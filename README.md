@@ -1,0 +1,375 @@
+# Equalify PDF Converter
+
+Transform PDF documents into accessible, semantic HTML for the University of Illinois Chicago (UIC).
+
+## Overview
+
+The Equalify PDF Converter addresses the fundamental accessibility challenges of PDF documents by converting them into responsive, semantic HTML that meets WCAG 2.1 AA compliance standards. Designed specifically for UIC's accessibility enhancement initiative, the system processes course materials through a multi-agent AI pipeline to ensure proper semantic structure, contextual alt text, and mathematical accessibility.
+
+## Key Features
+
+- **Semantic Conversion**: PDF → Markdown → Semantic HTML with proper heading hierarchy
+- **AI-Powered Enhancement**: Multi-agent PydanticAI pipeline for semantic analysis
+- **Accessibility First**: WCAG 2.1 AA compliance validation
+- **PII Protection**: Microsoft Presidio scanning and de-identification
+- **Faculty Review**: Natural language correction workflow with confidence scoring
+- **Multiple Output Formats**:
+  - Accessible Astro application (ShadCN/Radix components)
+  - Canvas LMS Pages integration
+- **Cost Effective**: ~$0.20 per document processing cost
+- **Fast Processing**: 2-8 minutes for typical documents
+
+## Architecture
+
+### Infrastructure
+- **AWS ECS**: Container orchestration with Fargate
+- **Redis**: Message queue and caching layer
+- **S3**: Static file hosting with versioning
+- **LocalStack**: Local AWS emulation for development
+
+### Processing Pipeline
+1. PDF upload and PII scanning
+2. Conversion to Markdown (IBM Docling)
+3. Multi-agent AI semantic enhancement
+4. Rendering to accessible MDX/HTML
+5. Deployment to S3 and Canvas LMS integration
+
+### Microservices
+- **API Gateway**: FastAPI entry point for document submission
+- **PII Worker**: Microsoft Presidio PII detection
+- **Approval Service**: Faculty review workflow
+- **Processing Worker**: PydanticAI multi-agent processing
+- **Timeout Worker**: Approval timeout monitoring
+
+## Quick Start
+
+### Prerequisites
+
+- Docker (v20.10+)
+- Docker Compose (v2.0+)
+- Python 3.11+ (for local development)
+- uv (Python package manager)
+
+### Development Setup
+
+```bash
+# 1. Clone the repository
+git clone <repository-url>
+cd equalify-pdf-converter
+
+# 2. Start services and verify
+make dev            # Start all services
+make health         # Verify infrastructure
+```
+
+### Common Commands
+
+```bash
+make dev            # Start development environment
+make down           # Stop all services
+make logs           # View service logs
+make health         # Run health checks
+make test           # Run tests
+make redis-cli      # Connect to Redis CLI
+make clean          # Remove containers and volumes
+```
+
+## Project Status
+
+**Current Phase**: Phase 1 - Infrastructure Foundation ✅
+
+### Completed
+- ✅ Docker Compose orchestration
+- ✅ Redis configuration and persistence
+- ✅ LocalStack S3 emulation
+- ✅ Development/Production environment separation
+- ✅ Health check and validation scripts
+- ✅ Infrastructure documentation
+
+### In Progress
+- 🚧 Phase 2: API Gateway and PII Worker
+- 🚧 Phase 2: Processing Worker with PydanticAI
+- 🚧 Phase 2: Approval Service
+
+### Planned
+- 📋 Phase 3: Frontend application (Astro + ShadCN)
+- 📋 Phase 3: Canvas LMS integration
+- 📋 Phase 4: AWS ECS deployment
+- 📋 Phase 4: Monitoring and observability
+
+## Documentation
+
+- **[Infrastructure Setup Guide](docs/infrastructure-setup.md)** - Complete setup instructions
+- **[Architecture Overview](CLAUDE.md)** - System architecture and design decisions
+- **[Scripts Documentation](scripts/README.md)** - Utility scripts reference
+- **[Redis Configuration](infrastructure/redis/README.md)** - Redis setup and operations
+- **[LocalStack Configuration](infrastructure/localstack/README.md)** - Local AWS services
+
+## Development
+
+### Project Structure
+
+```
+equalify-pdf-converter/
+├── docker-compose.yml              # Base service definitions
+├── docker-compose.dev.yml          # Development overrides (LocalStack)
+├── docker-compose.prod.yml         # Production overrides
+├── .env.example                    # Environment template
+├── .env.dev                        # Development configuration
+├── .env.prod                       # Production configuration
+├── docs/                           # Documentation
+│   └── infrastructure-setup.md     # Setup guide
+├── infrastructure/                 # Infrastructure configuration
+│   ├── localstack/                 # LocalStack init scripts
+│   │   ├── init-aws.sh             # S3 bucket creation
+│   │   └── README.md               # LocalStack documentation
+│   └── redis/                      # Redis configuration
+│       ├── redis.conf              # Redis server config
+│       └── README.md               # Redis documentation
+├── scripts/                        # Utility scripts
+│   ├── setup-aws.sh                # AWS resource initialization
+│   ├── health-check.sh             # Infrastructure validation
+│   └── README.md                   # Scripts documentation
+├── src/                            # Source code
+│   ├── shared/                     # Shared models and utilities
+│   │   ├── models/                 # Pydantic data models
+│   │   └── constants/              # Shared constants
+│   ├── api-gateway/                # FastAPI application (Phase 2)
+│   ├── pii-worker/                 # PII detection worker (Phase 2)
+│   ├── processing-worker/          # AI processing worker (Phase 2)
+│   ├── approval-service/           # Approval workflow (Phase 2)
+│   └── timeout-worker/             # Timeout monitoring (Phase 2)
+└── tests/                          # Test suite
+    └── models/                     # Model tests
+```
+
+### Environment Configuration
+
+#### Development (.env.dev)
+```bash
+# LocalStack for AWS services
+AWS_ENDPOINT_URL=http://localstack:4566
+AWS_ACCESS_KEY_ID=test
+AWS_SECRET_ACCESS_KEY=test
+
+# Local Redis
+REDIS_URL=redis://redis:6379
+
+# Debug logging
+LOG_LEVEL=DEBUG
+```
+
+#### Production (.env.prod)
+```bash
+# Real AWS services
+# AWS_ENDPOINT_URL not set
+AWS_ACCESS_KEY_ID=${AWS_ACCESS_KEY_ID}
+AWS_SECRET_ACCESS_KEY=${AWS_SECRET_ACCESS_KEY}
+
+# AWS ElastiCache
+REDIS_URL=${REDIS_URL}
+
+# Production logging
+LOG_LEVEL=INFO
+```
+
+### Running Services
+
+```bash
+# Development
+make dev              # Start all services
+make logs             # View logs
+make down             # Stop services
+
+# Production
+make prod             # Start with production config
+```
+
+### Testing Infrastructure
+
+```bash
+# Health checks
+make health           # Validate infrastructure
+
+# Test Redis
+make redis-cli        # Connect to Redis CLI
+
+# Direct commands if needed
+./scripts/health-check.sh
+docker exec -it equalify-pdf-redis redis-cli
+```
+
+## Technology Stack
+
+### Backend
+- **Python 3.11+**: Primary language (using uv for package management)
+- **FastAPI**: Async API framework
+- **PydanticAI**: Multi-agent AI framework
+- **Docling (IBM)**: PDF to Markdown conversion
+- **Microsoft Presidio**: PII detection and de-identification
+
+### Infrastructure
+- **Docker & Docker Compose**: Containerization
+- **Redis**: Message queue and caching
+- **AWS S3**: Object storage
+- **AWS ECS**: Container orchestration (production)
+- **LocalStack**: Local AWS emulation (development)
+
+### Frontend (Phase 3)
+- **Astro**: Static site generation framework
+- **ShadCN/Radix**: Accessible UI components
+- **Tailwind CSS**: Utility-first styling
+
+### Integrations
+- **Canvas LMS**: Learning management system integration
+- **Equalify Platform**: Webhook-triggered processing
+
+## Configuration
+
+### S3 Buckets
+
+- **equalify-pdf-temp**: Temporary PDF storage (7-day lifecycle)
+- **equalify-pdf-results**: Processed HTML results (versioned, public read)
+
+### Redis Data Structures
+
+- **Lists**: `eq-pdf:queue:pii`, `eq-pdf:queue:approval`, `eq-pdf:queue:processing`
+- **Sorted Sets**: `eq-pdf:timeouts:approval`
+- **Hashes**: `eq-pdf:job:{job_id}`, `eq-pdf:metrics:daily`
+
+### Environment Variables
+
+See `.env.example` for complete list. Key variables:
+
+- `AWS_*`: AWS configuration
+- `REDIS_URL`: Redis connection
+- `S3_*_BUCKET`: S3 bucket names
+- `OPENAI_API_KEY`: AI processing (Phase 2)
+- `CANVAS_*`: Canvas LMS integration (Phase 3)
+
+## Deployment
+
+### Development
+```bash
+make dev              # Start services
+make health           # Verify setup
+```
+
+### Production (AWS ECS)
+```bash
+make prod             # Start with production config
+```
+
+Detailed AWS deployment instructions coming in Phase 4. Overview:
+
+1. Build and push Docker images to ECR
+2. Create ECS task definitions
+3. Configure ECS services with auto-scaling
+4. Set up Application Load Balancer
+5. Configure AWS ElastiCache for Redis
+6. Create S3 buckets with proper policies
+
+## Monitoring
+
+```bash
+# Infrastructure health
+make health           # Comprehensive validation
+
+# Container status
+docker ps
+
+# Service logs
+make logs             # All services
+
+# Redis
+make redis-cli        # Connect to Redis
+# Inside CLI: INFO, PING, MONITOR
+# Queue lengths: LLEN eq-pdf:queue:pii
+
+# LocalStack
+curl http://localhost:4566/_localstack/health
+docker exec -it equalify-pdf-localstack awslocal s3 ls
+```
+
+## Troubleshooting
+
+Common issues and solutions:
+
+### Services Won't Start
+```bash
+make logs             # Check logs
+make clean            # Remove containers/volumes
+make dev              # Restart
+```
+
+### Redis Connection Issues
+```bash
+docker ps | grep redis
+make redis-cli        # Test with PING
+```
+
+### LocalStack Issues
+```bash
+make logs             # Check for errors
+docker exec -it equalify-pdf-localstack awslocal s3 ls  # Verify buckets
+./scripts/setup-aws.sh dev  # Reinitialize if needed
+```
+
+See [Infrastructure Setup Guide](docs/infrastructure-setup.md) for detailed troubleshooting.
+
+## Contributing
+
+This project is in active development. Phase 1 (Infrastructure Foundation) is complete.
+
+### Development Workflow
+
+1. Create feature branch
+2. Implement changes
+3. Run health checks: `make health`
+4. Run tests: `make test`
+5. Test locally: `make dev`
+6. Submit pull request
+
+### Code Standards
+
+- **Python**: Use `uv` for dependency management
+- **Docker**: Follow 12-factor app principles
+- **Documentation**: Update docs for any infrastructure changes
+- **Testing**: Validate with health check scripts
+
+## Success Criteria
+
+- ✅ WCAG 2.1 AA compliance validation
+- ✅ Processing cost: ~$0.20 per document
+- ✅ Processing time: 2-8 minutes
+- ✅ Structure accuracy: ≥90% heading hierarchy preservation
+- ✅ Faculty review time: ≤10 minutes for 10-page document
+
+## License
+
+[License information to be added]
+
+## Support
+
+For questions or issues:
+
+1. Check [Infrastructure Setup Guide](docs/infrastructure-setup.md)
+2. Run `make health` to validate infrastructure
+3. Review logs: `make logs` or `make logs-<service>`
+4. Try `make help` for all available commands
+5. Create GitHub issue with details
+
+## Acknowledgments
+
+- **University of Illinois Chicago (UIC)**: Primary use case partner
+- **IBM Docling**: PDF conversion technology
+- **Microsoft Presidio**: PII detection framework
+- **PydanticAI**: Multi-agent AI framework
+
+---
+
+**Project Status**: Phase 1 Complete ✅ | Phase 2 In Progress 🚧
+
+**Last Updated**: 2025-09-29
+
+**Version**: 1.0.0

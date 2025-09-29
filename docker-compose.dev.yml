@@ -1,0 +1,98 @@
+# Equalify PDF Converter - Development Override Configuration
+# This file adds LocalStack and development-specific configurations
+# Usage: docker-compose -f docker-compose.yml -f docker-compose.dev.yml up
+
+services:
+  # LocalStack - Local AWS cloud stack for development
+  localstack:
+    image: localstack/localstack:latest
+    container_name: equalify-pdf-localstack
+    restart: unless-stopped
+    ports:
+      - "4566:4566"  # LocalStack edge port
+      - "4510-4559:4510-4559"  # External service port range
+    environment:
+      - SERVICES=s3,cloudwatch
+      - DEBUG=${DEBUG:-0}
+      - DATA_DIR=/tmp/localstack/data
+      - DOCKER_HOST=unix:///var/run/docker.sock
+      - AWS_ACCESS_KEY_ID=test
+      - AWS_SECRET_ACCESS_KEY=test
+      - AWS_DEFAULT_REGION=us-east-1
+      - SKIP_SSL_CERT_DOWNLOAD=1
+      - TMPDIR=/tmp/localstack
+    volumes:
+      - ./infrastructure/localstack/init-aws.sh:/etc/localstack/init/ready.d/init-aws.sh:ro
+      - localstack-data:/tmp/localstack
+      - /var/run/docker.sock:/var/run/docker.sock
+    healthcheck:
+      test: ["CMD", "curl", "-f", "http://localhost:4566/_localstack/health"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+    networks:
+      - equalify-network
+
+  # Development overrides for API Gateway
+  api-gateway:
+    environment:
+      - AWS_ENDPOINT_URL=http://localstack:4566
+      - S3_TEMP_BUCKET=equalify-pdf-temp
+      - S3_RESULTS_BUCKET=equalify-pdf-results
+      - LOG_LEVEL=DEBUG
+    depends_on:
+      redis:
+        condition: service_healthy
+      localstack:
+        condition: service_healthy
+
+  # Development overrides for PII Worker
+  pii-worker:
+    environment:
+      - LOG_LEVEL=DEBUG
+    depends_on:
+      redis:
+        condition: service_healthy
+      localstack:
+        condition: service_healthy
+
+  # Development overrides for Approval Service
+  approval-service:
+    environment:
+      - LOG_LEVEL=DEBUG
+    depends_on:
+      redis:
+        condition: service_healthy
+      localstack:
+        condition: service_healthy
+
+  # Development overrides for Processing Worker
+  processing-worker:
+    environment:
+      - AWS_ENDPOINT_URL=http://localstack:4566
+      - S3_TEMP_BUCKET=equalify-pdf-temp
+      - S3_RESULTS_BUCKET=equalify-pdf-results
+      - LOG_LEVEL=DEBUG
+    depends_on:
+      redis:
+        condition: service_healthy
+      localstack:
+        condition: service_healthy
+
+  # Development overrides for Timeout Worker
+  timeout-worker:
+    environment:
+      - LOG_LEVEL=DEBUG
+    depends_on:
+      redis:
+        condition: service_healthy
+      localstack:
+        condition: service_healthy
+
+networks:
+  equalify-network:
+    external: false
+
+volumes:
+  localstack-data:
+    name: equalify-pdf-localstack-data

@@ -51,17 +51,38 @@
 
 ---
 
-### PRD-004: Document API Endpoints
-**Status**: Not Started
+### PRD-004: Document API Endpoints ✅
+**Status**: Complete
 **File**: [phase-2-services/PRD-004-api-endpoints.md](phase-2-services/PRD-004-api-endpoints.md)
-**Effort**: 2 days
-**Dependencies**: PRD-003 (Shared Services) - MUST BE COMPLETE
+**Completed**: 2025-09-30
+**Effort**: 6 hours (actual vs 2 days estimated)
+**Dependencies**: PRD-003 (Shared Services) ✅
 
-**Deliverables**:
-- `src/api/documents.py` (POST /submit, GET /status, GET /result)
-- `src/api/health.py` (Health check)
-- `src/middleware/` (Error handling, logging)
-- `src/main.py` (FastAPI app initialization)
+**Deliverables** (COMPLETE):
+- ✅ `src/api/documents.py` - POST /submit, GET /status, GET /result
+- ✅ `src/api/health.py` - Health and readiness checks
+- ✅ `src/middleware/error_handler.py` - Global exception handling
+- ✅ `src/middleware/logging_middleware.py` - Request/response logging
+- ✅ `src/middleware/rate_limit.py` - Redis-based rate limiting
+- ✅ `src/main.py` - FastAPI app with middleware stack
+- ✅ `src/services/rate_limit_service.py` - Sliding window rate limiter
+- ✅ `tests/test_documents.py` - 6 endpoint tests passing
+- ✅ `tests/test_health.py` - 3 health check tests passing
+- ✅ `tests/services/test_rate_limit_service.py` - 10 rate limit tests passing
+- ✅ `project-docs/rate-limiting.md` - Comprehensive documentation
+
+**Implementation Notes**:
+- All API endpoints functional with FastAPI dependency injection
+- Rate limiting implemented with Redis sliding window algorithm (BONUS)
+- Three-tier rate limiting: per-IP submission (10/hr), per-IP status checks (100/hr), global (1000/day)
+- Fail-open design ensures availability over strict enforcement
+- Headers: X-RateLimit-Limit, X-RateLimit-Remaining, X-RateLimit-Reset
+- Fixed datetime.utcnow() deprecation warnings
+- 135 total tests passing (9 API tests, 10 rate limit tests, 116 existing tests)
+- OpenAPI documentation auto-generated at /docs
+- Ready for production deployment
+
+**Unblocks**: PRD-005, PRD-006, PRD-007, PRD-008
 
 ---
 

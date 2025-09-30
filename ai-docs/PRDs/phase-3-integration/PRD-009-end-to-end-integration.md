@@ -1,12 +1,12 @@
-# PRD-008: End-to-End Integration & Testing
+# PRD-009: End-to-End Integration & Testing
 
 ## Document Information
-- **PRD ID**: PRD-008
+- **PRD ID**: PRD-009
 - **Title**: End-to-End Integration & Testing
 - **Phase**: Phase 3 - Integration
 - **Priority**: P0 (Critical)
 - **Estimated Effort**: 2 days
-- **Dependencies**: All Phase 1 and Phase 2 PRDs (PRD-001 through PRD-007)
+- **Dependencies**: All Phase 1 and Phase 2 PRDs (PRD-001 through PRD-008)
 - **Cannot be done in parallel**: Must be done last after all other components
 
 ## Executive Summary
@@ -15,8 +15,8 @@ Complete system integration that validates the entire PDF-to-accessible-HTML pip
 
 ## Problem Statement
 
-While individual services have been developed and tested in isolation, the complete system integration represents the highest risk area for the MVP. Without comprehensive end-to-end validation, production deployments may fail due to:
-- Service communication failures
+While individual modules have been developed and tested in isolation, the complete system integration represents the highest risk area for the MVP. Without comprehensive end-to-end validation, production deployments may fail due to:
+- Module communication failures
 - Queue processing bottlenecks
 - Resource contention issues
 - Configuration inconsistencies
@@ -37,7 +37,7 @@ While individual services have been developed and tested in isolation, the compl
 ## Goals and Objectives
 
 ### Primary Goals
-1. **Complete System Integration**: All 7 services working together seamlessly
+1. **Complete System Integration**: All modules working together seamlessly in the monolith
 2. **Performance Validation**: Meet all processing time and cost targets
 3. **Production Readiness**: Full monitoring, health checks, and error handling
 
@@ -57,41 +57,34 @@ graph TB
         AWS[AWS ECS]
     end
 
-    subgraph "Equalify PDF Converter System"
-        API[FastAPI Service]
-        PROC[Processing Service]
-        AI[AI Enhancement Service]
-        REND[Rendering Service]
+    subgraph "Equalify PDF Converter Monolith"
+        API[FastAPI API Layer]
+        SERVICES[Service Modules]
+        WORKERS[Background Workers]
         REDIS[Redis Queue]
         S3[S3 Storage]
-        MON[Monitoring Service]
     end
 
     EQ -->|Webhook| API
     API --> REDIS
-    REDIS --> PROC
-    PROC --> AI
-    AI --> REND
-    REND --> S3
+    REDIS --> WORKERS
+    WORKERS --> SERVICES
+    SERVICES --> S3
     S3 -->|Static URL| CAN
-    MON -->|Health Checks| API
-    MON -->|Health Checks| PROC
-    MON -->|Health Checks| AI
-    MON -->|Health Checks| REND
+    AWS -->|Deploy| API
 ```
 
-### Docker Compose Orchestration
-- **Complete service definition**: All 7 services with proper dependencies
-- **Network configuration**: Isolated networks with secure communication
+### Infrastructure Configuration
+- **Docker Compose**: Infrastructure services (Redis, LocalStack) with proper networking
 - **Volume management**: Persistent storage for Redis and temporary processing
 - **Environment configuration**: Consistent secrets and configuration management
-- **Health check integration**: Service readiness and liveness probes
+- **Health check integration**: Application and infrastructure health probes
 
-### Service Communication Validation
-- **API Gateway**: Request routing and load balancing
-- **Message Queues**: Redis pub/sub and task queue reliability
-- **Data Flow**: PDF → Markdown → MDX → HTML pipeline integrity
-- **Error Propagation**: Failure handling across service boundaries
+### Module Communication Validation
+- **API Layer**: Request routing and endpoint functionality
+- **Message Queues**: Redis task queue reliability
+- **Data Flow**: PDF → Markdown → MDX → HTML pipeline integrity within monolith
+- **Error Propagation**: Failure handling across module boundaries
 
 ## Functional Requirements
 
@@ -149,15 +142,15 @@ graph TB
 
 ### Integration Test Categories
 
-#### 1. Service Integration Tests
+#### 1. Module Integration Tests
 ```python
 # Example test structure
-class TestServiceIntegration:
+class TestModuleIntegration:
     def test_api_to_processing_communication(self)
-    def test_processing_to_ai_handoff(self)
-    def test_ai_to_rendering_pipeline(self)
-    def test_rendering_to_storage_deployment(self)
-    def test_cross_service_error_handling(self)
+    def test_processing_pipeline_flow(self)
+    def test_worker_queue_integration(self)
+    def test_storage_deployment(self)
+    def test_cross_module_error_handling(self)
 ```
 
 #### 2. End-to-End Workflow Tests
@@ -199,20 +192,14 @@ class TestProductionReadiness:
 ```yaml
 # Health check configuration
 health_checks:
-  fastapi_service:
+  fastapi_application:
     endpoint: /health
     interval: 30s
     timeout: 10s
-
-  processing_service:
-    endpoint: /health
-    interval: 60s
-    timeout: 15s
-
-  ai_enhancement_service:
-    endpoint: /health
-    interval: 120s
-    timeout: 30s
+    checks:
+      - redis_connection
+      - s3_access
+      - worker_status
 ```
 
 ### Performance Metrics
@@ -242,24 +229,31 @@ log_format = {
 
 ## Deployment and Operations
 
-### Docker Compose Production Configuration
+### Production Deployment Configuration
 ```yaml
-# docker-compose.prod.yml structure
+# Production deployment uses a single container with the monolith
+# Infrastructure services (Redis) run in separate containers
 version: '3.8'
 services:
-  fastapi:
-    image: equalify-pdf-converter/api:latest
+  redis:
+    image: redis:7-alpine
+    volumes:
+      - redis_data:/data
+
+  pdf-converter:
+    image: equalify-pdf-converter:latest
     deploy:
-      replicas: 2
       resources:
         limits:
-          cpus: '1.0'
-          memory: 1G
+          cpus: '2.0'
+          memory: 4G
     healthcheck:
       test: ["CMD", "curl", "-f", "http://localhost:8000/health"]
       interval: 30s
       timeout: 10s
       retries: 3
+    depends_on:
+      - redis
 ```
 
 ### Infrastructure as Code
@@ -311,11 +305,11 @@ deploy_equalify_pdf_converter() {
 ## Acceptance Criteria
 
 ### AC-001: Complete System Integration
-- [ ] All 7 services deployed and communicating via Docker Compose
+- [ ] Monolith application with all modules integrated and running
 - [ ] Full PDF-to-HTML pipeline processing sample documents
 - [ ] Webhook integration with Equalify platform mock
 - [ ] Canvas LMS external URL integration validated
-- [ ] Service dependency startup order working correctly
+- [ ] Infrastructure and application startup working correctly
 
 ### AC-002: Performance Benchmarks Met
 - [ ] Processing time: 2-8 minutes for typical 10-page documents
@@ -331,7 +325,7 @@ deploy_equalify_pdf_converter() {
 - [ ] Accessibility testing: Screen reader compatibility validated
 
 ### AC-004: Production Readiness
-- [ ] Health check endpoints: All services responding correctly
+- [ ] Health check endpoints: Application responding correctly
 - [ ] Monitoring dashboard: Real-time metrics visualization
 - [ ] Error handling: Graceful failure recovery demonstrated
 - [ ] Log aggregation: Centralized structured logging working
@@ -361,15 +355,16 @@ deploy_equalify_pdf_converter() {
 ## Deliverables
 
 ### 1. Integration Infrastructure
-- **File**: `/infrastructure/docker-compose.prod.yml`
-- **Content**: Complete production Docker Compose configuration
-- **Dependencies**: All service images and network configuration
+- **File**: `/docker-compose.yml`
+- **Content**: Infrastructure services (Redis, LocalStack)
+- **File**: `/Dockerfile`
+- **Content**: Production container image for monolith application
 
 ### 2. Comprehensive Test Suite
 - **Directory**: `/tests/integration/`
 - **Files**:
   - `test_end_to_end_workflows.py`
-  - `test_service_integration.py`
+  - `test_module_integration.py`
   - `test_performance_benchmarks.py`
   - `test_production_readiness.py`
 - **Coverage**: >80% critical path coverage
@@ -413,9 +408,9 @@ deploy_equalify_pdf_converter() {
 ## Risk Assessment
 
 ### High-Risk Areas
-1. **Service Communication Failures**: Complex inter-service dependencies
+1. **Module Communication**: Internal communication between modules
 2. **Performance Bottlenecks**: Queue processing under load
-3. **Resource Contention**: Multiple services competing for resources
+3. **Resource Contention**: Multiple workers competing for resources
 4. **Configuration Complexity**: Environment-specific settings
 
 ### Mitigation Strategies
@@ -463,7 +458,7 @@ deploy_equalify_pdf_converter() {
 
 The End-to-End Integration & Testing PRD will be considered successful when:
 
-1. **Complete System Integration**: All services working together seamlessly
+1. **Complete System Integration**: All modules working together seamlessly in the monolith
 2. **Performance Targets Met**: All processing time and cost benchmarks achieved
 3. **Production Ready**: Full monitoring, documentation, and deployment automation
 4. **Quality Validated**: WCAG 2.1 AA compliance and accuracy targets met

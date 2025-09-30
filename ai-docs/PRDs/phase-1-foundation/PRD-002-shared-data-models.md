@@ -8,7 +8,7 @@
 **Parallel**: ✅ Can start immediately
 
 ## Problem Statement
-The microservices architecture requires standardized data models for queue payloads, job status tracking, and inter-service communication. These models must be type-safe, version-compatible, and shared across all services to ensure data consistency.
+The monolith application requires standardized data models for queue payloads, job status tracking, and internal communication between modules. These models must be type-safe, version-compatible, and shared across all application modules to ensure data consistency.
 
 ## Success Criteria
 - [ ] Pydantic models for all data structures defined
@@ -16,7 +16,7 @@ The microservices architecture requires standardized data models for queue paylo
 - [ ] Queue payload formats standardized
 - [ ] Job status state machine clearly defined
 - [ ] Type validation working across all models
-- [ ] Models packaged for reuse across services
+- [ ] Models organized in src/shared/ for reuse across modules
 
 ## Technical Requirements
 
@@ -149,7 +149,7 @@ class ProcessingQueuePayload(BaseModel):
 
 ### Files to Create
 ```
-/shared/models/
+/src/shared/models/
 ├── __init__.py                    # Package exports
 ├── job.py                        # Job-related models
 ├── queue.py                      # Queue payload models
@@ -158,13 +158,13 @@ class ProcessingQueuePayload(BaseModel):
 ├── processing.py                 # Processing result models
 └── redis_schema.py               # Redis key patterns
 
-/shared/constants/
+/src/shared/constants/
 ├── __init__.py
 ├── queues.py                     # Queue names and keys
 ├── statuses.py                   # Job status constants
 └── redis_keys.py                 # Redis key patterns
 
-/tests/models/
+/tests/shared/
 ├── test_job_models.py
 ├── test_queue_models.py
 └── test_redis_integration.py
@@ -172,7 +172,7 @@ class ProcessingQueuePayload(BaseModel):
 
 ### Model Package Structure
 ```python
-# shared/models/__init__.py
+# src/shared/models/__init__.py
 from .job import JobStatus, JobSubmission
 from .pii import PIIFinding, PIIResult
 from .approval import ApprovalRequest, ApprovalDecision
@@ -236,6 +236,6 @@ class JobSubmission(BaseModel):
 - [ ] Redis integration functions working
 - [ ] Model validation tests passing
 - [ ] Documentation generated and reviewed
-- [ ] Package can be imported by other services
+- [ ] Models can be imported by all application modules
 - [ ] No circular dependencies between models
-- [ ] Models ready for Phase 2 service integration
+- [ ] Models ready for Phase 2 module implementation

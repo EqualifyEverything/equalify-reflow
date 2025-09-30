@@ -8,20 +8,29 @@ The Equalify PDF Converter transforms PDF documents into accessible, semantic HT
 University of Illinois Chicago (UIC) accessibility enhancement for course materials. System processes **course materials only** - strict architectural boundary against student records or PII.
 
 ## Core Architecture
-**Infrastructure:** AWS ECS with Fargate containers, Redis queue management, S3 static hosting
-**Processing:** Multi-agent PydanticAI pipeline with semantic caching for transparency
-**API:** FastAPI endpoints for document submission, status tracking, and result retrieval
-**Frontend:** Astro application with accessible ShadCN/Radix components
+
+**Pattern:** Monolith with Background Task Queue (single Python application)
+
+The application runs as **one unified codebase** with:
+- **FastAPI REST API** - HTTP endpoints for document submission, status, results
+- **Background Workers** - Async task processors monitoring Redis queues
+- **Redis Task Queues** - Decouples API responses from long-running processing
+- **Shared Services** - S3 storage, job management, queue operations
+
+**Infrastructure:** AWS ECS with Fargate containers, Redis task queues, S3 static hosting
+**Processing:** AI pipeline (Phase 1: single agent, Phase 2+: multi-agent) with semantic caching
+**Frontend:** Astro application with accessible ShadCN/Radix components (Phase 3)
 **Security:** Microsoft Presidio PII scanning, encrypted storage/transmission, ephemeral processing
 
 ## Processing Pipeline
-1. Convert PDF to Markdown via IBM's Docling
-2. Multi-agent AI processing to fix missing visual semantics, add contextual alt texts and descriptions, and transform mathematical equations into MathML
-   - Non-standard markdown represented by standardized JSX components
-3. Render semantic-rich MDX document as:
-   - Accessible Astro application (ShadCN/Radix components)
-   - Canvas LMS Pages integration for UIC students
-4. Save as versioned static resource in S3
+1. **REST API** receives PDF → Store in S3 temp → Queue for PII scanning
+2. **PII Worker** (background) → Microsoft Presidio scan → Queue for processing (or approval)
+3. **Processing Worker** (background) → Docling PDF→Markdown → AI accessibility enhancement
+4. AI processing adds contextual alt texts, fixes heading hierarchy, converts math to MathML
+5. Generate semantic MDX → Render to accessible HTML
+6. Store versioned results in S3 → API returns URLs
+
+**Note:** All workers run as background threads/processes within the single Python application, not separate microservices.
 
 ## Required Integrations
 - **Equalify Platform:** Webhook-triggered processing from accessibility scans

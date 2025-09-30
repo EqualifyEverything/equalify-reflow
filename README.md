@@ -21,25 +21,33 @@ The Equalify PDF Converter addresses the fundamental accessibility challenges of
 
 ## Architecture
 
+**Design Pattern**: Monolith with Background Task Queue
+
+The application runs as a **single Python process** with:
+- **FastAPI REST API** - Handles HTTP requests
+- **Background Workers** - Process tasks from Redis queues asynchronously
+- **Redis Task Queues** - Async communication between API and workers
+
 ### Infrastructure
-- **AWS ECS**: Container orchestration with Fargate
-- **Redis**: Message queue and caching layer
+- **AWS ECS**: Container orchestration with Fargate (production)
+- **Redis**: Task queue for background processing and caching
 - **S3**: Static file hosting with versioning
 - **LocalStack**: Local AWS emulation for development
 
 ### Processing Pipeline
-1. PDF upload and PII scanning
-2. Conversion to Markdown (IBM Docling)
-3. Multi-agent AI semantic enhancement
-4. Rendering to accessible MDX/HTML
-5. Deployment to S3 and Canvas LMS integration
+1. PDF upload via REST API → stored in S3 temp bucket
+2. Background PII worker → Microsoft Presidio scanning
+3. Faculty approval workflow (if PII detected)
+4. Background processing worker → PDF to Markdown (IBM Docling)
+5. AI semantic enhancement → Accessible MDX/HTML generation
+6. Results stored in S3 → Versioned URLs returned via API
 
-### Microservices
-- **API Gateway**: FastAPI entry point for document submission
-- **PII Worker**: Microsoft Presidio PII detection
-- **Approval Service**: Faculty review workflow
-- **Processing Worker**: PydanticAI multi-agent processing
-- **Timeout Worker**: Approval timeout monitoring
+### Application Components (Single Codebase)
+- **FastAPI API** - Document submission, status tracking, results retrieval
+- **PII Worker** - Background thread monitoring `eq-pdf:queue:pii`
+- **Processing Worker** - Background thread monitoring `eq-pdf:queue:processing`
+- **Timeout Worker** - Background scheduler checking approval deadlines
+- **Shared Services** - S3 storage, Redis queue management, job tracking
 
 ## Quick Start
 
@@ -57,8 +65,13 @@ The Equalify PDF Converter addresses the fundamental accessibility challenges of
 git clone <repository-url>
 cd equalify-pdf-converter
 
-# 2. Start services and verify
-make dev            # Start all services
+# 2. Start infrastructure services (Redis, LocalStack)
+make dev            # Starts Docker containers
+
+# 3. Run the monolith application
+uv run uvicorn src.main:app --reload --host 0.0.0.0 --port 8000
+
+# 4. Verify setup
 make health         # Verify infrastructure
 ```
 
@@ -87,9 +100,10 @@ make clean          # Remove containers and volumes
 - ✅ Infrastructure documentation
 
 ### In Progress
-- 🚧 Phase 2: API Gateway and PII Worker
-- 🚧 Phase 2: Processing Worker with PydanticAI
-- 🚧 Phase 2: Approval Service
+- 🚧 Phase 2: FastAPI REST endpoints (document submission, status, results)
+- 🚧 Phase 2: Background PII worker with Microsoft Presidio
+- 🚧 Phase 2: Background processing worker with AI pipeline
+- 🚧 Phase 2: Approval workflow and timeout monitoring
 
 ### Planned
 - 📋 Phase 3: Frontend application (Astro + ShadCN)
@@ -99,11 +113,27 @@ make clean          # Remove containers and volumes
 
 ## Documentation
 
+### Architecture & Planning
+- **[Architecture Overview](docs/architecture.md)** - Detailed monolith architecture
+- **[Architecture Clarification](docs/ARCHITECTURE_CLARIFICATION.md)** - Monolith vs microservices Q&A
+- **[Implementation Order](IMPLEMENTATION_ORDER.md)** - Quick reference for PRD order
 - **[Infrastructure Setup Guide](docs/infrastructure-setup.md)** - Complete setup instructions
-- **[Architecture Overview](CLAUDE.md)** - System architecture and design decisions
+- **[Program Flow](project-docs/program-flow.md)** - System-wide flow diagrams
+
+### PRD Documentation
+- **[PRD Index](ai-docs/PRDs/README.md)** - All PRDs with dependencies
+- **[PRD Restructuring Summary](docs/PRD_RESTRUCTURING_SUMMARY.md)** - Recent changes
+- **[Using /prd Command](docs/USING_PRD_COMMAND.md)** - Guide for AI agents executing PRDs
+
+### Infrastructure Configuration
 - **[Scripts Documentation](scripts/README.md)** - Utility scripts reference
 - **[Redis Configuration](infrastructure/redis/README.md)** - Redis setup and operations
 - **[LocalStack Configuration](infrastructure/localstack/README.md)** - Local AWS services
+
+### Project Documentation
+- **[System Architecture](CLAUDE.md)** - Project instructions and patterns
+- **[Project Proposal](project-docs/local/Proposal.md)** - Original technical proposal
+- **[Version 1 Buildout](project-docs/local/Version%201%20Buildout.md)** - Contract deliverables
 
 ## Development
 

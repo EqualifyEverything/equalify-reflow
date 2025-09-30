@@ -8,7 +8,7 @@
 **Parallel**: ✅ Can start immediately
 
 ## Problem Statement
-The Equalify PDF Converter requires a complete local development infrastructure that mirrors production AWS services. This foundation must support containerized microservices with Redis queuing, S3 storage, and proper networking between services.
+The Equalify PDF Converter requires a complete local development infrastructure that mirrors production AWS services. This foundation must support the **monolith Python application** (single codebase with FastAPI + background workers) with Redis task queues, S3 storage, and proper local development tooling.
 
 ## Success Criteria
 - [ ] LocalStack running with S3 buckets configured
@@ -40,33 +40,31 @@ The Equalify PDF Converter requires a complete local development infrastructure 
 ```
 
 ### Docker Compose Structure
-Use Docker Compose override files for environment-specific configurations:
-- **Base**: `docker-compose.yml` with core services (Redis, API services)
-- **Development**: `docker-compose.dev.yml` adds LocalStack + dev environment variables
-- **Production**: `docker-compose.prod.yml` has production environment variables for real AWS
+Use Docker Compose **only for infrastructure services** (Redis, LocalStack):
+- **Base**: `docker-compose.yml` with infrastructure services only
+- The **monolith application runs via `uv`** during development, NOT in Docker
+- Application includes: FastAPI API + background worker threads in single process
 
 ```yaml
-# Base services (docker-compose.yml)
+# Infrastructure services (docker-compose.yml)
 services:
-  redis:           # Message broker
-  api-gateway:     # Placeholder for Phase 2
-  pii-worker:      # Placeholder for Phase 2
-  approval-service: # Placeholder for Phase 2
-  processing-worker: # Placeholder for Phase 2
-  timeout-worker:   # Placeholder for Phase 2
-
-# Development override (docker-compose.dev.yml)
-services:
-  localstack:      # AWS services (dev only)
+  redis:           # Task queue and caching
+  localstack:      # AWS services for local development (S3, etc.)
 ```
+
+**Architecture Note:**
+This is a **monolith with background task queue** pattern, not microservices.
+- Single Python application codebase
+- FastAPI REST API + background workers in one process
+- Redis provides async task distribution (not service-to-service communication)
 
 **Usage Examples:**
 ```bash
-# Development
-docker-compose -f docker-compose.yml -f docker-compose.dev.yml up
+# Start infrastructure services only
+docker-compose up -d
 
-# Production
-docker-compose -f docker-compose.yml -f docker-compose.prod.yml up
+# Run the monolith application (FastAPI + workers)
+uv run uvicorn src.main:app --reload --host 0.0.0.0 --port 8000
 ```
 
 ## Acceptance Criteria
@@ -83,11 +81,11 @@ docker-compose -f docker-compose.yml -f docker-compose.prod.yml up
 - [ ] Basic queue operations tested: `LPUSH`, `BLPOP`
 - [ ] Health check endpoint responsive
 
-### 3. Container Orchestration
-- [ ] All services start in correct dependency order
-- [ ] Network communication between containers
-- [ ] Environment variables properly injected
-- [ ] Services restart on failure
+### 3. Infrastructure Orchestration
+- [ ] Infrastructure services start in correct dependency order
+- [ ] Network communication between infrastructure services
+- [ ] Environment variables properly configured for application
+- [ ] Infrastructure services restart on failure
 
 ### 4. Development Tools
 - [ ] Setup scripts for initializing AWS resources
@@ -99,9 +97,7 @@ docker-compose -f docker-compose.yml -f docker-compose.prod.yml up
 
 ### Files to Create
 ```
-/docker-compose.yml                    # Main orchestration
-/docker-compose.dev.yml               # Development overrides
-/docker-compose.prod.yml              # Production overrides
+/docker-compose.yml                    # Infrastructure orchestration
 /scripts/setup-aws.sh                 # LocalStack initialization
 /scripts/health-check.sh              # Infrastructure validation
 /.env.example                         # Environment template
@@ -119,11 +115,20 @@ docker-compose -f docker-compose.yml -f docker-compose.prod.yml up
 
 ## Technical Notes
 
-### Service Dependencies
+### Infrastructure Dependencies
 ```yaml
 # Startup Order
-1. Redis + LocalStack (parallel)
-2. All other services (depend on infrastructure)
+1. Infrastructure: Redis + LocalStack (via docker-compose)
+2. Application: Python monolith (via uv run - FastAPI + background workers)
+```
+
+**Application Structure:**
+```
+src/main.py:
+  - Starts FastAPI server (main thread)
+  - Starts PII worker thread (monitors eq-pdf:queue:pii)
+  - Starts processing worker thread (monitors eq-pdf:queue:processing)
+  - Starts timeout scheduler thread (checks approval deadlines)
 ```
 
 ### Environment Variables
@@ -177,9 +182,9 @@ S3_RESULTS_BUCKET=equalify-pdf-results
 ```
 
 ## Definition of Done
-- [ ] `docker-compose up` starts all infrastructure services
+- [ ] `docker-compose up` starts all infrastructure services (Redis, LocalStack)
 - [ ] Health check script passes all validations
 - [ ] Documentation allows new developer to setup locally
 - [ ] No hardcoded values, all environment-driven
-- [ ] Services restart automatically on failure
-- [ ] Infrastructure ready for Phase 2 service integration
+- [ ] Infrastructure services restart automatically on failure
+- [ ] Infrastructure ready for monolith application development

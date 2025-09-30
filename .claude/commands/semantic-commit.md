@@ -17,6 +17,7 @@ Understand the files in the `Read` section, and execute the `Run` commands then 
 - Outline the work done top to bottom organized by topic of changes
 - git status to see the files changed
 - Map the outline of work done to the files changed and think carefully about how to best represent it as a semantic commit
+- Note any AI docs (normally IN_ALL_CAPS.md and are generally status reports). We want to ignore them from final commit
 
 
 ## Report
@@ -29,6 +30,7 @@ X. <Commit Name>:<Commit Message>
     - <File>: <Why>
 ```
 
+Do not mention exact PRD or AI documentation names in commits. We are only referencing official code and documentation.
 
 I may provide wording/grouping feedback. If so, mirror report with changes. 
 

@@ -1,1 +1,1 @@
-"""Test suite for Equalify PDF Converter."""
+"""Tests package."""

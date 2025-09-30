@@ -1,6 +1,6 @@
 """Document processing endpoints."""
 
-from datetime import datetime, timedelta
+from datetime import datetime, timedelta, timezone
 from typing import Optional
 
 from fastapi import APIRouter, Depends, File, HTTPException, UploadFile, status
@@ -79,7 +79,7 @@ async def submit_document(
     # Queue for PII processing
     await queue.queue_pii_job(job_id, s3_key)
 
-    created_at = datetime.utcnow().isoformat() + "Z"
+    created_at = datetime.now(timezone.utc).isoformat().replace("+00:00", "Z")
 
     return JobSubmissionResponse(
         job_id=job_id,

@@ -8,6 +8,7 @@ from .config import settings
 from .services.storage_service import StorageService
 from .services.queue_service import QueueService
 from .services.job_service import JobService
+from .services.rate_limit_service import RateLimitService
 
 
 # Client dependencies with proper resource cleanup
@@ -136,3 +137,32 @@ async def get_job_service(
         )
 
     return JobService(redis_client=redis_client)
+
+
+async def get_rate_limit_service(
+    redis_client=None
+) -> AsyncGenerator[RateLimitService, None]:
+    """Get rate limit service instance.
+
+    Args:
+        redis_client: Optional Redis client (injected by FastAPI Depends)
+
+    Yields:
+        Configured RateLimitService instance
+
+    Note:
+        In FastAPI routes, use: rate_limiter: RateLimitService = Depends(get_rate_limit_service)
+    """
+    if redis_client is None:
+        # For non-FastAPI usage (workers, tests)
+        redis_client = redis.from_url(
+            settings.redis_url,
+            decode_responses=True,
+            max_connections=settings.redis_max_connections,
+        )
+        try:
+            yield RateLimitService(redis_client=redis_client)
+        finally:
+            await redis_client.close()
+    else:
+        yield RateLimitService(redis_client=redis_client)

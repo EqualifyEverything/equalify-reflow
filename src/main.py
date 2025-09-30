@@ -8,6 +8,7 @@ from .config import settings
 from .middleware import (
     ErrorHandlerMiddleware,
     LoggingMiddleware,
+    RateLimitMiddleware,
     add_cors_middleware,
 )
 from .api import documents, health
@@ -27,10 +28,11 @@ app = FastAPI(
     redoc_url="/redoc"
 )
 
-# Add middleware
-app.add_middleware(ErrorHandlerMiddleware)
-app.add_middleware(LoggingMiddleware)
-add_cors_middleware(app)
+# Add middleware (order matters: last added = first executed)
+app.add_middleware(ErrorHandlerMiddleware)  # Catch all errors
+app.add_middleware(RateLimitMiddleware)     # Rate limit before processing
+app.add_middleware(LoggingMiddleware)       # Log all requests
+add_cors_middleware(app)                     # CORS headers
 
 # Include routers
 app.include_router(health.router)

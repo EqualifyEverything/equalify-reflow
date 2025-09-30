@@ -1,0 +1,312 @@
+"""Integration tests for Queue Service."""
+
+import pytest
+import json
+from datetime import datetime
+from pydantic import BaseModel
+
+from src.services.queue_service import QueueService
+from src.shared.models.queue import PIIQueuePayload, ProcessingQueuePayload
+
+
+class SamplePayload(BaseModel):
+    """Simple test payload for testing."""
+
+    job_id: str
+    data: str
+
+
+@pytest.fixture
+def mock_redis_client(mocker):
+    """Create mock Redis client."""
+    client = mocker.AsyncMock()
+    return client
+
+
+@pytest.fixture
+def queue_service(mock_redis_client):
+    """Create queue service with mock client."""
+    return QueueService(redis_client=mock_redis_client)
+
+
+@pytest.fixture
+def sample_pii_payload():
+    """Create sample PII queue payload."""
+    return PIIQueuePayload(
+        job_id="550e8400-e29b-41d4-a716-446655440000",
+        s3_key="temp/550e8400-e29b-41d4-a716-446655440000/document.pdf",
+        created_at=datetime(2024, 1, 15, 10, 30, 0)
+    )
+
+
+class TestQueuePiiJob:
+    """Tests for queue_pii_job method (legacy method)."""
+
+    @pytest.mark.asyncio
+    async def test_queue_pii_job_success(self, queue_service, mock_redis_client):
+        """Test queuing a PII job."""
+        mock_redis_client.lpush.return_value = 1
+
+        await queue_service.queue_pii_job(
+            job_id="job123",
+            s3_key="temp/job123/file.pdf"
+        )
+
+        # Verify lpush was called
+        mock_redis_client.lpush.assert_called_once()
+        queue_name, payload_json = mock_redis_client.lpush.call_args.args
+
+        # Verify payload structure
+        payload = json.loads(payload_json)
+        assert payload["job_id"] == "job123"
+        assert payload["s3_key"] == "temp/job123/file.pdf"
+        assert "created_at" in payload
+
+
+class TestEnqueue:
+    """Tests for generic enqueue method."""
+
+    @pytest.mark.asyncio
+    async def test_enqueue_pydantic_model(self, queue_service, mock_redis_client, sample_pii_payload):
+        """Test enqueuing a Pydantic model."""
+        mock_redis_client.lpush.return_value = 1
+
+        await queue_service.enqueue("test_queue", sample_pii_payload)
+
+        # Verify lpush was called with correct data
+        mock_redis_client.lpush.assert_called_once()
+        queue_name, payload_json = mock_redis_client.lpush.call_args.args
+        assert queue_name == "test_queue"
+
+        # Verify JSON serialization
+        payload = json.loads(payload_json)
+        assert payload["job_id"] == sample_pii_payload.job_id
+        assert payload["s3_key"] == sample_pii_payload.s3_key
+
+    @pytest.mark.asyncio
+    async def test_enqueue_processing_payload(self, queue_service, mock_redis_client):
+        """Test enqueuing processing queue payload."""
+        payload = ProcessingQueuePayload(
+            job_id="550e8400-e29b-41d4-a716-446655440000",
+            s3_key="temp/file.pdf",
+            approved_at=None
+        )
+        mock_redis_client.lpush.return_value = 1
+
+        await queue_service.enqueue("processing_queue", payload)
+
+        mock_redis_client.lpush.assert_called_once()
+        queue_name, _ = mock_redis_client.lpush.call_args.args
+        assert queue_name == "processing_queue"
+
+    @pytest.mark.asyncio
+    async def test_enqueue_failure(self, queue_service, mock_redis_client, sample_pii_payload):
+        """Test handling of enqueue failure."""
+        mock_redis_client.lpush.side_effect = Exception("Redis connection error")
+
+        with pytest.raises(Exception) as exc:
+            await queue_service.enqueue("test_queue", sample_pii_payload)
+
+        assert "Failed to enqueue" in str(exc.value)
+
+
+class TestDequeue:
+    """Tests for dequeue method."""
+
+    @pytest.mark.asyncio
+    async def test_dequeue_success(self, queue_service, mock_redis_client):
+        """Test successful dequeue operation."""
+        payload_dict = {"job_id": "job123", "data": "test"}
+        payload_json = json.dumps(payload_dict)
+        mock_redis_client.brpop.return_value = ("test_queue", payload_json)
+
+        result = await queue_service.dequeue("test_queue", timeout=5)
+
+        assert result == payload_dict
+        mock_redis_client.brpop.assert_called_once_with("test_queue", timeout=5)
+
+    @pytest.mark.asyncio
+    async def test_dequeue_with_model_validation(self, queue_service, mock_redis_client):
+        """Test dequeue with Pydantic model validation."""
+        payload_dict = {"job_id": "job123", "data": "test"}
+        payload_json = json.dumps(payload_dict)
+        mock_redis_client.brpop.return_value = ("test_queue", payload_json)
+
+        result = await queue_service.dequeue(
+            "test_queue",
+            timeout=5,
+            model_class=SamplePayload
+        )
+
+        assert result["job_id"] == "job123"
+        assert result["data"] == "test"
+
+    @pytest.mark.asyncio
+    async def test_dequeue_timeout(self, queue_service, mock_redis_client):
+        """Test dequeue timeout (no items in queue)."""
+        mock_redis_client.brpop.return_value = None
+
+        result = await queue_service.dequeue("empty_queue", timeout=1)
+
+        assert result is None
+
+    @pytest.mark.asyncio
+    async def test_dequeue_invalid_json(self, queue_service, mock_redis_client):
+        """Test handling of invalid JSON in queue."""
+        mock_redis_client.brpop.return_value = ("test_queue", "invalid json{")
+
+        with pytest.raises(Exception) as exc:
+            await queue_service.dequeue("test_queue")
+
+        assert "Failed to deserialize" in str(exc.value)
+
+    @pytest.mark.asyncio
+    async def test_dequeue_connection_error(self, queue_service, mock_redis_client):
+        """Test handling of Redis connection error."""
+        mock_redis_client.brpop.side_effect = Exception("Connection lost")
+
+        with pytest.raises(Exception) as exc:
+            await queue_service.dequeue("test_queue")
+
+        assert "Failed to dequeue" in str(exc.value)
+
+
+class TestQueueDepth:
+    """Tests for queue_depth method."""
+
+    @pytest.mark.asyncio
+    async def test_queue_depth_empty(self, queue_service, mock_redis_client):
+        """Test depth of empty queue."""
+        mock_redis_client.llen.return_value = 0
+
+        depth = await queue_service.queue_depth("empty_queue")
+
+        assert depth == 0
+        mock_redis_client.llen.assert_called_once_with("empty_queue")
+
+    @pytest.mark.asyncio
+    async def test_queue_depth_with_items(self, queue_service, mock_redis_client):
+        """Test depth of queue with items."""
+        mock_redis_client.llen.return_value = 5
+
+        depth = await queue_service.queue_depth("active_queue")
+
+        assert depth == 5
+
+    @pytest.mark.asyncio
+    async def test_queue_depth_error(self, queue_service, mock_redis_client):
+        """Test handling of depth check error."""
+        mock_redis_client.llen.side_effect = Exception("Redis error")
+
+        depth = await queue_service.queue_depth("error_queue")
+
+        assert depth == -1  # Error indicator
+
+
+class TestCheckQueueDepth:
+    """Tests for check_queue_depth method (legacy)."""
+
+    @pytest.mark.asyncio
+    async def test_check_queue_depth_success(self, queue_service, mock_redis_client):
+        """Test checking queue depth."""
+        mock_redis_client.llen.return_value = 3
+
+        depth = await queue_service.check_queue_depth()
+
+        assert depth == 3
+
+
+class TestPeekQueue:
+    """Tests for peek_queue method."""
+
+    @pytest.mark.asyncio
+    async def test_peek_queue_success(self, queue_service, mock_redis_client):
+        """Test peeking at queue items."""
+        items = [
+            json.dumps({"job_id": "job1", "data": "test1"}),
+            json.dumps({"job_id": "job2", "data": "test2"}),
+        ]
+        mock_redis_client.lrange.return_value = items
+
+        result = await queue_service.peek_queue("test_queue", count=10)
+
+        assert len(result) == 2
+        assert result[0]["job_id"] == "job1"
+        assert result[1]["job_id"] == "job2"
+        mock_redis_client.lrange.assert_called_once_with("test_queue", 0, 9)
+
+    @pytest.mark.asyncio
+    async def test_peek_queue_custom_count(self, queue_service, mock_redis_client):
+        """Test peeking with custom count."""
+        mock_redis_client.lrange.return_value = []
+
+        await queue_service.peek_queue("test_queue", count=5)
+
+        mock_redis_client.lrange.assert_called_once_with("test_queue", 0, 4)
+
+    @pytest.mark.asyncio
+    async def test_peek_queue_empty(self, queue_service, mock_redis_client):
+        """Test peeking at empty queue."""
+        mock_redis_client.lrange.return_value = []
+
+        result = await queue_service.peek_queue("empty_queue")
+
+        assert result == []
+
+    @pytest.mark.asyncio
+    async def test_peek_queue_skip_invalid_json(self, queue_service, mock_redis_client):
+        """Test that invalid JSON items are skipped."""
+        items = [
+            json.dumps({"job_id": "job1"}),
+            "invalid json{",
+            json.dumps({"job_id": "job2"}),
+        ]
+        mock_redis_client.lrange.return_value = items
+
+        result = await queue_service.peek_queue("test_queue")
+
+        assert len(result) == 2  # Invalid item skipped
+        assert result[0]["job_id"] == "job1"
+        assert result[1]["job_id"] == "job2"
+
+    @pytest.mark.asyncio
+    async def test_peek_queue_error(self, queue_service, mock_redis_client):
+        """Test handling of peek error."""
+        mock_redis_client.lrange.side_effect = Exception("Redis error")
+
+        with pytest.raises(Exception) as exc:
+            await queue_service.peek_queue("test_queue")
+
+        assert "Failed to peek queue" in str(exc.value)
+
+
+class TestHealthCheck:
+    """Tests for health check methods."""
+
+    @pytest.mark.asyncio
+    async def test_health_check_healthy(self, queue_service, mock_redis_client):
+        """Test health check when Redis is healthy."""
+        mock_redis_client.ping.return_value = True
+
+        healthy = await queue_service.health_check()
+
+        assert healthy is True
+        mock_redis_client.ping.assert_called_once()
+
+    @pytest.mark.asyncio
+    async def test_health_check_unhealthy(self, queue_service, mock_redis_client):
+        """Test health check when Redis is down."""
+        mock_redis_client.ping.side_effect = Exception("Connection refused")
+
+        healthy = await queue_service.health_check()
+
+        assert healthy is False
+
+    @pytest.mark.asyncio
+    async def test_check_redis_connection(self, queue_service, mock_redis_client):
+        """Test Redis connection check."""
+        mock_redis_client.ping.return_value = True
+
+        connected = await queue_service.check_redis_connection()
+
+        assert connected is True

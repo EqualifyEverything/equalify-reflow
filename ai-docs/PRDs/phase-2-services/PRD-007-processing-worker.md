@@ -1,23 +1,40 @@
-# PRD-006: Processing Worker
+# PRD-007: Background Processing Worker
 
 ## Overview
-**Epic**: MVP PDF Converter Core Processing Service
-**Phase**: 2 - Core Services
+**Epic**: MVP PDF Converter AI Processing Worker
+**Phase**: 2 - Core Modules
 **Estimated Effort**: 4 days
-**Dependencies**: PRD-001 (Infrastructure), PRD-002 (Data Models)
-**Parallel**: ✅ Independent service
+**Dependencies**:
+- PRD-001 (Infrastructure)
+- PRD-002 (Data Models)
+- **PRD-003 (Shared Services) - REQUIRED** - Must be complete before starting this worker
 
 ## Problem Statement
-The system requires a main PDF to HTML conversion service that processes approved documents through a sophisticated AI pipeline. This worker handles Docling PDF→Markdown conversion, single-agent AI processing with page-by-page visual comparison for accessibility enhancement, S3 results storage, and job completion status updates.
+The monolith application requires a **background worker thread** that processes approved documents through an AI pipeline. This worker monitors the `eq-pdf:queue:processing` Redis queue, handles Docling PDF→Markdown conversion, performs AI accessibility enhancement, stores results in S3, and updates job status.
+
+**Architecture Note:** This is a **background worker thread** running within the same Python process as the FastAPI API, not a separate microservice. It shares storage_service, queue_service, and job_service from PRD-003 with the API and other workers.
 
 ## Success Criteria
 - [ ] Docling PDF→Markdown conversion working
 - [ ] Single Anthropic Claude agent implemented for page-by-page processing
+- [ ] Uses shared services from PRD-003 (storage_service, queue_service, job_service)
 - [ ] Semantic markdown from Claude agent with visual comparison produced
 - [ ] S3 results storage for versioned static resources
 - [ ] Processing time: 2-8 minutes for typical documents
 - [ ] Confidence scoring: >85% High, 60-85% Medium, <60% Low
 - [ ] Structure accuracy: ≥90% proper heading hierarchy preservation
+
+## Shared Service Dependencies
+This worker imports and uses the following shared services built in PRD-003:
+
+- **storage_service.download_from_s3()** - Downloads PDF files from S3 temp bucket
+- **storage_service.upload_to_s3()** - Uploads processed HTML/MDX to S3 results bucket
+- **queue_service.get_processing_job()** - Pops jobs from processing queue
+- **queue_service.monitor_processing_queue()** - Blocking queue operations
+- **job_service.update_job_status()** - Updates job status through processing pipeline
+- **job_service.mark_job_failed()** - Handles failed processing jobs
+
+These services MUST be implemented in PRD-003 before this worker can be developed.
 
 ## Technical Requirements
 
@@ -332,25 +349,42 @@ class ProcessedDocument(BaseModel):
 
 ### Queue Processing Logic
 
-#### Worker Main Loop
+#### Worker Main Loop (Background Thread)
 ```python
+# workers/processing_worker.py
+import asyncio
+from redis import Redis
+from ..services import ProcessingService, JobService
+from ..shared.constants import PROCESSING_QUEUE
+
 async def processing_worker_main():
-    """Main worker loop processing documents"""
+    """
+    Background worker thread that monitors Redis queue for processing jobs.
+
+    Runs in the same Python process as FastAPI API.
+    Started by src/main.py at application startup.
+    """
+    logger.info("Processing worker started")
+    redis = Redis.from_url(settings.redis_url, decode_responses=True)
+
     while True:
         try:
-            # Blocking pop from processing queue (60 second timeout for long jobs)
-            job_data = await redis.blpop(PROCESSING_QUEUE, timeout=60)
+            # Blocking pop from processing queue (60 second timeout)
+            job_data = redis.blpop(PROCESSING_QUEUE, timeout=60)
 
             if job_data:
                 job = ProcessingQueuePayload.parse_raw(job_data[1])
-                logger.info(f"Starting processing for job {job.job_id}")
+                logger.info(f"Processing worker picked up job {job.job_id}")
 
                 await update_job_status(job.job_id, "processing")
                 await process_document(job)
 
         except Exception as e:
-            logger.error(f"Worker error: {e}")
-            await asyncio.sleep(10)  # Longer pause for processing errors
+            logger.error(f"Processing worker error: {e}")
+            await asyncio.sleep(10)
+
+# Note: This worker runs as a background thread started by main.py,
+# not as a separate microservice or container.
 
 class ProcessingResult(BaseModel):
     job_id: str
@@ -458,79 +492,72 @@ async def store_results_in_s3(job_id: str, html_content: str, mdx_content: str) 
 
 ### Files to Create
 ```
-/services/processing-worker/
-├── Dockerfile                           # Container definition
-├── pyproject.toml                       # UV project configuration
-├── uv.lock                             # UV lock file
+/src/services/
+├── processing_service.py               # Main processing service module
+├── pdf_converter.py                    # Docling integration
+├── ai_pipeline.py                      # AI processing pipeline
+├── html_renderer.py                    # HTML generation
+├── mdx_renderer.py                     # MDX generation
+├── processing_worker.py                # Worker main loop
 
-├── app/
-│   ├── main.py                         # Worker main loop
-│   ├── config.py                       # Configuration
-│   ├── services/
-│   │   ├── pdf_converter.py            # Docling integration
-│   │   ├── ai_pipeline.py              # Multi-agent processing
-│   │   ├── html_renderer.py            # HTML generation
-│   │   ├── mdx_renderer.py             # MDX generation
-│   │   ├── queue_service.py            # Redis operations
-│   │   └── storage_service.py          # S3 operations
-│   ├── agents/
-│   │   ├── heading_agent.py            # Heading structure agent
-│   │   ├── alt_text_agent.py           # Alt text generation agent
-│   │   ├── math_agent.py               # Mathematical content agent
-│   │   ├── structure_agent.py          # Document structure agent
-│   │   ├── accessibility_agent.py      # WCAG compliance agent
-│   │   └── quality_agent.py            # Quality assessment agent
-│   ├── models/
-│   │   ├── processing_models.py        # Processing-specific models
-│   │   ├── ai_models.py               # AI agent models
-│   │   └── result_models.py           # Result format models
-│   └── utils/
-│       ├── markdown_utils.py          # Markdown processing utilities
-│       ├── html_utils.py              # HTML generation utilities
-│       └── confidence_scoring.py      # Confidence calculation
-├── tests/
-│   ├── test_pdf_conversion.py         # Docling integration tests
-│   ├── test_ai_pipeline.py            # Multi-agent tests
-│   ├── test_html_generation.py        # Rendering tests
-│   └── test_storage.py                # S3 operations tests
-├── config/
-│   ├── ai_prompts.yaml               # Agent system prompts
-│   └── docling_config.yaml           # PDF conversion settings
-└── docs/
-    ├── processing_pipeline.md         # Pipeline documentation
-    └── ai_agents.md                   # Agent descriptions
+/src/agents/
+├── document_accessibility_agent.py     # Main Claude agent for page processing
+├── quality_agent.py                    # Quality assessment
+
+/src/utils/
+├── markdown_utils.py                   # Markdown processing utilities
+├── html_utils.py                       # HTML generation utilities
+└── confidence_scoring.py               # Confidence calculation
+
+/tests/services/
+├── test_pdf_conversion.py              # Docling integration tests
+├── test_ai_pipeline.py                 # AI pipeline tests
+├── test_html_generation.py             # Rendering tests
+└── test_storage.py                     # S3 operations tests
+
+/config/
+├── ai_prompts.yaml                     # Agent system prompts
+└── docling_config.yaml                 # PDF conversion settings
 ```
 
-### Container Configuration
-```dockerfile
-FROM python:3.12-slim
+### Worker Execution (Part of Monolith)
+The processing worker runs as a **background asyncio task** started by src/main.py:
 
-# Install system dependencies for PDF processing and AI
-RUN apt-get update && apt-get install -y \
-    poppler-utils \
-    tesseract-ocr \
-    tesseract-ocr-eng \
-    libmagic1 \
-    && rm -rf /var/lib/apt/lists/*
+```python
+# src/main.py
+import asyncio
+from fastapi import FastAPI
+from contextlib import asynccontextmanager
+from .workers.processing_worker import processing_worker_main
 
-# Install uv
-RUN pip install uv
+@asynccontextmanager
+async def lifespan(app: FastAPI):
+    # Start processing worker as background task
+    asyncio.create_task(processing_worker_main())
+    asyncio.create_task(pii_worker_main())
+    asyncio.create_task(timeout_worker_main())
+    yield
 
-WORKDIR /app
-COPY pyproject.toml uv.lock ./
-RUN uv sync --frozen
-
-# Copy application code
-COPY app/ ./app/
-COPY config/ ./config/
-
-# Set resource limits for AI processing
-ENV PYTHONPATH=/app
-ENV AI_MEMORY_LIMIT=2048M
-ENV DOCLING_CACHE_DIR=/tmp/docling
-
-CMD ["uv", "run", "python", "app/main.py"]
+app = FastAPI(lifespan=lifespan)
 ```
+
+```bash
+# Start infrastructure services (Redis, LocalStack)
+docker-compose -f docker-compose.yml -f docker-compose.dev.yml up -d
+
+# Run the monolith application (starts API + all workers)
+uv run uvicorn src.main:app --reload --host 0.0.0.0 --port 8000
+
+# src/main.py automatically starts:
+# - FastAPI server (main thread)
+# - PII worker (background task)
+# - Processing worker (background task) ← This worker
+# - Timeout scheduler (background task)
+```
+
+**System Dependencies:**
+- poppler-utils, tesseract-ocr (for Docling PDF processing)
+- Install on dev machine or in production Docker container
 
 ## Technical Notes
 
@@ -633,8 +660,8 @@ STRUCTURE_ACCURACY_THRESHOLD=0.90
 - [ ] HTML and MDX output generated correctly
 - [ ] S3 storage with versioning implemented
 - [ ] Confidence scoring and quality metrics working
-- [ ] Container builds and runs successfully
+- [ ] Module integrates with main application
 - [ ] Integration tests with Redis and S3 pass
 - [ ] Performance meets 2-8 minute processing target
 - [ ] Documentation complete and accurate
-- [ ] Service ready for production deployment
+- [ ] Module ready for production deployment

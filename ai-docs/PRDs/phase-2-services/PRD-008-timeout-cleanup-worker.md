@@ -1,22 +1,41 @@
-# PRD-007: Timeout & Cleanup Worker
+# PRD-008: Timeout & Cleanup Service
 
 ## Overview
 **Epic**: MVP PDF Converter Background Maintenance Service
-**Phase**: 2 - Core Services
-**Estimated Effort**: 1 day
-**Dependencies**: PRD-001 (Infrastructure), PRD-002 (Data Models)
-**Parallel**: ✅ Independent service
+**Phase**: 2 - Core Modules
+**Estimated Effort**: 2 days
+**Dependencies**:
+- PRD-001 (Infrastructure)
+- PRD-002 (Data Models)
+- **PRD-003 (Shared Services) - REQUIRED** - Must be complete before starting this worker
 
 ## Problem Statement
-The system requires a background maintenance service that monitors approval timeouts, cleans up expired jobs and temporary files, and maintains system health through automated cleanup operations. This worker ensures the system doesn't accumulate stale data and properly manages resource lifecycle.
+The monolith application requires a **background scheduler thread** that monitors approval timeouts, cleans up expired jobs and temporary files, and maintains system health through automated cleanup operations. This worker runs as part of the same Python process as the FastAPI API and imports shared services built in PRD-003.
+
+**Architecture Note:** This is a **background scheduler thread** running within the monolith application, not an independent module. It shares storage_service, queue_service, and job_service with the API and other workers. All Redis connections and S3 clients are shared across the application.
 
 ## Success Criteria
 - [ ] Approval timeout monitoring using Redis sorted sets
 - [ ] Automatic job failure for expired approvals
+- [ ] Uses shared services from PRD-003 (storage_service, queue_service, job_service)
 - [ ] S3 temporary file cleanup operations
 - [ ] Orphaned data detection and removal
 - [ ] System metrics updates for cleanup operations
 - [ ] Configurable cleanup schedules and retention policies
+
+## Shared Service Dependencies
+This worker imports and uses the following shared services built in PRD-003:
+
+- **storage_service.cleanup_temp_files_for_job()** - Cleans up S3 temp files for specific jobs
+- **storage_service.list_temp_files()** - Lists temp files for age-based cleanup
+- **storage_service.delete_from_s3()** - Deletes expired temp files from S3
+- **queue_service.get_approval_timeouts()** - Monitors Redis sorted set for expired approvals
+- **queue_service.remove_from_timeout_tracking()** - Removes processed timeouts
+- **job_service.get_job_status()** - Retrieves job status for timeout processing
+- **job_service.update_job_status()** - Updates job status to "failed" for timeouts
+- **job_service.cleanup_old_job()** - Removes old job records from Redis
+
+These services MUST be implemented in PRD-003 before this worker can be developed.
 
 ## Technical Requirements
 
@@ -371,65 +390,64 @@ async def get_cleanup_health_status() -> CleanupHealthStatus:
 
 ### Files to Create
 ```
-/services/cleanup-worker/
-├── Dockerfile                        # Container definition
-├── pyproject.toml                    # UV project configuration
-├── uv.lock                          # UV lock file
+/src/services/
+├── cleanup_service.py                # Main cleanup service module
+├── timeout_service.py                # Approval timeout monitoring
+├── s3_cleanup_service.py             # S3 cleanup operations
+├── orphan_service.py                 # Orphaned data detection
+├── metrics_service.py                # Metrics management
+├── cleanup_worker.py                 # Worker main loop
 
-├── app/
-│   ├── main.py                      # Worker main loop
-│   ├── config.py                    # Configuration
-│   ├── services/
-│   │   ├── timeout_service.py       # Approval timeout monitoring
-│   │   ├── s3_cleanup_service.py    # S3 cleanup operations
-│   │   ├── orphan_service.py        # Orphaned data detection
-│   │   ├── metrics_service.py       # Metrics management
-│   │   └── scheduler_service.py     # Task scheduling
-│   ├── models/
-│   │   └── cleanup_models.py        # Cleanup-specific models
-│   └── utils/
-│       ├── date_utils.py            # Date/time utilities
-│       └── redis_utils.py           # Redis operation helpers
-├── tests/
-│   ├── test_timeout_monitoring.py   # Timeout logic tests
-│   ├── test_s3_cleanup.py           # S3 cleanup tests
-│   ├── test_orphan_detection.py     # Orphan detection tests
-│   └── test_scheduling.py           # Scheduler tests
-├── config/
-│   └── cleanup_config.yaml          # Cleanup configuration
-└── docs/
-    └── cleanup_operations.md         # Documentation
+/src/utils/
+├── date_utils.py                     # Date/time utilities
+└── scheduler_utils.py                # Task scheduling utilities
+
+/tests/services/
+├── test_timeout_monitoring.py        # Timeout logic tests
+├── test_s3_cleanup.py                # S3 cleanup tests
+├── test_orphan_detection.py          # Orphan detection tests
+└── test_scheduling.py                # Scheduler tests
+
+/config/
+└── cleanup_config.yaml               # Cleanup configuration
 ```
 
-### Container Configuration
-```dockerfile
-FROM python:3.12-slim
+### Worker Execution
+The cleanup worker runs as a **background asyncio task** started by src/main.py:
 
-# Install minimal system dependencies
-RUN apt-get update && apt-get install -y \
-    curl \
-    && rm -rf /var/lib/apt/lists/*
+```python
+# src/main.py
+import asyncio
+from fastapi import FastAPI
+from contextlib import asynccontextmanager
+from .workers.timeout_worker import timeout_worker_main
 
-# Install uv
-RUN pip install uv
+@asynccontextmanager
+async def lifespan(app: FastAPI):
+    # Start timeout/cleanup worker as background task
+    asyncio.create_task(timeout_worker_main())
+    asyncio.create_task(pii_worker_main())
+    asyncio.create_task(processing_worker_main())
+    yield
 
-WORKDIR /app
-COPY pyproject.toml uv.lock ./
-RUN uv sync --frozen
-
-# Copy application code
-COPY app/ ./app/
-COPY config/ ./config/
-
-# Set environment
-ENV PYTHONPATH=/app
-
-# Health check
-HEALTHCHECK --interval=60s --timeout=10s --start-period=30s \
-  CMD curl -f http://localhost:8080/health || exit 1
-
-CMD ["uv", "run", "python", "app/main.py"]
+app = FastAPI(lifespan=lifespan)
 ```
+
+```bash
+# Start infrastructure services
+docker-compose -f docker-compose.yml -f docker-compose.dev.yml up -d
+
+# Run the monolith application (starts API + all workers)
+uv run uvicorn src.main:app --reload --host 0.0.0.0 --port 8000
+
+# src/main.py automatically starts:
+# - FastAPI server (main thread)
+# - PII worker (background task)
+# - Processing worker (background task)
+# - Timeout/cleanup scheduler (background task) ← This worker
+```
+
+**Architecture Note:** The worker shares Redis connections and S3 clients with all other parts of the application. All cleanup operations use the same storage_service and job_service instances.
 
 ## Technical Notes
 
@@ -556,9 +574,9 @@ HEALTH_CHECK_PORT=8080
 - [ ] Orphaned data detection and cleanup implemented
 - [ ] Scheduled task execution working reliably
 - [ ] Metrics tracking and health status reporting
-- [ ] Container builds and runs successfully
+- [ ] Module integrates with main application
 - [ ] Integration tests with Redis and S3 pass
 - [ ] Performance meets cleanup efficiency targets
 - [ ] Error handling covers all edge cases
 - [ ] Documentation complete and accurate
-- [ ] Service ready for continuous background operation
+- [ ] Module ready for continuous background operation

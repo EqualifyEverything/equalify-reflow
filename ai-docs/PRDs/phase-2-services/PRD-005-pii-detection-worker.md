@@ -1,22 +1,38 @@
-# PRD-004: PII Detection Worker
+# PRD-005: PII Detection Service
 
 ## Overview
 **Epic**: MVP PDF Converter PII Security Layer
-**Phase**: 2 - Core Services
-**Estimated Effort**: 2 days
-**Dependencies**: PRD-001 (Infrastructure), PRD-002 (Data Models)
-**Parallel**: ✅ Independent service
+**Phase**: 2 - Core Modules
+**Estimated Effort**: 3 days
+**Dependencies**:
+- PRD-001 (Infrastructure)
+- PRD-002 (Data Models)
+- **PRD-003 (Shared Services) - REQUIRED** - Must be complete before starting this worker
 
 ## Problem Statement
-The system requires a dedicated worker service that processes uploaded PDFs for Personally Identifiable Information (PII) using Microsoft Presidio. Documents with no PII proceed directly to processing, while documents with detected PII are queued for human approval with detailed findings.
+The monolith application requires a **background worker thread** that processes uploaded PDFs for Personally Identifiable Information (PII) using Microsoft Presidio. This worker runs as part of the same Python process as the FastAPI API and imports shared services built in PRD-003. Documents with no PII proceed directly to processing, while documents with detected PII are queued for human approval with detailed findings.
+
+**Architecture Note:** This is a **background worker thread** running within the monolith application, not an independent module. It shares storage_service, queue_service, and job_service with the API and other workers.
 
 ## Success Criteria
 - [ ] Microsoft Presidio integration for PII detection
 - [ ] Queue processing from PII queue to approval/processing queues
+- [ ] Uses shared services from PRD-003 (storage_service, queue_service, job_service)
 - [ ] Configurable PII detection rules and thresholds
 - [ ] Detailed PII findings with location and confidence
 - [ ] Proper error handling and retry logic
 - [ ] Performance metrics and monitoring
+
+## Shared Service Dependencies
+This worker imports and uses the following shared services built in PRD-003:
+
+- **storage_service.download_from_s3()** - Downloads PDF files from S3 temp bucket
+- **queue_service.queue_for_processing()** - Queues clean documents to processing queue
+- **queue_service.queue_for_approval()** - Queues PII documents to approval queue
+- **job_service.update_job_status()** - Updates job status in Redis
+- **job_service.get_job_status()** - Retrieves current job status
+
+These services MUST be implemented in PRD-003 before this worker can be developed.
 
 ## Technical Requirements
 
@@ -171,58 +187,54 @@ async def queue_for_processing(job: PIIQueuePayload):
 
 ### Files to Create
 ```
-/services/pii-worker/
-├── Dockerfile                     # Container definition
-├── pyproject.toml                 # UV project configuration
-├── uv.lock                        # UV lock file
+/src/services/
+├── pii_service.py                 # PII detection service module
+├── pii_analyzer.py                # Presidio integration
+├── pdf_extractor.py               # PDF text extraction
+├── pii_worker.py                  # Worker main loop
 
-├── app/
-│   ├── main.py                   # Worker main loop
-│   ├── config.py                 # Configuration
-│   ├── services/
-│   │   ├── pii_analyzer.py       # Presidio integration
-│   │   ├── pdf_extractor.py      # PDF text extraction
-│   │   ├── queue_service.py      # Redis operations
-│   │   └── storage_service.py    # S3 operations
-│   ├── models/
-│   │   └── pii_models.py         # PII-specific data models
-│   └── utils/
-│       ├── token_generator.py    # Secure token generation
-│       └── text_processing.py    # Text preprocessing
-├── tests/
-│   ├── test_pii_detection.py     # PII detection tests
-│   ├── test_queue_processing.py  # Queue logic tests
-│   └── test_pdf_extraction.py    # PDF parsing tests
-├── config/
-│   └── presidio_config.yaml      # Presidio configuration
-└── docs/
-    └── pii_detection.md          # Documentation
+/src/utils/
+├── token_generator.py             # Secure token generation
+└── text_processing.py             # Text preprocessing
+
+/tests/services/
+├── test_pii_detection.py          # PII detection tests
+├── test_queue_processing.py       # Queue logic tests
+└── test_pdf_extraction.py         # PDF parsing tests
+
+/config/
+└── presidio_config.yaml           # Presidio configuration
 ```
-### Container Configuration
-```dockerfile
-FROM python:3.12-slim
+### Worker Execution
+The PII detection worker runs as a **background asyncio task** started by src/main.py:
 
-# Install system dependencies for PDF processing
-RUN apt-get update && apt-get install -y \
-    poppler-utils \
-    tesseract-ocr \
-    && rm -rf /var/lib/apt/lists/*
+```python
+# src/main.py
+import asyncio
+from fastapi import FastAPI
+from contextlib import asynccontextmanager
+from .workers.pii_worker import pii_worker_main
 
-# Install uv
-RUN pip install uv
+@asynccontextmanager
+async def lifespan(app: FastAPI):
+    # Start PII worker as background task
+    asyncio.create_task(pii_worker_main())
+    yield
 
-WORKDIR /app
-COPY pyproject.toml uv.lock ./
-RUN uv sync --frozen
-
-# Download Presidio models
-RUN uv run python -m spacy download en_core_web_sm
-
-COPY app/ ./app/
-COPY config/ ./config/
-
-CMD ["uv", "run", "python", "app/main.py"]
+app = FastAPI(lifespan=lifespan)
 ```
+
+```bash
+# Start infrastructure services
+docker-compose -f docker-compose.yml -f docker-compose.dev.yml up -d
+
+# Run the monolith application (starts API + all workers)
+uv run uvicorn src.main:app --reload --host 0.0.0.0 --port 8000
+```
+
+**System Dependencies:**
+- poppler-utils, tesseract-ocr (for Docling PDF processing)
+- Install on dev machine or in production Docker container
 
 ## Technical Notes
 
@@ -320,8 +332,8 @@ QUEUE_TIMEOUT_SECONDS=30
 - [ ] PII detection working with Presidio
 - [ ] Worker processes queue continuously
 - [ ] Proper routing based on PII findings
-- [ ] Container builds and runs successfully
+- [ ] Module integrates with main application
 - [ ] Integration tests with Redis and S3 pass
 - [ ] Error handling covers all edge cases
 - [ ] Documentation complete and accurate
-- [ ] Service ready for approval service integration
+- [ ] Module ready for approval workflow integration

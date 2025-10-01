@@ -189,19 +189,43 @@
 
 ---
 
-### PRD-007: Processing Worker
-**Status**: Not Started
+### PRD-007: Processing Worker ✅
+**Status**: Complete
 **File**: [phase-2-services/PRD-007-processing-worker.md](phase-2-services/PRD-007-processing-worker.md)
-**Effort**: 4 days
-**Dependencies**: PRD-003 (Shared Services) - MUST BE COMPLETE
+**Completed**: 2025-10-01
+**Effort**: ~8 hours (actual vs 4 days estimated)
+**Dependencies**: PRD-003 (Shared Services) ✅
 
-**Deliverables**:
-- `src/workers/processing_worker.py` (Background AI processing thread)
-- Docling PDF→Markdown conversion
-- Claude AI accessibility enhancement pipeline
-- MDX/HTML generation
+**Deliverables** (COMPLETE):
+- ✅ `src/workers/processing_worker.py` - Background worker with queue polling
+- ✅ `src/services/processing_service.py` - Main orchestration service
+- ✅ `src/services/pdf_converter.py` - Docling PDF→MD with page images
+- ✅ `src/services/ai_enhancement_service.py` - Concurrent page processing (max 5)
+- ✅ `src/agents/accessibility_agent.py` - Claude Haiku 3.5 agent via PydanticAI
+- ✅ `src/utils/confidence_scoring.py` - Confidence aggregation utilities
+- ✅ `config/accessibility_prompts.yaml` - Claude system prompts
+- ✅ Updated `src/main.py` - Processing worker integrated into lifespan
+- ✅ Updated `src/shared/models/processing.py` - Markdown-only output model
+- ✅ Updated `src/config.py` - Claude AI configuration with SecretStr
+- ✅ Updated `.env.dev` - Anthropic API key and processing settings
+- ✅ Updated `pyproject.toml` - pydantic-ai-slim[anthropic]>=1.0.12
+
+**Implementation Notes**:
+- **Architecture**: Markdown-only output (no HTML/MDX rendering - handled by client)
+- **AI Model**: Claude 3.5 Haiku via PydanticAI (cost-effective, fast)
+- **Concurrent Processing**: Max 5 pages at once using asyncio.Semaphore
+- **Retry Logic**: Up to 3 attempts per page with exponential backoff
+- **Page Images**: Docling `generate_page_images=True` verified working (2x scale = 144 DPI)
+- **Multimodal Input**: BinaryContent for base64 PNG images to Claude vision API
+- **Versioned Output**: S3 storage with `results/{job_id}/v{timestamp}/output.md`
+- **Confidence Scoring**: Per-page aggregation with high/medium/low classification
+- **Error Handling**: Page-level failures reported with page number and error
+- **Dependencies**: pydantic-ai-slim 1.0.12, PyYAML 6.0.3 (already transitive)
+- **Both workers running**: PII worker + Processing worker in single monolith app
 
 **Shared Services Used**: storage_service, queue_service, job_service
+
+**Unblocks**: PRD-008 (Timeout Worker), PRD-009 (End-to-End Integration)
 
 ---
 

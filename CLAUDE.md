@@ -9,7 +9,7 @@ University of Illinois Chicago (UIC) accessibility enhancement for course materi
 
 ## Core Architecture
 
-**Pattern:** Monolith with Background Task Queue (single Python application)
+**Pattern:** Monolith with Background Task Queue (single Python application, runs in Docker)
 
 The application runs as **one unified codebase** with:
 - **FastAPI REST API** - HTTP endpoints for document submission, status, results
@@ -21,6 +21,40 @@ The application runs as **one unified codebase** with:
 **Processing:** AI pipeline (Phase 1: single agent, Phase 2+: multi-agent) with semantic caching
 **Frontend:** Astro application with accessible ShadCN/Radix components (Phase 3)
 **Security:** Microsoft Presidio PII scanning, encrypted storage/transmission, ephemeral processing
+
+### ⚠️ CRITICAL: Development Workflow
+
+This project uses a **fully containerized development workflow**. You MUST work inside Docker containers.
+
+#### Development Commands (USE THESE BY DEFAULT):
+```bash
+make dev          # Start all services (Redis, LocalStack, API in containers)
+make logs-api     # View API logs
+make shell        # Access container shell for debugging
+make test-docker  # Run tests inside container
+make down         # Stop all services
+```
+
+#### Never Do These:
+- ❌ DO NOT run `uv run uvicorn` directly on host
+- ❌ DO NOT install dependencies locally with `uv sync`
+- ❌ DO NOT try to connect to `localhost:6379` from host code
+- ❌ DO NOT run `python` or `pytest` directly on host
+
+#### Why Containerized Development?
+- **Unified Networking**: All services communicate via Docker DNS (redis:6379, localstack:4566)
+- **Hot Reload**: Code changes auto-reload without rebuild
+- **Environment Parity**: Dev matches production exactly
+- **No Local Setup**: No need to install Redis, LocalStack, or Python dependencies on host
+
+#### How to Work:
+1. `make dev` - Starts everything
+2. Edit code in `src/` on your host machine
+3. Changes auto-reload in container
+4. `make shell` - Debug inside container if needed
+5. `make test-docker` - Run tests in container
+
+See [docs/infrastructure-setup.md](docs/infrastructure-setup.md) for details.
 
 ## Processing Pipeline
 1. **REST API** receives PDF → Store in S3 temp → Queue for PII scanning

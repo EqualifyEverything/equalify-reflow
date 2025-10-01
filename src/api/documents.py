@@ -36,7 +36,7 @@ class JobStatusResponse(BaseModel):
     created_at: str
     updated_at: str
     pii_findings: Optional[list[PIIFinding]] = None
-    approval_url: Optional[str] = None
+    approval_token: Optional[str] = None
 
 
 class JobResultResponse(BaseModel):
@@ -127,8 +127,8 @@ async def get_job_status(
         response.pii_findings = [
             PIIFinding(**finding) for finding in job_data["pii_findings"]
         ]
-        if "approval_url" in job_data:
-            response.approval_url = job_data["approval_url"]
+        if "approval_token" in job_data:
+            response.approval_token = job_data["approval_token"]
 
     return response
 

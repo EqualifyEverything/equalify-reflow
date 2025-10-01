@@ -35,59 +35,27 @@ services:
 
   # Development overrides for API Gateway
   api-gateway:
+    build:
+      target: development  # Use development stage for hot-reload
+    volumes:
+      # Mount source code for hot-reload (read-only to prevent accidental writes)
+      - ./src:/app/src:ro
+      # Mount tests for containerized test runs
+      - ./tests:/app/tests:ro
     environment:
       - AWS_ENDPOINT_URL=http://localstack:4566
       - S3_TEMP_BUCKET=equalify-pdf-temp
       - S3_RESULTS_BUCKET=equalify-pdf-results
       - LOG_LEVEL=DEBUG
+    command: ["uv", "run", "uvicorn", "src.main:app", "--reload", "--host", "0.0.0.0", "--port", "8000"]
     depends_on:
       redis:
         condition: service_healthy
       localstack:
         condition: service_healthy
 
-  # Development overrides for PII Worker
-  pii-worker:
-    environment:
-      - LOG_LEVEL=DEBUG
-    depends_on:
-      redis:
-        condition: service_healthy
-      localstack:
-        condition: service_healthy
-
-  # Development overrides for Approval Service
-  approval-service:
-    environment:
-      - LOG_LEVEL=DEBUG
-    depends_on:
-      redis:
-        condition: service_healthy
-      localstack:
-        condition: service_healthy
-
-  # Development overrides for Processing Worker
-  processing-worker:
-    environment:
-      - AWS_ENDPOINT_URL=http://localstack:4566
-      - S3_TEMP_BUCKET=equalify-pdf-temp
-      - S3_RESULTS_BUCKET=equalify-pdf-results
-      - LOG_LEVEL=DEBUG
-    depends_on:
-      redis:
-        condition: service_healthy
-      localstack:
-        condition: service_healthy
-
-  # Development overrides for Timeout Worker
-  timeout-worker:
-    environment:
-      - LOG_LEVEL=DEBUG
-    depends_on:
-      redis:
-        condition: service_healthy
-      localstack:
-        condition: service_healthy
+  # Note: Worker services will be added here when implemented
+  # Workers will run as background tasks within the api-gateway container (monolith architecture)
 
 networks:
   equalify-network:

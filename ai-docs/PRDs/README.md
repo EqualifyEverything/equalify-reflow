@@ -154,18 +154,38 @@
 
 ---
 
-### PRD-006: Approval Workflow API
-**Status**: Not Started
+### PRD-006: Approval Workflow API ✅
+**Status**: Complete
 **File**: [phase-2-services/PRD-006-approval-api.md](phase-2-services/PRD-006-approval-api.md)
-**Effort**: 2 days
-**Dependencies**: PRD-003 (Shared Services) - MUST BE COMPLETE
+**Completed**: 2025-10-01
+**Effort**: 3.5 hours (actual vs 2 days estimated)
+**Dependencies**: PRD-003 (Shared Services) ✅, PRD-005 (PII Worker) ✅
 
-**Deliverables**:
-- `src/api/approval.py` (POST /approve/{token}, GET /review/{token})
-- `src/services/approval_service.py` (Decision processing)
-- `src/services/cleanup_service.py` (Denied job cleanup)
+**Deliverables** (COMPLETE):
+- ✅ `src/api/approval.py` - GET /api/review/{token}, POST /api/approve/{token}
+- ✅ `src/services/approval_service.py` - Token validation, decision processing
+- ✅ `src/services/cleanup_service.py` - S3 file cleanup for denied jobs
+- ✅ `src/main.py` - Approval router registered
+- ✅ `tests/api/test_approval_flow.py` - 7 integration tests passing
+- ✅ `tests/api/test_approval_security.py` - 7 security tests passing
+- ✅ `tests/services/test_approval_service.py` - 11 service tests passing
+- ✅ `tests/services/test_cleanup_service.py` - 5 cleanup tests passing
 
-**Shared Services Used**: queue_service, job_service, storage_service
+**Implementation Notes**:
+- Approval workflow endpoints functional with token-based security
+- Token validation via Redis KEYS scan (O(N) - documented for optimization)
+- Approved jobs route to processing queue with `ProcessingQueuePayload`
+- Denied jobs trigger S3 cleanup and update status to "denied"
+- Timeout tracking removal prevents race conditions with timeout worker (PRD-008)
+- Idempotent S3 cleanup design (safe for double-cleanup scenarios)
+- Input validation: justification 10-1000 chars, reviewed_by min 3 chars
+- All 30 new tests passing (165 total tests passing)
+- Security: Tokens not leaked in error messages, PII not in URLs
+- OpenAPI docs auto-generated at /docs with approval endpoints
+
+**Shared Services Used**: queue_service, job_service, storage_service (via cleanup_service)
+
+**Unblocks**: PRD-007 (Processing Worker), PRD-008 (Timeout Worker), PRD-009 (Integration)
 
 ---
 

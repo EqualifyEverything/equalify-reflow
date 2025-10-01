@@ -2,7 +2,7 @@
 
 from datetime import datetime
 from typing import List, Optional
-from pydantic import BaseModel, Field
+from pydantic import BaseModel, ConfigDict, Field
 
 from .pii import PIIFinding
 
@@ -40,15 +40,15 @@ class PIIQueuePayload(BaseModel):
         description="UTC creation timestamp"
     )
 
-    class Config:
-        """Pydantic model configuration."""
-        json_schema_extra = {
+    model_config = ConfigDict(
+        json_schema_extra={
             "example": {
                 "job_id": "550e8400-e29b-41d4-a716-446655440000",
                 "s3_key": "temp/550e8400-e29b-41d4-a716-446655440000/input.pdf",
                 "created_at": "2024-01-15T10:30:00Z"
             }
         }
+    )
 
 
 class ApprovalQueuePayload(BaseModel):
@@ -99,9 +99,8 @@ class ApprovalQueuePayload(BaseModel):
         description="UTC expiration timestamp"
     )
 
-    class Config:
-        """Pydantic model configuration."""
-        json_schema_extra = {
+    model_config = ConfigDict(
+        json_schema_extra={
             "example": {
                 "job_id": "550e8400-e29b-41d4-a716-446655440000",
                 "s3_key": "temp/550e8400-e29b-41d4-a716-446655440000/input.pdf",
@@ -118,6 +117,7 @@ class ApprovalQueuePayload(BaseModel):
                 "expires_at": "2024-01-16T10:30:00Z"
             }
         }
+    )
 
 
 class ProcessingQueuePayload(BaseModel):
@@ -153,12 +153,12 @@ class ProcessingQueuePayload(BaseModel):
         description="UTC approval timestamp if required"
     )
 
-    class Config:
-        """Pydantic model configuration."""
-        json_schema_extra = {
+    model_config = ConfigDict(
+        json_schema_extra={
             "example": {
                 "job_id": "550e8400-e29b-41d4-a716-446655440000",
                 "s3_key": "temp/550e8400-e29b-41d4-a716-446655440000/input.pdf",
                 "approved_at": "2024-01-15T11:00:00Z"
             }
         }
+    )

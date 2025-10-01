@@ -1,7 +1,7 @@
 """Processing result models for completed conversions."""
 
 from typing import Optional
-from pydantic import BaseModel, Field
+from pydantic import BaseModel, ConfigDict, Field
 
 
 class ProcessingResult(BaseModel):
@@ -58,9 +58,8 @@ class ProcessingResult(BaseModel):
         description="Error details if failed"
     )
 
-    class Config:
-        """Pydantic model configuration."""
-        json_schema_extra = {
+    model_config = ConfigDict(
+        json_schema_extra={
             "example": {
                 "job_id": "550e8400-e29b-41d4-a716-446655440000",
                 "html_url": "https://equalify-output.s3.amazonaws.com/550e8400.../output.html",
@@ -70,6 +69,7 @@ class ProcessingResult(BaseModel):
                 "error_message": None
             }
         }
+    )
 
 
 class ProcessingJob(BaseModel):
@@ -108,9 +108,8 @@ class ProcessingJob(BaseModel):
         description="Final processing result"
     )
 
-    class Config:
-        """Pydantic model configuration."""
-        json_schema_extra = {
+    model_config = ConfigDict(
+        json_schema_extra={
             "example": {
                 "job_id": "550e8400-e29b-41d4-a716-446655440000",
                 "s3_key": "temp/550e8400.../input.pdf",
@@ -119,3 +118,4 @@ class ProcessingJob(BaseModel):
                 "result": None
             }
         }
+    )

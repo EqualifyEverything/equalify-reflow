@@ -1,7 +1,7 @@
 """PII detection models for Presidio integration."""
 
 from typing import List
-from pydantic import BaseModel, Field
+from pydantic import BaseModel, ConfigDict, Field
 
 
 class PIIFinding(BaseModel):
@@ -53,9 +53,8 @@ class PIIFinding(BaseModel):
         description="Detected text snippet"
     )
 
-    class Config:
-        """Pydantic model configuration."""
-        json_schema_extra = {
+    model_config = ConfigDict(
+        json_schema_extra={
             "example": {
                 "entity_type": "PERSON",
                 "start": 120,
@@ -64,6 +63,7 @@ class PIIFinding(BaseModel):
                 "text": "John Student"
             }
         }
+    )
 
 
 class PIIResult(BaseModel):
@@ -93,12 +93,12 @@ class PIIResult(BaseModel):
         description="Total count of findings"
     )
 
-    class Config:
-        """Pydantic model configuration."""
-        json_schema_extra = {
+    model_config = ConfigDict(
+        json_schema_extra={
             "example": {
                 "job_id": "550e8400-e29b-41d4-a716-446655440000",
                 "findings": [],
                 "total_findings": 0
             }
         }
+    )

@@ -2,7 +2,7 @@
 
 from datetime import datetime
 from typing import Literal
-from pydantic import BaseModel, Field
+from pydantic import BaseModel, ConfigDict, Field
 
 
 class ApprovalRequest(BaseModel):
@@ -52,9 +52,8 @@ class ApprovalRequest(BaseModel):
         description="UTC timestamp of review"
     )
 
-    class Config:
-        """Pydantic model configuration."""
-        json_schema_extra = {
+    model_config = ConfigDict(
+        json_schema_extra={
             "example": {
                 "job_id": "550e8400-e29b-41d4-a716-446655440000",
                 "decision": "approved",
@@ -63,6 +62,7 @@ class ApprovalRequest(BaseModel):
                 "reviewed_at": "2024-01-15T10:30:00Z"
             }
         }
+    )
 
 
 class ApprovalDecision(BaseModel):
@@ -96,9 +96,8 @@ class ApprovalDecision(BaseModel):
         description="UTC creation timestamp"
     )
 
-    class Config:
-        """Pydantic model configuration."""
-        json_schema_extra = {
+    model_config = ConfigDict(
+        json_schema_extra={
             "example": {
                 "approval_token": "a1b2c3d4e5f6g7h8i9j0k1l2m3n4o5p6",
                 "expires_at": "2024-01-16T10:30:00Z",
@@ -106,3 +105,4 @@ class ApprovalDecision(BaseModel):
                 "created_at": "2024-01-15T10:30:00Z"
             }
         }
+    )

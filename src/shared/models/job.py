@@ -2,7 +2,8 @@
 
 from datetime import datetime
 from typing import List, Literal, Optional
-from pydantic import BaseModel, Field, field_validator
+from pydantic import BaseModel, ConfigDict, Field, field_validator
+
 
 from .pii import PIIFinding
 from .approval import ApprovalRequest
@@ -81,9 +82,8 @@ class JobSubmission(BaseModel):
             raise ValueError('Temporary uploads must use temp/ prefix')
         return v
 
-    class Config:
-        """Pydantic model configuration."""
-        json_schema_extra = {
+    model_config = ConfigDict(
+        json_schema_extra={
             "example": {
                 "job_id": "550e8400-e29b-41d4-a716-446655440000",
                 "s3_key": "temp/550e8400-e29b-41d4-a716-446655440000/document.pdf",
@@ -92,6 +92,7 @@ class JobSubmission(BaseModel):
                 "original_filename": "Course_Syllabus.pdf"
             }
         }
+    )
 
 
 class JobStatus(BaseModel):
@@ -206,9 +207,8 @@ class JobStatus(BaseModel):
         valid_next = VALID_TRANSITIONS.get(self.status, [])
         return new_status in valid_next
 
-    class Config:
-        """Pydantic model configuration."""
-        json_schema_extra = {
+    model_config = ConfigDict(
+        json_schema_extra={
             "example": {
                 "job_id": "550e8400-e29b-41d4-a716-446655440000",
                 "status": "completed",
@@ -224,3 +224,4 @@ class JobStatus(BaseModel):
                 "approval_decision": None
             }
         }
+    )

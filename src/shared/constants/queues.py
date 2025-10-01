@@ -12,6 +12,11 @@ PII_QUEUE_NAME = f"{REDIS_PREFIX}:queue:pii"
 APPROVAL_QUEUE_NAME = f"{REDIS_PREFIX}:queue:approval"
 PROCESSING_QUEUE_NAME = f"{REDIS_PREFIX}:queue:processing"
 
+# Short aliases for convenience
+PII_QUEUE = PII_QUEUE_NAME
+APPROVAL_QUEUE = APPROVAL_QUEUE_NAME
+PROCESSING_QUEUE = PROCESSING_QUEUE_NAME
+
 # Timeout tracking (Redis Sorted Sets)
 APPROVAL_TIMEOUT_KEY = f"{REDIS_PREFIX}:timeouts:approval"
 

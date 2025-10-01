@@ -16,13 +16,14 @@ This guide walks you through setting up the complete infrastructure for the Equa
 
 ## Overview
 
-The Equalify PDF Converter uses a microservices architecture with:
+The Equalify PDF Converter uses a **monolith with background task queue** architecture:
 
+- **Single Python Application**: FastAPI + background workers in one containerized process
 - **Redis**: Message queue and caching
 - **LocalStack**: Local AWS services (S3, CloudWatch) for development
 - **Docker Compose**: Container orchestration
 - **S3**: PDF storage and HTML results hosting
-- **Multiple Workers**: PII detection, approval workflow, AI processing, timeout monitoring
+- **Background Workers**: PII detection, approval workflow, AI processing, timeout monitoring (all run as threads within the monolith)
 
 ## Prerequisites
 
@@ -59,29 +60,30 @@ The Equalify PDF Converter uses a microservices architecture with:
 
 ## Quick Start (Development)
 
-Get up and running in under 5 minutes:
+Get up and running in under 2 minutes:
 
 ```bash
 # 1. Clone the repository
 cd /path/to/equalify-pdf-converter
 
-# 2. Copy environment file
-cp .env.example .env.dev
+# 2. Start entire stack (one command!)
+make dev
 
-# 3. Start all services
-docker-compose -f docker-compose.yml -f docker-compose.dev.yml up -d
+# 3. Verify API is running
+curl http://localhost:8000/health
 
-# 4. Wait for services to be ready (about 30 seconds)
-sleep 30
-
-# 5. Run health check
-./scripts/health-check.sh
-
-# 6. Verify LocalStack S3 buckets
-awslocal s3 ls
+# 4. Access API documentation
+open http://localhost:8000/docs
 ```
 
-That's it! Your local development environment is ready.
+That's it! The entire stack (Redis, LocalStack, FastAPI) runs in Docker with unified networking.
+
+### What Just Happened?
+
+- **Redis**: Started and waiting on port 6379
+- **LocalStack**: S3 buckets created automatically (equalify-pdf-temp, equalify-pdf-results)
+- **FastAPI API**: Running on port 8000 with hot-reload enabled
+- **Background Workers**: Will run as threads within the API container (Phase 2)
 
 ## Infrastructure Components
 
@@ -115,50 +117,31 @@ That's it! Your local development environment is ready.
 
 **Configuration**: `infrastructure/localstack/init-aws.sh`
 
-### 3. Microservices (Placeholder for Phase 2)
+### 3. FastAPI Monolith Application (Containerized)
 
-- **API Gateway**: Main entry point (port 8080)
-- **PII Worker**: Microsoft Presidio PII detection
-- **Approval Service**: Faculty review workflow
-- **Processing Worker**: PydanticAI multi-agent processing
-- **Timeout Worker**: Approval timeout monitoring
+**Purpose**: Single Python application running all API and background processing
+
+**Container**: `api-gateway` (running on port 8000)
+
+**Components** (all in one process):
+- **FastAPI REST API**: Document submission, status tracking, results retrieval
+- **PII Worker**: Microsoft Presidio PII detection (Phase 2 - background thread)
+- **Processing Worker**: PydanticAI multi-agent processing (Phase 2 - background thread)
+- **Timeout Worker**: Approval timeout monitoring (Phase 2 - background thread)
+
+**Current Status**: API endpoints implemented and containerized with hot-reload for development
 
 ## Development Setup
 
-### Step 1: Environment Configuration
+### Step 1: Start the Stack
 
-Copy and configure the development environment file:
-
-```bash
-cp .env.example .env.dev
-```
-
-Edit `.env.dev` if needed (defaults are ready to use):
+The `.env.dev` file is already configured with sensible defaults. Simply start everything:
 
 ```bash
-# AWS Configuration (LocalStack)
-AWS_ACCESS_KEY_ID=test
-AWS_SECRET_ACCESS_KEY=test
-AWS_DEFAULT_REGION=us-east-1
-AWS_ENDPOINT_URL=http://localstack:4566
+# Start entire stack (Redis, LocalStack, FastAPI)
+make dev
 
-# S3 Buckets
-S3_TEMP_BUCKET=equalify-pdf-temp
-S3_RESULTS_BUCKET=equalify-pdf-results
-
-# Redis
-REDIS_URL=redis://redis:6379
-
-# Application
-ENVIRONMENT=development
-LOG_LEVEL=DEBUG
-```
-
-### Step 2: Start Services
-
-Start all infrastructure services:
-
-```bash
+# Or use docker-compose directly
 docker-compose -f docker-compose.yml -f docker-compose.dev.yml up -d
 ```
 
@@ -166,60 +149,84 @@ View logs:
 
 ```bash
 # All services
-docker-compose -f docker-compose.yml -f docker-compose.dev.yml logs -f
+make logs
 
-# Specific service
-docker-compose -f docker-compose.yml -f docker-compose.dev.yml logs -f redis
-docker-compose -f docker-compose.yml -f docker-compose.dev.yml logs -f localstack
+# API logs only
+make logs-api
+
+# Or use docker-compose
+docker-compose -f docker-compose.yml -f docker-compose.dev.yml logs -f api-gateway
 ```
 
-### Step 3: Verify Setup
+### Step 2: Verify Setup
 
-Run the health check script:
+Check that the API is responding:
 
 ```bash
-./scripts/health-check.sh
+# Health check endpoint
+curl http://localhost:8000/health
+
+# Should return:
+# {
+#   "status": "healthy",
+#   "checks": {
+#     "redis": true,
+#     "s3": true,
+#     "queue_depth": 0
+#   }
+# }
 ```
 
-Expected output:
-```
-========================================
-Equalify PDF Converter - Infrastructure Health Check
-========================================
+### Step 3: Development Workflow
 
->>> Checking Prerequisites
-✓ Docker is installed
-✓ Docker Compose is installed
-
->>> Checking Container Status
-✓ Redis container is running
-✓ API Gateway container is running
-...
-
->>> Testing Redis Connectivity
-✓ Redis ping successful
-✓ Redis write operation successful
-...
-
->>> Testing LocalStack S3
-✓ LocalStack S3 connection successful
-✓ Temp bucket (equalify-pdf-temp) exists
-...
-
-========================================
-All critical checks passed!
-========================================
-```
-
-### Step 4: Initialize AWS Resources (Optional)
-
-The LocalStack init script runs automatically, but you can also run it manually:
+**Hot Reload**: The API automatically reloads when you edit code in `src/`:
 
 ```bash
-./scripts/setup-aws.sh dev
+# Edit any file in src/
+vim src/api/documents.py
+
+# Changes are immediately reflected (no rebuild needed!)
 ```
 
-### Step 5: Test Infrastructure
+**Run Tests**:
+
+```bash
+# Run tests inside the container (same environment as production)
+make test-docker
+
+# Or run tests locally (requires uv)
+make test
+```
+
+**Access Container Shell**:
+
+```bash
+# Debug inside the API container
+make shell
+
+# You're now inside the container with access to:
+# - uv run python (Python with all dependencies)
+# - redis-cli (connect to Redis)
+# - awslocal (interact with LocalStack)
+```
+
+**Optional: Customize Configuration**
+
+If you need to change settings, edit `.env.dev`:
+
+```bash
+# AWS Configuration (LocalStack) - uses Docker DNS
+AWS_ENDPOINT_URL=http://localstack:4566
+REDIS_URL=redis://redis:6379
+
+# Application
+LOG_LEVEL=DEBUG
+ENVIRONMENT=development
+```
+
+### Advanced: Manual Infrastructure Testing
+
+These commands are useful for debugging but not required for normal development:
 
 #### Test Redis
 
@@ -535,53 +542,57 @@ docker-compose -f docker-compose.yml -f docker-compose.dev.yml up -d
 
 ## Common Operations
 
-### Start Services
+### Essential Commands (via Makefile)
 
 ```bash
-# Development
-docker-compose -f docker-compose.yml -f docker-compose.dev.yml up -d
+# Start development environment
+make dev
 
-# Production
-docker-compose -f docker-compose.yml -f docker-compose.prod.yml up -d
-
-# With logs
-docker-compose -f docker-compose.yml -f docker-compose.dev.yml up
-```
-
-### Stop Services
-
-```bash
 # Stop all services
-docker-compose -f docker-compose.yml -f docker-compose.dev.yml stop
+make down
 
-# Stop specific service
-docker-compose -f docker-compose.yml -f docker-compose.dev.yml stop redis
+# View all logs
+make logs
 
-# Stop and remove containers
-docker-compose -f docker-compose.yml -f docker-compose.dev.yml down
+# View API logs only
+make logs-api
+
+# Run tests in container
+make test-docker
+
+# Access container shell for debugging
+make shell
+
+# Build Docker images
+make build
+
+# Connect to Redis CLI
+make redis-cli
+
+# Run health checks
+make health
+
+# Clean up (removes containers and volumes)
+make clean
 ```
 
-### Restart Services
+### Advanced Docker Compose Commands
+
+If you need more control, use docker-compose directly:
 
 ```bash
-# Restart all services
-docker-compose -f docker-compose.yml -f docker-compose.dev.yml restart
+# Start with logs visible
+docker-compose -f docker-compose.yml -f docker-compose.dev.yml up
 
 # Restart specific service
-docker-compose -f docker-compose.yml -f docker-compose.dev.yml restart redis
-```
+docker-compose -f docker-compose.yml -f docker-compose.dev.yml restart api-gateway
 
-### View Logs
+# View logs with timestamps
+docker-compose -f docker-compose.yml -f docker-compose.dev.yml logs -f --timestamps
 
-```bash
-# All services
-docker-compose -f docker-compose.yml -f docker-compose.dev.yml logs -f
-
-# Specific service
-docker-compose -f docker-compose.yml -f docker-compose.dev.yml logs -f redis
-
-# Last 100 lines
-docker-compose -f docker-compose.yml -f docker-compose.dev.yml logs --tail=100
+# See resource usage
+docker-compose -f docker-compose.yml -f docker-compose.dev.yml ps
+docker stats
 ```
 
 ### Update Configuration
@@ -673,13 +684,22 @@ docker volume inspect equalify-pdf-redis-data
 
 ## Next Steps
 
-After successfully setting up infrastructure:
+**Current Status**: Phase 2 - Core Services (In Progress)
 
-1. **Phase 2**: Implement API Gateway service
-2. **Phase 2**: Implement PII Worker with Microsoft Presidio
-3. **Phase 2**: Implement Processing Worker with PydanticAI
-4. **Phase 3**: Add monitoring and observability
-5. **Phase 4**: Deploy to AWS ECS
+✅ **Completed**:
+- Infrastructure Foundation (Redis, LocalStack, Docker Compose)
+- Shared Data Models (Pydantic models, queue schemas)
+- Shared Services (Storage, Queue, Job management)
+- Document API Endpoints (POST /submit, GET /status, GET /result)
+- Docker Containerization (Hot-reload, unified networking)
+
+🚧 **Next Tasks**:
+1. **PRD-005**: Implement PII Worker with Microsoft Presidio
+2. **PRD-006**: Implement Approval Workflow API
+3. **PRD-007**: Implement Processing Worker with PydanticAI
+4. **PRD-008**: Implement Timeout Worker
+5. **Phase 3**: End-to-end integration testing
+6. **Phase 4**: Deploy to AWS ECS
 
 ## Additional Resources
 
@@ -693,12 +713,13 @@ After successfully setting up infrastructure:
 
 If you encounter issues not covered in this guide:
 
-1. Check container logs: `docker logs <container-name>`
-2. Run health check: `./scripts/health-check.sh`
-3. Review troubleshooting section above
-4. Check GitHub issues or create a new one
+1. Check container logs: `make logs` or `make logs-api`
+2. Access container shell for debugging: `make shell`
+3. Run health check: `curl http://localhost:8000/health`
+4. Review troubleshooting section above
+5. Check GitHub issues or create a new one
 
 ---
 
-**Last Updated**: 2025-09-29
-**Version**: 1.0.0 (Phase 1 - Infrastructure Foundation)
+**Last Updated**: 2025-10-01
+**Version**: 2.0.0 (Phase 2 - Containerized Application with Hot-Reload)

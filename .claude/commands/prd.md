@@ -25,11 +25,6 @@ Example: `/prd 003`
 2. Verify all dependency PRDs are marked complete
 3. If dependencies incomplete: **STOP** and report missing dependencies
 
-### Execute Project Scan
-```bash
-git ls-files
-```
-
 ### Report Context Understanding
 Before proceeding, report:
 - Project architecture pattern (monolith with background workers)

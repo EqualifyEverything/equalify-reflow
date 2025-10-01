@@ -15,7 +15,7 @@ from ..services.job_service import JobService
 from ..services.queue_service import QueueService
 
 
-router = APIRouter(prefix="/api", tags=["Approval"])
+router = APIRouter(prefix="/api/approval", tags=["Approval"])
 
 
 class ApprovalDecisionInput(BaseModel):
@@ -23,7 +23,7 @@ class ApprovalDecisionInput(BaseModel):
 
     Attributes:
         decision: Binary approval decision
-        justification: Required explanation (10-1000 chars)
+        justification: Optional explanation (10-1000 chars)
         reviewed_by: Reviewer identifier (email or user ID)
 
     Example:
@@ -37,11 +37,11 @@ class ApprovalDecisionInput(BaseModel):
         ...,
         description="Approval or denial of processing"
     )
-    justification: str = Field(
-        ...,
+    justification: str | None = Field(
+        None,
         min_length=10,
         max_length=1000,
-        description="Required explanation for decision"
+        description="Optional explanation for decision"
     )
     reviewed_by: str = Field(
         ...,
@@ -163,7 +163,7 @@ async def get_review_details(
 
 
 @router.post(
-    "/approve/{token}",
+    "/{token}/approve",
     response_model=ApprovalResponse,
     summary="Submit approval decision",
     description="Submit approval or denial decision for PII-flagged document"

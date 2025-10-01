@@ -8,12 +8,11 @@ class ProcessingResult(BaseModel):
     """Final processing results for a converted document.
 
     Captures all outputs from the AI processing pipeline including
-    accessibility improvements, semantic HTML, and quality metrics.
+    accessibility improvements and quality metrics.
 
     Attributes:
         job_id: Unique job identifier (UUID)
-        html_url: S3 URL for accessible HTML output
-        mdx_url: S3 URL for MDX source with semantic annotations
+        markdown_url: S3 URL for accessible markdown output
         confidence_score: AI confidence in conversion quality (0.0-1.0)
         processing_time_seconds: Total processing duration
         error_message: Optional error details if processing failed
@@ -21,8 +20,7 @@ class ProcessingResult(BaseModel):
     Example:
         >>> result = ProcessingResult(
         ...     job_id="550e8400-e29b-41d4-a716-446655440000",
-        ...     html_url="https://s3.../output.html",
-        ...     mdx_url="https://s3.../output.mdx",
+        ...     markdown_url="s3://equalify-results/550e8400.../v20250101_120000/output.md",
         ...     confidence_score=0.92,
         ...     processing_time_seconds=180,
         ...     error_message=None
@@ -33,13 +31,9 @@ class ProcessingResult(BaseModel):
         pattern=r'^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$',
         description="UUID format job identifier"
     )
-    html_url: Optional[str] = Field(
+    markdown_url: Optional[str] = Field(
         default=None,
-        description="S3 URL for accessible HTML"
-    )
-    mdx_url: Optional[str] = Field(
-        default=None,
-        description="S3 URL for MDX source"
+        description="S3 URL for accessible markdown output"
     )
     confidence_score: Optional[float] = Field(
         default=None,
@@ -62,8 +56,7 @@ class ProcessingResult(BaseModel):
         json_schema_extra={
             "example": {
                 "job_id": "550e8400-e29b-41d4-a716-446655440000",
-                "html_url": "https://equalify-output.s3.amazonaws.com/550e8400.../output.html",
-                "mdx_url": "https://equalify-output.s3.amazonaws.com/550e8400.../output.mdx",
+                "markdown_url": "s3://equalify-results/550e8400.../v20250101_120000/output.md",
                 "confidence_score": 0.87,
                 "processing_time_seconds": 245,
                 "error_message": None

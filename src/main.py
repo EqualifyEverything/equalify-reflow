@@ -15,6 +15,7 @@ from .middleware import (
 )
 from .api import documents, health, approval
 from .workers.pii_worker import start_pii_worker
+from .workers.processing_worker import start_processing_worker
 
 # Configure logging
 logging.basicConfig(
@@ -32,20 +33,23 @@ async def lifespan(app: FastAPI):
     Starts background workers when the application starts
     and ensures cleanup on shutdown.
     """
-    # Startup: Launch PII worker as background task
+    # Startup: Launch background workers
     logger.info("Starting background workers...")
     pii_worker_task = asyncio.create_task(start_pii_worker())
-    logger.info("PII worker task created")
+    processing_worker_task = asyncio.create_task(start_processing_worker())
+    logger.info("PII worker and Processing worker tasks created")
 
     yield
 
     # Shutdown: Cancel worker tasks
     logger.info("Shutting down background workers...")
     pii_worker_task.cancel()
+    processing_worker_task.cancel()
     try:
         await pii_worker_task
+        await processing_worker_task
     except asyncio.CancelledError:
-        logger.info("PII worker stopped")
+        logger.info("Background workers stopped")
 
 
 # Create FastAPI app with lifespan

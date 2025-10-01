@@ -55,8 +55,6 @@ The application runs as a **single Python process** with:
 
 - Docker (v20.10+)
 - Docker Compose (v2.0+)
-- Python 3.11+ (for local development)
-- uv (Python package manager)
 
 ### Development Setup
 
@@ -65,24 +63,40 @@ The application runs as a **single Python process** with:
 git clone <repository-url>
 cd equalify-pdf-converter
 
-# 2. Start infrastructure services (Redis, LocalStack)
-make dev            # Starts Docker containers
+# 2. Start the stack
+make dev
 
-# 3. Run the monolith application
-uv run uvicorn src.main:app --reload --host 0.0.0.0 --port 8000
+# 3. Verify API is running
+curl http://localhost:8000/health
 
-# 4. Verify setup
-make health         # Verify infrastructure
+# 4. Access API documentation
+open http://localhost:8000/docs
 ```
+
+### Development Features
+
+- 🔥 **Hot Reload**: Code changes auto-reload without container restart
+- 🐳 **Unified Networking**: All services communicate via Docker DNS
+- 🚀 **Single Command**: `make dev` starts everything
+- ✅ **Tests in Container**: Run tests in same environment as production
 
 ### Common Commands
 
 ```bash
+# Essential
 make dev            # Start development environment
 make down           # Stop all services
-make logs           # View service logs
+make logs           # View all service logs
+make logs-api       # View API logs only
 make health         # Run health checks
 make test           # Run tests
+
+# Docker
+make build          # Build Docker images
+make shell          # Access API container shell
+make test-docker    # Run tests inside container
+
+# Utilities
 make redis-cli      # Connect to Redis CLI
 make clean          # Remove containers and volumes
 ```

@@ -16,6 +16,12 @@ WORKDIR /app
 # ==============================================================================
 FROM base AS dependencies
 
+# Install system dependencies for Docling (PDF processing) and Presidio (PII detection)
+RUN apt-get update && apt-get install -y --no-install-recommends \
+    poppler-utils \
+    tesseract-ocr \
+    && rm -rf /var/lib/apt/lists/*
+
 # Copy dependency files
 COPY pyproject.toml uv.lock* ./
 

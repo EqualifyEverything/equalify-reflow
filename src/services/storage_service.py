@@ -168,10 +168,12 @@ class StorageService:
 
         try:
             # Upload to results bucket
+            # Handle both str and bytes content
+            body = content if isinstance(content, bytes) else content.encode('utf-8')
             self.s3_client.put_object(
                 Bucket=self.results_bucket,
                 Key=s3_key,
-                Body=content.encode('utf-8'),
+                Body=body,
                 ContentType=content_type,
                 CacheControl='public, max-age=31536000'  # Cache for 1 year
             )

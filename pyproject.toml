@@ -11,6 +11,11 @@ dependencies = [
     "python-multipart>=0.0.12",
     "boto3>=1.35.0",
     "pydantic-settings>=2.6.0",
+    "presidio-analyzer>=2.2.0",
+    "spacy>=3.7.0,<3.8.0",
+    "docling>=2.55.0",
+    "numpy>=1.21.0,<2.0.0",
+    "en-core-web-sm @ https://github.com/explosion/spacy-models/releases/download/en_core_web_sm-3.7.1/en_core_web_sm-3.7.1-py3-none-any.whl",
 ]
 
 [project.optional-dependencies]
@@ -37,6 +42,9 @@ warn_unused_configs = true
 disallow_untyped_defs = true
 strict = true
 mypy_path = "src"
+
+[tool.hatch.metadata]
+allow-direct-references = true
 
 [tool.hatch.build.targets.wheel]
 packages = ["src/shared"]

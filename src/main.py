@@ -13,7 +13,7 @@ from .middleware import (
     RateLimitMiddleware,
     add_cors_middleware,
 )
-from .api import documents, health
+from .api import documents, health, approval
 from .workers.pii_worker import start_pii_worker
 
 # Configure logging
@@ -67,6 +67,7 @@ add_cors_middleware(app)                     # CORS headers
 # Include routers
 app.include_router(health.router)
 app.include_router(documents.router)
+app.include_router(approval.router)
 
 
 @app.get("/")

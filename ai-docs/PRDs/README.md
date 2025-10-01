@@ -123,18 +123,34 @@
 
 ---
 
-### PRD-005: PII Detection Worker
-**Status**: Not Started
+### PRD-005: PII Detection Worker ✅
+**Status**: Complete
 **File**: [phase-2-services/PRD-005-pii-detection-worker.md](phase-2-services/PRD-005-pii-detection-worker.md)
-**Effort**: 3 days
-**Dependencies**: PRD-003 (Shared Services) - MUST BE COMPLETE
+**Completed**: 2025-10-01
+**Effort**: 4 hours (actual vs 3 days estimated)
+**Dependencies**: PRD-003 (Shared Services) ✅
 
-**Deliverables**:
-- `src/workers/pii_worker.py` (Background PII scanning thread)
-- Microsoft Presidio integration
-- PDF text extraction with Docling
+**Deliverables** (COMPLETE):
+- ✅ `src/workers/pii_worker.py` - Background asyncio worker thread
+- ✅ `src/services/pii_service.py` - PII detection orchestration
+- ✅ `src/services/pii_analyzer.py` - Microsoft Presidio analyzer wrapper
+- ✅ `src/services/pdf_extractor.py` - Docling PDF text extraction
+- ✅ `src/utils/token_generator.py` - Secure approval token generation
+- ✅ `src/main.py` - Worker lifecycle with FastAPI lifespan
+
+**Implementation Notes**:
+- Presidio successfully integrated with spaCy en_core_web_sm model
+- Docling extracts text from PDFs (handles complex layouts, tables, OCR)
+- PII detection with configurable confidence threshold (0.7 default)
+- Worker runs as background asyncio task in monolith application
+- Automatic routing: clean docs → processing queue, PII docs → approval queue
+- Retry logic: 1 retry on PDF extraction failures
+- Successfully tested: 604KB security paper → 55K chars extracted → 526 PII entities detected
+- Dependencies: presidio-analyzer, spacy, docling, en-core-web-sm model
 
 **Shared Services Used**: storage_service, queue_service, job_service
+
+**Unblocks**: PRD-006 (Approval API)
 
 ---
 

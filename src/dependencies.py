@@ -163,6 +163,6 @@ async def get_rate_limit_service(
         try:
             yield RateLimitService(redis_client=redis_client)
         finally:
-            await redis_client.close()
+            await redis_client.aclose()
     else:
         yield RateLimitService(redis_client=redis_client)

@@ -1,5 +1,6 @@
 """Configuration management for API Gateway Service."""
 
+from pydantic import SecretStr
 from pydantic_settings import BaseSettings, SettingsConfigDict
 
 
@@ -43,6 +44,18 @@ class Settings(BaseSettings):
 
     # Processing Configuration
     estimated_processing_minutes: int = 5
+
+    # Claude AI Configuration
+    anthropic_api_key: SecretStr
+    claude_model: str = "claude-3-5-haiku-20241022"
+    claude_max_tokens: int = 4096
+    claude_temperature: float = 0.2
+
+    # AI Processing Configuration
+    max_concurrent_pages: int = 5  # Process up to 5 pages concurrently
+    page_retry_attempts: int = 3  # Retry failed pages up to 3 times
+    confidence_threshold_high: float = 0.85
+    confidence_threshold_medium: float = 0.60
 
 
 settings = Settings()

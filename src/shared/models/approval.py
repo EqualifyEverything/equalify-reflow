@@ -24,7 +24,7 @@ class ApprovalRequest(BaseModel):
         ...     decision="approved",
         ...     justification="PII is instructor name in course syllabus - acceptable",
         ...     reviewed_by="faculty@uic.edu",
-        ...     reviewed_at=datetime.utcnow()
+        ...     reviewed_at=datetime.now(timezone.utc)
         ... )
     """
     job_id: str = Field(

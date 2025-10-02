@@ -22,7 +22,7 @@ class PIIQueuePayload(BaseModel):
         >>> payload = PIIQueuePayload(
         ...     job_id="550e8400-e29b-41d4-a716-446655440000",
         ...     s3_key="temp/550e8400.../document.pdf",
-        ...     created_at=datetime.utcnow()
+        ...     created_at=datetime.now(timezone.utc)
         ... )
     """
     job_id: str = Field(
@@ -70,7 +70,7 @@ class ApprovalQueuePayload(BaseModel):
         ...     s3_key="temp/550e8400.../document.pdf",
         ...     pii_findings=[...],
         ...     approval_token="abc123...",
-        ...     expires_at=datetime.utcnow() + timedelta(days=1)
+        ...     expires_at=datetime.now(timezone.utc) + timedelta(days=1)
         ... )
     """
     job_id: str = Field(

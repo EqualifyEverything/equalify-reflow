@@ -38,8 +38,7 @@ services:
     build:
       target: development  # Use development stage for hot-reload
     ports:
-      - "8000:8000"  # API endpoints
-      - "8001:8001"  # Prometheus metrics endpoint
+      - "8000:8000"  # API endpoints (includes /metrics)
     volumes:
       # Mount source code for hot-reload (read-only to prevent accidental writes)
       - ./src:/app/src:ro
@@ -51,7 +50,6 @@ services:
       - S3_RESULTS_BUCKET=equalify-pdf-results
       - LOG_LEVEL=DEBUG
       - ENABLE_METRICS=true
-      - METRICS_PORT=8001
     command: ["uv", "run", "uvicorn", "src.main:app", "--reload", "--host", "0.0.0.0", "--port", "8000"]
     depends_on:
       redis:
@@ -99,11 +97,6 @@ services:
         condition: service_healthy
     networks:
       - equalify-network
-    healthcheck:
-      test: ["CMD", "wget", "--spider", "-q", "http://localhost:9121/metrics"]
-      interval: 10s
-      timeout: 5s
-      retries: 3
 
   # Prometheus - Metrics collection and storage
   prometheus:
@@ -126,7 +119,7 @@ services:
       api-gateway:
         condition: service_started
       redis-exporter:
-        condition: service_healthy
+        condition: service_started
     networks:
       - equalify-network
     healthcheck:

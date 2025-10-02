@@ -1,4 +1,5 @@
 """FastAPI application for API Gateway Service."""
+# Test comment for hot-reload verification
 
 import asyncio
 import logging
@@ -16,6 +17,7 @@ from .middleware import (
 from .api import documents, health, approval
 from .workers.pii_worker import start_pii_worker
 from .workers.processing_worker import start_processing_worker
+from .workers.timeout_worker import start_timeout_worker
 
 # Configure logging
 logging.basicConfig(
@@ -37,7 +39,8 @@ async def lifespan(app: FastAPI):
     logger.info("Starting background workers...")
     pii_worker_task = asyncio.create_task(start_pii_worker())
     processing_worker_task = asyncio.create_task(start_processing_worker())
-    logger.info("PII worker and Processing worker tasks created")
+    timeout_worker_task = asyncio.create_task(start_timeout_worker())
+    logger.info("PII, Processing, and Timeout worker tasks created")
 
     yield
 
@@ -45,9 +48,11 @@ async def lifespan(app: FastAPI):
     logger.info("Shutting down background workers...")
     pii_worker_task.cancel()
     processing_worker_task.cancel()
+    timeout_worker_task.cancel()
     try:
         await pii_worker_task
         await processing_worker_task
+        await timeout_worker_task
     except asyncio.CancelledError:
         logger.info("Background workers stopped")
 

@@ -1,6 +1,8 @@
 """Storage service for S3 operations."""
 
 import uuid
+import logging
+from datetime import datetime, timedelta, timezone
 from typing import BinaryIO, Optional
 from io import BytesIO
 
@@ -8,6 +10,8 @@ from fastapi import HTTPException, UploadFile
 from botocore.exceptions import ClientError
 
 from ..config import settings
+
+logger = logging.getLogger(__name__)
 
 
 class StorageService:
@@ -262,3 +266,212 @@ class StorageService:
                 status_code=500,
                 detail=f"Failed to generate presigned URL: {str(e)}"
             )
+
+    async def cleanup_temp_files_for_job(self, job_id: str) -> int:
+        """Delete all temporary files associated with a specific job.
+
+        This method finds and deletes all S3 objects with the prefix temp/{job_id}/
+        or the specific temp/{job_id}.pdf file. Useful for cleaning up after job
+        completion, failure, or timeout.
+
+        Args:
+            job_id: Job identifier (UUID)
+
+        Returns:
+            int: Number of files successfully deleted
+
+        Raises:
+            HTTPException: If S3 list or delete operations fail
+
+        Example:
+            >>> storage = StorageService(s3_client, "temp-bucket", "results-bucket")
+            >>> deleted = await storage.cleanup_temp_files_for_job("abc-123")
+            >>> print(f"Deleted {deleted} files")
+        """
+        try:
+            deleted_count = 0
+
+            # List all objects with job_id prefix (handles both temp/{job_id}.pdf and temp/{job_id}/*)
+            paginator = self.s3_client.get_paginator('list_objects_v2')
+            pages = paginator.paginate(
+                Bucket=self.temp_bucket,
+                Prefix=f"temp/{job_id}"
+            )
+
+            # Collect all object keys to delete
+            objects_to_delete = []
+            for page in pages:
+                if 'Contents' in page:
+                    for obj in page['Contents']:
+                        objects_to_delete.append({'Key': obj['Key']})
+
+            # Batch delete objects (S3 allows up to 1000 per request)
+            if objects_to_delete:
+                # Delete in batches of 1000
+                batch_size = 1000
+                for i in range(0, len(objects_to_delete), batch_size):
+                    batch = objects_to_delete[i:i + batch_size]
+                    response = self.s3_client.delete_objects(
+                        Bucket=self.temp_bucket,
+                        Delete={'Objects': batch}
+                    )
+                    deleted_count += len(response.get('Deleted', []))
+
+                    # Log any errors
+                    if 'Errors' in response and response['Errors']:
+                        for error in response['Errors']:
+                            logger.error(
+                                f"Failed to delete {error['Key']}: {error['Message']}"
+                            )
+
+                logger.info(
+                    f"Cleaned up {deleted_count} temp files for job {job_id}"
+                )
+
+            return deleted_count
+
+        except ClientError as e:
+            logger.error(
+                f"S3 ClientError cleaning up job {job_id}: {str(e)}",
+                exc_info=True
+            )
+            raise HTTPException(
+                status_code=500,
+                detail=f"Failed to cleanup temp files: {str(e)}"
+            )
+        except Exception as e:
+            logger.error(
+                f"Unexpected error cleaning up job {job_id}: {str(e)}",
+                exc_info=True
+            )
+            raise HTTPException(
+                status_code=500,
+                detail=f"Unexpected error during cleanup: {str(e)}"
+            )
+
+    async def list_temp_files(
+        self,
+        older_than_hours: int = 24
+    ) -> list[dict[str, any]]:
+        """List temporary files older than specified hours.
+
+        Scans the temp bucket and returns metadata for files that are older
+        than the retention period. Used by timeout worker for periodic cleanup.
+
+        Args:
+            older_than_hours: Age threshold in hours (default: 24)
+
+        Returns:
+            List of dicts with keys:
+                - 'key': S3 object key
+                - 'size': File size in bytes
+                - 'last_modified': datetime object (timezone-aware)
+                - 'age_hours': Age in hours (float)
+
+        Raises:
+            HTTPException: If S3 list operation fails
+
+        Example:
+            >>> storage = StorageService(s3_client, "temp-bucket", "results-bucket")
+            >>> old_files = await storage.list_temp_files(older_than_hours=48)
+            >>> for file in old_files:
+            ...     print(f"{file['key']} is {file['age_hours']:.1f} hours old")
+        """
+        try:
+            cutoff_time = datetime.now(timezone.utc) - timedelta(hours=older_than_hours)
+            old_files = []
+
+            # Paginate through temp bucket
+            paginator = self.s3_client.get_paginator('list_objects_v2')
+            pages = paginator.paginate(
+                Bucket=self.temp_bucket,
+                Prefix='temp/'
+            )
+
+            for page in pages:
+                if 'Contents' not in page:
+                    continue
+
+                for obj in page['Contents']:
+                    # Ensure LastModified is timezone-aware
+                    last_modified = obj['LastModified']
+                    if last_modified.tzinfo is None:
+                        last_modified = last_modified.replace(tzinfo=timezone.utc)
+
+                    # Check if file is older than cutoff
+                    if last_modified < cutoff_time:
+                        age_hours = (datetime.now(timezone.utc) - last_modified).total_seconds() / 3600
+                        old_files.append({
+                            'key': obj['Key'],
+                            'size': obj['Size'],
+                            'last_modified': last_modified,
+                            'age_hours': age_hours
+                        })
+
+            logger.info(
+                f"Found {len(old_files)} temp files older than {older_than_hours} hours"
+            )
+            return old_files
+
+        except ClientError as e:
+            logger.error(
+                f"S3 ClientError listing temp files: {str(e)}",
+                exc_info=True
+            )
+            raise HTTPException(
+                status_code=500,
+                detail=f"Failed to list temp files: {str(e)}"
+            )
+        except Exception as e:
+            logger.error(
+                f"Unexpected error listing temp files: {str(e)}",
+                exc_info=True
+            )
+            raise HTTPException(
+                status_code=500,
+                detail=f"Unexpected error listing temp files: {str(e)}"
+            )
+
+    async def delete_from_s3(self, bucket: str, key: str) -> bool:
+        """Delete a specific object from S3.
+
+        Generic deletion method for any bucket/key combination. Idempotent -
+        succeeds even if object doesn't exist.
+
+        Args:
+            bucket: S3 bucket name
+            key: S3 object key
+
+        Returns:
+            bool: True if object was deleted or didn't exist, False on error
+
+        Example:
+            >>> storage = StorageService(s3_client, "temp-bucket", "results-bucket")
+            >>> success = await storage.delete_from_s3("temp-bucket", "temp/abc-123.pdf")
+        """
+        try:
+            self.s3_client.delete_object(
+                Bucket=bucket,
+                Key=key
+            )
+            logger.debug(f"Deleted s3://{bucket}/{key}")
+            return True
+
+        except ClientError as e:
+            # Check if object doesn't exist (idempotent success)
+            if e.response['Error']['Code'] == 'NoSuchKey':
+                logger.debug(f"Object already deleted: s3://{bucket}/{key}")
+                return True
+
+            logger.error(
+                f"Failed to delete s3://{bucket}/{key}: {str(e)}",
+                exc_info=True
+            )
+            return False
+
+        except Exception as e:
+            logger.error(
+                f"Unexpected error deleting s3://{bucket}/{key}: {str(e)}",
+                exc_info=True
+            )
+            return False

@@ -13,6 +13,7 @@ from ..services.job_service import JobService
 from ..services.pdf_converter import PDFConverter
 from ..services.ai_enhancement_service import AIEnhancementService, PageProcessingError
 from ..utils.confidence_scoring import calculate_document_confidence
+from ..utils.retry_helpers import retry_with_backoff
 from ..config import settings
 
 logger = logging.getLogger(__name__)
@@ -76,15 +77,25 @@ class ProcessingService:
         logger.info(f"Starting processing for job {job.job_id}")
 
         try:
-            # Step 1: Update job status to processing
-            await self.job.update_job_status(job.job_id, "processing")
+            # Step 1: Update job status to processing (with retry for Redis failures)
+            await retry_with_backoff(
+                lambda: self.job.update_job_status(job.job_id, "processing"),
+                max_attempts=3,
+                operation_name=f"Update job {job.job_id} status to processing"
+            )
 
-            # Step 2: Download PDF from S3
+            # Step 2: Download PDF from S3 (with retry on network/throttling errors)
             logger.info(f"Downloading PDF from s3://{settings.s3_temp_bucket}/{job.s3_key}")
-            pdf_content = await self.storage.download_temp_file(s3_key=job.s3_key)
+            pdf_content = await retry_with_backoff(
+                lambda: self.storage.download_temp_file(s3_key=job.s3_key),
+                max_attempts=3,
+                operation_name=f"Download PDF from S3 for job {job.job_id}"
+            )
             logger.info(f"Downloaded {len(pdf_content)} bytes")
 
             # Step 3: Convert PDF with Docling (markdown + page images)
+            # Note: PDF conversion is compute-intensive, not network-dependent
+            # Retries handled internally by pdf_converter if needed
             logger.info("Converting PDF with Docling...")
             conversion_result = await self.pdf_converter.convert_with_page_images(
                 pdf_content
@@ -122,8 +133,12 @@ class ProcessingService:
                     f"{e.original_error}"
                 )
                 logger.error(error_msg)
-                await self.job.update_job_status(
-                    job.job_id, "failed", error=error_msg
+                await retry_with_backoff(
+                    lambda: self.job.update_job_status(
+                        job.job_id, "failed", error=error_msg
+                    ),
+                    max_attempts=3,
+                    operation_name=f"Update job {job.job_id} to failed (AI processing error)"
                 )
                 raise ValueError(error_msg) from e
 
@@ -142,27 +157,35 @@ class ProcessingService:
                 f"Document confidence: {confidence_score:.2f} ({confidence_level})"
             )
 
-            # Step 7: Upload results to S3 with versioning
+            # Step 7: Upload results to S3 with versioning (with retry on network errors)
             logger.info(f"Uploading markdown to S3 results bucket")
-            result_url = await self.storage.upload_result(
-                job_id=job.job_id,
-                content=final_markdown.encode("utf-8"),
-                format="md"
+            result_url = await retry_with_backoff(
+                lambda: self.storage.upload_result(
+                    job_id=job.job_id,
+                    content=final_markdown.encode("utf-8"),
+                    format="md"
+                ),
+                max_attempts=3,
+                operation_name=f"Upload result to S3 for job {job.job_id}"
             )
 
-            # Step 8: Update job status with metadata
+            # Step 8: Update job status with metadata (with retry for Redis failures)
             processing_time = int(time.time() - start_time)
 
-            await self.job.update_job_status(
-                job.job_id,
-                "completed",
-                metadata={
-                    "markdown_url": result_url,
-                    "confidence_score": confidence_score,
-                    "confidence_level": confidence_level,
-                    "processing_time_seconds": processing_time,
-                    "total_pages": conversion_result.total_pages,
-                },
+            await retry_with_backoff(
+                lambda: self.job.update_job_status(
+                    job.job_id,
+                    "completed",
+                    metadata={
+                        "markdown_url": result_url,
+                        "confidence_score": confidence_score,
+                        "confidence_level": confidence_level,
+                        "processing_time_seconds": processing_time,
+                        "total_pages": conversion_result.total_pages,
+                    },
+                ),
+                max_attempts=3,
+                operation_name=f"Update job {job.job_id} status to completed"
             )
 
             logger.info(
@@ -183,12 +206,16 @@ class ProcessingService:
             raise
 
         except Exception as e:
-            # Unexpected error
+            # Unexpected error (after any retries)
             error_msg = f"Processing failed: {str(e)}"
             logger.error(f"Job {job.job_id} failed: {error_msg}", exc_info=True)
 
-            await self.job.update_job_status(
-                job.job_id, "failed", error=error_msg
+            await retry_with_backoff(
+                lambda: self.job.update_job_status(
+                    job.job_id, "failed", error=error_msg
+                ),
+                max_attempts=3,
+                operation_name=f"Update job {job.job_id} to failed (unexpected error)"
             )
 
             # Return failed result

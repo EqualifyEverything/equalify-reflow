@@ -23,31 +23,47 @@
 ## Phase 2: Core Services (SEQUENTIAL - Follow Order)
 
 ### PRD-003: Shared Services Foundation ✅
-**Status**: Complete
+**Status**: Complete (Updated 2025-10-02 - Added PRD-008 dependencies)
 **File**: [phase-2-services/PRD-003-shared-services.md](phase-2-services/PRD-003-shared-services.md)
-**Completed**: 2025-09-30
-**Effort**: 5.5 hours (actual vs 4 days estimated)
+**Completed**: 2025-09-30 (Initial), 2025-10-02 (Extensions)
+**Effort**: 5.5 hours initial + 4 hours extensions = 9.5 hours total (actual vs 4 days estimated)
 **Dependencies**: PRD-001 ✅, PRD-002 ✅
 
 **Deliverables** (COMPLETE):
 - ✅ `src/services/storage_service.py` - S3 operations with upload, download, delete, presigned URLs
+  - **NEW (10/02)**: `cleanup_temp_files_for_job()` - Batch delete temp files for job
+  - **NEW (10/02)**: `list_temp_files()` - List files older than retention period
+  - **NEW (10/02)**: `delete_from_s3()` - Generic idempotent delete method
 - ✅ `src/services/queue_service.py` - Generic Redis queue operations with enqueue, dequeue, peek
+  - **NEW (10/02)**: `add_to_timeout_tracking()` - Add job to sorted set with deadline
+  - **NEW (10/02)**: `get_expired_timeouts()` - Query sorted set for expired jobs
+  - **NEW (10/02)**: `remove_from_timeout_tracking()` - Remove job from timeout tracking
+  - **NEW (10/02)**: `get_timeout_count()` - Count jobs awaiting approval
 - ✅ `src/services/job_service.py` - Job status management with lifecycle operations
+  - **NEW (10/02)**: `cleanup_old_job()` - Delete old job hash from Redis
 - ✅ `src/config.py` - Configuration management with all queue names and settings
+  - **NEW (10/02)**: Timeout worker schedules (approval_check_interval_seconds, etc.)
+  - **NEW (10/02)**: Retention policies (temp_file_retention_hours, job_retention_days, etc.)
 - ✅ `src/dependencies.py` - FastAPI dependency injection with proper resource cleanup
-- ✅ `tests/services/test_storage_service.py` - 23 tests passing
-- ✅ `tests/services/test_queue_service.py` - 21 tests passing
-- ✅ `tests/services/test_job_service.py` - 23 tests passing
+- ✅ `tests/services/test_storage_service.py` - 37 tests passing (+14 new cleanup tests)
+- ✅ `tests/services/test_queue_service.py` - 34 tests passing (+13 new timeout tracking tests)
+- ✅ `tests/services/test_job_service.py` - 32 tests passing (+9 new cleanup tests)
+- ✅ `src/shared/README.md` - Updated with new service methods documentation
 
 **Implementation Notes**:
 - All services enhanced with PRD-specified methods
 - FastAPI dependency injection refactored for proper async generators
 - Configuration expanded with AWS credentials, Redis pool settings, queue names
-- 67 service tests passing (100% coverage of new methods)
-- All 125 total tests passing after integration
+- **Extension (10/02)**: Added missing methods needed by PRD-008 (Timeout Worker)
+  - StorageService: Batch cleanup operations for temp files
+  - QueueService: Redis sorted set operations for timeout tracking
+  - JobService: Old job cleanup for retention management
+  - Config: Cleanup schedules and retention policies
+- **129 service tests passing** (100% coverage including new methods)
+- All service tests green, PRD-003 fully complete
 - API endpoints updated to use dependency injection pattern
 
-**Unblocks**: PRD-004, PRD-005, PRD-006, PRD-007, PRD-008
+**Unblocks**: PRD-004 ✅, PRD-005 ✅, PRD-006 ✅, PRD-007 ✅, **PRD-008 (NOW READY)**
 
 ---
 

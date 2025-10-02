@@ -1,17 +1,17 @@
-# PRD-009: End-to-End Integration & Testing
+# PRD-010: End-to-End Integration & Testing
 
 ## Document Information
-- **PRD ID**: PRD-009
+- **PRD ID**: PRD-010
 - **Title**: End-to-End Integration & Testing
 - **Phase**: Phase 3 - Integration
 - **Priority**: P0 (Critical)
 - **Estimated Effort**: 2 days
-- **Dependencies**: All Phase 1 and Phase 2 PRDs (PRD-001 through PRD-008)
+- **Dependencies**: All Phase 1 and Phase 2 PRDs (PRD-001 through PRD-008), PRD-009A (Grafana Observability), PRD-009B (Demo REST UI)
 - **Cannot be done in parallel**: Must be done last after all other components
 
 ## Executive Summary
 
-Complete system integration that validates the entire PDF-to-accessible-HTML pipeline works seamlessly across all services. This PRD establishes the comprehensive testing framework, performance benchmarks, monitoring infrastructure, and production readiness validation required for the Equalify PDF Converter MVP.
+Complete system integration that validates the entire PDF-to-semantic-markup pipeline works seamlessly across all services. This PRD establishes the comprehensive testing framework, performance benchmarks, monitoring infrastructure, and production readiness validation required for the Equalify PDF Converter MVP.
 
 ## Problem Statement
 
@@ -188,9 +188,11 @@ class TestProductionReadiness:
 
 ## Monitoring and Observability
 
+**NOTE**: Monitoring infrastructure is implemented in PRD-009A (Grafana Observability Stack). This PRD validates that monitoring works correctly for integration testing.
+
 ### System Health Monitoring
 ```yaml
-# Health check configuration
+# Health check configuration (from PRD-009A)
 health_checks:
   fastapi_application:
     endpoint: /health

@@ -75,13 +75,17 @@ class TimeoutWorker:
         # Worker state
         self.running = False
 
-    async def start(self):
-        """Main worker loop with scheduled task execution."""
+    async def start(self, shutdown_event: asyncio.Event = None):
+        """Main worker loop with scheduled task execution.
+
+        Args:
+            shutdown_event: Optional event to signal graceful shutdown
+        """
         self.running = True
         logger.info("Timeout worker started")
 
         try:
-            while self.running:
+            while self.running and (shutdown_event is None or not shutdown_event.is_set()):
                 try:
                     current_time = datetime.now(timezone.utc)
 
@@ -129,7 +133,7 @@ class TimeoutWorker:
             logger.info("Timeout worker received cancellation signal")
             raise
 
-        logger.info("Timeout worker stopped")
+        logger.info("Timeout worker shutting down gracefully")
 
     def _should_run_task(
         self,
@@ -230,11 +234,14 @@ class TimeoutWorker:
 _worker_instance = None
 
 
-async def start_timeout_worker():
+async def start_timeout_worker(shutdown_event: asyncio.Event = None):
     """Entry point for timeout worker (called from main.py lifespan).
 
     Creates service instances and starts the worker loop.
     This function is called from FastAPI lifespan context.
+
+    Args:
+        shutdown_event: Optional event to signal graceful shutdown
     """
     global _worker_instance
 
@@ -275,7 +282,7 @@ async def start_timeout_worker():
     logger.info("Timeout worker services initialized, starting worker loop...")
 
     # Start worker (runs until stopped)
-    await _worker_instance.start()
+    await _worker_instance.start(shutdown_event)
 
 
 def get_timeout_worker():

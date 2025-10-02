@@ -48,16 +48,19 @@ class ProcessingWorker:
         self.queue = queue_service
         self.running = False
 
-    async def start(self) -> None:
+    async def start(self, shutdown_event: asyncio.Event = None) -> None:
         """Start the processing worker main loop.
 
         Continuously polls processing queue and processes jobs.
-        Runs until stopped via stop() method.
+        Runs until stopped via stop() method or shutdown_event is set.
+
+        Args:
+            shutdown_event: Optional event to signal graceful shutdown
         """
         self.running = True
         logger.info("Processing worker started")
 
-        while self.running:
+        while self.running and (shutdown_event is None or not shutdown_event.is_set()):
             try:
                 # Blocking pop from processing queue with timeout
                 job_data = await self.queue.dequeue(
@@ -65,6 +68,13 @@ class ProcessingWorker:
                 )
 
                 if job_data:
+                    # Check shutdown before processing
+                    if shutdown_event and shutdown_event.is_set():
+                        logger.info("Shutdown requested, requeueing job and stopping")
+                        # Requeue job for next worker
+                        await self.queue.enqueue(PROCESSING_QUEUE, job_data)
+                        break
+
                     # Parse payload
                     job = ProcessingQueuePayload.model_validate(job_data)
                     logger.info(f"Received processing job: {job.job_id}")
@@ -81,7 +91,7 @@ class ProcessingWorker:
                 # Brief pause before retry to avoid tight error loop
                 await asyncio.sleep(WORKER_SLEEP_SECONDS)
 
-        logger.info("Processing worker stopped")
+        logger.info("Processing worker shutting down gracefully")
 
     def stop(self) -> None:
         """Stop the processing worker gracefully."""
@@ -93,11 +103,14 @@ class ProcessingWorker:
 _worker_instance: Optional[ProcessingWorker] = None
 
 
-async def start_processing_worker() -> None:
+async def start_processing_worker(shutdown_event: asyncio.Event = None) -> None:
     """Start the processing worker as a background task.
 
     Creates service instances and starts the worker loop.
     This function is called from FastAPI lifespan context.
+
+    Args:
+        shutdown_event: Optional event to signal graceful shutdown
     """
     global _worker_instance
 
@@ -124,7 +137,7 @@ async def start_processing_worker() -> None:
         job_service=job_service,
     )
 
-    await _worker_instance.start()
+    await _worker_instance.start(shutdown_event)
 
 
 def stop_processing_worker() -> None:

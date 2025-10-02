@@ -37,24 +37,48 @@ async def lifespan(app: FastAPI):
     """
     # Startup: Launch background workers
     logger.info("Starting background workers...")
-    pii_worker_task = asyncio.create_task(start_pii_worker())
-    processing_worker_task = asyncio.create_task(start_processing_worker())
-    timeout_worker_task = asyncio.create_task(start_timeout_worker())
+
+    # Create shutdown event to signal graceful shutdown
+    shutdown_event = asyncio.Event()
+
+    # Pass shutdown event to workers
+    pii_worker_task = asyncio.create_task(start_pii_worker(shutdown_event))
+    processing_worker_task = asyncio.create_task(start_processing_worker(shutdown_event))
+    timeout_worker_task = asyncio.create_task(start_timeout_worker(shutdown_event))
     logger.info("PII, Processing, and Timeout worker tasks created")
 
     yield
 
-    # Shutdown: Cancel worker tasks
-    logger.info("Shutting down background workers...")
-    pii_worker_task.cancel()
-    processing_worker_task.cancel()
-    timeout_worker_task.cancel()
+    # Shutdown: Graceful shutdown with timeout
+    logger.info("Initiating graceful shutdown of background workers...")
+    shutdown_event.set()
+
+    # Wait for workers to finish current job (max 30 seconds)
     try:
-        await pii_worker_task
-        await processing_worker_task
-        await timeout_worker_task
-    except asyncio.CancelledError:
-        logger.info("Background workers stopped")
+        await asyncio.wait_for(
+            asyncio.gather(
+                pii_worker_task,
+                processing_worker_task,
+                timeout_worker_task,
+                return_exceptions=True
+            ),
+            timeout=30.0
+        )
+        logger.info("All background workers stopped gracefully")
+    except asyncio.TimeoutError:
+        logger.warning("Graceful shutdown timeout, forcing cancellation")
+        pii_worker_task.cancel()
+        processing_worker_task.cancel()
+        timeout_worker_task.cancel()
+        try:
+            await asyncio.gather(
+                pii_worker_task,
+                processing_worker_task,
+                timeout_worker_task,
+                return_exceptions=True
+            )
+        except Exception as e:
+            logger.error(f"Error during forced shutdown: {e}")
 
 
 # Create FastAPI app with lifespan

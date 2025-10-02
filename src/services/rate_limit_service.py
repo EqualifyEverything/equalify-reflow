@@ -2,6 +2,7 @@
 
 import logging
 import time
+import uuid
 from typing import Optional
 
 from redis.asyncio import Redis
@@ -154,7 +155,9 @@ class RateLimitService:
             # Check if under limit
             if current_count < limit:
                 # Add this request to the window
-                await self.redis.zadd(key, {str(now): now})
+                # Use unique member to prevent collisions at the same microsecond
+                member = f"{now}-{uuid.uuid4().hex[:8]}"
+                await self.redis.zadd(key, {member: now})
 
                 # Set expiry on the key (cleanup)
                 await self.redis.expire(key, window)

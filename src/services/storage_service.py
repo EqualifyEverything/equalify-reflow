@@ -50,10 +50,25 @@ class StorageService:
             )
 
         # Validate file size
-        file.file.seek(0, 2)  # Seek to end
-        file_size = file.file.tell()
-        file.file.seek(0)  # Reset to beginning
+        try:
+            file.file.seek(0, 2)  # Seek to end
+            file_size = file.file.tell()
+            file.file.seek(0)  # Reset to beginning
+        except (OSError, IOError, AttributeError) as e:
+            raise HTTPException(
+                status_code=400,
+                detail=f"Unable to read file: {str(e)}"
+            )
 
+        # Check minimum file size (empty or corrupt files)
+        MIN_FILE_SIZE = 100  # 100 bytes minimum
+        if file_size < MIN_FILE_SIZE:
+            raise HTTPException(
+                status_code=400,
+                detail=f"File too small. Minimum file size is {MIN_FILE_SIZE} bytes"
+            )
+
+        # Check maximum file size (files up to max_upload_size are accepted)
         if file_size > settings.max_upload_size:
             raise HTTPException(
                 status_code=413,
@@ -83,6 +98,10 @@ class StorageService:
         """
         Generate S3 URL for result file.
 
+        Supports both LocalStack (development) and production AWS S3:
+        - LocalStack: http://localstack:4566/bucket/key (path-style)
+        - Production: https://bucket.s3.region.amazonaws.com/key (virtual-hosted-style)
+
         Args:
             job_id: Job identifier
             file_type: File extension (html or mdx)
@@ -91,7 +110,14 @@ class StorageService:
             S3 URL for the result file
         """
         s3_key = f"{job_id}.{file_type}"
-        return f"{settings.aws_endpoint_url}/{self.results_bucket}/{s3_key}"
+
+        # LocalStack development environment
+        if settings.aws_endpoint_url:
+            return f"{settings.aws_endpoint_url}/{self.results_bucket}/{s3_key}"
+
+        # Production AWS S3 - use virtual-hosted-style URL
+        region = settings.aws_region or "us-east-1"
+        return f"https://{self.results_bucket}.s3.{region}.amazonaws.com/{s3_key}"
 
     async def check_s3_access(self) -> bool:
         """
@@ -182,35 +208,45 @@ class StorageService:
                 CacheControl='public, max-age=31536000'  # Cache for 1 year
             )
 
-            # Return public URL
-            return f"{settings.aws_endpoint_url}/{self.results_bucket}/{s3_key}"
+            # Return public URL using same logic as get_result_url
+            if settings.aws_endpoint_url:
+                return f"{settings.aws_endpoint_url}/{self.results_bucket}/{s3_key}"
+            else:
+                region = settings.aws_region or "us-east-1"
+                return f"https://{self.results_bucket}.s3.{region}.amazonaws.com/{s3_key}"
         except Exception as e:
             raise HTTPException(
                 status_code=500,
                 detail=f"Failed to upload result: {str(e)}"
             )
 
-    async def delete_temp_file(self, s3_key: str) -> None:
+    async def delete_temp_file(self, s3_key: str) -> bool:
         """
         Delete temporary file from temp bucket.
+
+        This is a best-effort operation - errors are logged but not raised.
+        Cleanup failures should not block the main workflow.
 
         Args:
             s3_key: S3 key of file to delete
 
-        Raises:
-            HTTPException: If deletion fails
+        Returns:
+            bool: True if deletion succeeded, False on error
         """
         try:
             self.s3_client.delete_object(
                 Bucket=self.temp_bucket,
                 Key=s3_key
             )
-        except Exception as e:
+            logger.debug(f"Successfully deleted temp file: {s3_key}")
+            return True
+        except ClientError as e:
             # Log error but don't fail - cleanup is best effort
-            raise HTTPException(
-                status_code=500,
-                detail=f"Failed to delete temp file: {str(e)}"
-            )
+            logger.warning(f"Failed to delete temp file {s3_key}: {str(e)}")
+            return False
+        except Exception as e:
+            logger.warning(f"Unexpected error deleting temp file {s3_key}: {str(e)}")
+            return False
 
     async def file_exists(self, bucket: str, key: str) -> bool:
         """

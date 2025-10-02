@@ -14,7 +14,7 @@ scrape_configs:
   - job_name: 'equalify-api'
     metrics_path: '/metrics'
     static_configs:
-      - targets: ['api-gateway:8001']
+      - targets: ['api-gateway:8000']
         labels:
           service: 'api-gateway'
           component: 'fastapi'

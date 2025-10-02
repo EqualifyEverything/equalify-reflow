@@ -3,15 +3,70 @@
 This service stores metrics about timeout worker operations
 (timeouts processed, files cleaned, orphans detected, etc.)
 in Redis hashes organized by date.
+
+Additionally provides Prometheus metrics for real-time monitoring
+of jobs, queues, and workers.
 """
 
 import logging
 from datetime import datetime, timezone, timedelta
 from typing import Dict, Optional
 
+from prometheus_client import Counter, Histogram, Gauge
+
 from ..config import settings
 
 logger = logging.getLogger(__name__)
+
+# Prometheus Metrics for Jobs
+jobs_submitted_total = Counter(
+    "jobs_submitted_total",
+    "Total jobs submitted",
+    ["source"],  # webhook, api, etc.
+)
+
+jobs_completed_total = Counter(
+    "jobs_completed_total",
+    "Total jobs completed",
+    ["status"],  # success, failed, denied
+)
+
+job_duration_seconds = Histogram(
+    "job_duration_seconds",
+    "Job processing duration",
+    ["stage"],  # pii_scan, processing, total
+    buckets=[10, 30, 60, 120, 300, 600, 1200],  # 10s to 20min
+)
+
+# Prometheus Metrics for Queues
+queue_depth_gauge = Gauge(
+    "queue_depth",
+    "Current queue depth",
+    ["queue_name"],  # pii_scan, processing, approval_pending
+)
+
+# Prometheus Metrics for Workers
+worker_active_gauge = Gauge(
+    "worker_active",
+    "Worker active status (1=active, 0=stopped)",
+    ["worker_name"],  # pii, processing, timeout
+)
+
+worker_errors_total = Counter(
+    "worker_errors_total",
+    "Worker error count",
+    ["worker_name", "error_type"],
+)
+
+worker_jobs_processed_total = Counter(
+    "worker_jobs_processed_total",
+    "Total jobs processed by worker",
+    ["worker_name", "result"],  # success, error
+)
+
+# Prometheus Metrics for System Health
+redis_up = Gauge("redis_up", "Redis connectivity (1=up, 0=down)")
+s3_up = Gauge("s3_up", "S3 connectivity (1=up, 0=down)")
 
 
 class MetricsService:

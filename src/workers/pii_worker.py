@@ -47,21 +47,31 @@ class PIIWorker:
         self.queue = queue_service
         self.running = False
 
-    async def start(self) -> None:
+    async def start(self, shutdown_event: asyncio.Event = None) -> None:
         """Start the PII worker main loop.
 
         Continuously polls PII queue and processes jobs.
-        Runs until stopped via stop() method.
+        Runs until stopped via stop() method or shutdown_event is set.
+
+        Args:
+            shutdown_event: Optional event to signal graceful shutdown
         """
         self.running = True
         logger.info("PII worker started")
 
-        while self.running:
+        while self.running and (shutdown_event is None or not shutdown_event.is_set()):
             try:
                 # Blocking pop from PII queue with timeout
                 job_data = await self.queue.dequeue(PII_QUEUE, timeout=QUEUE_TIMEOUT_SECONDS)
 
                 if job_data:
+                    # Check shutdown before processing
+                    if shutdown_event and shutdown_event.is_set():
+                        logger.info("Shutdown requested, requeueing job and stopping")
+                        # Requeue job for next worker
+                        await self.queue.enqueue(PII_QUEUE, job_data)
+                        break
+
                     # Parse payload (dequeue returns dict)
                     job = PIIQueuePayload.model_validate(job_data)
                     logger.info(f"Received PII job: {job.job_id}")
@@ -78,7 +88,7 @@ class PIIWorker:
                 # Brief pause before retry to avoid tight error loop
                 await asyncio.sleep(WORKER_SLEEP_SECONDS)
 
-        logger.info("PII worker stopped")
+        logger.info("PII worker shutting down gracefully")
 
     def stop(self) -> None:
         """Stop the PII worker gracefully."""
@@ -90,23 +100,36 @@ class PIIWorker:
 _worker_instance: Optional[PIIWorker] = None
 
 
-async def start_pii_worker() -> None:
+async def start_pii_worker(shutdown_event: asyncio.Event = None) -> None:
     """Start the PII worker as a background task.
 
     Creates service instances and starts the worker loop.
     This function is called from FastAPI lifespan context.
+
+    Args:
+        shutdown_event: Optional event to signal graceful shutdown
     """
     global _worker_instance
 
     logger.info("Initializing PII worker...")
 
     # Import dependencies dynamically to avoid circular imports
-    from ..dependencies import get_storage_service, get_queue_service, get_job_service
+    from ..dependencies import get_redis_client, get_s3_client
+    from ..config import settings
 
-    # Create service instances using dependency injection pattern
-    storage_service = await get_storage_service(s3_client=None)
-    queue_service = await get_queue_service(redis_client=None)
-    job_service = await get_job_service(redis_client=None)
+    # Get Redis and S3 clients using proper async generator pattern
+    redis_client = await anext(get_redis_client())
+    s3_client = await anext(get_s3_client())
+
+    # Create service instances directly with clients
+    storage_service = StorageService(
+        s3_client=s3_client,
+        temp_bucket=settings.s3_temp_bucket,
+        results_bucket=settings.s3_results_bucket,
+    )
+
+    queue_service = QueueService(redis_client=redis_client)
+    job_service = JobService(redis_client=redis_client)
 
     # Create worker
     _worker_instance = PIIWorker(
@@ -118,7 +141,7 @@ async def start_pii_worker() -> None:
     logger.info("PII worker services initialized, starting worker loop...")
 
     # Start worker (runs until stopped)
-    await _worker_instance.start()
+    await _worker_instance.start(shutdown_event)
 
 
 def get_pii_worker() -> Optional[PIIWorker]:

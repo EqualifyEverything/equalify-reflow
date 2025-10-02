@@ -11,9 +11,6 @@ from src.services.cleanup_service import CleanupService
 def mock_s3_client():
     """Mock S3 client for testing."""
     client = AsyncMock()
-    # Mock NoSuchKey exception
-    client.exceptions = MagicMock()
-    client.exceptions.NoSuchKey = type('NoSuchKey', (Exception,), {})
     return client
 
 
@@ -46,7 +43,12 @@ async def test_cleanup_job_files_already_deleted(cleanup_service, mock_s3_client
     """Test cleanup of non-existent file (idempotent behavior)."""
     # Arrange
     s3_key = "temp/deleted-job-456.pdf"
-    mock_s3_client.delete_object.side_effect = mock_s3_client.exceptions.NoSuchKey()
+    # Mock ClientError with NoSuchKey code
+    error = ClientError(
+        {"Error": {"Code": "NoSuchKey", "Message": "The specified key does not exist."}},
+        "DeleteObject"
+    )
+    mock_s3_client.delete_object.side_effect = error
 
     # Act
     result = await cleanup_service.cleanup_job_files(s3_key)

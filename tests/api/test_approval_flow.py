@@ -60,9 +60,10 @@ async def test_get_review_details_valid_token(valid_job_data):
         mock_s3 = AsyncMock()
         mock_s3_dep.return_value = mock_s3
 
-        # Mock JobService
+        # Mock JobService (with new O(1) lookup method)
         mock_job_service = AsyncMock()
         mock_job_service.get_job.return_value = valid_job_data
+        mock_job_service.get_job_by_approval_token.return_value = valid_job_data
         mock_job_service_class.return_value = mock_job_service
 
         # Make request
@@ -116,17 +117,17 @@ async def test_get_review_details_expired_token(expired_job_data):
          patch("src.api.approval.get_s3_client") as mock_s3_dep, \
          patch("src.api.approval.JobService") as mock_job_service_class:
 
-        # Mock Redis with expired job
+        # Mock Redis client
         mock_redis = AsyncMock()
-        mock_redis.keys.return_value = [b"eq-pdf:job:expired-job-456"]
         mock_redis_dep.return_value = mock_redis
 
+        # Mock S3
         mock_s3 = AsyncMock()
         mock_s3_dep.return_value = mock_s3
 
-        # Mock JobService
+        # Mock JobService with expired data
         mock_job_service = AsyncMock()
-        mock_job_service.get_job.return_value = expired_job_data
+        mock_job_service.get_job_by_approval_token.return_value = expired_job_data
         mock_job_service_class.return_value = mock_job_service
 
         # Make request
@@ -171,6 +172,7 @@ async def test_submit_approval_approved_decision(valid_job_data):
         # Mock JobService
         mock_job_service = AsyncMock()
         mock_job_service.get_job.return_value = valid_job_data
+        mock_job_service.get_job_by_approval_token.return_value = valid_job_data
         mock_job_service_class.return_value = mock_job_service
 
         # Mock QueueService
@@ -229,6 +231,7 @@ async def test_submit_approval_denied_decision(valid_job_data):
         # Mock JobService
         mock_job_service = AsyncMock()
         mock_job_service.get_job.return_value = valid_job_data
+        mock_job_service.get_job_by_approval_token.return_value = valid_job_data
         mock_job_service_class.return_value = mock_job_service
 
         # Mock QueueService

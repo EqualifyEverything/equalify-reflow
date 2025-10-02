@@ -14,6 +14,7 @@ from ..shared.constants.statuses import (
 )
 from ..shared.constants.queues import APPROVAL_QUEUE, PROCESSING_QUEUE
 from ..utils.token_generator import generate_secure_token
+from ..utils.retry_helpers import retry_with_backoff
 from .storage_service import StorageService
 from .queue_service import QueueService
 from .job_service import JobService
@@ -56,66 +57,88 @@ class PIIDetectionService:
         """Process a single PII detection job.
 
         Main orchestration method that:
-        1. Downloads PDF from S3
-        2. Extracts text
+        1. Downloads PDF from S3 (with retry on transient errors)
+        2. Extracts text (with retry on transient errors)
         3. Runs PII analysis
-        4. Routes based on findings
+        4. Routes based on findings (with retry on transient errors)
+
+        All external service calls (S3, Redis) are wrapped with exponential
+        backoff retry logic to handle transient network/service failures.
 
         Args:
             job: PII queue payload with job details
-            retry_count: Current retry attempt (0-indexed)
+            retry_count: Current retry attempt (0-indexed, deprecated - kept for compatibility)
 
         Raises:
             Exception: On unrecoverable errors after retries
         """
-        logger.info(f"Processing PII job {job.job_id} (attempt {retry_count + 1})")
+        logger.info(f"Processing PII job {job.job_id}")
 
         try:
-            # Update status to scanning
-            await self.jobs.update_job_status(job.job_id, STATUS_PII_SCANNING)
+            # Update status to scanning (with retry for Redis failures)
+            await retry_with_backoff(
+                lambda: self.jobs.update_job_status(job.job_id, STATUS_PII_SCANNING),
+                max_attempts=3,
+                operation_name=f"Update job {job.job_id} status to PII_SCANNING"
+            )
 
-            # Step 1: Download PDF from S3
-            pdf_content = await self.storage.download_temp_file(job.s3_key)
+            # Step 1: Download PDF from S3 (with retry on network/throttling errors)
+            pdf_content = await retry_with_backoff(
+                lambda: self.storage.download_temp_file(job.s3_key),
+                max_attempts=3,
+                operation_name=f"Download PDF from S3 for job {job.job_id}"
+            )
             logger.info(f"Downloaded PDF for job {job.job_id}: {len(pdf_content)} bytes")
 
-            # Step 2: Extract text content
-            text_content = await extract_pdf_text(pdf_content)
+            # Step 2: Extract text content (with retry on transient extraction errors)
+            text_content = await retry_with_backoff(
+                lambda: extract_pdf_text(pdf_content),
+                max_attempts=MAX_RETRY_ATTEMPTS + 1,  # Maintain existing retry count for PDF extraction
+                operation_name=f"Extract text from PDF for job {job.job_id}"
+            )
             logger.info(f"Extracted {len(text_content)} characters from job {job.job_id}")
 
-            # Step 3: Run PII analysis
+            # Step 3: Run PII analysis (synchronous, no network calls - no retry needed)
             pii_findings = self.pii_analyzer.analyze_text(text_content)
             logger.info(f"Found {len(pii_findings)} PII entities in job {job.job_id}")
 
-            # Step 4: Route based on findings
+            # Step 4: Route based on findings (with retry for queue/status operations)
             if pii_findings:
-                await self._queue_for_approval(job, pii_findings)
+                await self._queue_for_approval_with_retry(job, pii_findings)
             else:
-                await self._queue_for_processing(job)
+                await self._queue_for_processing_with_retry(job)
 
         except PDFExtractionError as e:
-            # PDF extraction failed - retry once
-            if retry_count < MAX_RETRY_ATTEMPTS:
-                logger.warning(f"PDF extraction failed for job {job.job_id}, retrying: {e}")
-                await self.process_pii_job(job, retry_count=retry_count + 1)
-            else:
-                logger.error(f"PDF extraction failed for job {job.job_id} after retries: {e}")
-                await self.jobs.update_job_status(
+            # PDF extraction failed after retries - permanent failure
+            logger.error(f"PDF extraction failed for job {job.job_id} after retries: {e}")
+            await retry_with_backoff(
+                lambda: self.jobs.update_job_status(
                     job.job_id,
                     STATUS_FAILED,
                     error=f"PDF extraction failed: {str(e)}"
-                )
+                ),
+                max_attempts=3,
+                operation_name=f"Update job {job.job_id} to FAILED"
+            )
 
         except Exception as e:
-            # Unexpected error
+            # Unexpected error (after any retries)
             logger.error(f"PII processing failed for job {job.job_id}: {e}", exc_info=True)
-            await self.jobs.update_job_status(
-                job.job_id,
-                STATUS_FAILED,
-                error=f"PII scan error: {str(e)}"
+            await retry_with_backoff(
+                lambda: self.jobs.update_job_status(
+                    job.job_id,
+                    STATUS_FAILED,
+                    error=f"PII scan error: {str(e)}"
+                ),
+                max_attempts=3,
+                operation_name=f"Update job {job.job_id} to FAILED"
             )
 
     async def _queue_for_approval(self, job: PIIQueuePayload, findings: List[PIIFinding]) -> None:
         """Queue job for manual approval with PII details.
+
+        NOTE: This method does not include retry logic internally.
+        Use _queue_for_approval_with_retry() for automatic retries on transient failures.
 
         Args:
             job: Original PII queue payload
@@ -148,10 +171,41 @@ class PIIDetectionService:
             approval_expires_at=expires_at.isoformat()
         )
 
+        # Add to timeout tracking so timeout worker can find it
+        await self.queue.add_to_timeout_tracking(job.job_id, expires_at)
+
+        # Store token-to-job mapping for O(1) lookup (expires with approval)
+        await self.jobs.store_approval_token_mapping(
+            approval_token,
+            job.job_id,
+            ttl_hours=APPROVAL_TIMEOUT_HOURS
+        )
+
         logger.info(f"Job {job.job_id} queued for approval, token: {approval_token[:8]}...")
+
+    async def _queue_for_approval_with_retry(self, job: PIIQueuePayload, findings: List[PIIFinding]) -> None:
+        """Queue job for approval with retry logic for transient failures.
+
+        Wraps _queue_for_approval with exponential backoff retry for:
+        - Redis queue operations (enqueue)
+        - Redis status updates
+        - Redis timeout tracking
+
+        Args:
+            job: Original PII queue payload
+            findings: Detected PII entities
+        """
+        await retry_with_backoff(
+            lambda: self._queue_for_approval(job, findings),
+            max_attempts=3,
+            operation_name=f"Queue job {job.job_id} for approval"
+        )
 
     async def _queue_for_processing(self, job: PIIQueuePayload) -> None:
         """Queue clean job directly for processing.
+
+        NOTE: This method does not include retry logic internally.
+        Use _queue_for_processing_with_retry() for automatic retries on transient failures.
 
         Args:
             job: Original PII queue payload
@@ -172,3 +226,19 @@ class PIIDetectionService:
         await self.jobs.update_job_status(job.job_id, STATUS_PROCESSING)
 
         logger.info(f"Job {job.job_id} queued for processing")
+
+    async def _queue_for_processing_with_retry(self, job: PIIQueuePayload) -> None:
+        """Queue job for processing with retry logic for transient failures.
+
+        Wraps _queue_for_processing with exponential backoff retry for:
+        - Redis queue operations (enqueue)
+        - Redis status updates
+
+        Args:
+            job: Original PII queue payload
+        """
+        await retry_with_backoff(
+            lambda: self._queue_for_processing(job),
+            max_attempts=3,
+            operation_name=f"Queue job {job.job_id} for processing"
+        )

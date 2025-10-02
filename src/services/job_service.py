@@ -1,10 +1,13 @@
 """Job service for job status management."""
 
 import json
+import logging
 from datetime import datetime
 from typing import Optional, List
 
 from ..config import settings
+
+logger = logging.getLogger(__name__)
 
 
 class JobService:
@@ -188,3 +191,59 @@ class JobService:
             )
         except Exception as e:
             raise Exception(f"Failed to set expiration for job {job_id}: {str(e)}")
+
+    async def cleanup_old_job(self, job_id: str) -> bool:
+        """Delete old job status hash from Redis.
+
+        This method is used by the timeout worker to clean up jobs that are:
+        - Completed and past retention period
+        - Failed and past retention period
+        - Denied and past retention period
+        - Stuck in processing state for too long
+
+        Args:
+            job_id: Job identifier (UUID)
+
+        Returns:
+            bool: True if job existed and was deleted, False if job didn't exist
+
+        Example:
+            >>> job_service = JobService(redis_client)
+            >>> deleted = await job_service.cleanup_old_job("abc-123")
+            >>> if deleted:
+            ...     print("Job cleaned up successfully")
+        """
+        try:
+            # Check if job exists before deleting
+            key = f"{self.status_prefix}{job_id}"
+            exists = await self.redis.exists(key)
+
+            if not exists:
+                logger.debug(f"Job {job_id} does not exist (already cleaned up)")
+                return False
+
+            # Get job status for logging before deletion
+            job_data = await self.redis.hgetall(key)
+            job_status = job_data.get('status', 'unknown') if job_data else 'unknown'
+
+            # Delete the job hash
+            deleted_count = await self.redis.delete(key)
+
+            if deleted_count > 0:
+                logger.info(
+                    f"Cleaned up old job {job_id} (status: {job_status})"
+                )
+                return True
+            else:
+                logger.warning(
+                    f"Failed to delete job {job_id} (delete returned 0)"
+                )
+                return False
+
+        except Exception as e:
+            logger.error(
+                f"Error cleaning up job {job_id}: {str(e)}",
+                exc_info=True
+            )
+            # Return False on error (job not cleaned up)
+            return False

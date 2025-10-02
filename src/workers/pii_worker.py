@@ -10,6 +10,11 @@ from ..services.pii_service import PIIDetectionService
 from ..services.storage_service import StorageService
 from ..services.queue_service import QueueService
 from ..services.job_service import JobService
+from ..services.metrics_service import (
+    worker_active_gauge,
+    worker_errors_total,
+    worker_jobs_processed_total,
+)
 from ..config import settings
 
 logger = logging.getLogger(__name__)
@@ -59,36 +64,55 @@ class PIIWorker:
         self.running = True
         logger.info("PII worker started")
 
-        while self.running and (shutdown_event is None or not shutdown_event.is_set()):
-            try:
-                # Blocking pop from PII queue with timeout
-                job_data = await self.queue.dequeue(PII_QUEUE, timeout=QUEUE_TIMEOUT_SECONDS)
+        # Mark worker as active in Prometheus
+        worker_active_gauge.labels(worker_name="pii").set(1)
 
-                if job_data:
-                    # Check shutdown before processing
-                    if shutdown_event and shutdown_event.is_set():
-                        logger.info("Shutdown requested, requeueing job and stopping")
-                        # Requeue job for next worker
-                        await self.queue.enqueue(PII_QUEUE, job_data)
-                        break
+        try:
+            while self.running and (shutdown_event is None or not shutdown_event.is_set()):
+                try:
+                    # Blocking pop from PII queue with timeout
+                    job_data = await self.queue.dequeue(PII_QUEUE, timeout=QUEUE_TIMEOUT_SECONDS)
 
-                    # Parse payload (dequeue returns dict)
-                    job = PIIQueuePayload.model_validate(job_data)
-                    logger.info(f"Received PII job: {job.job_id}")
+                    if job_data:
+                        # Check shutdown before processing
+                        if shutdown_event and shutdown_event.is_set():
+                            logger.info("Shutdown requested, requeueing job and stopping")
+                            # Requeue job for next worker
+                            await self.queue.enqueue(PII_QUEUE, job_data)
+                            break
 
-                    # Process job
-                    await self.pii_service.process_pii_job(job)
+                        # Parse payload (dequeue returns dict)
+                        job = PIIQueuePayload.model_validate(job_data)
+                        logger.info(f"Received PII job: {job.job_id}")
 
-                else:
-                    # Queue empty, continue polling
-                    logger.debug("PII queue empty, continuing to poll")
+                        # Process job
+                        await self.pii_service.process_pii_job(job)
 
-            except Exception as e:
-                logger.error(f"PII worker error: {e}", exc_info=True)
-                # Brief pause before retry to avoid tight error loop
-                await asyncio.sleep(WORKER_SLEEP_SECONDS)
+                        # Track successful processing
+                        worker_jobs_processed_total.labels(
+                            worker_name="pii", result="success"
+                        ).inc()
 
-        logger.info("PII worker shutting down gracefully")
+                    else:
+                        # Queue empty, continue polling
+                        logger.debug("PII queue empty, continuing to poll")
+
+                except Exception as e:
+                    logger.error(f"PII worker error: {e}", exc_info=True)
+                    # Track error
+                    worker_errors_total.labels(
+                        worker_name="pii", error_type=type(e).__name__
+                    ).inc()
+                    worker_jobs_processed_total.labels(
+                        worker_name="pii", result="error"
+                    ).inc()
+                    # Brief pause before retry to avoid tight error loop
+                    await asyncio.sleep(WORKER_SLEEP_SECONDS)
+
+        finally:
+            # Mark worker as inactive when shutting down
+            worker_active_gauge.labels(worker_name="pii").set(0)
+            logger.info("PII worker shutting down gracefully")
 
     def stop(self) -> None:
         """Stop the PII worker gracefully."""

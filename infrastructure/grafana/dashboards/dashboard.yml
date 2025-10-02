@@ -1,0 +1,16 @@
+# Grafana Dashboard Provisioning Configuration
+# Auto-loads JSON dashboards from this directory
+
+apiVersion: 1
+
+providers:
+  - name: 'Equalify PDF Converter'
+    orgId: 1
+    folder: 'Equalify'
+    type: file
+    disableDeletion: false
+    updateIntervalSeconds: 10
+    allowUiUpdates: true
+    options:
+      path: /etc/grafana/provisioning/dashboards
+      foldersFromFilesStructure: false

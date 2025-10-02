@@ -37,6 +37,10 @@ class Settings(BaseSettings):
     api_port: int = Field(ge=1, le=65535, default=8000)
     log_level: str = "INFO"
 
+    # Metrics Configuration
+    enable_metrics: bool = True
+    metrics_port: int = Field(ge=1, le=65535, default=8001)
+
     # Application Settings
     max_upload_size: int = Field(gt=0, le=1024*1024*1024, default=100*1024*1024)  # 100MB, max 1GB
     max_file_size_mb: int = Field(gt=0, le=1000, default=100)

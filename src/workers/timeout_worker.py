@@ -13,7 +13,11 @@ from datetime import datetime, timezone, timedelta
 
 from ..config import settings
 from ..services.cleanup_service import CleanupService
-from ..services.metrics_service import MetricsService
+from ..services.metrics_service import (
+    MetricsService,
+    worker_active_gauge,
+    worker_errors_total,
+)
 from ..services.timeout_service import TimeoutService
 from ..services.s3_cleanup_service import S3CleanupService
 from ..services.orphan_service import OrphanService
@@ -84,6 +88,9 @@ class TimeoutWorker:
         self.running = True
         logger.info("Timeout worker started")
 
+        # Mark worker as active in Prometheus
+        worker_active_gauge.labels(worker_name="timeout").set(1)
+
         try:
             while self.running and (shutdown_event is None or not shutdown_event.is_set()):
                 try:
@@ -126,6 +133,10 @@ class TimeoutWorker:
 
                 except Exception as e:
                     logger.error(f"Error in timeout worker loop: {e}", exc_info=True)
+                    # Track error
+                    worker_errors_total.labels(
+                        worker_name="timeout", error_type=type(e).__name__
+                    ).inc()
                     # Sleep longer on error to avoid rapid error loops
                     await asyncio.sleep(60)
 
@@ -133,7 +144,10 @@ class TimeoutWorker:
             logger.info("Timeout worker received cancellation signal")
             raise
 
-        logger.info("Timeout worker shutting down gracefully")
+        finally:
+            # Mark worker as inactive when shutting down
+            worker_active_gauge.labels(worker_name="timeout").set(0)
+            logger.info("Timeout worker shutting down gracefully")
 
     def _should_run_task(
         self,

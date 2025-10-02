@@ -10,6 +10,11 @@ from ..services.processing_service import ProcessingService
 from ..services.storage_service import StorageService
 from ..services.queue_service import QueueService
 from ..services.job_service import JobService
+from ..services.metrics_service import (
+    worker_active_gauge,
+    worker_errors_total,
+    worker_jobs_processed_total,
+)
 from ..config import settings
 from ..dependencies import get_redis_client, get_s3_client
 
@@ -60,38 +65,57 @@ class ProcessingWorker:
         self.running = True
         logger.info("Processing worker started")
 
-        while self.running and (shutdown_event is None or not shutdown_event.is_set()):
-            try:
-                # Blocking pop from processing queue with timeout
-                job_data = await self.queue.dequeue(
-                    PROCESSING_QUEUE, timeout=QUEUE_TIMEOUT_SECONDS
-                )
+        # Mark worker as active in Prometheus
+        worker_active_gauge.labels(worker_name="processing").set(1)
 
-                if job_data:
-                    # Check shutdown before processing
-                    if shutdown_event and shutdown_event.is_set():
-                        logger.info("Shutdown requested, requeueing job and stopping")
-                        # Requeue job for next worker
-                        await self.queue.enqueue(PROCESSING_QUEUE, job_data)
-                        break
+        try:
+            while self.running and (shutdown_event is None or not shutdown_event.is_set()):
+                try:
+                    # Blocking pop from processing queue with timeout
+                    job_data = await self.queue.dequeue(
+                        PROCESSING_QUEUE, timeout=QUEUE_TIMEOUT_SECONDS
+                    )
 
-                    # Parse payload
-                    job = ProcessingQueuePayload.model_validate(job_data)
-                    logger.info(f"Received processing job: {job.job_id}")
+                    if job_data:
+                        # Check shutdown before processing
+                        if shutdown_event and shutdown_event.is_set():
+                            logger.info("Shutdown requested, requeueing job and stopping")
+                            # Requeue job for next worker
+                            await self.queue.enqueue(PROCESSING_QUEUE, job_data)
+                            break
 
-                    # Process job
-                    await self.processing_service.process_document(job)
+                        # Parse payload
+                        job = ProcessingQueuePayload.model_validate(job_data)
+                        logger.info(f"Received processing job: {job.job_id}")
 
-                else:
-                    # Queue empty, continue polling
-                    logger.debug("Processing queue empty, continuing to poll")
+                        # Process job
+                        await self.processing_service.process_document(job)
 
-            except Exception as e:
-                logger.error(f"Processing worker error: {e}", exc_info=True)
-                # Brief pause before retry to avoid tight error loop
-                await asyncio.sleep(WORKER_SLEEP_SECONDS)
+                        # Track successful processing
+                        worker_jobs_processed_total.labels(
+                            worker_name="processing", result="success"
+                        ).inc()
 
-        logger.info("Processing worker shutting down gracefully")
+                    else:
+                        # Queue empty, continue polling
+                        logger.debug("Processing queue empty, continuing to poll")
+
+                except Exception as e:
+                    logger.error(f"Processing worker error: {e}", exc_info=True)
+                    # Track error
+                    worker_errors_total.labels(
+                        worker_name="processing", error_type=type(e).__name__
+                    ).inc()
+                    worker_jobs_processed_total.labels(
+                        worker_name="processing", result="error"
+                    ).inc()
+                    # Brief pause before retry to avoid tight error loop
+                    await asyncio.sleep(WORKER_SLEEP_SECONDS)
+
+        finally:
+            # Mark worker as inactive when shutting down
+            worker_active_gauge.labels(worker_name="processing").set(0)
+            logger.info("Processing worker shutting down gracefully")
 
     def stop(self) -> None:
         """Stop the processing worker gracefully."""

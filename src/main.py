@@ -14,6 +14,7 @@ from .middleware import (
     RateLimitMiddleware,
     add_cors_middleware,
 )
+from .middleware.metrics import setup_metrics
 from .api import documents, health, approval
 from .workers.pii_worker import start_pii_worker
 from .workers.processing_worker import start_processing_worker
@@ -90,6 +91,9 @@ app = FastAPI(
     redoc_url="/redoc",
     lifespan=lifespan
 )
+
+# Set up metrics collection (must be called before adding middleware)
+setup_metrics(app)
 
 # Add middleware (order matters: last added = first executed)
 app.add_middleware(ErrorHandlerMiddleware)  # Catch all errors

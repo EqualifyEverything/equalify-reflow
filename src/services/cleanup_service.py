@@ -7,6 +7,8 @@ Implements idempotent cleanup with graceful error handling.
 import logging
 from typing import Any
 
+from botocore.exceptions import ClientError
+
 from ..config import settings
 
 logger = logging.getLogger(__name__)
@@ -50,10 +52,20 @@ class CleanupService:
             logger.info(f"Successfully cleaned up S3 file: {s3_key}")
             return True
 
-        except self.s3.exceptions.NoSuchKey:
+        except ClientError as e:
+            error_code = e.response['Error']['Code']
+
             # File doesn't exist - idempotent success
-            logger.info(f"S3 file already deleted (idempotent): {s3_key}")
-            return True
+            if error_code in ('NoSuchKey', '404'):
+                logger.info(f"S3 file already deleted (idempotent): {s3_key}")
+                return True
+
+            # Other S3 errors - log and return False
+            logger.error(
+                f"S3 ClientError cleaning up {s3_key}: {error_code} - {str(e)}",
+                exc_info=True
+            )
+            return False
 
         except Exception as e:
             # Log error but don't fail the approval workflow

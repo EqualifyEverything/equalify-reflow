@@ -57,5 +57,18 @@ class Settings(BaseSettings):
     confidence_threshold_high: float = 0.85
     confidence_threshold_medium: float = 0.60
 
+    # Timeout Worker Configuration
+    approval_timeout_hours: int = 4  # Approval deadline (hours)
+    approval_check_interval_seconds: int = 30  # Check for expired approvals every 30s
+    temp_cleanup_interval_hours: int = 1  # Clean temp files every hour
+    orphan_cleanup_interval_hours: int = 4  # Check for orphaned jobs every 4 hours
+    metrics_cleanup_interval_hours: int = 24  # Clean old metrics daily
+
+    # Retention Policies
+    temp_file_retention_hours: int = 24  # Delete temp files after 24 hours
+    job_retention_days: int = 30  # Keep completed/failed jobs for 30 days
+    metrics_retention_days: int = 90  # Keep metrics for 90 days
+    max_processing_hours: int = 2  # Mark jobs as stuck after 2 hours in processing
+
 
 settings = Settings()

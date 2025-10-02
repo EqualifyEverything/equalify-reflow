@@ -192,6 +192,63 @@ class JobService:
         except Exception as e:
             raise Exception(f"Failed to set expiration for job {job_id}: {str(e)}")
 
+    async def list_all_jobs(self) -> List[str]:
+        """List all job IDs in Redis.
+
+        This method scans for all job keys matching the status prefix
+        and extracts the job IDs. Used by orphan detection service.
+
+        Returns:
+            List of job IDs (without prefix)
+
+        Example:
+            >>> job_service = JobService(redis_client)
+            >>> job_ids = await job_service.list_all_jobs()
+            >>> print(f"Found {len(job_ids)} jobs")
+        """
+        try:
+            # Use SCAN to find all job keys (safer than KEYS for production)
+            pattern = f"{self.status_prefix}*"
+            job_ids = []
+
+            cursor = 0
+            while True:
+                cursor, keys = await self.redis.scan(
+                    cursor=cursor,
+                    match=pattern,
+                    count=100
+                )
+
+                # Extract job IDs from keys (remove prefix)
+                for key in keys:
+                    # Remove prefix to get job ID
+                    job_id = key.replace(self.status_prefix, "")
+                    job_ids.append(job_id)
+
+                if cursor == 0:
+                    break
+
+            logger.debug(f"Found {len(job_ids)} jobs in Redis")
+            return job_ids
+
+        except Exception as e:
+            logger.error(f"Error listing jobs: {str(e)}", exc_info=True)
+            return []
+
+    async def get_job_status(self, job_id: str) -> Optional[dict]:
+        """Get job status and metadata (alias for get_job).
+
+        This method is an alias for get_job() to match the naming
+        convention used in other services (timeout_service, orphan_service).
+
+        Args:
+            job_id: Job identifier
+
+        Returns:
+            Job data dictionary or None if not found
+        """
+        return await self.get_job(job_id)
+
     async def cleanup_old_job(self, job_id: str) -> bool:
         """Delete old job status hash from Redis.
 

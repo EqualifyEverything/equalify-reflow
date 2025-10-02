@@ -1,123 +1,141 @@
 {
-  "dashboard": {
-    "title": "Equalify PDF Converter - Job Processing",
-    "tags": ["equalify", "jobs", "processing"],
-    "timezone": "browser",
-    "schemaVersion": 16,
-    "version": 0,
-    "refresh": "15s",
-    "panels": [
-      {
-        "id": 1,
-        "gridPos": {"x": 0, "y": 0, "w": 12, "h": 8},
-        "type": "piechart",
-        "title": "Jobs by Status",
-        "targets": [
-          {
-            "expr": "jobs_completed_total",
-            "legendFormat": "{{status}}",
-            "refId": "A"
-          }
-        ],
-        "options": {
-          "legend": {
-            "displayMode": "list",
-            "placement": "bottom"
-          }
-        }
+  "id": null,
+  "uid": "equalify-job-processing",
+  "title": "Equalify PDF Converter - Job Processing",
+  "tags": ["equalify", "jobs", "processing"],
+  "timezone": "browser",
+  "schemaVersion": 38,
+  "version": 0,
+  "refresh": "15s",
+  "panels": [
+    {
+      "id": 1,
+      "gridPos": {"x": 0, "y": 0, "w": 12, "h": 8},
+      "type": "piechart",
+      "title": "Jobs by Status",
+      "datasource": {
+        "type": "prometheus",
+        "uid": "prometheus"
       },
-      {
-        "id": 2,
-        "gridPos": {"x": 12, "y": 0, "w": 6, "h": 8},
-        "type": "stat",
-        "title": "Jobs per Hour",
-        "targets": [
-          {
-            "expr": "rate(jobs_submitted_total[1h]) * 3600",
-            "legendFormat": "Submission Rate",
-            "refId": "A"
-          }
-        ],
-        "options": {
-          "reduceOptions": {
-            "values": false,
-            "calcs": ["lastNotNull"]
-          },
-          "textMode": "value_and_name"
-        },
-        "fieldConfig": {
-          "defaults": {
-            "unit": "short",
-            "decimals": 1
-          }
+      "targets": [
+        {
+          "expr": "jobs_completed_total",
+          "legendFormat": "{{status}}",
+          "refId": "A"
         }
-      },
-      {
-        "id": 3,
-        "gridPos": {"x": 18, "y": 0, "w": 6, "h": 8},
-        "type": "gauge",
-        "title": "Success Rate",
-        "targets": [
-          {
-            "expr": "sum(rate(jobs_completed_total{status='success'}[5m])) / sum(rate(jobs_completed_total[5m])) * 100",
-            "legendFormat": "Success %",
-            "refId": "A"
-          }
-        ],
-        "options": {
-          "showThresholdLabels": false,
-          "showThresholdMarkers": true
-        },
-        "fieldConfig": {
-          "defaults": {
-            "unit": "percent",
-            "thresholds": {
-              "mode": "absolute",
-              "steps": [
-                {"value": 0, "color": "red"},
-                {"value": 75, "color": "yellow"},
-                {"value": 95, "color": "green"}
-              ]
-            },
-            "max": 100,
-            "min": 0
-          }
-        }
-      },
-      {
-        "id": 4,
-        "gridPos": {"x": 0, "y": 8, "w": 24, "h": 10},
-        "type": "graph",
-        "title": "Processing Duration by Stage (p95)",
-        "targets": [
-          {
-            "expr": "histogram_quantile(0.95, rate(job_duration_seconds_bucket{stage='pii_scan'}[5m]))",
-            "legendFormat": "PII Scan (p95)",
-            "refId": "A"
-          },
-          {
-            "expr": "histogram_quantile(0.95, rate(job_duration_seconds_bucket{stage='processing'}[5m]))",
-            "legendFormat": "AI Processing (p95)",
-            "refId": "B"
-          },
-          {
-            "expr": "histogram_quantile(0.95, rate(job_duration_seconds_bucket{stage='total'}[5m]))",
-            "legendFormat": "Total (p95)",
-            "refId": "C"
-          }
-        ],
-        "yaxes": [
-          {"format": "s", "label": "Duration (seconds)"},
-          {"format": "short"}
-        ],
+      ],
+      "options": {
         "legend": {
-          "show": true,
-          "values": true,
-          "current": true,
-          "max": true,
-          "avg": true
+          "displayMode": "list",
+          "placement": "bottom"
         }
       }
-    ]
-  }
+    },
+    {
+      "id": 2,
+      "gridPos": {"x": 12, "y": 0, "w": 6, "h": 8},
+      "type": "stat",
+      "title": "Jobs per Hour",
+      "datasource": {
+        "type": "prometheus",
+        "uid": "prometheus"
+      },
+      "targets": [
+        {
+          "expr": "rate(jobs_submitted_total[1h]) * 3600",
+          "legendFormat": "Submission Rate",
+          "refId": "A"
+        }
+      ],
+      "options": {
+        "reduceOptions": {
+          "values": false,
+          "calcs": ["lastNotNull"]
+        },
+        "textMode": "value_and_name"
+      },
+      "fieldConfig": {
+        "defaults": {
+          "unit": "short",
+          "decimals": 1
+        }
+      }
+    },
+    {
+      "id": 3,
+      "gridPos": {"x": 18, "y": 0, "w": 6, "h": 8},
+      "type": "gauge",
+      "title": "Success Rate",
+      "datasource": {
+        "type": "prometheus",
+        "uid": "prometheus"
+      },
+      "targets": [
+        {
+          "expr": "sum(rate(jobs_completed_total{status=\"success\"}[5m])) / sum(rate(jobs_completed_total[5m])) * 100",
+          "legendFormat": "Success %",
+          "refId": "A"
+        }
+      ],
+      "options": {
+        "showThresholdLabels": false,
+        "showThresholdMarkers": true
+      },
+      "fieldConfig": {
+        "defaults": {
+          "unit": "percent",
+          "thresholds": {
+            "mode": "absolute",
+            "steps": [
+              {"value": 0, "color": "red"},
+              {"value": 75, "color": "yellow"},
+              {"value": 95, "color": "green"}
+            ]
+          },
+          "max": 100,
+          "min": 0
+        }
+      }
+    },
+    {
+      "id": 4,
+      "gridPos": {"x": 0, "y": 8, "w": 24, "h": 10},
+      "type": "timeseries",
+      "title": "Processing Duration by Stage (p95)",
+      "datasource": {
+        "type": "prometheus",
+        "uid": "prometheus"
+      },
+      "targets": [
+        {
+          "expr": "histogram_quantile(0.95, rate(job_duration_seconds_bucket{stage=\"pii_scan\"}[5m]))",
+          "legendFormat": "PII Scan (p95)",
+          "refId": "A"
+        },
+        {
+          "expr": "histogram_quantile(0.95, rate(job_duration_seconds_bucket{stage=\"processing\"}[5m]))",
+          "legendFormat": "AI Processing (p95)",
+          "refId": "B"
+        },
+        {
+          "expr": "histogram_quantile(0.95, rate(job_duration_seconds_bucket{stage=\"total\"}[5m]))",
+          "legendFormat": "Total (p95)",
+          "refId": "C"
+        }
+      ],
+      "fieldConfig": {
+        "defaults": {
+          "unit": "s"
+        }
+      },
+      "options": {
+        "legend": {
+          "showLegend": true,
+          "displayMode": "list",
+          "placement": "bottom",
+          "calcs": ["lastNotNull", "max", "mean"]
+        }
+      }
+    }
+  ]
 }

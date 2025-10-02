@@ -1,174 +1,203 @@
 {
-  "dashboard": {
-    "title": "Equalify PDF Converter - Worker Health",
-    "tags": ["equalify", "workers", "health"],
-    "timezone": "browser",
-    "schemaVersion": 16,
-    "version": 0,
-    "refresh": "15s",
-    "panels": [
-      {
-        "id": 1,
-        "gridPos": {"x": 0, "y": 0, "w": 8, "h": 6},
-        "type": "stat",
-        "title": "PII Worker Status",
-        "targets": [
-          {
-            "expr": "worker_active{worker_name='pii'}",
-            "legendFormat": "PII Worker",
-            "refId": "A"
-          }
-        ],
-        "options": {
-          "reduceOptions": {
-            "values": false,
-            "calcs": ["lastNotNull"]
-          },
-          "textMode": "value_and_name"
+  "id": null,
+  "uid": "equalify-worker-health",
+  "title": "Equalify PDF Converter - Worker Health",
+  "tags": ["equalify", "workers", "health"],
+  "timezone": "browser",
+  "schemaVersion": 38,
+  "version": 0,
+  "refresh": "15s",
+  "panels": [
+    {
+      "id": 1,
+      "gridPos": {"x": 0, "y": 0, "w": 8, "h": 6},
+      "type": "stat",
+      "title": "PII Worker Status",
+      "datasource": {
+        "type": "prometheus",
+        "uid": "prometheus"
+      },
+      "targets": [
+        {
+          "expr": "worker_active{worker_name=\"pii\"}",
+          "legendFormat": "PII Worker",
+          "refId": "A"
+        }
+      ],
+      "options": {
+        "reduceOptions": {
+          "values": false,
+          "calcs": ["lastNotNull"]
         },
-        "fieldConfig": {
-          "defaults": {
-            "thresholds": {
-              "mode": "absolute",
-              "steps": [
-                {"value": 0, "color": "red"},
-                {"value": 1, "color": "green"}
-              ]
-            },
-            "mappings": [
-              {"type": "value", "value": "0", "text": "STOPPED"},
-              {"type": "value", "value": "1", "text": "ACTIVE"}
-            ]
-          }
-        }
+        "textMode": "value_and_name"
       },
-      {
-        "id": 2,
-        "gridPos": {"x": 8, "y": 0, "w": 8, "h": 6},
-        "type": "stat",
-        "title": "Processing Worker Status",
-        "targets": [
-          {
-            "expr": "worker_active{worker_name='processing'}",
-            "legendFormat": "Processing Worker",
-            "refId": "A"
-          }
-        ],
-        "options": {
-          "reduceOptions": {
-            "values": false,
-            "calcs": ["lastNotNull"]
+      "fieldConfig": {
+        "defaults": {
+          "thresholds": {
+            "mode": "absolute",
+            "steps": [
+              {"value": 0, "color": "red"},
+              {"value": 1, "color": "green"}
+            ]
           },
-          "textMode": "value_and_name"
-        },
-        "fieldConfig": {
-          "defaults": {
-            "thresholds": {
-              "mode": "absolute",
-              "steps": [
-                {"value": 0, "color": "red"},
-                {"value": 1, "color": "green"}
-              ]
-            },
-            "mappings": [
-              {"type": "value", "value": "0", "text": "STOPPED"},
-              {"type": "value", "value": "1", "text": "ACTIVE"}
-            ]
-          }
+          "mappings": [
+            {"type": "value", "options": {"0": {"text": "STOPPED"}}},
+            {"type": "value", "options": {"1": {"text": "ACTIVE"}}}
+          ]
         }
-      },
-      {
-        "id": 3,
-        "gridPos": {"x": 16, "y": 0, "w": 8, "h": 6},
-        "type": "stat",
-        "title": "Timeout Worker Status",
-        "targets": [
-          {
-            "expr": "worker_active{worker_name='timeout'}",
-            "legendFormat": "Timeout Worker",
-            "refId": "A"
-          }
-        ],
-        "options": {
-          "reduceOptions": {
-            "values": false,
-            "calcs": ["lastNotNull"]
-          },
-          "textMode": "value_and_name"
-        },
-        "fieldConfig": {
-          "defaults": {
-            "thresholds": {
-              "mode": "absolute",
-              "steps": [
-                {"value": 0, "color": "red"},
-                {"value": 1, "color": "green"}
-              ]
-            },
-            "mappings": [
-              {"type": "value", "value": "0", "text": "STOPPED"},
-              {"type": "value", "value": "1", "text": "ACTIVE"}
-            ]
-          }
-        }
-      },
-      {
-        "id": 4,
-        "gridPos": {"x": 0, "y": 6, "w": 24, "h": 8},
-        "type": "graph",
-        "title": "Worker Errors (errors/min)",
-        "targets": [
-          {
-            "expr": "rate(worker_errors_total[5m]) * 60",
-            "legendFormat": "{{worker_name}} - {{error_type}}",
-            "refId": "A"
-          }
-        ],
-        "yaxes": [
-          {"format": "short", "label": "Errors/minute"},
-          {"format": "short"}
-        ],
-        "legend": {
-          "show": true,
-          "values": true,
-          "current": true,
-          "max": true
-        }
-      },
-      {
-        "id": 5,
-        "gridPos": {"x": 0, "y": 14, "w": 12, "h": 8},
-        "type": "graph",
-        "title": "Worker Jobs Processed (jobs/min)",
-        "targets": [
-          {
-            "expr": "rate(worker_jobs_processed_total[5m]) * 60",
-            "legendFormat": "{{worker_name}} - {{result}}",
-            "refId": "A"
-          }
-        ],
-        "yaxes": [
-          {"format": "short", "label": "Jobs/minute"},
-          {"format": "short"}
-        ]
-      },
-      {
-        "id": 6,
-        "gridPos": {"x": 12, "y": 14, "w": 12, "h": 8},
-        "type": "graph",
-        "title": "Redis Operations (ops/s)",
-        "targets": [
-          {
-            "expr": "rate(redis_commands_total[5m])",
-            "legendFormat": "{{cmd}}",
-            "refId": "A"
-          }
-        ],
-        "yaxes": [
-          {"format": "ops", "label": "Operations/sec"},
-          {"format": "short"}
-        ]
       }
-    ]
-  }
+    },
+    {
+      "id": 2,
+      "gridPos": {"x": 8, "y": 0, "w": 8, "h": 6},
+      "type": "stat",
+      "title": "Processing Worker Status",
+      "datasource": {
+        "type": "prometheus",
+        "uid": "prometheus"
+      },
+      "targets": [
+        {
+          "expr": "worker_active{worker_name=\"processing\"}",
+          "legendFormat": "Processing Worker",
+          "refId": "A"
+        }
+      ],
+      "options": {
+        "reduceOptions": {
+          "values": false,
+          "calcs": ["lastNotNull"]
+        },
+        "textMode": "value_and_name"
+      },
+      "fieldConfig": {
+        "defaults": {
+          "thresholds": {
+            "mode": "absolute",
+            "steps": [
+              {"value": 0, "color": "red"},
+              {"value": 1, "color": "green"}
+            ]
+          },
+          "mappings": [
+            {"type": "value", "options": {"0": {"text": "STOPPED"}}},
+            {"type": "value", "options": {"1": {"text": "ACTIVE"}}}
+          ]
+        }
+      }
+    },
+    {
+      "id": 3,
+      "gridPos": {"x": 16, "y": 0, "w": 8, "h": 6},
+      "type": "stat",
+      "title": "Timeout Worker Status",
+      "datasource": {
+        "type": "prometheus",
+        "uid": "prometheus"
+      },
+      "targets": [
+        {
+          "expr": "worker_active{worker_name=\"timeout\"}",
+          "legendFormat": "Timeout Worker",
+          "refId": "A"
+        }
+      ],
+      "options": {
+        "reduceOptions": {
+          "values": false,
+          "calcs": ["lastNotNull"]
+        },
+        "textMode": "value_and_name"
+      },
+      "fieldConfig": {
+        "defaults": {
+          "thresholds": {
+            "mode": "absolute",
+            "steps": [
+              {"value": 0, "color": "red"},
+              {"value": 1, "color": "green"}
+            ]
+          },
+          "mappings": [
+            {"type": "value", "options": {"0": {"text": "STOPPED"}}},
+            {"type": "value", "options": {"1": {"text": "ACTIVE"}}}
+          ]
+        }
+      }
+    },
+    {
+      "id": 4,
+      "gridPos": {"x": 0, "y": 6, "w": 24, "h": 8},
+      "type": "timeseries",
+      "title": "Worker Errors (errors/min)",
+      "datasource": {
+        "type": "prometheus",
+        "uid": "prometheus"
+      },
+      "targets": [
+        {
+          "expr": "rate(worker_errors_total[5m]) * 60",
+          "legendFormat": "{{worker_name}} - {{error_type}}",
+          "refId": "A"
+        }
+      ],
+      "fieldConfig": {
+        "defaults": {
+          "unit": "short"
+        }
+      },
+      "options": {
+        "legend": {
+          "showLegend": true,
+          "displayMode": "list",
+          "placement": "bottom",
+          "calcs": ["lastNotNull", "max"]
+        }
+      }
+    },
+    {
+      "id": 5,
+      "gridPos": {"x": 0, "y": 14, "w": 12, "h": 8},
+      "type": "timeseries",
+      "title": "Worker Jobs Processed (jobs/min)",
+      "datasource": {
+        "type": "prometheus",
+        "uid": "prometheus"
+      },
+      "targets": [
+        {
+          "expr": "rate(worker_jobs_processed_total[5m]) * 60",
+          "legendFormat": "{{worker_name}} - {{result}}",
+          "refId": "A"
+        }
+      ],
+      "fieldConfig": {
+        "defaults": {
+          "unit": "short"
+        }
+      }
+    },
+    {
+      "id": 6,
+      "gridPos": {"x": 12, "y": 14, "w": 12, "h": 8},
+      "type": "timeseries",
+      "title": "Redis Operations (ops/s)",
+      "datasource": {
+        "type": "prometheus",
+        "uid": "prometheus"
+      },
+      "targets": [
+        {
+          "expr": "rate(redis_commands_total[5m])",
+          "legendFormat": "{{cmd}}",
+          "refId": "A"
+        }
+      ],
+      "fieldConfig": {
+        "defaults": {
+          "unit": "ops"
+        }
+      }
+    }
+  ]
 }

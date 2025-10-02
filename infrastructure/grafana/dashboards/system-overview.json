@@ -1,169 +1,192 @@
 {
-  "dashboard": {
-    "title": "Equalify PDF Converter - System Overview",
-    "tags": ["equalify", "system", "overview"],
-    "timezone": "browser",
-    "schemaVersion": 16,
-    "version": 0,
-    "refresh": "15s",
-    "panels": [
-      {
-        "id": 1,
-        "gridPos": {"x": 0, "y": 0, "w": 8, "h": 6},
-        "type": "stat",
-        "title": "API Health",
-        "targets": [
-          {
-            "expr": "up{job='equalify-api'}",
-            "legendFormat": "API Status",
-            "refId": "A"
-          }
-        ],
-        "options": {
-          "reduceOptions": {
-            "values": false,
-            "calcs": ["lastNotNull"]
-          },
-          "text": {},
-          "textMode": "value_and_name"
-        },
-        "fieldConfig": {
-          "defaults": {
-            "thresholds": {
-              "mode": "absolute",
-              "steps": [
-                {"value": 0, "color": "red"},
-                {"value": 1, "color": "green"}
-              ]
-            },
-            "mappings": [
-              {"type": "value", "value": "0", "text": "DOWN"},
-              {"type": "value", "value": "1", "text": "UP"}
-            ]
-          }
+  "id": null,
+  "uid": "equalify-system-overview",
+  "title": "Equalify PDF Converter - System Overview",
+  "tags": ["equalify", "system", "overview"],
+  "timezone": "browser",
+  "schemaVersion": 38,
+  "version": 0,
+  "refresh": "15s",
+  "panels": [
+    {
+      "id": 1,
+      "gridPos": {"x": 0, "y": 0, "w": 8, "h": 6},
+      "type": "stat",
+      "title": "API Health",
+      "datasource": {
+        "type": "prometheus",
+        "uid": "prometheus"
+      },
+      "targets": [
+        {
+          "expr": "up{job=\"equalify-api\"}",
+          "legendFormat": "API Status",
+          "refId": "A"
         }
-      },
-      {
-        "id": 2,
-        "gridPos": {"x": 8, "y": 0, "w": 8, "h": 6},
-        "type": "stat",
-        "title": "Redis Health",
-        "targets": [
-          {
-            "expr": "redis_up",
-            "legendFormat": "Redis Status",
-            "refId": "A"
-          }
-        ],
-        "options": {
-          "reduceOptions": {
-            "values": false,
-            "calcs": ["lastNotNull"]
-          },
-          "textMode": "value_and_name"
+      ],
+      "options": {
+        "reduceOptions": {
+          "values": false,
+          "calcs": ["lastNotNull"]
         },
-        "fieldConfig": {
-          "defaults": {
-            "thresholds": {
-              "mode": "absolute",
-              "steps": [
-                {"value": 0, "color": "red"},
-                {"value": 1, "color": "green"}
-              ]
-            },
-            "mappings": [
-              {"type": "value", "value": "0", "text": "DOWN"},
-              {"type": "value", "value": "1", "text": "UP"}
-            ]
-          }
-        }
+        "textMode": "value_and_name"
       },
-      {
-        "id": 3,
-        "gridPos": {"x": 16, "y": 0, "w": 8, "h": 6},
-        "type": "stat",
-        "title": "S3 Health",
-        "targets": [
-          {
-            "expr": "s3_up",
-            "legendFormat": "S3 Status",
-            "refId": "A"
-          }
-        ],
-        "options": {
-          "reduceOptions": {
-            "values": false,
-            "calcs": ["lastNotNull"]
+      "fieldConfig": {
+        "defaults": {
+          "thresholds": {
+            "mode": "absolute",
+            "steps": [
+              {"value": 0, "color": "red"},
+              {"value": 1, "color": "green"}
+            ]
           },
-          "textMode": "value_and_name"
-        },
-        "fieldConfig": {
-          "defaults": {
-            "thresholds": {
-              "mode": "absolute",
-              "steps": [
-                {"value": 0, "color": "red"},
-                {"value": 1, "color": "green"}
-              ]
-            },
-            "mappings": [
-              {"type": "value", "value": "0", "text": "DOWN"},
-              {"type": "value", "value": "1", "text": "UP"}
-            ]
-          }
+          "mappings": [
+            {"type": "value", "options": {"0": {"text": "DOWN"}}},
+            {"type": "value", "options": {"1": {"text": "UP"}}}
+          ]
         }
-      },
-      {
-        "id": 4,
-        "gridPos": {"x": 0, "y": 6, "w": 12, "h": 8},
-        "type": "graph",
-        "title": "HTTP Request Rate (req/s)",
-        "targets": [
-          {
-            "expr": "rate(http_requests_total[5m])",
-            "legendFormat": "{{method}} {{endpoint}}",
-            "refId": "A"
-          }
-        ],
-        "yaxes": [
-          {"format": "reqps", "label": "Requests/sec"},
-          {"format": "short"}
-        ]
-      },
-      {
-        "id": 5,
-        "gridPos": {"x": 12, "y": 6, "w": 12, "h": 8},
-        "type": "graph",
-        "title": "HTTP Error Rate (errors/s)",
-        "targets": [
-          {
-            "expr": "rate(http_requests_total{status=~\"5..\"}[5m])",
-            "legendFormat": "{{status}} errors",
-            "refId": "A"
-          }
-        ],
-        "yaxes": [
-          {"format": "reqps", "label": "Errors/sec"},
-          {"format": "short"}
-        ]
-      },
-      {
-        "id": 6,
-        "gridPos": {"x": 0, "y": 14, "w": 24, "h": 8},
-        "type": "graph",
-        "title": "HTTP Response Time (p95)",
-        "targets": [
-          {
-            "expr": "histogram_quantile(0.95, rate(http_request_duration_seconds_bucket[5m]))",
-            "legendFormat": "p95 latency",
-            "refId": "A"
-          }
-        ],
-        "yaxes": [
-          {"format": "s", "label": "Seconds"},
-          {"format": "short"}
-        ]
       }
-    ]
-  }
+    },
+    {
+      "id": 2,
+      "gridPos": {"x": 8, "y": 0, "w": 8, "h": 6},
+      "type": "stat",
+      "title": "Redis Health",
+      "datasource": {
+        "type": "prometheus",
+        "uid": "prometheus"
+      },
+      "targets": [
+        {
+          "expr": "redis_up",
+          "legendFormat": "Redis Status",
+          "refId": "A"
+        }
+      ],
+      "options": {
+        "reduceOptions": {
+          "values": false,
+          "calcs": ["lastNotNull"]
+        },
+        "textMode": "value_and_name"
+      },
+      "fieldConfig": {
+        "defaults": {
+          "thresholds": {
+            "mode": "absolute",
+            "steps": [
+              {"value": 0, "color": "red"},
+              {"value": 1, "color": "green"}
+            ]
+          },
+          "mappings": [
+            {"type": "value", "options": {"0": {"text": "DOWN"}}},
+            {"type": "value", "options": {"1": {"text": "UP"}}}
+          ]
+        }
+      }
+    },
+    {
+      "id": 3,
+      "gridPos": {"x": 16, "y": 0, "w": 8, "h": 6},
+      "type": "stat",
+      "title": "Total Queue Depth",
+      "datasource": {
+        "type": "prometheus",
+        "uid": "prometheus"
+      },
+      "targets": [
+        {
+          "expr": "sum(queue_depth)",
+          "legendFormat": "Queue Depth",
+          "refId": "A"
+        }
+      ],
+      "options": {
+        "reduceOptions": {
+          "values": false,
+          "calcs": ["lastNotNull"]
+        },
+        "textMode": "value_and_name"
+      },
+      "fieldConfig": {
+        "defaults": {
+          "thresholds": {
+            "mode": "absolute",
+            "steps": [
+              {"value": 0, "color": "green"},
+              {"value": 10, "color": "yellow"},
+              {"value": 50, "color": "red"}
+            ]
+          }
+        }
+      }
+    },
+    {
+      "id": 4,
+      "gridPos": {"x": 0, "y": 6, "w": 12, "h": 8},
+      "type": "timeseries",
+      "title": "HTTP Request Rate (req/s)",
+      "datasource": {
+        "type": "prometheus",
+        "uid": "prometheus"
+      },
+      "targets": [
+        {
+          "expr": "rate(http_requests_total[5m])",
+          "legendFormat": "{{method}} {{endpoint}}",
+          "refId": "A"
+        }
+      ],
+      "fieldConfig": {
+        "defaults": {
+          "unit": "reqps"
+        }
+      }
+    },
+    {
+      "id": 5,
+      "gridPos": {"x": 12, "y": 6, "w": 12, "h": 8},
+      "type": "timeseries",
+      "title": "HTTP Error Rate (errors/s)",
+      "datasource": {
+        "type": "prometheus",
+        "uid": "prometheus"
+      },
+      "targets": [
+        {
+          "expr": "rate(http_requests_total{status=~\"5..\"}[5m])",
+          "legendFormat": "{{status}} errors",
+          "refId": "A"
+        }
+      ],
+      "fieldConfig": {
+        "defaults": {
+          "unit": "reqps"
+        }
+      }
+    },
+    {
+      "id": 6,
+      "gridPos": {"x": 0, "y": 14, "w": 24, "h": 8},
+      "type": "timeseries",
+      "title": "HTTP Response Time (p95)",
+      "datasource": {
+        "type": "prometheus",
+        "uid": "prometheus"
+      },
+      "targets": [
+        {
+          "expr": "histogram_quantile(0.95, rate(http_request_duration_seconds_bucket[5m]))",
+          "legendFormat": "p95 latency",
+          "refId": "A"
+        }
+      ],
+      "fieldConfig": {
+        "defaults": {
+          "unit": "s"
+        }
+      }
+    }
+  ]
 }

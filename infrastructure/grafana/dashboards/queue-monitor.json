@@ -1,96 +1,111 @@
 {
-  "dashboard": {
-    "title": "Equalify PDF Converter - Queue Monitor",
-    "tags": ["equalify", "queues", "monitoring"],
-    "timezone": "browser",
-    "schemaVersion": 16,
-    "version": 0,
-    "refresh": "15s",
-    "panels": [
-      {
-        "id": 1,
-        "gridPos": {"x": 0, "y": 0, "w": 24, "h": 10},
-        "type": "graph",
-        "title": "Queue Depths (Real-time)",
-        "targets": [
-          {
-            "expr": "queue_depth{queue_name='pii_scan_queue'}",
-            "legendFormat": "PII Scan Queue",
-            "refId": "A"
-          },
-          {
-            "expr": "queue_depth{queue_name='processing_queue'}",
-            "legendFormat": "Processing Queue",
-            "refId": "B"
-          },
-          {
-            "expr": "queue_depth{queue_name='approval_pending_queue'}",
-            "legendFormat": "Approval Queue",
-            "refId": "C"
-          }
-        ],
-        "yaxes": [
-          {"format": "short", "label": "Jobs in Queue"},
-          {"format": "short"}
-        ],
-        "legend": {
-          "show": true,
-          "values": true,
-          "current": true,
-          "max": true,
-          "avg": true
+  "id": null,
+  "uid": "equalify-queue-monitor",
+  "title": "Equalify PDF Converter - Queue Monitor",
+  "tags": ["equalify", "queues", "monitoring"],
+  "timezone": "browser",
+  "schemaVersion": 38,
+  "version": 0,
+  "refresh": "15s",
+  "panels": [
+    {
+      "id": 1,
+      "gridPos": {"x": 0, "y": 0, "w": 24, "h": 10},
+      "type": "timeseries",
+      "title": "Queue Depths (Real-time)",
+      "datasource": {
+        "type": "prometheus",
+        "uid": "prometheus"
+      },
+      "targets": [
+        {
+          "expr": "queue_depth{queue_name=\"pii_scan_queue\"}",
+          "legendFormat": "PII Scan Queue",
+          "refId": "A"
+        },
+        {
+          "expr": "queue_depth{queue_name=\"processing_queue\"}",
+          "legendFormat": "Processing Queue",
+          "refId": "B"
+        },
+        {
+          "expr": "queue_depth{queue_name=\"approval_pending_queue\"}",
+          "legendFormat": "Approval Queue",
+          "refId": "C"
+        }
+      ],
+      "fieldConfig": {
+        "defaults": {
+          "unit": "short"
         }
       },
-      {
-        "id": 2,
-        "gridPos": {"x": 0, "y": 10, "w": 12, "h": 8},
-        "type": "graph",
-        "title": "Queue Processing Rate (jobs/min)",
-        "targets": [
-          {
-            "expr": "rate(jobs_completed_total[5m]) * 60",
-            "legendFormat": "{{status}}",
-            "refId": "A"
-          }
-        ],
-        "yaxes": [
-          {"format": "short", "label": "Jobs/minute"},
-          {"format": "short"}
-        ]
+      "options": {
+        "legend": {
+          "showLegend": true,
+          "displayMode": "list",
+          "placement": "bottom",
+          "calcs": ["lastNotNull", "max", "mean"]
+        }
+      }
+    },
+    {
+      "id": 2,
+      "gridPos": {"x": 0, "y": 10, "w": 12, "h": 8},
+      "type": "timeseries",
+      "title": "Queue Processing Rate (jobs/min)",
+      "datasource": {
+        "type": "prometheus",
+        "uid": "prometheus"
       },
-      {
-        "id": 3,
-        "gridPos": {"x": 12, "y": 10, "w": 12, "h": 8},
-        "type": "stat",
-        "title": "Average Queue Wait Time (estimated)",
-        "targets": [
-          {
-            "expr": "sum(queue_depth) / (rate(jobs_completed_total[5m]) + 0.001)",
-            "legendFormat": "Wait Time",
-            "refId": "A"
-          }
-        ],
-        "options": {
-          "reduceOptions": {
-            "values": false,
-            "calcs": ["lastNotNull"]
-          },
-          "textMode": "value_and_name"
+      "targets": [
+        {
+          "expr": "rate(jobs_completed_total[5m]) * 60",
+          "legendFormat": "{{status}}",
+          "refId": "A"
+        }
+      ],
+      "fieldConfig": {
+        "defaults": {
+          "unit": "short"
+        }
+      }
+    },
+    {
+      "id": 3,
+      "gridPos": {"x": 12, "y": 10, "w": 12, "h": 8},
+      "type": "stat",
+      "title": "Average Queue Wait Time (estimated)",
+      "datasource": {
+        "type": "prometheus",
+        "uid": "prometheus"
+      },
+      "targets": [
+        {
+          "expr": "sum(queue_depth) / (rate(jobs_completed_total[5m]) + 0.001)",
+          "legendFormat": "Wait Time",
+          "refId": "A"
+        }
+      ],
+      "options": {
+        "reduceOptions": {
+          "values": false,
+          "calcs": ["lastNotNull"]
         },
-        "fieldConfig": {
-          "defaults": {
-            "unit": "s",
-            "thresholds": {
-              "mode": "absolute",
-              "steps": [
-                {"value": 0, "color": "green"},
-                {"value": 60, "color": "yellow"},
-                {"value": 300, "color": "red"}
-              ]
-            }
+        "textMode": "value_and_name"
+      },
+      "fieldConfig": {
+        "defaults": {
+          "unit": "s",
+          "thresholds": {
+            "mode": "absolute",
+            "steps": [
+              {"value": 0, "color": "green"},
+              {"value": 60, "color": "yellow"},
+              {"value": 300, "color": "red"}
+            ]
           }
         }
       }
-    ]
-  }
+    }
+  ]
 }

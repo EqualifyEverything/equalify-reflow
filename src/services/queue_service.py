@@ -1,11 +1,15 @@
 """Queue service for Redis operations."""
 
 import json
+import logging
 from datetime import datetime
 from typing import Optional, List, Any
 from pydantic import BaseModel
 
 from ..config import settings
+from ..shared.constants.redis_keys import timeout_key
+
+logger = logging.getLogger(__name__)
 
 
 class QueueService:
@@ -185,3 +189,190 @@ class QueueService:
             True if Redis is healthy, False otherwise
         """
         return await self.check_redis_connection()
+
+    async def add_to_timeout_tracking(
+        self,
+        job_id: str,
+        expires_at: datetime,
+        timeout_type: str = "approval"
+    ) -> None:
+        """Add job to timeout tracking sorted set.
+
+        Uses Redis sorted set (ZADD) where:
+        - Score: Unix timestamp of expiration deadline
+        - Member: job_id
+
+        This allows efficient range queries to find expired jobs using ZRANGEBYSCORE.
+
+        Args:
+            job_id: Job identifier (UUID)
+            expires_at: Datetime when approval expires
+            timeout_type: Type of timeout (default: "approval")
+
+        Raises:
+            Exception: If Redis operation fails
+
+        Example:
+            >>> queue = QueueService(redis_client)
+            >>> expires = datetime.now(timezone.utc) + timedelta(hours=4)
+            >>> await queue.add_to_timeout_tracking("abc-123", expires)
+        """
+        try:
+            # Convert datetime to Unix timestamp
+            timestamp = expires_at.timestamp()
+
+            # Get Redis key for this timeout type
+            key = timeout_key(timeout_type)
+
+            # ZADD adds to sorted set: ZADD key score member
+            await self.redis.zadd(key, {job_id: timestamp})
+
+            logger.debug(
+                f"Added job {job_id} to timeout tracking "
+                f"(expires at {expires_at.isoformat()})"
+            )
+
+        except Exception as e:
+            logger.error(
+                f"Failed to add job {job_id} to timeout tracking: {str(e)}",
+                exc_info=True
+            )
+            raise Exception(f"Failed to add timeout tracking: {str(e)}")
+
+    async def get_expired_timeouts(
+        self,
+        timeout_type: str = "approval"
+    ) -> list[tuple[str, float]]:
+        """Get jobs with expired approval deadlines.
+
+        Queries Redis sorted set for members with scores (timestamps) less than
+        or equal to current time. Returns job IDs and their expiration timestamps.
+
+        Args:
+            timeout_type: Type of timeout to check (default: "approval")
+
+        Returns:
+            List of tuples: [(job_id, expiration_timestamp), ...]
+            Empty list if no expired jobs or on error
+
+        Example:
+            >>> queue = QueueService(redis_client)
+            >>> expired = await queue.get_expired_timeouts()
+            >>> for job_id, timestamp in expired:
+            ...     print(f"Job {job_id} expired at {datetime.fromtimestamp(timestamp)}")
+        """
+        try:
+            # Get current timestamp
+            current_time = datetime.utcnow().timestamp()
+
+            # Get Redis key for this timeout type
+            key = timeout_key(timeout_type)
+
+            # ZRANGEBYSCORE returns members with score in range [0, current_time]
+            # withscores=True returns (member, score) tuples
+            result = await self.redis.zrangebyscore(
+                key,
+                min=0,
+                max=current_time,
+                withscores=True
+            )
+
+            # Convert result to list of tuples (job_id, timestamp)
+            expired_jobs = []
+            for job_id, timestamp in result:
+                # Redis returns bytes, decode to string
+                if isinstance(job_id, bytes):
+                    job_id = job_id.decode('utf-8')
+                expired_jobs.append((job_id, float(timestamp)))
+
+            if expired_jobs:
+                logger.info(
+                    f"Found {len(expired_jobs)} expired {timeout_type} timeouts"
+                )
+
+            return expired_jobs
+
+        except Exception as e:
+            logger.error(
+                f"Failed to get expired {timeout_type} timeouts: {str(e)}",
+                exc_info=True
+            )
+            # Return empty list on error (fail-safe)
+            return []
+
+    async def remove_from_timeout_tracking(
+        self,
+        job_id: str,
+        timeout_type: str = "approval"
+    ) -> bool:
+        """Remove job from timeout tracking sorted set.
+
+        Called when:
+        - Job is approved/denied (no longer needs timeout tracking)
+        - Timeout has been processed
+        - Job is completed or failed
+
+        Args:
+            job_id: Job identifier (UUID)
+            timeout_type: Type of timeout (default: "approval")
+
+        Returns:
+            bool: True if job was removed, False if job wasn't in set
+
+        Example:
+            >>> queue = QueueService(redis_client)
+            >>> removed = await queue.remove_from_timeout_tracking("abc-123")
+            >>> if removed:
+            ...     print("Job removed from timeout tracking")
+        """
+        try:
+            # Get Redis key for this timeout type
+            key = timeout_key(timeout_type)
+
+            # ZREM removes member from sorted set
+            # Returns number of members removed (0 or 1)
+            count = await self.redis.zrem(key, job_id)
+
+            if count > 0:
+                logger.debug(
+                    f"Removed job {job_id} from {timeout_type} timeout tracking"
+                )
+                return True
+            else:
+                logger.debug(
+                    f"Job {job_id} was not in {timeout_type} timeout tracking"
+                )
+                return False
+
+        except Exception as e:
+            logger.error(
+                f"Failed to remove job {job_id} from timeout tracking: {str(e)}",
+                exc_info=True
+            )
+            # Return False on error (idempotent - job effectively not tracked)
+            return False
+
+    async def get_timeout_count(self, timeout_type: str = "approval") -> int:
+        """Get count of jobs currently in timeout tracking.
+
+        Args:
+            timeout_type: Type of timeout (default: "approval")
+
+        Returns:
+            int: Number of jobs in timeout tracking, or -1 on error
+
+        Example:
+            >>> queue = QueueService(redis_client)
+            >>> count = await queue.get_timeout_count()
+            >>> print(f"{count} jobs awaiting approval")
+        """
+        try:
+            key = timeout_key(timeout_type)
+            count = await self.redis.zcard(key)
+            return count
+        except Exception as e:
+            logger.error(
+                f"Failed to get timeout count: {str(e)}",
+                exc_info=True
+            )
+            return -1

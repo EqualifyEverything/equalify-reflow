@@ -54,8 +54,31 @@ services:
       localstack:
         condition: service_healthy
 
-  # Note: Worker services will be added here when implemented
-  # Workers will run as background tasks within the api-gateway container (monolith architecture)
+  # Demo Frontend - React UI for API testing
+  demo-ui:
+    build:
+      context: ./frontend/demo-ui
+      dockerfile: Dockerfile.dev
+    container_name: equalify-pdf-demo-ui
+    restart: unless-stopped
+    ports:
+      - "5173:5173"  # Vite dev server
+    environment:
+      - VITE_API_URL=http://localhost:8000  # Browser makes requests to localhost
+      - VITE_GRAFANA_URL=http://localhost:3000
+    volumes:
+      # Hot reload - mount source code
+      - ./frontend/demo-ui/src:/app/src:ro
+      - ./frontend/demo-ui/public:/app/public:ro
+      - ./frontend/demo-ui/index.html:/app/index.html:ro
+      - ./frontend/demo-ui/vite.config.ts:/app/vite.config.ts:ro
+      - ./frontend/demo-ui/tailwind.config.js:/app/tailwind.config.js:ro
+      - ./frontend/demo-ui/postcss.config.js:/app/postcss.config.js:ro
+    networks:
+      - equalify-network
+    depends_on:
+      api-gateway:
+        condition: service_healthy
 
 networks:
   equalify-network:

@@ -1,0 +1,160 @@
+@tailwind base;
+@tailwind components;
+@tailwind utilities;
+
+@layer base {
+  :root {
+    /* Content colors */
+    --background: 0.98 0 0;  /* Near white background */
+    --foreground: 0.1 0 0;   /* Near black text */
+
+    /* Card colors */
+    --card: 1 0 0;
+    --card-foreground: 0.1 0 0;
+
+    /* Primary (UIC Navy equivalent in OKLCH) */
+    --primary: 0.1 0 0;
+    --primary-foreground: 1 0 0;
+
+    /* Secondary */
+    --secondary: 0.95 0 0;
+    --secondary-foreground: 0.1 0 0;
+
+    /* Muted */
+    --muted: 0.95 0 0;
+    --muted-foreground: 0.4 0 0;
+
+    /* Accent */
+    --accent: 0.95 0 0;
+    --accent-foreground: 0.1 0 0;
+
+    /* Destructive (UIC Red equivalent) */
+    --destructive: 0.577 0.245 27.325;
+    --destructive-foreground: 1 0 0;
+
+    /* Borders & Inputs */
+    --border: 0 0 0 / 10%;
+    --input: 0 0 0 / 10%;
+    --ring: 0.4 0 0;
+
+    /* Sidebar dark theme */
+    --sidebar: 0.12 0 0;          /* Very dark gray */
+    --sidebar-foreground: 0.985 0 0;  /* Near white */
+    --sidebar-primary: 0.488 0.243 264.376;  /* Blue/Purple */
+    --sidebar-accent: 0.15 0 0;   /* Dark gray */
+    --sidebar-border: 1 0 0 / 10%;  /* White 10% opacity */
+    --sidebar-ring: 0.556 0 0;    /* Mid-gray */
+
+    /* Border radius */
+    --radius: 0.625rem;  /* 10px base */
+  }
+
+  body {
+    @apply bg-uic-light-gray text-foreground font-sans;
+  }
+
+  /* Typography hierarchy matching UIC branding */
+  h1 {
+    @apply text-5xl font-bold text-uic-navy mt-16 mb-8;
+    border-bottom: 4px solid #d50032;
+    padding-bottom: 0.5rem;
+  }
+
+  h2 {
+    @apply text-3xl font-bold text-uic-navy mt-14 mb-6;
+    border-bottom: 2px solid #d50032;
+    padding-bottom: 0.5rem;
+  }
+
+  h3 {
+    @apply text-2xl font-bold text-uic-navy mt-10 mb-4;
+  }
+
+  h4 {
+    @apply text-xl font-bold text-uic-navy mt-8 mb-3;
+  }
+
+  h5 {
+    @apply text-lg font-bold text-uic-navy mt-6 mb-2;
+  }
+
+  h6 {
+    @apply text-base font-bold text-uic-navy mt-4 mb-2;
+  }
+
+  /* Body text */
+  p {
+    @apply text-lg leading-relaxed mb-6;
+  }
+
+  p:first-of-type {
+    @apply text-xl text-uic-navy;
+  }
+
+  /* Links */
+  a {
+    @apply text-uic-red no-underline hover:underline font-semibold transition-colors;
+  }
+
+  /* Strong/Bold */
+  strong, b {
+    @apply text-uic-navy font-bold;
+  }
+
+  /* Code inline */
+  code {
+    @apply text-uic-navy bg-gray-100 text-sm font-mono rounded px-1.5 py-0.5;
+  }
+
+  /* Blockquotes */
+  blockquote {
+    @apply text-xl italic text-uic-navy border-l-4 border-uic-red bg-gray-50 pl-6 py-4 my-6;
+  }
+}
+
+@layer components {
+  /* Demo badge */
+  .demo-badge {
+    @apply bg-uic-red text-white px-3 py-1 rounded-full text-sm font-bold uppercase tracking-wide;
+  }
+
+  /* UIC dividers */
+  .uic-divider {
+    @apply h-1 bg-uic-red max-w-32 mx-auto;
+  }
+
+  .divider-line {
+    @apply h-px bg-white opacity-20 w-full;
+  }
+
+  .divider-thick {
+    @apply h-0.5 bg-white opacity-20 w-full;
+  }
+
+  /* Hero section */
+  .hero-section {
+    @apply bg-uic-navy text-white py-hero;
+  }
+
+  /* Content section */
+  .content-section {
+    @apply bg-uic-light-gray text-uic-navy py-section;
+  }
+
+  /* UIC accent text */
+  .uic-accent {
+    @apply text-uic-red;
+  }
+
+  /* Balanced text */
+  .text-balance {
+    text-wrap: balance;
+  }
+}
+
+@layer utilities {
+  /* Custom utilities for UIC branding */
+  .transition-hover {
+    @apply transition-all duration-300;
+  }
+}

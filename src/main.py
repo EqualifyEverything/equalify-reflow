@@ -102,6 +102,12 @@ app.include_router(health.router)
 app.include_router(documents.router)
 app.include_router(approval.router)
 
+# Conditionally import dev monitoring endpoints (only in development)
+if settings.environment == "dev":
+    from .api import dev_monitoring
+    app.include_router(dev_monitoring.router)
+    logger.info("✅ Dev monitoring endpoints enabled at /api/dev/monitoring/queues")
+
 
 @app.get("/")
 async def root():

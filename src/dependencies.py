@@ -1,8 +1,9 @@
 """Dependency injection for shared clients and services."""
 
-from typing import AsyncGenerator
+from typing import AsyncGenerator, Optional
 import boto3
 import redis.asyncio as redis
+from fastapi import Depends
 
 from .config import settings
 from .services.storage_service import StorageService
@@ -54,34 +55,28 @@ async def get_redis_client() -> AsyncGenerator[redis.Redis, None]:
     try:
         yield client
     finally:
-        await client.close()
+        await client.aclose()
 
 
 # Service dependencies
 async def get_storage_service(
-    s3_client=None
+    s3_client = Depends(get_s3_client)
 ) -> StorageService:
     """Get storage service instance.
 
     Args:
-        s3_client: Optional S3 client (injected by FastAPI Depends)
+        s3_client: S3 client (auto-injected by FastAPI Depends)
 
     Returns:
         Configured StorageService instance
 
     Note:
         In FastAPI routes, use: storage_service: StorageService = Depends(get_storage_service)
-    """
-    if s3_client is None:
-        # For non-FastAPI usage (workers, tests)
-        s3_client = boto3.client(
-            "s3",
-            endpoint_url=settings.aws_endpoint_url,
-            region_name=settings.aws_region,
-            aws_access_key_id=settings.aws_access_key_id,
-            aws_secret_access_key=settings.aws_secret_access_key,
-        )
 
+        For workers, do NOT use this function. Instead:
+        s3_client = await anext(get_s3_client())
+        storage_service = StorageService(s3_client=s3_client, ...)
+    """
     return StorageService(
         s3_client=s3_client,
         temp_bucket=settings.s3_temp_bucket,
@@ -90,79 +85,64 @@ async def get_storage_service(
 
 
 async def get_queue_service(
-    redis_client=None
+    redis_client = Depends(get_redis_client)
 ) -> QueueService:
     """Get queue service instance.
 
     Args:
-        redis_client: Optional Redis client (injected by FastAPI Depends)
+        redis_client: Redis client (auto-injected by FastAPI Depends)
 
     Returns:
         Configured QueueService instance
 
     Note:
         In FastAPI routes, use: queue_service: QueueService = Depends(get_queue_service)
-    """
-    if redis_client is None:
-        # For non-FastAPI usage (workers, tests)
-        redis_client = redis.from_url(
-            settings.redis_url,
-            decode_responses=True,
-            max_connections=settings.redis_max_connections,
-        )
 
+        For workers, do NOT use this function. Instead:
+        redis_client = await anext(get_redis_client())
+        queue_service = QueueService(redis_client=redis_client)
+    """
     return QueueService(redis_client=redis_client)
 
 
 async def get_job_service(
-    redis_client=None
+    redis_client = Depends(get_redis_client)
 ) -> JobService:
     """Get job service instance.
 
     Args:
-        redis_client: Optional Redis client (injected by FastAPI Depends)
+        redis_client: Redis client (auto-injected by FastAPI Depends)
 
     Returns:
         Configured JobService instance
 
     Note:
         In FastAPI routes, use: job_service: JobService = Depends(get_job_service)
-    """
-    if redis_client is None:
-        # For non-FastAPI usage (workers, tests)
-        redis_client = redis.from_url(
-            settings.redis_url,
-            decode_responses=True,
-            max_connections=settings.redis_max_connections,
-        )
 
+        For workers, do NOT use this function. Instead:
+        redis_client = await anext(get_redis_client())
+        job_service = JobService(redis_client=redis_client)
+    """
     return JobService(redis_client=redis_client)
 
 
 async def get_rate_limit_service(
-    redis_client=None
+    redis_client = Depends(get_redis_client)
 ) -> AsyncGenerator[RateLimitService, None]:
     """Get rate limit service instance.
 
     Args:
-        redis_client: Optional Redis client (injected by FastAPI Depends)
+        redis_client: Redis client (auto-injected by FastAPI Depends)
 
     Yields:
         Configured RateLimitService instance
 
     Note:
         In FastAPI routes, use: rate_limiter: RateLimitService = Depends(get_rate_limit_service)
+
+        For workers, do NOT use this function. Instead:
+        redis_client = await anext(get_redis_client())
+        rate_limiter = RateLimitService(redis=redis_client)
     """
-    if redis_client is None:
-        # For non-FastAPI usage (workers, tests)
-        redis_client = redis.from_url(
-            settings.redis_url,
-            decode_responses=True,
-            max_connections=settings.redis_max_connections,
-        )
-        try:
-            yield RateLimitService(redis_client=redis_client)
-        finally:
-            await redis_client.aclose()
-    else:
-        yield RateLimitService(redis_client=redis_client)
+    # RateLimitService expects 'redis' parameter, not 'redis_client'
+    yield RateLimitService(redis=redis_client)

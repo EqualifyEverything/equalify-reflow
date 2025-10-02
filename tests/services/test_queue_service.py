@@ -310,3 +310,178 @@ class TestHealthCheck:
         connected = await queue_service.check_redis_connection()
 
         assert connected is True
+
+
+class TestTimeoutTracking:
+    """Tests for timeout tracking sorted set operations."""
+
+    @pytest.mark.asyncio
+    async def test_add_to_timeout_tracking(self, queue_service, mock_redis_client):
+        """Test adding job to timeout tracking."""
+        from datetime import datetime, timedelta, timezone
+
+        expires_at = datetime.now(timezone.utc) + timedelta(hours=4)
+
+        await queue_service.add_to_timeout_tracking("job123", expires_at)
+
+        # Verify ZADD was called with correct parameters
+        mock_redis_client.zadd.assert_called_once()
+        call_args = mock_redis_client.zadd.call_args
+        assert call_args[0][0] == "eq-pdf:timeouts:approval"
+        assert "job123" in call_args[0][1]
+
+    @pytest.mark.asyncio
+    async def test_add_to_timeout_tracking_custom_type(self, queue_service, mock_redis_client):
+        """Test adding with custom timeout type."""
+        from datetime import datetime, timezone
+
+        expires_at = datetime.now(timezone.utc)
+
+        await queue_service.add_to_timeout_tracking(
+            "job456",
+            expires_at,
+            timeout_type="processing"
+        )
+
+        call_args = mock_redis_client.zadd.call_args
+        assert call_args[0][0] == "eq-pdf:timeouts:processing"
+
+    @pytest.mark.asyncio
+    async def test_add_to_timeout_tracking_error(self, queue_service, mock_redis_client):
+        """Test error handling when adding to timeout tracking."""
+        from datetime import datetime, timezone
+
+        mock_redis_client.zadd.side_effect = Exception("Redis error")
+        expires_at = datetime.now(timezone.utc)
+
+        with pytest.raises(Exception) as exc:
+            await queue_service.add_to_timeout_tracking("job789", expires_at)
+
+        assert "Failed to add timeout tracking" in str(exc.value)
+
+    @pytest.mark.asyncio
+    async def test_get_expired_timeouts(self, queue_service, mock_redis_client):
+        """Test getting expired timeouts from sorted set."""
+        # Mock Redis response: [(job_id, timestamp), ...]
+        mock_redis_client.zrangebyscore.return_value = [
+            (b"job123", 1609459200.0),  # Expired job 1
+            (b"job456", 1609462800.0)   # Expired job 2
+        ]
+
+        expired = await queue_service.get_expired_timeouts()
+
+        assert len(expired) == 2
+        assert expired[0] == ("job123", 1609459200.0)
+        assert expired[1] == ("job456", 1609462800.0)
+
+        # Verify ZRANGEBYSCORE was called
+        mock_redis_client.zrangebyscore.assert_called_once()
+        call_kwargs = mock_redis_client.zrangebyscore.call_args.kwargs
+        assert call_kwargs["min"] == 0
+        assert call_kwargs["withscores"] is True
+
+    @pytest.mark.asyncio
+    async def test_get_expired_timeouts_none(self, queue_service, mock_redis_client):
+        """Test when no timeouts have expired."""
+        mock_redis_client.zrangebyscore.return_value = []
+
+        expired = await queue_service.get_expired_timeouts()
+
+        assert len(expired) == 0
+
+    @pytest.mark.asyncio
+    async def test_get_expired_timeouts_handles_strings(self, queue_service, mock_redis_client):
+        """Test handling of string job IDs (not bytes)."""
+        mock_redis_client.zrangebyscore.return_value = [
+            ("job789", 1609459200.0)  # String instead of bytes
+        ]
+
+        expired = await queue_service.get_expired_timeouts()
+
+        assert len(expired) == 1
+        assert expired[0] == ("job789", 1609459200.0)
+
+    @pytest.mark.asyncio
+    async def test_get_expired_timeouts_error_returns_empty(self, queue_service, mock_redis_client):
+        """Test fail-safe behavior on error."""
+        mock_redis_client.zrangebyscore.side_effect = Exception("Redis error")
+
+        # Should return empty list instead of raising
+        expired = await queue_service.get_expired_timeouts()
+
+        assert expired == []
+
+    @pytest.mark.asyncio
+    async def test_remove_from_timeout_tracking(self, queue_service, mock_redis_client):
+        """Test removing job from timeout tracking."""
+        mock_redis_client.zrem.return_value = 1  # 1 member removed
+
+        removed = await queue_service.remove_from_timeout_tracking("job123")
+
+        assert removed is True
+        mock_redis_client.zrem.assert_called_once_with(
+            "eq-pdf:timeouts:approval",
+            "job123"
+        )
+
+    @pytest.mark.asyncio
+    async def test_remove_from_timeout_tracking_not_present(self, queue_service, mock_redis_client):
+        """Test removing job that wasn't in tracking."""
+        mock_redis_client.zrem.return_value = 0  # 0 members removed
+
+        removed = await queue_service.remove_from_timeout_tracking("job456")
+
+        assert removed is False
+
+    @pytest.mark.asyncio
+    async def test_remove_from_timeout_tracking_custom_type(self, queue_service, mock_redis_client):
+        """Test removing with custom timeout type."""
+        mock_redis_client.zrem.return_value = 1
+
+        await queue_service.remove_from_timeout_tracking(
+            "job789",
+            timeout_type="processing"
+        )
+
+        mock_redis_client.zrem.assert_called_once_with(
+            "eq-pdf:timeouts:processing",
+            "job789"
+        )
+
+    @pytest.mark.asyncio
+    async def test_remove_from_timeout_tracking_error_returns_false(self, queue_service, mock_redis_client):
+        """Test fail-safe behavior on error."""
+        mock_redis_client.zrem.side_effect = Exception("Redis error")
+
+        # Should return False instead of raising
+        removed = await queue_service.remove_from_timeout_tracking("job-error")
+
+        assert removed is False
+
+    @pytest.mark.asyncio
+    async def test_get_timeout_count(self, queue_service, mock_redis_client):
+        """Test getting count of jobs in timeout tracking."""
+        mock_redis_client.zcard.return_value = 5
+
+        count = await queue_service.get_timeout_count()
+
+        assert count == 5
+        mock_redis_client.zcard.assert_called_once_with("eq-pdf:timeouts:approval")
+
+    @pytest.mark.asyncio
+    async def test_get_timeout_count_empty(self, queue_service, mock_redis_client):
+        """Test count when no jobs in tracking."""
+        mock_redis_client.zcard.return_value = 0
+
+        count = await queue_service.get_timeout_count()
+
+        assert count == 0
+
+    @pytest.mark.asyncio
+    async def test_get_timeout_count_error_returns_negative(self, queue_service, mock_redis_client):
+        """Test error handling returns -1."""
+        mock_redis_client.zcard.side_effect = Exception("Redis error")
+
+        count = await queue_service.get_timeout_count()
+
+        assert count == -1

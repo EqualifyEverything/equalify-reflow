@@ -391,3 +391,116 @@ class TestJobLifecycle:
         all_calls = [call.kwargs.get("mapping", {}) for call in mock_redis_client.hset.call_args_list]
         pii_calls = [c for c in all_calls if "pii_findings" in c]
         assert len(pii_calls) == 0
+
+
+class TestCleanupOldJob:
+    """Tests for cleanup_old_job method."""
+
+    @pytest.mark.asyncio
+    async def test_cleanup_existing_job(self, job_service, mock_redis_client):
+        """Test cleanup of existing job."""
+        job_id = "job123"
+
+        # Mock exists check
+        mock_redis_client.exists.return_value = 1  # Job exists
+
+        # Mock hgetall to return job data for logging
+        mock_redis_client.hgetall.return_value = {
+            'status': 'completed',
+            'job_id': job_id
+        }
+
+        # Mock delete
+        mock_redis_client.delete.return_value = 1  # 1 key deleted
+
+        deleted = await job_service.cleanup_old_job(job_id)
+
+        assert deleted is True
+        mock_redis_client.exists.assert_called_once_with(f"eq-pdf:job:{job_id}")
+        mock_redis_client.delete.assert_called_once_with(f"eq-pdf:job:{job_id}")
+
+    @pytest.mark.asyncio
+    async def test_cleanup_nonexistent_job(self, job_service, mock_redis_client):
+        """Test cleanup when job doesn't exist."""
+        job_id = "job456"
+
+        # Mock exists check - job doesn't exist
+        mock_redis_client.exists.return_value = 0
+
+        deleted = await job_service.cleanup_old_job(job_id)
+
+        assert deleted is False
+        mock_redis_client.exists.assert_called_once()
+        # Should not attempt to delete
+        mock_redis_client.delete.assert_not_called()
+
+    @pytest.mark.asyncio
+    async def test_cleanup_different_statuses(self, job_service, mock_redis_client):
+        """Test cleanup logs correct status."""
+        statuses = ['completed', 'failed', 'denied', 'unknown']
+
+        for status in statuses:
+            mock_redis_client.exists.return_value = 1
+            mock_redis_client.hgetall.return_value = {'status': status}
+            mock_redis_client.delete.return_value = 1
+
+            deleted = await job_service.cleanup_old_job(f"job-{status}")
+
+            assert deleted is True
+
+    @pytest.mark.asyncio
+    async def test_cleanup_delete_returns_zero(self, job_service, mock_redis_client):
+        """Test when delete operation returns 0 (shouldn't happen but defensive)."""
+        mock_redis_client.exists.return_value = 1
+        mock_redis_client.hgetall.return_value = {'status': 'completed'}
+        mock_redis_client.delete.return_value = 0  # Unexpected but possible
+
+        deleted = await job_service.cleanup_old_job("job-weird")
+
+        assert deleted is False
+
+    @pytest.mark.asyncio
+    async def test_cleanup_handles_exists_error(self, job_service, mock_redis_client):
+        """Test error handling during exists check."""
+        mock_redis_client.exists.side_effect = Exception("Redis connection error")
+
+        deleted = await job_service.cleanup_old_job("job-error")
+
+        # Should return False on error
+        assert deleted is False
+
+    @pytest.mark.asyncio
+    async def test_cleanup_handles_hgetall_error(self, job_service, mock_redis_client):
+        """Test graceful handling when hgetall fails."""
+        mock_redis_client.exists.return_value = 1
+        mock_redis_client.hgetall.side_effect = Exception("Redis error")
+
+        # Should still attempt delete (fallback to unknown status)
+        deleted = await job_service.cleanup_old_job("job-hgetall-error")
+
+        # Depends on implementation - should either fail gracefully or continue
+        # Since implementation catches all exceptions, should return False
+        assert deleted is False
+
+    @pytest.mark.asyncio
+    async def test_cleanup_handles_delete_error(self, job_service, mock_redis_client):
+        """Test error handling during delete operation."""
+        mock_redis_client.exists.return_value = 1
+        mock_redis_client.hgetall.return_value = {'status': 'completed'}
+        mock_redis_client.delete.side_effect = Exception("Delete failed")
+
+        deleted = await job_service.cleanup_old_job("job-delete-error")
+
+        assert deleted is False
+
+    @pytest.mark.asyncio
+    async def test_cleanup_with_empty_job_data(self, job_service, mock_redis_client):
+        """Test cleanup when job hash exists but is empty."""
+        mock_redis_client.exists.return_value = 1
+        mock_redis_client.hgetall.return_value = {}  # Empty hash
+        mock_redis_client.delete.return_value = 1
+
+        deleted = await job_service.cleanup_old_job("job-empty")
+
+        # Should still clean up (status will be 'unknown')
+        assert deleted is True

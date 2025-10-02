@@ -45,7 +45,7 @@ class ApprovalService:
     async def validate_approval_token(self, token: str) -> Optional[dict]:
         """Find job by approval token and validate expiration.
 
-        Scans all job keys to find matching approval token.
+        Uses O(1) Redis lookup via token mapping to find job directly.
         Checks expiration timestamp to ensure token is still valid.
 
         Args:
@@ -60,43 +60,46 @@ class ApprovalService:
             ...     print(f"Valid token for job {job['job_id']}")
         """
         try:
-            # Scan all job keys to find token match
-            # NOTE: O(N) operation - acceptable for MVP scale
-            # TODO: Optimize with token→job_id hash mapping for production
-            job_keys = await self.redis.keys(f"{settings.job_status_prefix}*")
+            # O(1) lookup using token mapping (stored in job_service)
+            job = await self.job_service.get_job_by_approval_token(token)
 
-            for key in job_keys:
-                # Extract job_id from key (eq-pdf:job:XXX → XXX)
-                if isinstance(key, bytes):
-                    key = key.decode('utf-8')
+            if not job:
+                logger.debug("Approval token not found or expired")
+                return None
 
-                job_id = key.split(":")[-1]
-                job = await self.job_service.get_job(job_id)
+            job_id = job.get("job_id")
 
-                if not job:
-                    continue
+            # Validate expiration timestamp
+            expires_at_str = job.get("approval_expires_at")
+            if not expires_at_str:
+                logger.warning(f"Job {job_id} missing expires_at field")
+                return None
 
-                # Check if token matches
-                if job.get("approval_token") == token:
-                    # Validate expiration
-                    expires_at_str = job.get("approval_expires_at")
-                    if not expires_at_str:
-                        logger.warning(f"Job {job_id} missing expires_at field")
-                        return None
+            try:
+                # Parse ISO format datetime and ensure timezone awareness
+                # Replace Z suffix with +00:00 for proper parsing
+                expires_at_str = expires_at_str.replace("Z", "+00:00")
+                expires_at = datetime.fromisoformat(expires_at_str)
 
-                    expires_at = datetime.fromisoformat(expires_at_str)
-                    now = datetime.now(timezone.utc)
+                # If somehow still naive, add UTC timezone
+                if expires_at.tzinfo is None:
+                    expires_at = expires_at.replace(tzinfo=timezone.utc)
 
-                    if now < expires_at:
-                        logger.info(f"Valid approval token for job {job_id}")
-                        return job
-                    else:
-                        logger.info(f"Expired approval token for job {job_id}")
-                        return None
+            except (ValueError, AttributeError) as e:
+                logger.error(
+                    f"Invalid expiration timestamp for job {job_id}: {expires_at_str}",
+                    exc_info=True
+                )
+                return None
 
-            # No matching token found
-            logger.warning(f"No job found with approval token")
-            return None
+            now = datetime.now(timezone.utc)
+
+            if now < expires_at:
+                logger.info(f"Valid approval token for job {job_id}")
+                return job
+            else:
+                logger.info(f"Expired approval token for job {job_id}")
+                return None
 
         except Exception as e:
             logger.error(f"Error validating approval token: {str(e)}", exc_info=True)

@@ -173,7 +173,15 @@ async def get_job_result(
 
     # If still processing, return estimated completion
     elif job_data["status"] in ["pii_scanning", "processing", "awaiting_approval"]:
-        created_at = datetime.fromisoformat(job_data["created_at"].replace("Z", ""))
+        # Parse ISO format datetime and ensure timezone awareness
+        # Replace Z suffix with +00:00 for proper parsing
+        created_at_str = job_data["created_at"].replace("Z", "+00:00")
+        created_at = datetime.fromisoformat(created_at_str)
+
+        # If somehow still naive, add UTC timezone
+        if created_at.tzinfo is None:
+            created_at = created_at.replace(tzinfo=timezone.utc)
+
         estimated_completion = created_at + timedelta(minutes=settings.estimated_processing_minutes)
 
         return JobResultResponse(

@@ -2,10 +2,15 @@
 
 import json
 import logging
-from datetime import datetime
+from datetime import datetime, timezone
 from typing import Optional, List
 
 from ..config import settings
+from ..shared.constants.statuses import (
+    STATUS_COMPLETED,
+    STATUS_FAILED,
+    STATUS_DENIED
+)
 
 logger = logging.getLogger(__name__)
 
@@ -21,6 +26,73 @@ class JobService:
         """
         self.redis = redis_client
         self.status_prefix = settings.job_status_prefix
+        # TTL settings from config
+        self.job_ttl_active = settings.job_ttl_active
+        self.job_ttl_completed = settings.job_ttl_completed
+        self.job_ttl_failed = settings.job_ttl_failed
+        self.job_ttl_denied = settings.job_ttl_denied
+
+    def _get_ttl_for_status(self, status: str) -> int:
+        """Get appropriate TTL (time-to-live) for job based on status.
+
+        Different statuses have different retention requirements:
+        - Completed jobs: 30 days (for result retrieval and audit)
+        - Failed jobs: 30 days (for debugging and retry decisions)
+        - Denied jobs: 7 days (shorter retention, decision recorded)
+        - Active jobs (processing, awaiting_approval, etc.): 7 days
+
+        Args:
+            status: Job status string
+
+        Returns:
+            TTL in seconds for the given status
+
+        Example:
+            >>> ttl = self._get_ttl_for_status("completed")
+            >>> print(f"Completed jobs expire after {ttl / 86400} days")
+        """
+        if status == STATUS_COMPLETED:
+            return self.job_ttl_completed
+        elif status == STATUS_FAILED:
+            return self.job_ttl_failed
+        elif status == STATUS_DENIED:
+            return self.job_ttl_denied
+        else:
+            # Default for active states: pii_scanning, awaiting_approval, processing
+            return self.job_ttl_active
+
+    async def _set_job_ttl(self, job_id: str, status: str) -> None:
+        """Set TTL for job hash based on status.
+
+        Automatically sets appropriate expiration time based on job status.
+        Critical for preventing Redis memory exhaustion from abandoned jobs.
+
+        Args:
+            job_id: Job identifier
+            status: Current job status (determines TTL duration)
+
+        Raises:
+            Exception: If Redis EXPIRE command fails
+
+        Example:
+            >>> await self._set_job_ttl("job-123", "completed")
+            # Sets 30-day TTL for completed job
+        """
+        ttl = self._get_ttl_for_status(status)
+        key = f"{self.status_prefix}{job_id}"
+
+        try:
+            await self.redis.expire(key, ttl)
+            logger.debug(
+                f"Set TTL for job {job_id} to {ttl}s "
+                f"({ttl / 86400:.1f} days) for status '{status}'"
+            )
+        except Exception as e:
+            logger.error(
+                f"Failed to set TTL for job {job_id}: {str(e)}",
+                exc_info=True
+            )
+            raise Exception(f"Failed to set TTL for job {job_id}: {str(e)}")
 
     async def create_job(
         self,
@@ -29,14 +101,21 @@ class JobService:
         status: str = "pii_scanning"
     ) -> None:
         """
-        Create a new job in Redis.
+        Create a new job in Redis with automatic TTL.
+
+        Sets initial TTL based on job status to prevent Redis memory exhaustion.
+        Jobs will auto-expire after retention period unless status changes.
 
         Args:
             job_id: Unique job identifier
             s3_key: S3 key where document is stored
-            status: Initial job status
+            status: Initial job status (default: "pii_scanning")
+
+        Example:
+            >>> await job_service.create_job("job-123", "temp/file.pdf")
+            # Creates job with 7-day TTL (active job default)
         """
-        created_at = datetime.utcnow().isoformat()
+        created_at = datetime.now(timezone.utc).isoformat()
 
         await self.redis.hset(
             f"{self.status_prefix}{job_id}",
@@ -48,6 +127,9 @@ class JobService:
                 "updated_at": created_at
             }
         )
+
+        # Set TTL based on initial status (prevents memory leaks)
+        await self._set_job_ttl(job_id, status)
 
     async def get_job(self, job_id: str) -> Optional[dict]:
         """
@@ -80,16 +162,26 @@ class JobService:
         **additional_fields
     ) -> None:
         """
-        Update job status and additional fields.
+        Update job status and additional fields with automatic TTL adjustment.
+
+        When job status changes, TTL is automatically adjusted based on new status:
+        - Transition to 'completed': Sets 30-day TTL
+        - Transition to 'failed': Sets 30-day TTL
+        - Transition to 'denied': Sets 7-day TTL
+        - Other statuses (active): Sets 7-day TTL
 
         Args:
             job_id: Job identifier
             status: New status
-            **additional_fields: Additional fields to update
+            **additional_fields: Additional fields to update (auto-serialized if dict/list)
+
+        Example:
+            >>> await job_service.update_job_status("job-123", "completed")
+            # Updates status and sets 30-day TTL
         """
         update_data = {
             "status": status,
-            "updated_at": datetime.utcnow().isoformat()
+            "updated_at": datetime.now(timezone.utc).isoformat()
         }
 
         # Serialize complex fields as JSON
@@ -104,25 +196,37 @@ class JobService:
             mapping=update_data
         )
 
+        # Adjust TTL based on new status (critical for memory management)
+        await self._set_job_ttl(job_id, status)
+
     async def add_pii_findings(
         self,
         job_id: str,
         findings: List[dict]
     ) -> None:
         """
-        Store PII scan results for a job.
+        Store PII scan results for a job and maintain TTL.
+
+        Updates job with PII findings without changing status.
+        Does NOT modify TTL since status remains unchanged.
+        TTL will be adjusted when status changes (e.g., to awaiting_approval).
 
         Args:
             job_id: Job identifier
             findings: List of PII finding dictionaries
+
+        Note:
+            This method is typically called before status update to awaiting_approval,
+            which will set the appropriate TTL via update_job_status().
         """
         await self.redis.hset(
             f"{self.status_prefix}{job_id}",
             mapping={
                 "pii_findings": json.dumps(findings),
-                "updated_at": datetime.utcnow().isoformat()
+                "updated_at": datetime.now(timezone.utc).isoformat()
             }
         )
+        # Note: TTL maintained from previous status, will be updated on next status change
 
     async def add_processing_result(
         self,
@@ -131,22 +235,31 @@ class JobService:
         confidence: float
     ) -> None:
         """
-        Store processing completion data.
+        Store processing completion data and maintain TTL.
+
+        Updates job with processing results without changing status.
+        Does NOT modify TTL since status remains unchanged.
+        TTL will be adjusted when status changes to 'completed' via update_job_status().
 
         Args:
             job_id: Job identifier
             result_url: URL to the processed result
             confidence: Processing confidence score (0.0 to 1.0)
+
+        Note:
+            This method is typically called before status update to 'completed',
+            which will set the 30-day retention TTL via update_job_status().
         """
         await self.redis.hset(
             f"{self.status_prefix}{job_id}",
             mapping={
                 "result_url": result_url,
                 "confidence_score": str(confidence),
-                "completed_at": datetime.utcnow().isoformat(),
-                "updated_at": datetime.utcnow().isoformat()
+                "completed_at": datetime.now(timezone.utc).isoformat(),
+                "updated_at": datetime.now(timezone.utc).isoformat()
             }
         )
+        # Note: TTL maintained from previous status, will be updated on next status change
 
     async def job_exists(self, job_id: str) -> bool:
         """
@@ -304,3 +417,86 @@ class JobService:
             )
             # Return False on error (job not cleaned up)
             return False
+
+    async def store_approval_token_mapping(
+        self,
+        approval_token: str,
+        job_id: str,
+        ttl_hours: int = 4
+    ) -> None:
+        """Store approval token to job ID mapping for O(1) lookup.
+
+        Creates a Redis key: eq-pdf:approval-token:{token} → job_id
+        This enables direct token lookup without scanning all job hashes.
+
+        Args:
+            approval_token: Secure approval token
+            job_id: Job identifier
+            ttl_hours: Time-to-live in hours (matches approval expiration)
+
+        Example:
+            >>> job_service = JobService(redis_client)
+            >>> await job_service.store_approval_token_mapping(
+            ...     "abc123token",
+            ...     "job-uuid-123",
+            ...     ttl_hours=4
+            ... )
+        """
+        try:
+            token_key = f"eq-pdf:approval-token:{approval_token}"
+            ttl_seconds = ttl_hours * 3600
+
+            # Store mapping with expiration
+            await self.redis.set(token_key, job_id, ex=ttl_seconds)
+
+            logger.debug(
+                f"Stored approval token mapping: {approval_token[:8]}... → {job_id}"
+            )
+
+        except Exception as e:
+            logger.error(
+                f"Failed to store approval token mapping: {str(e)}",
+                exc_info=True
+            )
+            raise Exception(f"Failed to store token mapping: {str(e)}")
+
+    async def get_job_by_approval_token(self, token: str) -> Optional[dict]:
+        """Get job by approval token using O(1) Redis lookup.
+
+        Uses token mapping stored in Redis to directly fetch job ID,
+        then retrieves full job data. Much faster than scanning all jobs.
+
+        Args:
+            token: Approval token from URL
+
+        Returns:
+            Job data dictionary or None if token not found/expired
+
+        Example:
+            >>> job_service = JobService(redis_client)
+            >>> job = await job_service.get_job_by_approval_token("abc123token")
+            >>> if job:
+            ...     print(f"Found job: {job['job_id']}")
+        """
+        try:
+            # O(1) lookup in Redis
+            token_key = f"eq-pdf:approval-token:{token}"
+            job_id = await self.redis.get(token_key)
+
+            if not job_id:
+                logger.debug("Approval token not found or expired")
+                return None
+
+            # Decode if bytes
+            if isinstance(job_id, bytes):
+                job_id = job_id.decode('utf-8')
+
+            # Fetch full job data
+            return await self.get_job(job_id)
+
+        except Exception as e:
+            logger.error(
+                f"Error fetching job by token: {str(e)}",
+                exc_info=True
+            )
+            return None

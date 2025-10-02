@@ -42,7 +42,7 @@ class JobSubmission(BaseModel):
         >>> submission = JobSubmission(
         ...     job_id="550e8400-e29b-41d4-a716-446655440000",
         ...     s3_key="temp/550e8400.../syllabus.pdf",
-        ...     created_at=datetime.utcnow(),
+        ...     created_at=datetime.now(timezone.utc),
         ...     file_size_bytes=2456789,
         ...     original_filename="CS101_Syllabus_Fall2024.pdf"
         ... )
@@ -127,8 +127,8 @@ class JobStatus(BaseModel):
         >>> status = JobStatus(
         ...     job_id="550e8400-e29b-41d4-a716-446655440000",
         ...     status="processing",
-        ...     created_at=datetime.utcnow(),
-        ...     updated_at=datetime.utcnow(),
+        ...     created_at=datetime.now(timezone.utc),
+        ...     updated_at=datetime.now(timezone.utc),
         ...     pii_findings=None,
         ...     approval_token=None
         ... )

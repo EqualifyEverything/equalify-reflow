@@ -2,7 +2,7 @@
 
 import json
 import logging
-from datetime import datetime
+from datetime import datetime, timezone
 from typing import Optional, List, Any
 from pydantic import BaseModel
 
@@ -35,7 +35,7 @@ class QueueService:
         payload = {
             "job_id": job_id,
             "s3_key": s3_key,
-            "created_at": datetime.utcnow().isoformat()
+            "created_at": datetime.now(timezone.utc).isoformat()
         }
 
         # Push to queue
@@ -263,7 +263,7 @@ class QueueService:
         """
         try:
             # Get current timestamp
-            current_time = datetime.utcnow().timestamp()
+            current_time = datetime.now(timezone.utc).timestamp()
 
             # Get Redis key for this timeout type
             key = timeout_key(timeout_type)

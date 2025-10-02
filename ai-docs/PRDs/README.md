@@ -325,26 +325,44 @@
 
 ---
 
-### PRD-009B: Demo REST API Testing UI
-**Status**: Not Started
+### PRD-009B: Demo REST API Testing UI ✅
+**Status**: Complete
 **File**: [phase-3-integration/PRD-009B-demo-rest-ui.md](phase-3-integration/PRD-009B-demo-rest-ui.md)
-**Effort**: 8-12 hours
-**Dependencies**: PRD-004 (API Endpoints), PRD-006 (Approval API)
-**Can run in parallel with**: PRD-009A
+**Completed**: 2025-10-02
+**Effort**: ~8 hours (actual vs 8-12 hours estimated)
+**Dependencies**: PRD-004 (API Endpoints) ✅, PRD-006 (Approval API) ✅
 
-**Deliverables**:
-- `frontend/demo-ui/` (Vite + React + TypeScript)
-- ShadCN UI components with UIC branding
-- Document upload interface (drag-drop)
-- Real-time job status tracking
-- PII review and approval interface
-- System monitoring dashboard (queues, health, workers)
-- Docker-integrated frontend with hot reload
-- Mobile-responsive design for presentations
+**Deliverables** (COMPLETE):
+- ✅ `frontend/demo-ui/` - Vite + React + TypeScript setup
+- ✅ ShadCN UI components with UIC branding (navy #001e62, red #d50032)
+- ✅ Document upload interface (file picker)
+- ✅ Real-time job status tracking (React Query polling every 2s)
+- ✅ PII review and approval interface (token-based routing)
+- ✅ System monitoring dashboard (health, workers, optional queue metrics)
+- ✅ Docker integration with hot reload (docker-compose.dev.yml)
+- ✅ Mobile-responsive design (tested 375px, 768px, 1024px+)
+- ✅ `src/api/dev_monitoring.py` - Optional dev-only queue metrics endpoint
+- ✅ Backend integration - Dev monitoring router conditionally enabled
+- ✅ Comprehensive README with demo script
+
+**Implementation Notes**:
+- Full React application with 4 pages: Dashboard, Job Detail, Approval Review, Monitoring
+- Typed API client matching FastAPI OpenAPI spec
+- React Query hooks for intelligent polling (stop on terminal states)
+- Layout components: Header with "DEMO ONLY" badge, Sidebar navigation
+- Document components: Upload, JobList, JobCard, JobDetail
+- Monitoring components: SystemHealth, QueueMonitor, WorkerStatus
+- Accessible UI with WCAG 2.1 AA compliance (Radix primitives)
+- UIC branding throughout (OKLCH color tokens)
+- Docker hot-reload verified working
+- Dev monitoring endpoint `/api/dev/monitoring/queues` (dev-only)
+- Zero regressions in existing 237 backend tests
 
 **⚠️ NOTE**: This is a DEMO/DEVELOPER TOOL for testing and stakeholder presentations, NOT the production UIC interface. Production will use Canvas LMS integration.
 
 **Purpose**: Better than Postman for API testing, stakeholder demos, and visual debugging of the document processing pipeline.
+
+**Unblocks**: PRD-010 (End-to-End Integration) - UI ready for validation
 
 ---
 

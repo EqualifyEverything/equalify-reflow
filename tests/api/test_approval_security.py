@@ -97,6 +97,7 @@ async def test_approval_no_pii_data_in_url():
         # Mock JobService
         mock_job_service = AsyncMock()
         mock_job_service.get_job.return_value = valid_job
+        mock_job_service.get_job_by_approval_token.return_value = valid_job  # New O(1) lookup method
         mock_job_service_class.return_value = mock_job_service
 
         # Make request
@@ -157,6 +158,7 @@ async def test_approval_decision_sanitization():
         # Mock JobService
         mock_job_service = AsyncMock()
         mock_job_service.get_job.return_value = valid_job
+        mock_job_service.get_job_by_approval_token.return_value = valid_job  # New O(1) lookup method
         mock_job_service_class.return_value = mock_job_service
 
         # Mock QueueService
@@ -321,6 +323,7 @@ async def test_approval_decision_idempotency():
         # Mock JobService
         mock_job_service = AsyncMock()
         mock_job_service.get_job.return_value = valid_job
+        mock_job_service.get_job_by_approval_token.return_value = valid_job  # New O(1) lookup method
         mock_job_service_class.return_value = mock_job_service
 
         # Mock QueueService

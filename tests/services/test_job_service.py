@@ -353,6 +353,7 @@ class TestJobLifecycle:
 
         # 1. Create job
         mock_redis_client.hset.return_value = 3
+        mock_redis_client.expire.return_value = 1
         await job_service.create_job(job_id, "temp/file.pdf", "pii_scanning")
 
         # 2. Add PII findings
@@ -374,7 +375,8 @@ class TestJobLifecycle:
 
         # Verify all operations were called
         assert mock_redis_client.hset.call_count == 4
-        assert mock_redis_client.expire.call_count == 1
+        # TTL is set on: create_job (1), update_job_status (1), set_expiration (1) = 3 total
+        assert mock_redis_client.expire.call_count == 3
 
     @pytest.mark.asyncio
     async def test_job_no_pii_flow(self, job_service, mock_redis_client):

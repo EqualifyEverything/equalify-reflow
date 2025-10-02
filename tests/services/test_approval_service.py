@@ -59,8 +59,8 @@ async def test_validate_approval_token_valid(approval_service, mock_redis_client
     job_id = "test-job-123"
     expires_at = (datetime.now(timezone.utc) + timedelta(hours=2)).isoformat()
 
-    mock_redis_client.keys.return_value = [b"eq-pdf:job:test-job-123"]
-    mock_job_service.get_job.return_value = {
+    # Mock O(1) token lookup
+    mock_job_service.get_job_by_approval_token.return_value = {
         "job_id": job_id,
         "approval_token": token,
         "approval_expires_at": expires_at,
@@ -73,7 +73,7 @@ async def test_validate_approval_token_valid(approval_service, mock_redis_client
     # Assert
     assert result is not None
     assert result["job_id"] == job_id
-    mock_redis_client.keys.assert_called_once_with("eq-pdf:job:*")
+    mock_job_service.get_job_by_approval_token.assert_called_once_with(token)
 
 
 @pytest.mark.asyncio
@@ -83,8 +83,8 @@ async def test_validate_approval_token_expired(approval_service, mock_redis_clie
     token = "expired-token-xyz"
     expires_at = (datetime.now(timezone.utc) - timedelta(hours=1)).isoformat()  # Past
 
-    mock_redis_client.keys.return_value = [b"eq-pdf:job:test-job-456"]
-    mock_job_service.get_job.return_value = {
+    # Mock O(1) token lookup
+    mock_job_service.get_job_by_approval_token.return_value = {
         "job_id": "test-job-456",
         "approval_token": token,
         "approval_expires_at": expires_at
@@ -102,12 +102,9 @@ async def test_validate_approval_token_not_found(approval_service, mock_redis_cl
     """Test token validation when no matching job found."""
     # Arrange
     token = "nonexistent-token"
-    mock_redis_client.keys.return_value = [b"eq-pdf:job:some-job"]
-    mock_job_service.get_job.return_value = {
-        "job_id": "some-job",
-        "approval_token": "different-token",
-        "approval_expires_at": datetime.now(timezone.utc).isoformat()
-    }
+
+    # Mock O(1) token lookup returning None (not found)
+    mock_job_service.get_job_by_approval_token.return_value = None
 
     # Act
     result = await approval_service.validate_approval_token(token)
@@ -121,8 +118,9 @@ async def test_validate_approval_token_missing_expires_at(approval_service, mock
     """Test token validation when job missing expires_at field."""
     # Arrange
     token = "token-missing-expiry"
-    mock_redis_client.keys.return_value = [b"eq-pdf:job:test-job-789"]
-    mock_job_service.get_job.return_value = {
+
+    # Mock O(1) token lookup
+    mock_job_service.get_job_by_approval_token.return_value = {
         "job_id": "test-job-789",
         "approval_token": token
         # Missing approval_expires_at
@@ -137,14 +135,13 @@ async def test_validate_approval_token_missing_expires_at(approval_service, mock
 
 @pytest.mark.asyncio
 async def test_validate_approval_token_handles_string_keys(approval_service, mock_redis_client, mock_job_service):
-    """Test token validation handles both bytes and string Redis keys."""
+    """Test token validation uses O(1) lookup (no longer needs to handle key formats)."""
     # Arrange
     token = "valid-token"
     expires_at = (datetime.now(timezone.utc) + timedelta(hours=2)).isoformat()
 
-    # Return string key instead of bytes
-    mock_redis_client.keys.return_value = ["eq-pdf:job:test-job-999"]
-    mock_job_service.get_job.return_value = {
+    # Mock O(1) token lookup
+    mock_job_service.get_job_by_approval_token.return_value = {
         "job_id": "test-job-999",
         "approval_token": token,
         "approval_expires_at": expires_at

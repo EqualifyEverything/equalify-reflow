@@ -207,8 +207,9 @@ class TestDeleteTempFile:
         """Test successful file deletion."""
         mock_s3_client.delete_object.return_value = None
 
-        await storage_service.delete_temp_file("temp/job123/file.pdf")
+        result = await storage_service.delete_temp_file("temp/job123/file.pdf")
 
+        assert result is True
         mock_s3_client.delete_object.assert_called_once_with(
             Bucket=settings.s3_temp_bucket,
             Key="temp/job123/file.pdf"
@@ -216,13 +217,12 @@ class TestDeleteTempFile:
 
     @pytest.mark.asyncio
     async def test_delete_failure(self, storage_service, mock_s3_client):
-        """Test handling of deletion failure."""
+        """Test handling of deletion failure - best effort, no exception raised."""
         mock_s3_client.delete_object.side_effect = Exception("S3 error")
 
-        with pytest.raises(HTTPException) as exc:
-            await storage_service.delete_temp_file("temp/file.pdf")
+        result = await storage_service.delete_temp_file("temp/file.pdf")
 
-        assert exc.value.status_code == 500
+        assert result is False  # Returns False instead of raising exception
 
 
 class TestFileExists:

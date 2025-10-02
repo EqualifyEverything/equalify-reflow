@@ -288,34 +288,64 @@
 
 ## Phase 3: Integration & Demo
 
-### PRD-009: End-to-End Integration
+### PRD-009A: Grafana Observability Stack
 **Status**: Not Started
-**File**: [phase-3-integration/PRD-009-end-to-end-integration.md](phase-3-integration/PRD-009-end-to-end-integration.md)
-**Effort**: 3 days
-**Dependencies**: ALL Phase 2 PRDs complete
+**File**: [phase-3-integration/PRD-009A-grafana-observability.md](phase-3-integration/PRD-009A-grafana-observability.md)
+**Effort**: 6-8 hours
+**Dependencies**: PRD-008 (Timeout Worker - all workers complete)
+**Can run in parallel with**: PRD-009B
 
 **Deliverables**:
-- End-to-end integration tests
-- Performance benchmarking
-- Error handling validation
-- Documentation updates
+- Prometheus metrics collection (OpenTelemetry)
+- Grafana dashboards (System, Queues, Jobs, Workers)
+- Redis exporter integration
+- Docker Compose integration (Prometheus, Grafana, Redis exporter)
+- Metrics middleware and instrumentation
+- Production-ready observability stack
+
+**Purpose**: Industry-standard monitoring for system health, queue depths, job processing, and worker status. Essential for debugging and production operations.
 
 ---
 
-### PRD-010: Demo Frontend Application
+### PRD-009B: Demo REST API Testing UI
 **Status**: Not Started
-**File**: [phase-3-integration/PRD-010-demo-frontend.md](phase-3-integration/PRD-010-demo-frontend.md)
-**Effort**: 3 days
-**Dependencies**: PRD-004, PRD-006
+**File**: [phase-3-integration/PRD-009B-demo-rest-ui.md](phase-3-integration/PRD-009B-demo-rest-ui.md)
+**Effort**: 8-12 hours
+**Dependencies**: PRD-004 (API Endpoints), PRD-006 (Approval API)
+**Can run in parallel with**: PRD-009A
 
 **Deliverables**:
 - `frontend/demo-ui/` (Vite + React + TypeScript)
-- ShadCN UI components
-- Document upload interface
-- Job status tracking
-- PII review interface
+- ShadCN UI components with UIC branding
+- Document upload interface (drag-drop)
+- Real-time job status tracking
+- PII review and approval interface
+- System monitoring dashboard (queues, health, workers)
+- Docker-integrated frontend with hot reload
+- Mobile-responsive design for presentations
 
-**⚠️ NOTE**: This is a DEMO frontend for testing and stakeholder presentations, NOT the production UIC interface.
+**⚠️ NOTE**: This is a DEMO/DEVELOPER TOOL for testing and stakeholder presentations, NOT the production UIC interface. Production will use Canvas LMS integration.
+
+**Purpose**: Better than Postman for API testing, stakeholder demos, and visual debugging of the document processing pipeline.
+
+---
+
+### PRD-010: End-to-End Integration & Testing
+**Status**: Not Started
+**File**: [phase-3-integration/PRD-010-end-to-end-integration.md](phase-3-integration/PRD-010-end-to-end-integration.md)
+**Effort**: 2 days
+**Dependencies**: ALL Phase 2 PRDs complete (PRD-001 through PRD-008), PRD-009A (Grafana), PRD-009B (Demo UI)
+
+**Deliverables**:
+- End-to-end integration tests
+- Performance benchmarking (2-8 min processing, $0.20/doc)
+- Load testing (10+ concurrent documents)
+- Error handling validation
+- Production readiness checklist
+- Documentation updates
+- Final validation with Grafana metrics
+
+**Purpose**: Final validation that entire system meets success criteria and is ready for AWS ECS deployment.
 
 ---
 
@@ -339,10 +369,14 @@ With 1 developer: Sequential
 With 2+ developers: Can parallelize after PRD-003 done
 ```
 
-### Week 3: Integration
+### Week 3: Integration & Demo
 ```
-Days 1-2: PRD-009 End-to-end integration
-Days 3-5: PRD-010 Demo frontend (optional)
+PRD-009A: Grafana Observability (6-8 hours)
+PRD-009B: Demo REST UI (8-12 hours)
+  → Can run in parallel (independent implementations)
+
+PRD-010: End-to-End Integration (2 days)
+  → Must run after 009A and 009B complete
 ```
 
 ---
@@ -357,6 +391,20 @@ PRD-003: Shared Services
     ├─► PRD-006: Approval API
     ├─► PRD-007: Processing Worker
     └─► PRD-008: Timeout Worker
+```
+
+### Phase 3 Dependencies Graph
+```
+PRD-008 (All workers complete)
+    └─► PRD-009A: Grafana Observability
+
+PRD-004 + PRD-006 (API complete)
+    └─► PRD-009B: Demo REST UI
+
+PRD-009A + PRD-009B
+    └─► PRD-010: End-to-End Integration
+
+Note: PRD-009A and PRD-009B can run in parallel
 ```
 
 ### File Locations

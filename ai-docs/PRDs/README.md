@@ -245,19 +245,44 @@
 
 ---
 
-### PRD-008: Timeout Cleanup Worker
-**Status**: Not Started
+### PRD-008: Timeout Cleanup Worker ✅
+**Status**: Complete
 **File**: [phase-2-services/PRD-008-timeout-cleanup-worker.md](phase-2-services/PRD-008-timeout-cleanup-worker.md)
-**Effort**: 2 days
-**Dependencies**: PRD-003 (Shared Services) - MUST BE COMPLETE
+**Completed**: 2025-10-02
+**Effort**: ~8 hours (actual vs 2 days estimated)
+**Dependencies**: PRD-003 (Shared Services) ✅
 
-**Deliverables**:
-- `src/workers/timeout_worker.py` (Background maintenance scheduler)
-- Approval timeout monitoring
-- S3 temp file cleanup
-- Orphaned job cleanup
+**Deliverables** (COMPLETE):
+- ✅ `src/workers/timeout_worker.py` - Background scheduler with asyncio task coordination
+- ✅ `src/services/timeout_service.py` - Approval timeout monitoring (30s intervals)
+- ✅ `src/services/s3_cleanup_service.py` - S3 temp file cleanup (hourly)
+- ✅ `src/services/orphan_service.py` - Orphaned job detection (4h intervals)
+- ✅ `src/services/metrics_service.py` - Daily metrics tracking and cleanup
+- ✅ `src/main.py` - Timeout worker integrated into lifespan (3 workers running)
+- ✅ `tests/services/test_timeout_monitoring.py` - 9 tests passing
+- ✅ `tests/services/test_s3_cleanup.py` - 8 tests passing
+- ✅ `tests/services/test_orphan_detection.py` - 18 tests passing
+- ✅ `tests/workers/test_timeout_worker.py` - 14 tests passing
 
-**Shared Services Used**: storage_service, queue_service, job_service
+**Implementation Notes**:
+- **Architecture**: Single worker with time-based task scheduling (not separate workers per task)
+- **Scheduled Tasks**:
+  - Approval timeouts: 30 seconds (updates job to "failed", removes temp files)
+  - Temp file cleanup: 1 hour (deletes files older than 24h retention)
+  - Orphaned jobs: 4 hours (cleans up old completed/failed jobs beyond 30 day retention)
+  - Stuck jobs: 4 hours (fails jobs stuck in processing >2 hours)
+  - Metrics cleanup: Daily (removes metrics older than 90 days)
+- **Metrics Storage**: Redis hashes with date keys (eq-pdf:metrics:daily:YYYYMMDD)
+- **Error Handling**: Task-level try/except with metric tracking, worker continues on failures
+- **Timezone Handling**: Fixed naive datetime comparison issues in orphan detection
+- **Integration**: Uses same dependency injection pattern as PII/Processing workers
+- **All 49 new tests passing** (237 total tests passing)
+- **Three workers running**: PII worker, Processing worker, Timeout worker
+- **Zero regressions**: Existing tests remain green
+
+**Shared Services Used**: storage_service, queue_service, job_service, metrics_service
+
+**Unblocks**: PRD-009 (End-to-End Integration) - **ALL PHASE 2 PRDs NOW COMPLETE**
 
 ---
 

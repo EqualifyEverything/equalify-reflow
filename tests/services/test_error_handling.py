@@ -7,7 +7,7 @@ Tests for:
 """
 
 import pytest
-from unittest.mock import Mock, AsyncMock, patch
+from unittest.mock import Mock, AsyncMock, MagicMock, patch
 from io import BytesIO
 from fastapi import UploadFile, HTTPException
 
@@ -105,7 +105,7 @@ class TestFileSeekErrorHandling:
     async def test_successful_file_operations(self, storage_service):
         """Test that successful file operations work as expected."""
         # Create a valid file-like object
-        file_content = b"PDF content here"
+        file_content = b"%PDF-1.4\n" + b"%Padding content\n" * 10 + b"%%EOF"
         mock_file = BytesIO(file_content)
 
         storage_service.s3_client.upload_fileobj = Mock()
@@ -209,13 +209,14 @@ class TestRateLimitKeyCollision:
     @pytest.fixture
     def redis_client(self):
         """Create mock Redis client."""
-        mock_redis = AsyncMock()
-        # Default pipeline behavior
-        mock_pipeline = AsyncMock()
+        mock_redis = MagicMock()
+        # Default pipeline behavior - pipeline is synchronous, only execute() is async
+        mock_pipeline = MagicMock()
         mock_pipeline.execute = AsyncMock(return_value=[None, 0])  # [zremrangebyscore result, zcard result]
-        mock_redis.pipeline.return_value = mock_pipeline
+        mock_redis.pipeline = MagicMock(return_value=mock_pipeline)
         mock_redis.zadd = AsyncMock()
         mock_redis.expire = AsyncMock()
+        mock_redis.zremrangebyscore = AsyncMock()
         return mock_redis
 
     @pytest.fixture

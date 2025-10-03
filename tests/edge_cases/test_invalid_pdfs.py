@@ -194,7 +194,7 @@ class TestInvalidPdfHandling:
     @pytest.mark.asyncio
     async def test_pdf_without_extension(self, storage_service, mocker):
         """Test valid PDF without .pdf extension."""
-        pdf_content = b"%PDF-1.4\n%Test content\n%%EOF"
+        pdf_content = b"%PDF-1.4\n" + b"%Test content line\n" * 10 + b"%%EOF"
         file = BytesIO(pdf_content)
 
         upload_file = mocker.Mock(spec=UploadFile)
@@ -234,7 +234,7 @@ class TestInvalidPdfHandling:
     @pytest.mark.asyncio
     async def test_pdf_with_special_characters_in_filename(self, storage_service, mocker):
         """Test PDF with special characters in filename."""
-        pdf_content = b"%PDF-1.4\n%Test content\n%%EOF"
+        pdf_content = b"%PDF-1.4\n" + b"%Test content line\n" * 10 + b"%%EOF"
         file = BytesIO(pdf_content)
 
         upload_file = mocker.Mock(spec=UploadFile)
@@ -253,7 +253,7 @@ class TestInvalidPdfHandling:
     @pytest.mark.asyncio
     async def test_pdf_with_unicode_filename(self, storage_service, mocker):
         """Test PDF with unicode characters in filename."""
-        pdf_content = b"%PDF-1.4\n%Test content\n%%EOF"
+        pdf_content = b"%PDF-1.4\n" + b"%Test content line\n" * 10 + b"%%EOF"
         file = BytesIO(pdf_content)
 
         upload_file = mocker.Mock(spec=UploadFile)
@@ -272,7 +272,7 @@ class TestInvalidPdfHandling:
     @pytest.mark.asyncio
     async def test_pdf_with_very_long_filename(self, storage_service, mocker):
         """Test PDF with extremely long filename."""
-        pdf_content = b"%PDF-1.4\n%Test content\n%%EOF"
+        pdf_content = b"%PDF-1.4\n" + b"%Test content line\n" * 10 + b"%%EOF"
         file = BytesIO(pdf_content)
 
         # Create 300 character filename
@@ -298,10 +298,10 @@ class TestInvalidPdfHandling:
     async def test_multiple_pdf_versions(self, storage_service, mocker):
         """Test handling of different PDF versions."""
         pdf_versions = [
-            b"%PDF-1.0\n%Test\n%%EOF",  # Very old
-            b"%PDF-1.4\n%Test\n%%EOF",  # Common
-            b"%PDF-1.7\n%Test\n%%EOF",  # Modern
-            b"%PDF-2.0\n%Test\n%%EOF",  # Latest
+            b"%PDF-1.0\n" + b"%Test line\n" * 10 + b"%%EOF",  # Very old
+            b"%PDF-1.4\n" + b"%Test line\n" * 10 + b"%%EOF",  # Common
+            b"%PDF-1.7\n" + b"%Test line\n" * 10 + b"%%EOF",  # Modern
+            b"%PDF-2.0\n" + b"%Test line\n" * 10 + b"%%EOF",  # Latest
         ]
 
         mock_s3_client = mocker.MagicMock()

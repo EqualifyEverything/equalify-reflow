@@ -110,7 +110,7 @@ class TestProcessExpiredApprovals:
         expired_job_data
     ):
         """Test processing a single expired approval."""
-        mock_queue_service.get_expired_timeouts.return_value = ["test-job-123"]
+        mock_queue_service.get_expired_timeouts.return_value = [("test-job-123", 1609459200.0)]
         mock_job_service.get_job_status.return_value = expired_job_data
 
         result = await timeout_service.process_expired_approvals()
@@ -138,8 +138,11 @@ class TestProcessExpiredApprovals:
         expired_job_data
     ):
         """Test processing multiple expired approvals."""
-        job_ids = ["job-1", "job-2", "job-3"]
-        mock_queue_service.get_expired_timeouts.return_value = job_ids
+        mock_queue_service.get_expired_timeouts.return_value = [
+            ("job-1", 1609459200.0),
+            ("job-2", 1609459300.0),
+            ("job-3", 1609459400.0)
+        ]
         mock_job_service.get_job_status.return_value = expired_job_data
 
         result = await timeout_service.process_expired_approvals()
@@ -156,7 +159,7 @@ class TestProcessExpiredApprovals:
         completed_job_data
     ):
         """Test skipping jobs that are no longer awaiting_approval."""
-        mock_queue_service.get_expired_timeouts.return_value = ["test-job-456"]
+        mock_queue_service.get_expired_timeouts.return_value = [("test-job-456", 1609459200.0)]
         mock_job_service.get_job_status.return_value = completed_job_data
 
         result = await timeout_service.process_expired_approvals()
@@ -176,7 +179,7 @@ class TestProcessExpiredApprovals:
         mock_job_service
     ):
         """Test handling job that doesn't exist in Redis."""
-        mock_queue_service.get_expired_timeouts.return_value = ["missing-job"]
+        mock_queue_service.get_expired_timeouts.return_value = [("missing-job", 1609459200.0)]
         mock_job_service.get_job_status.return_value = None
 
         result = await timeout_service.process_expired_approvals()
@@ -197,7 +200,7 @@ class TestProcessExpiredApprovals:
         expired_job_data
     ):
         """Test that cleanup failure doesn't prevent status update."""
-        mock_queue_service.get_expired_timeouts.return_value = ["test-job-123"]
+        mock_queue_service.get_expired_timeouts.return_value = [("test-job-123", 1609459200.0)]
         mock_job_service.get_job_status.return_value = expired_job_data
         mock_cleanup_service.cleanup_denied_job.return_value = False
 
@@ -216,7 +219,11 @@ class TestProcessExpiredApprovals:
         expired_job_data
     ):
         """Test that one job failure doesn't stop processing others."""
-        mock_queue_service.get_expired_timeouts.return_value = ["job-1", "job-2", "job-3"]
+        mock_queue_service.get_expired_timeouts.return_value = [
+            ("job-1", 1609459200.0),
+            ("job-2", 1609459300.0),
+            ("job-3", 1609459400.0)
+        ]
 
         # First job fails, others succeed
         def get_job_side_effect(job_id):

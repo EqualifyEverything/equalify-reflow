@@ -412,6 +412,19 @@ class TestTimeoutTracking:
         assert expired == []
 
     @pytest.mark.asyncio
+    async def test_get_expired_timeouts_rejects_non_string_type(self, queue_service):
+        """Test that passing non-string timeout_type raises TypeError.
+
+        This prevents the common mistake of passing a timestamp float
+        instead of a timeout type string like 'approval'.
+        """
+        with pytest.raises(TypeError) as exc:
+            await queue_service.get_expired_timeouts(1609459200.0)
+
+        assert "timeout_type must be a string" in str(exc.value)
+        assert "Do not pass a timestamp" in str(exc.value)
+
+    @pytest.mark.asyncio
     async def test_remove_from_timeout_tracking(self, queue_service, mock_redis_client):
         """Test removing job from timeout tracking."""
         mock_redis_client.zrem.return_value = 1  # 1 member removed

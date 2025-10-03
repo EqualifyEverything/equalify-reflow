@@ -214,6 +214,13 @@ class StorageService:
             else:
                 region = settings.aws_region or "us-east-1"
                 return f"https://{self.results_bucket}.s3.{region}.amazonaws.com/{s3_key}"
+        except ClientError as e:
+            # Preserve ClientError for retry logic to categorize properly
+            error_code = e.response.get('Error', {}).get('Code', 'Unknown')
+            raise HTTPException(
+                status_code=500,
+                detail=f"Failed to upload result: {error_code}"
+            ) from e
         except Exception as e:
             raise HTTPException(
                 status_code=500,

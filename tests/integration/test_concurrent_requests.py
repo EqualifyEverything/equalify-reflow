@@ -306,7 +306,7 @@ class TestConcurrentStatusUpdates:
         await asyncio.gather(*tasks)
 
         # Verify all updates called (last one wins in Redis)
-        assert job_service.update_job_status.call_count == 5 + 1  # +1 from create_job
+        assert job_service.update_job_status.call_count == 5
 
     @pytest.mark.asyncio
     async def test_concurrent_metadata_updates(

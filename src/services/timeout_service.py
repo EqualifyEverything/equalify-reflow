@@ -47,23 +47,19 @@ class TimeoutService:
             Number of expired approvals processed
         """
         try:
-            # Get current timestamp
-            current_time = datetime.now(timezone.utc).timestamp()
-
             # Query Redis sorted set for expired timeouts
-            expired_job_ids = await self.queue_service.get_expired_timeouts(
-                current_time
-            )
+            # Returns [(job_id, timestamp), ...] tuples
+            expired_timeouts = await self.queue_service.get_expired_timeouts()
 
-            if not expired_job_ids:
+            if not expired_timeouts:
                 logger.debug("No expired approvals found")
                 return 0
 
-            logger.info(f"Found {len(expired_job_ids)} expired approvals to process")
+            logger.info(f"Found {len(expired_timeouts)} expired approvals to process")
 
             # Process each expired job
             processed_count = 0
-            for job_id in expired_job_ids:
+            for job_id, expiration_timestamp in expired_timeouts:
                 try:
                     success = await self._process_expired_job(job_id)
                     if success:
@@ -83,7 +79,7 @@ class TimeoutService:
                 )
 
             logger.info(
-                f"Processed {processed_count}/{len(expired_job_ids)} expired approvals"
+                f"Processed {processed_count}/{len(expired_timeouts)} expired approvals"
             )
             return processed_count
 

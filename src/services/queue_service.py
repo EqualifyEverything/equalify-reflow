@@ -246,14 +246,20 @@ class QueueService:
         """Get jobs with expired approval deadlines.
 
         Queries Redis sorted set for members with scores (timestamps) less than
-        or equal to current time. Returns job IDs and their expiration timestamps.
+        or equal to current time (calculated internally). Returns job IDs and their
+        expiration timestamps.
 
         Args:
-            timeout_type: Type of timeout to check (default: "approval")
+            timeout_type: Type of timeout to check (default: "approval").
+                Valid values: "approval", "processing", etc.
+                DO NOT pass a timestamp - this method calculates current time internally.
 
         Returns:
             List of tuples: [(job_id, expiration_timestamp), ...]
             Empty list if no expired jobs or on error
+
+        Raises:
+            TypeError: If timeout_type is not a string
 
         Example:
             >>> queue = QueueService(redis_client)
@@ -261,6 +267,14 @@ class QueueService:
             >>> for job_id, timestamp in expired:
             ...     print(f"Job {job_id} expired at {datetime.fromtimestamp(timestamp)}")
         """
+        # Type validation - prevent common mistake of passing timestamp
+        if not isinstance(timeout_type, str):
+            raise TypeError(
+                f"timeout_type must be a string (e.g., 'approval'), "
+                f"got {type(timeout_type).__name__}. "
+                f"Do not pass a timestamp - this method calculates current time internally."
+            )
+
         try:
             # Get current timestamp
             current_time = datetime.now(timezone.utc).timestamp()

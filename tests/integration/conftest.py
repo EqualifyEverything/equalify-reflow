@@ -1,16 +1,22 @@
 """Shared fixtures for integration tests.
 
 Provides fixtures for:
-- Real Redis and S3 clients from Docker environment
-- Service instances with mocked AI components
+- Real Redis and S3 clients via testcontainers
+- Service instances with real infrastructure (mocked AI only)
 - Test data generators
 - Cleanup helpers
 """
 
 import pytest
 import uuid
+import asyncio
 from datetime import datetime, timezone
 from unittest.mock import AsyncMock, MagicMock, patch
+from typing import AsyncGenerator
+import redis.asyncio as aioredis
+from testcontainers.redis import RedisContainer
+from testcontainers.localstack import LocalStackContainer
+import boto3
 
 from src.services.storage_service import StorageService
 from src.services.queue_service import QueueService
@@ -22,117 +28,134 @@ from src.shared.models.pii import PIIFinding
 from src.config import settings
 
 
-@pytest.fixture
-def mock_redis_client():
-    """Mock Redis client for isolated tests."""
-    client = AsyncMock()
-    # Mock common Redis operations
-    client.lpush = AsyncMock()
-    client.brpop = AsyncMock()
-    client.llen = AsyncMock(return_value=0)
-    client.hset = AsyncMock()
-    client.hgetall = AsyncMock(return_value={})
-    client.get = AsyncMock(return_value=None)
-    client.set = AsyncMock()
-    client.delete = AsyncMock()
-    client.expire = AsyncMock()
-    client.zadd = AsyncMock()
-    client.zrem = AsyncMock()
-    client.zrangebyscore = AsyncMock(return_value=[])
-    client.ping = AsyncMock()
-    client.exists = AsyncMock(return_value=0)
-    client.scan = AsyncMock(return_value=(0, []))
-    client.keys = AsyncMock(return_value=[])
-    return client
+# ============================================================================
+# TESTCONTAINER FIXTURES - Real Infrastructure
+# ============================================================================
+
+@pytest.fixture(scope="session")
+def redis_container():
+    """Start Redis container for integration tests (session-scoped)."""
+    container = RedisContainer("redis:7-alpine")
+    container.start()
+    yield container
+    container.stop()
+
+
+@pytest.fixture(scope="session")
+def localstack_container():
+    """Start LocalStack container for S3 integration tests (session-scoped)."""
+    container = LocalStackContainer(image="localstack/localstack:latest")
+    container.with_services("s3")
+    container.start()
+    yield container
+    container.stop()
 
 
 @pytest.fixture
-def mock_s3_client():
-    """Mock S3 client for isolated tests."""
-    client = AsyncMock()
-    # Add S3 exceptions
-    client.exceptions = MagicMock()
-    client.exceptions.NoSuchKey = type('NoSuchKey', (Exception,), {})
-    # Mock common S3 operations
-    client.put_object = AsyncMock()
-    client.get_object = AsyncMock()
-    client.delete_object = AsyncMock()
-    client.list_objects_v2 = AsyncMock(return_value={'Contents': []})
-    return client
+async def real_redis_client(redis_container) -> AsyncGenerator[aioredis.Redis, None]:
+    """Real Redis client connected to testcontainer with per-test cleanup."""
+    # Get connection details from container
+    host = redis_container.get_container_host_ip()
+    port = redis_container.get_exposed_port(6379)
+    redis_url = f"redis://{host}:{port}/0"
+
+    client = await aioredis.from_url(redis_url, decode_responses=True)
+
+    yield client
+
+    # Cleanup: flush all data after each test
+    await client.flushall()
+    await client.aclose()
 
 
 @pytest.fixture
-def storage_service(mock_s3_client):
-    """Create StorageService with mocked S3."""
+def real_s3_client(localstack_container):
+    """Real S3 client connected to LocalStack testcontainer with per-test cleanup."""
+    # Get LocalStack endpoint
+    host = localstack_container.get_container_host_ip()
+    port = localstack_container.get_exposed_port(4566)
+    endpoint_url = f"http://{host}:{port}"
+
+    # Use SYNC boto3 client (not async) - matches existing StorageService
+    s3_client = boto3.client(
+        "s3",
+        endpoint_url=endpoint_url,
+        aws_access_key_id="test",
+        aws_secret_access_key="test",
+        region_name="us-east-1",
+    )
+
+    # Create test buckets
+    try:
+        s3_client.create_bucket(Bucket=settings.s3_temp_bucket)
+        s3_client.create_bucket(Bucket=settings.s3_results_bucket)
+    except Exception:
+        pass  # Buckets may already exist
+
+    yield s3_client
+
+    # Cleanup: delete all objects in test buckets
+    for bucket in [settings.s3_temp_bucket, settings.s3_results_bucket]:
+        try:
+            response = s3_client.list_objects_v2(Bucket=bucket)
+            if "Contents" in response:
+                for obj in response["Contents"]:
+                    s3_client.delete_object(Bucket=bucket, Key=obj["Key"])
+        except Exception:
+            pass  # Bucket may not exist
+
+
+# ============================================================================
+# REAL SERVICE FIXTURES - Using Real Infrastructure
+# ============================================================================
+
+@pytest.fixture
+async def storage_service(real_s3_client):
+    """Create StorageService with REAL S3 (LocalStack)."""
     return StorageService(
-        s3_client=mock_s3_client,
+        s3_client=real_s3_client,
         temp_bucket=settings.s3_temp_bucket,
         results_bucket=settings.s3_results_bucket,
     )
 
 
 @pytest.fixture
-def queue_service(mock_redis_client):
-    """Create QueueService with mocked Redis."""
-    service = QueueService(redis_client=mock_redis_client)
-    # Mock common methods
-    service.enqueue = AsyncMock()
-    service.dequeue = AsyncMock(return_value=None)
-    service.queue_depth = AsyncMock(return_value=0)
-    service.add_to_timeout_tracking = AsyncMock()
-    service.remove_from_timeout_tracking = AsyncMock(return_value=True)
-    return service
+async def queue_service(real_redis_client):
+    """Create QueueService with REAL Redis."""
+    return QueueService(redis_client=real_redis_client)
 
 
 @pytest.fixture
-def job_service(mock_redis_client):
-    """Create JobService with stateful mocks that track job state."""
-    service = JobService(redis_client=mock_redis_client)
-
-    # In-memory job storage for tests
-    jobs_db = {}
-
-    async def create_job_mock(job_id: str, s3_key: str, status: str, **kwargs):
-        jobs_db[job_id] = {
-            "job_id": job_id,
-            "s3_key": s3_key,
-            "status": status,
-            "created_at": datetime.now(timezone.utc).isoformat(),
-            **kwargs
-        }
-
-    async def get_job_mock(job_id: str):
-        return jobs_db.get(job_id)
-
-    async def update_job_status_mock(job_id: str, status: str, **kwargs):
-        if job_id in jobs_db:
-            jobs_db[job_id]["status"] = status
-            jobs_db[job_id].update(kwargs)
-
-    async def job_exists_mock(job_id: str):
-        return job_id in jobs_db
-
-    async def delete_job_mock(job_id: str):
-        jobs_db.pop(job_id, None)
-
-    service.create_job = AsyncMock(side_effect=create_job_mock)
-    service.get_job = AsyncMock(side_effect=get_job_mock)
-    service.update_job_status = AsyncMock(side_effect=update_job_status_mock)
-    service.job_exists = AsyncMock(side_effect=job_exists_mock)
-    service.delete_job = AsyncMock(side_effect=delete_job_mock)
-
-    return service
+async def job_service(real_redis_client):
+    """Create JobService with REAL Redis."""
+    return JobService(redis_client=real_redis_client)
 
 
 @pytest.fixture
-def approval_service(mock_redis_client, mock_s3_client, job_service, queue_service):
-    """Create ApprovalService with mocked dependencies."""
+async def approval_service(real_redis_client, real_s3_client, job_service, queue_service):
+    """Create ApprovalService with real dependencies."""
     return ApprovalService(
-        redis_client=mock_redis_client,
-        s3_client=mock_s3_client,
+        redis_client=real_redis_client,
+        s3_client=real_s3_client,
         job_service=job_service,
         queue_service=queue_service
     )
+
+
+# ============================================================================
+# MOCKED AI/ML FIXTURES - Expensive Components (Keep Mocked)
+# ============================================================================
+
+@pytest.fixture(autouse=True)
+def mock_anthropic_api():
+    """Auto-mock Anthropic API to avoid needing API keys in integration tests."""
+    import os
+    # Set fake API key to avoid initialization errors
+    os.environ['ANTHROPIC_API_KEY'] = 'test-key-for-integration-tests'
+    yield
+    # Clean up
+    if 'ANTHROPIC_API_KEY' in os.environ and os.environ['ANTHROPIC_API_KEY'] == 'test-key-for-integration-tests':
+        del os.environ['ANTHROPIC_API_KEY']
 
 
 @pytest.fixture
@@ -158,54 +181,90 @@ def mock_pdf_extractor():
 @pytest.fixture
 def mock_pdf_converter():
     """Mock PDF converter for processing worker tests."""
-    with patch('src.services.pdf_converter.PDFConverter') as mock:
-        converter = MagicMock()
-        # Mock conversion result
-        conversion_result = MagicMock()
-        conversion_result.has_page_images = True
-        conversion_result.total_pages = 1
-        conversion_result.full_markdown = "# Sample Document\n\nTest content."
-        conversion_result.pages = [MagicMock(page_num=1)]
-        converter.convert_with_page_images = AsyncMock(return_value=conversion_result)
-        mock.return_value = converter
-        yield converter
+    converter = MagicMock()
+    # Mock conversion result
+    conversion_result = MagicMock()
+    conversion_result.has_page_images = True
+    conversion_result.total_pages = 1
+    conversion_result.full_markdown = "# Sample Document\n\nTest content."
+    conversion_result.pages = [MagicMock(page_num=1)]
+    converter.convert_with_page_images = AsyncMock(return_value=conversion_result)
+    return converter
 
 
 @pytest.fixture
 def mock_ai_enhancement():
     """Mock AI enhancement service for processing worker tests."""
-    with patch('src.services.ai_enhancement_service.AIEnhancementService') as mock:
-        ai_service = MagicMock()
-        # Mock page processing result
-        improvement_result = MagicMock()
-        improvement_result.confidence_score = 0.95
-        ai_service.process_pages_concurrently = AsyncMock(return_value=[improvement_result])
-        ai_service.combine_page_markdown = MagicMock(
-            return_value="# Sample Document\n\nEnhanced content with accessibility improvements."
-        )
-        mock.return_value = ai_service
-        yield ai_service
+    ai_service = MagicMock()
+    # Mock page processing result
+    improvement_result = MagicMock()
+    improvement_result.confidence_score = 0.95
+    ai_service.process_pages_concurrently = AsyncMock(return_value=[improvement_result])
+    ai_service.combine_page_markdown = MagicMock(
+        return_value="# Sample Document\n\nEnhanced content with accessibility improvements."
+    )
+    return ai_service
 
+
+# ============================================================================
+# WORKER FIXTURES - Using Real Services
+# ============================================================================
 
 @pytest.fixture
-def pii_worker(storage_service, queue_service, job_service):
-    """Create PIIWorker instance with mocked services."""
-    return PIIWorker(
+async def pii_worker(storage_service, queue_service, job_service, mock_pii_analyzer):
+    """Create PIIWorker instance with REAL services and MOCKED PII analyzer."""
+    from src.services.pii_service import PIIDetectionService
+
+    # Create PIIDetectionService with mocked PII analyzer
+    pii_service = PIIDetectionService(
         storage_service=storage_service,
         queue_service=queue_service,
         job_service=job_service
     )
+    # Replace the auto-created analyzer with our mocked one
+    pii_service.pii_analyzer = mock_pii_analyzer
 
-
-@pytest.fixture
-def processing_worker(storage_service, queue_service, job_service):
-    """Create ProcessingWorker instance with mocked services."""
-    return ProcessingWorker(
+    # Create worker and inject the pre-configured pii service
+    worker = PIIWorker(
         storage_service=storage_service,
         queue_service=queue_service,
         job_service=job_service
     )
+    # Replace the auto-created pii_service with our mocked one
+    worker.pii_service = pii_service
 
+    return worker
+
+
+@pytest.fixture
+async def processing_worker(storage_service, queue_service, job_service, mock_pdf_converter, mock_ai_enhancement):
+    """Create ProcessingWorker instance with REAL services and MOCKED AI."""
+    from src.services.processing_service import ProcessingService
+
+    # Create ProcessingService with mocked AI/PDF components
+    processing_service = ProcessingService(
+        storage_service=storage_service,
+        queue_service=queue_service,
+        job_service=job_service,
+        pdf_converter=mock_pdf_converter,
+        ai_enhancement=mock_ai_enhancement
+    )
+
+    # Create worker and inject the pre-configured processing service
+    worker = ProcessingWorker(
+        storage_service=storage_service,
+        queue_service=queue_service,
+        job_service=job_service
+    )
+    # Replace the auto-created processing_service with our mocked one
+    worker.processing_service = processing_service
+
+    return worker
+
+
+# ============================================================================
+# TEST DATA FIXTURES
+# ============================================================================
 
 @pytest.fixture
 def sample_job_id():
@@ -221,9 +280,26 @@ def sample_s3_key(sample_job_id):
 
 @pytest.fixture
 def sample_pdf_content():
-    """Generate sample PDF binary content."""
-    # Minimal valid PDF structure
-    return b"%PDF-1.4\n1 0 obj\n<< /Type /Catalog /Pages 2 0 R >>\nendobj\nxref\n0 1\ntrailer\n<< /Size 1 /Root 1 0 R >>\nstartxref\n100\n%%EOF"
+    """Generate valid PDF binary content using reportlab.
+
+    Creates a simple single-page PDF that Docling can actually process.
+    """
+    from io import BytesIO
+    from reportlab.pdfgen import canvas
+    from reportlab.lib.pagesizes import letter
+
+    buffer = BytesIO()
+    pdf = canvas.Canvas(buffer, pagesize=letter)
+
+    # Add some simple text content
+    pdf.drawString(100, 750, "Sample PDF Document")
+    pdf.drawString(100, 730, "This is a test document for integration testing.")
+    pdf.drawString(100, 710, "It contains basic text content that can be extracted.")
+
+    pdf.showPage()
+    pdf.save()
+
+    return buffer.getvalue()
 
 
 @pytest.fixture
@@ -245,19 +321,3 @@ def sample_pii_findings():
             end=116
         )
     ]
-
-
-@pytest.fixture
-async def cleanup_redis(mock_redis_client):
-    """Cleanup Redis state after tests."""
-    yield
-    # Reset all mock call counts
-    mock_redis_client.reset_mock()
-
-
-@pytest.fixture
-async def cleanup_s3(mock_s3_client):
-    """Cleanup S3 state after tests."""
-    yield
-    # Reset all mock call counts
-    mock_s3_client.reset_mock()

@@ -305,7 +305,8 @@ class TestRateLimitKeyCollision:
     async def test_cleanup_still_works_with_uuid_members(self, redis_client, rate_limit_service):
         """Test that window cleanup still functions with UUID-based members."""
         # Mock pipeline to simulate existing entries
-        mock_pipeline = AsyncMock()
+        # Pipeline methods (zremrangebyscore, zcard) are sync, only execute() is async
+        mock_pipeline = MagicMock()
         mock_pipeline.execute = AsyncMock(return_value=[5, 3])  # Removed 5 old, 3 remaining
         redis_client.pipeline.return_value = mock_pipeline
 
@@ -349,7 +350,8 @@ class TestIntegrationErrorHandling:
     async def test_rate_limit_collision_resistance(self):
         """Test that rate limiting handles high concurrency without collisions."""
         mock_redis = AsyncMock()
-        mock_pipeline = AsyncMock()
+        # Pipeline methods are sync, only execute() is async
+        mock_pipeline = MagicMock()
         mock_pipeline.execute = AsyncMock(return_value=[None, 0])
         mock_redis.pipeline.return_value = mock_pipeline
         mock_redis.zadd = AsyncMock(return_value=1)

@@ -67,35 +67,11 @@ jobs:
           name: unit-test-results
           path: .pytest_cache/
 
-  # Job 2: Integration tests with Docker services (< 5 min)
+  # Job 2: Integration tests with testcontainers (< 5 min)
   integration-tests:
-    name: Integration Tests
+    name: Integration Tests (Testcontainers)
     runs-on: ubuntu-latest
     timeout-minutes: 15
-
-    services:
-      redis:
-        image: redis:7-alpine
-        options: >-
-          --health-cmd "redis-cli ping"
-          --health-interval 10s
-          --health-timeout 5s
-          --health-retries 5
-        ports:
-          - 6379:6379
-
-      localstack:
-        image: localstack/localstack:latest
-        env:
-          SERVICES: s3
-          DEFAULT_REGION: us-east-1
-        options: >-
-          --health-cmd "awslocal s3 ls || exit 1"
-          --health-interval 10s
-          --health-timeout 5s
-          --health-retries 5
-        ports:
-          - 4566:4566
 
     steps:
       - name: Checkout code
@@ -107,30 +83,21 @@ jobs:
           python-version: ${{ env.PYTHON_VERSION }}
           cache: 'pip'
 
+      - name: Set up Docker Buildx
+        uses: docker/setup-buildx-action@v3
+
       - name: Install uv
         run: pip install uv
 
       - name: Install dependencies
         run: uv sync --all-extras
 
-      - name: Configure AWS CLI for LocalStack
+      - name: Run integration tests (testcontainers)
         run: |
-          pip install awscli-local
-          awslocal s3 mb s3://equalify-pdf-temp || true
-          awslocal s3 mb s3://equalify-pdf-results || true
-
-      - name: Run integration tests
-        env:
-          REDIS_URL: redis://localhost:6379/0
-          AWS_ENDPOINT_URL: http://localhost:4566
-          AWS_ACCESS_KEY_ID: test
-          AWS_SECRET_ACCESS_KEY: test
-          AWS_REGION: us-east-1
-        run: |
-          uv run pytest tests/integration tests/edge_cases \
+          uv run pytest tests/integration \
             -v \
             --tb=short \
-            -m "integration or slow" \
+            -m "integration" \
             --cov=src \
             --cov-report=term \
             --cov-report=html \

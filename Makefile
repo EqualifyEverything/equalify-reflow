@@ -1,4 +1,4 @@
-.PHONY: help dev prod up down logs health test clean build shell test-docker logs-api grafana-url prometheus-url metrics-url coverage coverage-html coverage-report
+.PHONY: help dev prod up down logs health test test-unit test-integration test-slow clean build shell test-docker logs-api grafana-url prometheus-url metrics-url coverage coverage-html coverage-report
 
 # Default target
 help:
@@ -13,6 +13,10 @@ help:
 	@echo "  make test         - Run tests locally"
 	@echo ""
 	@echo "Testing & Coverage:"
+	@echo "  make test         - Run all tests"
+	@echo "  make test-unit    - Run unit tests only (fast)"
+	@echo "  make test-integration - Run integration tests (uses testcontainers)"
+	@echo "  make test-slow    - Run slow tests (integration + performance)"
 	@echo "  make coverage     - Run tests with coverage report"
 	@echo "  make coverage-html - Generate and open HTML coverage report"
 	@echo "  make coverage-report - Show coverage summary"
@@ -56,9 +60,24 @@ logs:
 health:
 	./scripts/health-check.sh
 
-# Run tests
+# Run all tests
 test:
 	uv run pytest tests/ -v
+
+# Run unit tests only (fast, no integration)
+test-unit:
+	@echo "Running unit tests (excluding integration tests)..."
+	uv run pytest -m "not integration" -v
+
+# Run integration tests (uses testcontainers)
+test-integration:
+	@echo "Running integration tests (requires Docker for testcontainers)..."
+	uv run pytest -m integration -v
+
+# Run slow tests (integration + performance)
+test-slow:
+	@echo "Running slow tests (integration + performance)..."
+	uv run pytest -m slow -v
 
 # Redis CLI
 redis-cli:

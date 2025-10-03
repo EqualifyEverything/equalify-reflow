@@ -174,28 +174,76 @@ class ApprovalService:
     ) -> None:
         """Handle approved decision - route to processing queue.
 
+        Uses Redis atomic lock to prevent duplicate queue entries
+        from concurrent approval attempts.
+
         Args:
             job_id: Job identifier
             s3_key: S3 object key
             decision_metadata: Decision details for audit trail
         """
         try:
-            # Enqueue to processing queue
-            queue_payload = ProcessingQueuePayload(
-                job_id=job_id,
-                s3_key=s3_key,
-                approved_at=datetime.now(timezone.utc)
+            # ATOMIC LOCK: Use Redis SETNX to claim exclusive approval processing
+            # This prevents race condition where two concurrent approvals
+            # both try to enqueue the same job
+            lock_key = f"eq-pdf:approval-lock:{job_id}"
+            lock_acquired = await self.redis.set(
+                lock_key,
+                "processing",
+                nx=True,  # Only set if not exists (atomic)
+                ex=60  # Expire after 60 seconds (safety cleanup)
             )
-            await self.queue_service.enqueue(PROCESSING_QUEUE, queue_payload)
-            logger.info(f"Job {job_id} approved - queued for processing")
 
-            # Update job status
-            await self.job_service.update_job_status(
-                job_id,
-                STATUS_PROCESSING,
-                approval_decision=decision_metadata
-            )
-            logger.info(f"Job {job_id} status updated to processing")
+            if not lock_acquired:
+                # Another approval is already processing or completed
+                logger.info(
+                    f"Job {job_id} approval already in progress or completed - "
+                    "ignoring duplicate approval attempt"
+                )
+                return
+
+            try:
+                # Double-check job status after acquiring lock
+                current_job = await self.job_service.get_job(job_id)
+                if not current_job:
+                    logger.warning(f"Job {job_id} disappeared during approval processing")
+                    raise ValueError(f"Job {job_id} not found")
+
+                current_status = current_job.get("status")
+
+                # If job already processed/processing, release lock and return
+                if current_status == STATUS_PROCESSING:
+                    logger.info(f"Job {job_id} already in processing status - duplicate approval")
+                    return
+
+                # If job is in any other non-awaiting state, abort
+                if current_status not in ["awaiting_approval", "pii_scanning"]:
+                    logger.warning(
+                        f"Job {job_id} in unexpected status '{current_status}' during approval"
+                    )
+                    raise ValueError(f"Job {job_id} cannot be approved from status '{current_status}'")
+
+                # Enqueue to processing queue
+                queue_payload = ProcessingQueuePayload(
+                    job_id=job_id,
+                    s3_key=s3_key,
+                    approved_at=datetime.now(timezone.utc)
+                )
+                await self.queue_service.enqueue(PROCESSING_QUEUE, queue_payload)
+                logger.info(f"Job {job_id} approved - queued for processing")
+
+                # Update job status
+                await self.job_service.update_job_status(
+                    job_id,
+                    STATUS_PROCESSING,
+                    approval_decision=decision_metadata
+                )
+                logger.info(f"Job {job_id} status updated to processing")
+
+            finally:
+                # Release lock after processing (or on error)
+                await self.redis.delete(lock_key)
+                logger.debug(f"Released approval lock for job {job_id}")
 
         except Exception as e:
             logger.error(f"Failed to process approval for job {job_id}: {str(e)}", exc_info=True)

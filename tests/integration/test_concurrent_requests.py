@@ -125,7 +125,6 @@ class TestRaceConditionDoubleApproval:
     """Tests for race conditions in approval workflow using REAL Redis."""
 
     @pytest.mark.asyncio
-    @pytest.mark.xfail(reason="KNOWN BUG: Concurrent approvals not idempotent - approval service allows duplicate queue entries. Discovered by real infrastructure testing (STORY-010).")
     async def test_double_approval_attempt_handled_safely(
         self,
         approval_service,
@@ -134,12 +133,7 @@ class TestRaceConditionDoubleApproval:
         sample_job_id,
         sample_s3_key
     ):
-        """Test that two concurrent approval attempts don't cause duplicate processing in REAL Redis.
-
-        NOTE: This test currently fails because the approval service doesn't implement
-        proper idempotency checks. Two concurrent approvals will both succeed and add
-        duplicate entries to the processing queue. This bug was only discovered after
-        converting from mocked to real infrastructure tests."""
+        """Test that two concurrent approval attempts don't cause duplicate processing in REAL Redis."""
         # Setup: Job awaiting approval in REAL Redis
         approval_token = "test-approval-token-123"
         await job_service.create_job(

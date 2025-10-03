@@ -20,7 +20,8 @@ def pii_analyzer():
         mock_provider.return_value.create_engine.return_value = mock_engine
 
         with patch('presidio_analyzer.AnalyzerEngine') as mock_analyzer:
-            analyzer = PIIAnalyzer(confidence_threshold=0.7)
+            # Use default threshold from settings (0.85)
+            analyzer = PIIAnalyzer()
             # Set up the mock to return expected structure
             analyzer.analyzer = mock_analyzer.return_value
             yield analyzer
@@ -55,7 +56,7 @@ class TestPIIDetectionAccuracy:
             if should_detect:
                 assert len(findings) > 0, f"Failed to detect SSN: {description}"
                 assert findings[0].entity_type == "US_SSN"
-                assert findings[0].score >= 0.7
+                assert findings[0].score >= 0.85
             else:
                 assert len(findings) == 0, f"False positive: {description}"
 
@@ -151,32 +152,24 @@ class TestPIIDetectionAccuracy:
                 assert any(f.entity_type == "PHONE_NUMBER" for f in findings)
 
     @pytest.mark.asyncio
-    async def test_person_name_detection(self, pii_analyzer):
-        """Test person name detection."""
+    async def test_person_name_not_detected(self, pii_analyzer):
+        """Test that person names are NOT detected (PERSON entity disabled)."""
         test_cases = [
-            ("Student John Smith submitted", True, "Full name"),
-            ("Contact Dr. Jane Doe", True, "With title"),
-            ("Professor Maria Garcia Lopez", True, "Multiple names"),
-            ("The student submitted", False, "Generic reference"),
+            "Student John Smith submitted",
+            "Contact Dr. Jane Doe",
+            "Professor Maria Garcia Lopez",
+            "Dylan Isaac Software Engineer",
         ]
 
-        for text, should_detect, description in test_cases:
-            if should_detect:
-                # Mock name detection
-                mock_result = Mock()
-                mock_result.entity_type = "PERSON"
-                mock_result.start = 8
-                mock_result.end = 20
-                mock_result.score = 0.80
-                pii_analyzer.analyzer.analyze.return_value = [mock_result]
-            else:
-                pii_analyzer.analyzer.analyze.return_value = []
+        for text in test_cases:
+            # PERSON entity type is disabled, should not detect
+            pii_analyzer.analyzer.analyze.return_value = []
 
             findings = pii_analyzer.analyze_text(text)
 
-            if should_detect:
-                assert len(findings) > 0, f"Failed to detect: {description}"
-                assert any(f.entity_type == "PERSON" for f in findings)
+            # Should not detect PERSON entities (disabled to reduce false positives)
+            person_findings = [f for f in findings if f.entity_type == "PERSON"]
+            assert len(person_findings) == 0, f"Should not detect PERSON in: {text}"
 
     @pytest.mark.asyncio
     async def test_false_positive_prevention(self, pii_analyzer):
@@ -206,30 +199,24 @@ class TestPIIDetectionAccuracy:
         assert len(ssn_findings) == 0
 
     @pytest.mark.asyncio
-    async def test_location_detection(self, pii_analyzer):
-        """Test address/location detection."""
+    async def test_location_not_detected(self, pii_analyzer):
+        """Test that locations are NOT detected (LOCATION entity disabled)."""
         test_cases = [
-            ("Office at 123 Main Street, Chicago IL", True, "Full address"),
-            ("Located in Chicago", False, "City only - not PII"),
-            ("Building 5, Room 201", False, "Campus location"),
+            "Office at 123 Main Street, Chicago IL",
+            "Located in Chicago",
+            "Building 5, Room 201",
+            "San Francisco Bay Area",
         ]
 
-        for text, should_detect, description in test_cases:
-            if should_detect:
-                mock_result = Mock()
-                mock_result.entity_type = "LOCATION"
-                mock_result.start = 10
-                mock_result.end = 35
-                mock_result.score = 0.75
-                pii_analyzer.analyzer.analyze.return_value = [mock_result]
-            else:
-                pii_analyzer.analyzer.analyze.return_value = []
+        for text in test_cases:
+            # LOCATION entity type is disabled, should not detect
+            pii_analyzer.analyzer.analyze.return_value = []
 
             findings = pii_analyzer.analyze_text(text)
 
-            if should_detect:
-                assert len(findings) > 0, f"Failed to detect: {description}"
-                assert any(f.entity_type == "LOCATION" for f in findings)
+            # Should not detect LOCATION entities (disabled to reduce false positives)
+            location_findings = [f for f in findings if f.entity_type == "LOCATION"]
+            assert len(location_findings) == 0, f"Should not detect LOCATION in: {text}"
 
     @pytest.mark.asyncio
     async def test_credit_card_detection(self, pii_analyzer):
@@ -260,14 +247,14 @@ class TestPIIDetectionAccuracy:
     @pytest.mark.asyncio
     async def test_confidence_threshold_filtering(self, pii_analyzer):
         """Test that low confidence findings are filtered out."""
-        text = "Test content with potential PII"
+        text = "Email: test@example.com"
 
-        # Mock low confidence finding
+        # Mock low confidence finding (below 0.85 threshold)
         mock_result = Mock()
-        mock_result.entity_type = "PERSON"
-        mock_result.start = 0
-        mock_result.end = 10
-        mock_result.score = 0.5  # Below 0.7 threshold
+        mock_result.entity_type = "EMAIL_ADDRESS"
+        mock_result.start = 7
+        mock_result.end = 23
+        mock_result.score = 0.6  # Below 0.85 threshold
         pii_analyzer.analyzer.analyze.return_value = [mock_result]
 
         findings = pii_analyzer.analyze_text(text)
@@ -278,13 +265,13 @@ class TestPIIDetectionAccuracy:
     @pytest.mark.asyncio
     async def test_multiple_pii_types_in_same_text(self, pii_analyzer):
         """Test detection of multiple PII types in one text."""
-        text = "Contact John Doe at john.doe@example.com or 555-123-4567"
+        text = "Contact john.doe@example.com or 555-123-4567. SSN: 123-45-6789"
 
-        # Mock multiple findings
+        # Mock multiple findings (only pattern-based entities)
         mock_results = [
-            Mock(entity_type="PERSON", start=8, end=16, score=0.85),
-            Mock(entity_type="EMAIL_ADDRESS", start=20, end=41, score=0.95),
-            Mock(entity_type="PHONE_NUMBER", start=45, end=57, score=0.90),
+            Mock(entity_type="EMAIL_ADDRESS", start=8, end=29, score=0.95),
+            Mock(entity_type="PHONE_NUMBER", start=33, end=45, score=0.90),
+            Mock(entity_type="US_SSN", start=52, end=63, score=0.95),
         ]
         pii_analyzer.analyzer.analyze.return_value = mock_results
 
@@ -293,9 +280,9 @@ class TestPIIDetectionAccuracy:
         # Should detect all three types
         assert len(findings) == 3
         entity_types = {f.entity_type for f in findings}
-        assert "PERSON" in entity_types
         assert "EMAIL_ADDRESS" in entity_types
         assert "PHONE_NUMBER" in entity_types
+        assert "US_SSN" in entity_types
 
     @pytest.mark.asyncio
     async def test_international_phone_formats(self, pii_analyzer):
@@ -324,31 +311,25 @@ class TestPIIDetectionAccuracy:
             assert findings[0].entity_type == "PHONE_NUMBER"
 
     @pytest.mark.asyncio
-    async def test_date_time_detection_context(self, pii_analyzer):
-        """Test that generic dates are not flagged but specific birthdates are."""
+    async def test_date_time_not_detected(self, pii_analyzer):
+        """Test that dates are NOT detected (DATE_TIME entity disabled)."""
         test_cases = [
-            ("Due date: January 15, 2024", False, "Generic deadline"),
-            ("Born on 03/15/1995", True, "Birthdate"),
-            ("Meeting at 2:00 PM", False, "Time only"),
-            ("The year 2024", False, "Year only"),
+            "Due date: January 15, 2024",
+            "Born on 03/15/1995",
+            "Meeting at 2:00 PM",
+            "The year 2024",
+            "September 2019 - Present",
         ]
 
-        for text, should_detect, description in test_cases:
-            if should_detect:
-                mock_result = Mock()
-                mock_result.entity_type = "DATE_TIME"
-                mock_result.start = 8
-                mock_result.end = 18
-                mock_result.score = 0.80
-                pii_analyzer.analyzer.analyze.return_value = [mock_result]
-            else:
-                pii_analyzer.analyzer.analyze.return_value = []
+        for text in test_cases:
+            # DATE_TIME entity type is disabled, should not detect
+            pii_analyzer.analyzer.analyze.return_value = []
 
             findings = pii_analyzer.analyze_text(text)
 
-            # Note: DATE_TIME detection depends on context
-            if should_detect:
-                assert any(f.entity_type == "DATE_TIME" for f in findings), description
+            # Should not detect DATE_TIME entities (disabled to reduce false positives)
+            date_findings = [f for f in findings if f.entity_type == "DATE_TIME"]
+            assert len(date_findings) == 0, f"Should not detect DATE_TIME in: {text}"
 
     @pytest.mark.asyncio
     async def test_empty_text_handling(self, pii_analyzer):

@@ -75,6 +75,9 @@ class Settings(BaseSettings):
     metrics_retention_days: int = Field(ge=1, le=730, default=90)  # Keep metrics for 90 days, max 2 years
     max_processing_hours: int = Field(ge=1, le=24, default=2)  # Mark jobs as stuck after 2 hours in processing
 
+    # PII Detection Configuration
+    pii_confidence_threshold: float = Field(ge=0.0, le=1.0, default=0.85)  # Minimum confidence score for PII detection
+
     # Redis TTL Configuration (in seconds)
     # TTL ensures job hashes auto-expire to prevent Redis memory exhaustion
     job_ttl_active: int = Field(ge=3600, le=30*24*3600, default=7*24*3600)       # 7 days for active jobs, min 1 hour, max 30 days

@@ -6,25 +6,27 @@ from typing import List
 from presidio_analyzer import AnalyzerEngine
 from presidio_analyzer.nlp_engine import NlpEngineProvider
 
+from ..config import settings
 from ..shared.models.pii import PIIFinding
 
 logger = logging.getLogger(__name__)
 
 # PII entity types to detect
+# NOTE: Only pattern-based detectors are enabled to reduce false positives
+# Removed NER-based detectors (PERSON, DATE_TIME, LOCATION) which flagged
+# technical terms, company names, and job titles as PII in course materials
 ENTITY_TYPES = [
-    "PERSON",              # Names
-    "EMAIL_ADDRESS",       # Email addresses
-    "PHONE_NUMBER",        # Phone numbers
-    "US_SSN",              # Social Security Numbers
-    "CREDIT_CARD",         # Credit card numbers
-    "IBAN_CODE",           # Bank account numbers
-    "US_DRIVER_LICENSE",   # Driver's license numbers
-    "DATE_TIME",           # Specific dates
-    "LOCATION",            # Addresses
+    "EMAIL_ADDRESS",       # Email addresses (pattern-based)
+    "PHONE_NUMBER",        # Phone numbers (pattern-based)
+    "US_SSN",              # Social Security Numbers (pattern-based)
+    "CREDIT_CARD",         # Credit card numbers (pattern-based, Luhn check)
+    "IBAN_CODE",           # Bank account numbers (pattern-based)
+    "US_DRIVER_LICENSE",   # Driver's license numbers (pattern-based)
 ]
 
 # Confidence threshold for PII detection
-DEFAULT_CONFIDENCE_THRESHOLD = 0.7
+# Configurable via settings.pii_confidence_threshold (default 0.85)
+DEFAULT_CONFIDENCE_THRESHOLD = settings.pii_confidence_threshold
 
 
 class PIIAnalyzer:
@@ -33,9 +35,14 @@ class PIIAnalyzer:
     Configures and manages Presidio AnalyzerEngine for detecting
     personally identifiable information in text content.
 
+    Uses pattern-based detectors only (EMAIL, PHONE, SSN, CREDIT_CARD,
+    IBAN, DRIVER_LICENSE) to minimize false positives in course materials.
+    NER-based detectors (PERSON, DATE_TIME, LOCATION) are disabled as they
+    frequently misidentify technical terms, company names, and job titles.
+
     Attributes:
         analyzer: Presidio AnalyzerEngine instance
-        confidence_threshold: Minimum confidence score (0.0-1.0)
+        confidence_threshold: Minimum confidence score (0.0-1.0, default 0.85)
     """
 
     def __init__(self, confidence_threshold: float = DEFAULT_CONFIDENCE_THRESHOLD):

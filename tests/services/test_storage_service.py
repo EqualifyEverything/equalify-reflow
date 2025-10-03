@@ -29,7 +29,8 @@ def storage_service(mock_s3_client):
 @pytest.fixture
 def sample_pdf_upload(mocker):
     """Create a sample PDF upload file."""
-    pdf_content = b"%PDF-1.4\n%Test PDF content\n%%EOF"
+    # Create PDF larger than 100 bytes minimum
+    pdf_content = b"%PDF-1.4\n" + b"%Test PDF content line\n" * 10 + b"%%EOF"
     file = BytesIO(pdf_content)
 
     # Create UploadFile with proper content_type

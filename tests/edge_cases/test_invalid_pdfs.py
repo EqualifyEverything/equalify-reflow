@@ -215,7 +215,8 @@ class TestInvalidPdfHandling:
     @pytest.mark.asyncio
     async def test_pdf_with_null_bytes(self, storage_service, mocker):
         """Test PDF containing null bytes."""
-        pdf_content = b"%PDF-1.4\n\x00\x00\x00Content with nulls\x00\x00%%EOF"
+        # Create PDF larger than 100 bytes minimum
+        pdf_content = b"%PDF-1.4\n\x00\x00\x00Content with nulls\x00\x00" + b"padding" * 15 + b"%%EOF"
         file = BytesIO(pdf_content)
 
         upload_file = mocker.Mock(spec=UploadFile)

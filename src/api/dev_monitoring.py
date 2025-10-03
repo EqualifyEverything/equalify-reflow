@@ -12,7 +12,7 @@ from fastapi import APIRouter, HTTPException, Depends
 from ..config import settings
 from ..dependencies import get_queue_service, get_redis_client
 from ..services.queue_service import QueueService
-from ..shared.constants.queues import QueueNames
+from ..shared.constants.queues import PII_QUEUE, PROCESSING_QUEUE, APPROVAL_TIMEOUT_KEY
 from redis.asyncio import Redis
 
 router = APIRouter(prefix="/api/dev", tags=["Development"])
@@ -40,11 +40,11 @@ async def get_queue_metrics(
     require_dev_mode()
 
     # Get queue lengths
-    pii_scan_depth = await redis.llen(QueueNames.PII_SCAN)
-    processing_depth = await redis.llen(QueueNames.PROCESSING)
+    pii_scan_depth = await redis.llen(PII_QUEUE)
+    processing_depth = await redis.llen(PROCESSING_QUEUE)
 
     # For sorted sets (approval timeouts), use ZCARD
-    approval_depth = await redis.zcard("eq-pdf:timeouts:approval")
+    approval_depth = await redis.zcard(APPROVAL_TIMEOUT_KEY)
 
     return {
         "queues": {

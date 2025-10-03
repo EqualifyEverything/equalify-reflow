@@ -209,7 +209,7 @@ class RateLimitService:
             await self.redis.zremrangebyscore(key, 0, window_start)
             current = await self.redis.zcard(key)
 
-            remaining = max(0, limit - current)
+            remaining = min(limit, max(0, limit - current))
 
             # Calculate reset time
             if current > 0:

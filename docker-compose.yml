@@ -23,7 +23,7 @@ services:
     ports:
       - "8000:8000"
     env_file:
-      - .env.dev
+      - .env
     environment:
       - REDIS_URL=redis://redis:6379
       - AWS_ENDPOINT_URL=http://localstack:4566

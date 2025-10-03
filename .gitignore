@@ -7,8 +7,7 @@
 
 # But keep templates
 !.env.example
-!.env.dev
-!.env.prod
+!.env.dev.example
 
 # Python
 __pycache__/
@@ -155,5 +154,3 @@ site/
 
 # Local Files
 project-docs/local/
-.env.dev
-.env.dev

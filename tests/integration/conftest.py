@@ -86,14 +86,41 @@ def queue_service(mock_redis_client):
 
 @pytest.fixture
 def job_service(mock_redis_client):
-    """Create JobService with mocked Redis."""
+    """Create JobService with stateful mocks that track job state."""
     service = JobService(redis_client=mock_redis_client)
-    # Mock common methods with proper return values
-    service.create_job = AsyncMock()
-    service.get_job = AsyncMock(return_value=None)
-    service.update_job_status = AsyncMock()
-    service.job_exists = AsyncMock(return_value=True)
-    service.delete_job = AsyncMock()
+
+    # In-memory job storage for tests
+    jobs_db = {}
+
+    async def create_job_mock(job_id: str, s3_key: str, status: str, **kwargs):
+        jobs_db[job_id] = {
+            "job_id": job_id,
+            "s3_key": s3_key,
+            "status": status,
+            "created_at": datetime.now(timezone.utc).isoformat(),
+            **kwargs
+        }
+
+    async def get_job_mock(job_id: str):
+        return jobs_db.get(job_id)
+
+    async def update_job_status_mock(job_id: str, status: str, **kwargs):
+        if job_id in jobs_db:
+            jobs_db[job_id]["status"] = status
+            jobs_db[job_id].update(kwargs)
+
+    async def job_exists_mock(job_id: str):
+        return job_id in jobs_db
+
+    async def delete_job_mock(job_id: str):
+        jobs_db.pop(job_id, None)
+
+    service.create_job = AsyncMock(side_effect=create_job_mock)
+    service.get_job = AsyncMock(side_effect=get_job_mock)
+    service.update_job_status = AsyncMock(side_effect=update_job_status_mock)
+    service.job_exists = AsyncMock(side_effect=job_exists_mock)
+    service.delete_job = AsyncMock(side_effect=delete_job_mock)
+
     return service
 
 

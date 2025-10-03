@@ -1,5 +1,7 @@
 # Equalify PDF Converter
 
+[![Test Suite](https://github.com/dylanisaac/equalify-pdf-converter/actions/workflows/test.yml/badge.svg)](https://github.com/dylanisaac/equalify-pdf-converter/actions/workflows/test.yml)
+
 Transform PDF documents into accessible, semantic HTML for the University of Illinois Chicago (UIC).
 
 ## Overview
@@ -100,6 +102,20 @@ make test-docker    # Run tests inside container
 make redis-cli      # Connect to Redis CLI
 make clean          # Remove containers and volumes
 ```
+
+### CI/CD
+
+All tests run automatically via GitHub Actions on:
+- Every push to any branch
+- Every pull request to `main` or `develop`
+- Manual workflow dispatch
+
+**Status:** PRs cannot merge until all tests pass.
+
+**Test Jobs:**
+- **Unit Tests** - Fast tests (<2min)
+- **Integration Tests** - Redis/S3 integration (<5min)
+- **Docker Full Suite** - Complete verification (<10min)
 
 ## Project Status
 

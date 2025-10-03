@@ -40,8 +40,16 @@ testpaths = ["tests"]
 python_files = ["test_*.py"]
 python_classes = ["Test*"]
 python_functions = ["test_*"]
-addopts = "-v --tb=short"
+addopts = "-v --tb=short --strict-markers --maxfail=10 --disable-warnings"
 pythonpath = ["src"]
+markers = [
+    "unit: Unit tests (fast, isolated)",
+    "integration: Integration tests (with Redis/S3)",
+    "slow: Slow-running tests (>1s)",
+    "requires_redis: Needs Redis service",
+    "requires_s3: Needs S3/LocalStack service",
+    "requires_ai: Needs Anthropic API (mocked in CI)",
+]
 
 [tool.mypy]
 python_version = "3.11"

@@ -40,7 +40,7 @@ testpaths = ["tests"]
 python_files = ["test_*.py"]
 python_classes = ["Test*"]
 python_functions = ["test_*"]
-addopts = "-v --tb=short --strict-markers --maxfail=10 --disable-warnings"
+addopts = "-v --tb=short --strict-markers --maxfail=10 --disable-warnings --cov=src --cov-report=term-missing --cov-report=html --cov-report=xml"
 pythonpath = ["src"]
 markers = [
     "unit: Unit tests (fast, isolated)",
@@ -50,6 +50,39 @@ markers = [
     "requires_s3: Needs S3/LocalStack service",
     "requires_ai: Needs Anthropic API (mocked in CI)",
 ]
+
+[tool.coverage.run]
+source = ["src"]
+omit = [
+    "*/tests/*",
+    "*/test_*.py",
+    "*/__pycache__/*",
+    "*/site-packages/*",
+    ".venv/*",
+]
+branch = true
+parallel = true
+
+[tool.coverage.report]
+precision = 2
+show_missing = true
+skip_covered = false
+exclude_lines = [
+    "pragma: no cover",
+    "def __repr__",
+    "raise AssertionError",
+    "raise NotImplementedError",
+    "if __name__ == .__main__.:",
+    "if TYPE_CHECKING:",
+    "class .*\\bProtocol\\):",
+    "@(abc\\.)?abstractmethod",
+]
+
+[tool.coverage.html]
+directory = "htmlcov"
+
+[tool.coverage.xml]
+output = "coverage.xml"
 
 [tool.mypy]
 python_version = "3.11"

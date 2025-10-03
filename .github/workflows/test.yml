@@ -47,7 +47,18 @@ jobs:
             -v \
             --tb=short \
             -m "not integration and not slow" \
+            --cov=src \
+            --cov-report=term \
+            --cov-report=html \
             --maxfail=5
+
+      - name: Upload coverage HTML report
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: unit-coverage-report
+          path: htmlcov/
+          retention-days: 30
 
       - name: Upload unit test results
         if: always()
@@ -120,7 +131,18 @@ jobs:
             -v \
             --tb=short \
             -m "integration or slow" \
+            --cov=src \
+            --cov-report=term \
+            --cov-report=html \
             --maxfail=3
+
+      - name: Upload coverage HTML report
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: integration-coverage-report
+          path: htmlcov/
+          retention-days: 30
 
       - name: Upload integration test results
         if: always()
@@ -154,7 +176,26 @@ jobs:
         run: make build
 
       - name: Run tests in Docker
-        run: make test-docker
+        run: |
+          docker-compose -f docker-compose.yml -f docker-compose.dev.yml exec -T api-gateway \
+            uv run pytest tests/ \
+            --cov=src \
+            --cov-report=term \
+            --cov-report=html \
+            -v
+
+      - name: Copy coverage from container
+        if: always()
+        run: |
+          docker cp $(docker-compose -f docker-compose.yml -f docker-compose.dev.yml ps -q api-gateway):/app/htmlcov ./htmlcov || true
+
+      - name: Upload coverage HTML report
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: docker-coverage-report
+          path: htmlcov/
+          retention-days: 30
 
       - name: Upload Docker test results
         if: always()

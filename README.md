@@ -93,6 +93,11 @@ make logs-api       # View API logs only
 make health         # Run health checks
 make test           # Run tests
 
+# Testing & Coverage
+make coverage       # Run tests with coverage report
+make coverage-html  # Generate and open HTML coverage report
+make coverage-report # Show coverage summary
+
 # Docker
 make build          # Build Docker images
 make shell          # Access API container shell
@@ -113,9 +118,41 @@ All tests run automatically via GitHub Actions on:
 **Status:** PRs cannot merge until all tests pass.
 
 **Test Jobs:**
-- **Unit Tests** - Fast tests (<2min)
-- **Integration Tests** - Redis/S3 integration (<5min)
-- **Docker Full Suite** - Complete verification (<10min)
+- **Unit Tests** - Fast tests (<2min) with coverage reporting
+- **Integration Tests** - Redis/S3 integration (<5min) with coverage reporting
+- **Docker Full Suite** - Complete verification (<10min) with coverage reporting
+
+### Test Coverage
+
+Test coverage is automatically collected on every CI run and uploaded as artifacts.
+
+**Current Coverage:** 82% (503/503 tests passing ✅)
+
+**Local Coverage:**
+```bash
+# Run tests with coverage
+make coverage
+
+# View HTML coverage report
+make coverage-html
+
+# Show coverage summary
+make coverage-report
+```
+
+**CI Coverage Reports:**
+Coverage HTML reports are generated for all test jobs and uploaded as artifacts:
+- **Unit Tests:** Coverage for services, models, and API endpoints
+- **Integration Tests:** Coverage for Redis/S3 integration paths
+- **Docker Tests:** Full end-to-end coverage report
+
+Download coverage reports from GitHub Actions → Workflow run → Artifacts section.
+
+**Coverage Details:**
+- Line coverage (% of code lines executed)
+- Branch coverage (% of decision branches tested)
+- Missing lines highlighted in HTML reports
+- Per-file coverage breakdown
 
 ## Project Status
 

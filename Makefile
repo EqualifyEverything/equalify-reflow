@@ -1,4 +1,4 @@
-.PHONY: help dev prod up down logs health test clean build shell test-docker logs-api grafana-url prometheus-url metrics-url
+.PHONY: help dev prod up down logs health test clean build shell test-docker logs-api grafana-url prometheus-url metrics-url coverage coverage-html coverage-report
 
 # Default target
 help:
@@ -11,6 +11,11 @@ help:
 	@echo "  make logs-api     - View API logs only"
 	@echo "  make health       - Run health checks"
 	@echo "  make test         - Run tests locally"
+	@echo ""
+	@echo "Testing & Coverage:"
+	@echo "  make coverage     - Run tests with coverage report"
+	@echo "  make coverage-html - Generate and open HTML coverage report"
+	@echo "  make coverage-report - Show coverage summary"
 	@echo ""
 	@echo "Docker:"
 	@echo "  make build        - Build Docker images"
@@ -93,3 +98,16 @@ prometheus-url:
 metrics-url:
 	@echo "Opening API metrics at http://localhost:8001/metrics"
 	@open http://localhost:8001/metrics 2>/dev/null || xdg-open http://localhost:8001/metrics 2>/dev/null || echo "Please open http://localhost:8001/metrics in your browser"
+
+# Coverage commands
+coverage:
+	@echo "Running tests with coverage..."
+	docker-compose -f docker-compose.yml -f docker-compose.dev.yml exec api-gateway uv run pytest tests/ --cov=src --cov-report=term-missing --cov-report=html --cov-report=xml -v
+
+coverage-html: coverage
+	@echo "Opening HTML coverage report..."
+	@open htmlcov/index.html 2>/dev/null || xdg-open htmlcov/index.html 2>/dev/null || echo "Please open htmlcov/index.html in your browser"
+
+coverage-report:
+	@echo "Coverage summary:"
+	docker-compose -f docker-compose.yml -f docker-compose.dev.yml exec api-gateway uv run coverage report

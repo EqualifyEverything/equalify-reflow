@@ -40,15 +40,21 @@ testpaths = ["tests"]
 python_files = ["test_*.py"]
 python_classes = ["Test*"]
 python_functions = ["test_*"]
-addopts = "-v --tb=short --strict-markers --maxfail=10 --disable-warnings --cov=src --cov-report=term-missing --cov-report=html --cov-report=xml"
+addopts = "-v --tb=short --strict-markers --maxfail=10 --cov=src --cov-report=term-missing --cov-report=html --cov-report=xml"
 pythonpath = ["src"]
 markers = [
-    "unit: Unit tests (fast, isolated)",
-    "integration: Integration tests (with Redis/S3)",
+    "unit: Unit tests (fast, isolated, mocked dependencies)",
+    "integration: Integration tests (real Redis/S3, mocked AI/Docling)",
+    "e2e: End-to-end tests (full pipeline with real infrastructure)",
     "slow: Slow-running tests (>1s)",
     "requires_redis: Needs Redis service",
     "requires_s3: Needs S3/LocalStack service",
     "requires_ai: Needs Anthropic API (mocked in CI)",
+]
+filterwarnings = [
+    "ignore::DeprecationWarning:spacy.*",
+    "ignore::DeprecationWarning:weasel.*",
+    "ignore::RuntimeWarning:_pytest.stash",
 ]
 
 [tool.coverage.run]
@@ -104,5 +110,9 @@ build-backend = "hatchling.build"
 
 [dependency-groups]
 dev = [
+    "aioboto3>=15.1.0",
+    "pytest-asyncio>=1.2.0",
     "pytest-mock>=3.15.1",
+    "reportlab>=4.4.4",
+    "testcontainers>=4.13.1",
 ]

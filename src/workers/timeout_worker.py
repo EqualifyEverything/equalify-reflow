@@ -262,24 +262,24 @@ async def start_timeout_worker(shutdown_event: asyncio.Event = None):
     logger.info("Initializing timeout worker...")
 
     # Import dependencies dynamically to avoid circular imports
-    from ..dependencies import (
-        get_storage_service,
-        get_queue_service,
-        get_job_service
-    )
-    import redis.asyncio as redis
+    from ..dependencies import get_redis_client, get_s3_client
+    from ..services.storage_service import StorageService
+    from ..services.queue_service import QueueService
+    from ..services.job_service import JobService
 
-    # Create Redis client for metrics service (not provided by dependencies)
-    redis_client = redis.from_url(
-        settings.redis_url,
-        decode_responses=True,
-        max_connections=settings.redis_max_connections,
+    # Get Redis and S3 clients using proper async generator pattern
+    redis_client = await anext(get_redis_client())
+    s3_client = await anext(get_s3_client())
+
+    # Create service instances directly with clients
+    storage_service = StorageService(
+        s3_client=s3_client,
+        temp_bucket=settings.s3_temp_bucket,
+        results_bucket=settings.s3_results_bucket,
     )
 
-    # Create service instances using dependency injection pattern
-    storage_service = await get_storage_service(s3_client=None)
-    queue_service = await get_queue_service(redis_client=None)
-    job_service = await get_job_service(redis_client=None)
+    queue_service = QueueService(redis_client=redis_client)
+    job_service = JobService(redis_client=redis_client)
 
     # Metrics service uses the same Redis client
     from ..services.metrics_service import MetricsService

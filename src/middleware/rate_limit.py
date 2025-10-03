@@ -45,8 +45,8 @@ class RateLimitMiddleware(BaseHTTPMiddleware):
         # Get rate limit service
         rate_limiter = None
         try:
-            async for rate_limiter in get_rate_limit_service():
-                break
+            rate_limit_gen = get_rate_limit_service()
+            rate_limiter = await anext(rate_limit_gen)
         except Exception as e:
             logger.error(f"Failed to get rate limiter: {e}", exc_info=True)
             # Fail open - allow request if rate limiter unavailable

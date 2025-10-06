@@ -78,6 +78,30 @@ jobs:
     runs-on: ubuntu-latest
     timeout-minutes: 15
 
+    services:
+      redis:
+        image: redis:7-alpine
+        options: >-
+          --health-cmd "redis-cli ping"
+          --health-interval 10s
+          --health-timeout 5s
+          --health-retries 5
+        ports:
+          - 6379:6379
+
+      localstack:
+        image: localstack/localstack:3.0
+        env:
+          SERVICES: s3
+          DEBUG: 0
+        options: >-
+          --health-cmd "awslocal s3 ls || exit 1"
+          --health-interval 10s
+          --health-timeout 5s
+          --health-retries 5
+        ports:
+          - 4566:4566
+
     steps:
       - name: Checkout code
         uses: actions/checkout@v4
@@ -103,6 +127,8 @@ jobs:
           AWS_ACCESS_KEY_ID: test
           AWS_SECRET_ACCESS_KEY: test
           AWS_DEFAULT_REGION: us-east-1
+          REDIS_URL: redis://localhost:6379
+          AWS_ENDPOINT_URL: http://localhost:4566
         run: |
           uv run pytest tests/integration \
             -v \
@@ -154,7 +180,7 @@ jobs:
 
       - name: Run tests in Docker
         run: |
-          docker-compose -f docker-compose.yml -f docker-compose.dev.yml exec -T api-gateway \
+          docker compose -f docker-compose.yml -f docker-compose.dev.yml exec -T api-gateway \
             uv run pytest tests/ \
             --cov=src \
             --cov-report=term \
@@ -164,7 +190,7 @@ jobs:
       - name: Copy coverage from container
         if: always()
         run: |
-          docker cp $(docker-compose -f docker-compose.yml -f docker-compose.dev.yml ps -q api-gateway):/app/htmlcov ./htmlcov || true
+          docker cp $(docker compose -f docker-compose.yml -f docker-compose.dev.yml ps -q api-gateway):/app/htmlcov ./htmlcov || true
 
       - name: Upload coverage HTML report
         if: always()

@@ -44,20 +44,20 @@ help:
 
 # Development environment
 dev:
-	docker-compose -f docker-compose.yml -f docker-compose.dev.yml up -d
+	docker compose -f docker-compose.yml -f docker-compose.dev.yml up -d
 
 # Production environment
 prod:
-	docker-compose -f docker-compose.yml -f docker-compose.prod.yml up -d
+	docker compose -f docker-compose.yml -f docker-compose.prod.yml up -d
 
 # Stop services
 down:
-	docker-compose -f docker-compose.yml -f docker-compose.dev.yml down
-	docker-compose -f docker-compose.yml -f docker-compose.prod.yml down
+	docker compose -f docker-compose.yml -f docker-compose.dev.yml down
+	docker compose -f docker-compose.yml -f docker-compose.prod.yml down
 
 # View logs
 logs:
-	docker-compose -f docker-compose.yml -f docker-compose.dev.yml logs -f
+	docker compose -f docker-compose.yml -f docker-compose.dev.yml logs -f
 
 # Health check
 health:
@@ -91,7 +91,7 @@ test-slow: test-e2e
 # Run all tests in Docker (most comprehensive)
 test-all:
 	@echo "Running all tests in Docker..."
-	docker-compose -f docker-compose.yml -f docker-compose.dev.yml exec api-gateway uv run pytest tests/ -v
+	docker compose -f docker-compose.yml -f docker-compose.dev.yml exec api-gateway uv run pytest tests/ -v
 
 # Redis CLI
 redis-cli:
@@ -99,24 +99,24 @@ redis-cli:
 
 # Build Docker images
 build:
-	docker-compose -f docker-compose.yml -f docker-compose.dev.yml build
+	docker compose -f docker-compose.yml -f docker-compose.dev.yml build
 
 # Access API container shell for debugging
 shell:
-	docker-compose -f docker-compose.yml -f docker-compose.dev.yml exec api-gateway /bin/bash
+	docker compose -f docker-compose.yml -f docker-compose.dev.yml exec api-gateway /bin/bash
 
 # Run tests inside Docker container
 test-docker:
-	docker-compose -f docker-compose.yml -f docker-compose.dev.yml exec api-gateway uv run pytest tests/ -v
+	docker compose -f docker-compose.yml -f docker-compose.dev.yml exec api-gateway uv run pytest tests/ -v
 
 # View API logs only
 logs-api:
-	docker-compose -f docker-compose.yml -f docker-compose.dev.yml logs -f api-gateway
+	docker compose -f docker-compose.yml -f docker-compose.dev.yml logs -f api-gateway
 
 # Cleanup
 clean:
-	docker-compose -f docker-compose.yml -f docker-compose.dev.yml down -v
-	docker-compose -f docker-compose.yml -f docker-compose.prod.yml down -v
+	docker compose -f docker-compose.yml -f docker-compose.dev.yml down -v
+	docker compose -f docker-compose.yml -f docker-compose.prod.yml down -v
 
 # Observability URLs
 grafana-url:
@@ -135,7 +135,7 @@ metrics-url:
 # Coverage commands
 coverage:
 	@echo "Running tests with coverage..."
-	docker-compose -f docker-compose.yml -f docker-compose.dev.yml exec api-gateway uv run pytest tests/ --cov=src --cov-report=term-missing --cov-report=html --cov-report=xml -v
+	docker compose -f docker-compose.yml -f docker-compose.dev.yml exec api-gateway uv run pytest tests/ --cov=src --cov-report=term-missing --cov-report=html --cov-report=xml -v
 
 coverage-html: coverage
 	@echo "Opening HTML coverage report..."
@@ -143,4 +143,4 @@ coverage-html: coverage
 
 coverage-report:
 	@echo "Coverage summary:"
-	docker-compose -f docker-compose.yml -f docker-compose.dev.yml exec api-gateway uv run coverage report
+	docker compose -f docker-compose.yml -f docker-compose.dev.yml exec api-gateway uv run coverage report

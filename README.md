@@ -115,6 +115,11 @@ See [Architecture Overview](docs/architecture.md) for detailed system design.
 - **[CI/CD Pipeline](docs/ci-cd.md)** - Testing strategy and GitHub Actions workflows
 - **[Testing Strategy](docs/testing-strategy.md)** - Test organization and best practices
 
+### AWS Deployment
+- **[AWS Deployment Guide](docs/aws-deployment.md)** - Complete Terraform infrastructure and deployment
+- **[AWS Bedrock Integration](docs/aws-bedrock-summary.md)** - Using Claude via AWS Bedrock
+- **[Bedrock Migration Guide](docs/aws-bedrock-migration.md)** - Detailed migration from Anthropic API
+
 ### Infrastructure Configuration
 - **[Redis Configuration](infrastructure/redis/README.md)** - Redis setup and operations
 - **[LocalStack Configuration](infrastructure/localstack/README.md)** - Local AWS services

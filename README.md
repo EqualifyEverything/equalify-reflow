@@ -1,6 +1,6 @@
 # Equalify PDF Converter
 
-[![Test Suite](https://github.com/dylanisaac/equalify-pdf-converter/actions/workflows/test.yml/badge.svg)](https://github.com/dylanisaac/equalify-pdf-converter/actions/workflows/test.yml)
+[![Test Suite](https://github.com/EqualifyEverything/equalify-pdf-converter/actions/workflows/test.yml/badge.svg)](https://github.com/EqualifyEverything/equalify-pdf-converter/actions/workflows/test.yml)
 
 > ⚠️ **ACTIVE DEVELOPMENT** - This project is currently in Phase 2 development. Core infrastructure is complete, but API endpoints and processing workers are still being implemented. See [Project Status](docs/project-status.md) for current progress.
 
@@ -165,7 +165,7 @@ Having issues?
 2. Run `make health` to validate infrastructure
 3. Review logs: `make logs` or `make logs-api`
 4. Try `make help` for all available commands
-5. Create a [GitHub issue](https://github.com/dylanisaac/equalify-pdf-converter/issues)
+5. Create a [GitHub issue](https://github.com/EqualifyEverything/equalify-pdf-converter/issues)
 
 ## Project Status
 

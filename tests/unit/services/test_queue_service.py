@@ -7,6 +7,7 @@ from pydantic import BaseModel
 
 from src.services.queue_service import QueueService
 from src.shared.models.queue import PIIQueuePayload, ProcessingQueuePayload
+from tests.conftest_fixtures.data_factories import create_pii_queue_payload
 
 
 class SamplePayload(BaseModel):
@@ -17,13 +18,6 @@ class SamplePayload(BaseModel):
 
 
 @pytest.fixture
-def mock_redis_client(mocker):
-    """Create mock Redis client."""
-    client = mocker.AsyncMock()
-    return client
-
-
-@pytest.fixture
 def queue_service(mock_redis_client):
     """Create queue service with mock client."""
     return QueueService(redis_client=mock_redis_client)
@@ -31,8 +25,8 @@ def queue_service(mock_redis_client):
 
 @pytest.fixture
 def sample_pii_payload():
-    """Create sample PII queue payload."""
-    return PIIQueuePayload(
+    """Create sample PII queue payload using factory."""
+    return create_pii_queue_payload(
         job_id="550e8400-e29b-41d4-a716-446655440000",
         s3_key="temp/550e8400-e29b-41d4-a716-446655440000/document.pdf",
         created_at=datetime(2024, 1, 15, 10, 30, 0)

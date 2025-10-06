@@ -7,13 +7,7 @@ from botocore.exceptions import ClientError
 
 from src.services.storage_service import StorageService
 from src.config import settings
-
-
-@pytest.fixture
-def mock_s3_client(mocker):
-    """Create mock S3 client."""
-    client = mocker.MagicMock()
-    return client
+from tests.conftest_fixtures.data_factories import create_test_upload_file
 
 
 @pytest.fixture
@@ -28,18 +22,8 @@ def storage_service(mock_s3_client):
 
 @pytest.fixture
 def sample_pdf_upload(mocker):
-    """Create a sample PDF upload file."""
-    # Create PDF larger than 100 bytes minimum
-    pdf_content = b"%PDF-1.4\n" + b"%Test PDF content line\n" * 10 + b"%%EOF"
-    file = BytesIO(pdf_content)
-
-    # Create UploadFile with proper content_type
-    upload_file = mocker.Mock(spec=UploadFile)
-    upload_file.filename = "test.pdf"
-    upload_file.file = file
-    upload_file.content_type = "application/pdf"
-
-    return upload_file
+    """Create a sample PDF upload file using factory."""
+    return create_test_upload_file(mocker, filename="test.pdf")
 
 
 class TestStoreDocument:

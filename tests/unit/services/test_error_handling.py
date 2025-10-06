@@ -20,21 +20,37 @@ class TestFileSeekErrorHandling:
     """Tests for Bug #11: File seek failure handling."""
 
     @pytest.fixture
-    def storage_service(self):
+    def storage_service(self, mock_s3_client):
         """Create storage service with mocked S3 client."""
-        mock_s3 = Mock()
         return StorageService(
-            s3_client=mock_s3,
+            s3_client=mock_s3_client,
             temp_bucket=settings.s3_temp_bucket,
             results_bucket=settings.s3_results_bucket
         )
 
+    @pytest.mark.parametrize("error_method,error_class,error_msg,expected_detail", [
+        ("seek", OSError, "Device not ready", "Device not ready"),
+        ("seek", IOError, "File handle closed", "Unable to read file"),
+        ("tell", OSError, "Position unavailable", "Unable to read file"),
+    ])
     @pytest.mark.asyncio
-    async def test_file_seek_os_error(self, storage_service):
-        """Test handling of OSError during file seek operation."""
-        # Create a file object that raises OSError on seek
+    async def test_file_operation_errors(
+        self, storage_service, error_method, error_class, error_msg, expected_detail
+    ):
+        """Test handling of various file operation errors (Bug #11).
+
+        Parameterized test covering:
+        - OSError during seek (Device not ready)
+        - IOError during seek (File handle closed)
+        - OSError during tell (Position unavailable)
+        """
         mock_file = Mock()
-        mock_file.seek.side_effect = OSError("Device not ready")
+
+        if error_method == "seek":
+            mock_file.seek.side_effect = error_class(error_msg)
+        elif error_method == "tell":
+            mock_file.seek.return_value = None
+            mock_file.tell.side_effect = error_class(error_msg)
 
         upload_file = Mock(spec=UploadFile)
         upload_file.filename = "test.pdf"
@@ -45,25 +61,7 @@ class TestFileSeekErrorHandling:
             await storage_service.store_document(upload_file)
 
         assert exc_info.value.status_code == 400
-        assert "Unable to read file" in exc_info.value.detail
-        assert "Device not ready" in exc_info.value.detail
-
-    @pytest.mark.asyncio
-    async def test_file_seek_io_error(self, storage_service):
-        """Test handling of IOError during file seek operation."""
-        mock_file = Mock()
-        mock_file.seek.side_effect = IOError("File handle closed")
-
-        upload_file = Mock(spec=UploadFile)
-        upload_file.filename = "test.pdf"
-        upload_file.file = mock_file
-        upload_file.content_type = "application/pdf"
-
-        with pytest.raises(HTTPException) as exc_info:
-            await storage_service.store_document(upload_file)
-
-        assert exc_info.value.status_code == 400
-        assert "Unable to read file" in exc_info.value.detail
+        assert expected_detail in exc_info.value.detail
 
     @pytest.mark.asyncio
     async def test_file_seek_attribute_error(self, storage_service):
@@ -71,24 +69,6 @@ class TestFileSeekErrorHandling:
         # Create an object without seek method
         mock_file = Mock(spec=[])  # Empty spec means no methods
         delattr(mock_file, 'seek')  # Ensure no seek attribute
-
-        upload_file = Mock(spec=UploadFile)
-        upload_file.filename = "test.pdf"
-        upload_file.file = mock_file
-        upload_file.content_type = "application/pdf"
-
-        with pytest.raises(HTTPException) as exc_info:
-            await storage_service.store_document(upload_file)
-
-        assert exc_info.value.status_code == 400
-        assert "Unable to read file" in exc_info.value.detail
-
-    @pytest.mark.asyncio
-    async def test_file_tell_failure(self, storage_service):
-        """Test handling of failure in tell() method."""
-        mock_file = Mock()
-        mock_file.seek.return_value = None
-        mock_file.tell.side_effect = OSError("Position unavailable")
 
         upload_file = Mock(spec=UploadFile)
         upload_file.filename = "test.pdf"
@@ -127,11 +107,10 @@ class TestBestEffortCleanup:
     """Tests for Bug #12: Best-effort cleanup in delete_temp_file."""
 
     @pytest.fixture
-    def storage_service(self):
+    def storage_service(self, mock_s3_client):
         """Create storage service with mocked S3 client."""
-        mock_s3 = Mock()
         return StorageService(
-            s3_client=mock_s3,
+            s3_client=mock_s3_client,
             temp_bucket=settings.s3_temp_bucket,
             results_bucket=settings.s3_results_bucket
         )
@@ -145,6 +124,29 @@ class TestBestEffortCleanup:
 
         assert result is True
         storage_service.s3_client.delete_object.assert_called_once()
+
+    @pytest.mark.parametrize("error_type,error_msg", [
+        (Exception, "Unexpected S3 error"),
+        (ConnectionError, "Network unreachable"),
+        (TimeoutError, "Request timed out"),
+    ])
+    @pytest.mark.asyncio
+    async def test_delete_errors_return_false(self, storage_service, error_type, error_msg):
+        """Test that all error types return False instead of raising (Bug #12).
+
+        Parameterized test covering:
+        - Generic exceptions
+        - Network errors
+        - Timeout errors
+        """
+        storage_service.s3_client.delete_object = Mock(
+            side_effect=error_type(error_msg)
+        )
+
+        # Should not raise exception
+        result = await storage_service.delete_temp_file("temp/test.pdf")
+
+        assert result is False
 
     @pytest.mark.asyncio
     async def test_delete_client_error_returns_false(self, storage_service):
@@ -160,30 +162,6 @@ class TestBestEffortCleanup:
         result = await storage_service.delete_temp_file("temp/test.pdf")
 
         assert result is False  # Returns False, doesn't raise
-
-    @pytest.mark.asyncio
-    async def test_delete_generic_error_returns_false(self, storage_service):
-        """Test that generic exceptions return False instead of raising."""
-        storage_service.s3_client.delete_object = Mock(
-            side_effect=Exception("Unexpected S3 error")
-        )
-
-        # Should not raise exception
-        result = await storage_service.delete_temp_file("temp/test.pdf")
-
-        assert result is False
-
-    @pytest.mark.asyncio
-    async def test_delete_network_error_returns_false(self, storage_service):
-        """Test that network errors return False instead of raising."""
-        storage_service.s3_client.delete_object = Mock(
-            side_effect=ConnectionError("Network unreachable")
-        )
-
-        # Should not raise exception
-        result = await storage_service.delete_temp_file("temp/test.pdf")
-
-        assert result is False
 
     @pytest.mark.asyncio
     async def test_delete_logs_warnings_on_error(self, storage_service, caplog):

@@ -1,4 +1,12 @@
-"""Test configuration and fixtures."""
+"""Test configuration and fixtures.
+
+IMPORTANT: Shared fixtures are now available from tests.conftest_fixtures:
+- mock_redis_client, mock_s3_client, mock_ai_service (clients.py)
+- generate_job_id, create_test_job, create_pii_queue_payload, etc. (data_factories.py)
+- assert_job_state, assert_s3_upload, assert_redis_set (helpers.py)
+
+Import these instead of defining duplicates in test files.
+"""
 
 import pytest
 from datetime import datetime, timezone
@@ -9,6 +17,9 @@ from src.main import app
 from src.shared.models.queue import ProcessingQueuePayload
 from src.services.pdf_converter import PageData, PDFConversionResult
 from src.agents.accessibility_agent import PageImprovementResult
+
+# Import shared fixtures to make them available to all tests
+pytest_plugins = ["tests.conftest_fixtures.clients", "tests.conftest_fixtures.data_factories"]
 
 
 @pytest.fixture

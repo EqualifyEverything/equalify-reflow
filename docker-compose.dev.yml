@@ -44,6 +44,8 @@ services:
       - ./src:/app/src:ro
       # Mount tests for containerized test runs
       - ./tests:/app/tests:ro
+      # Mount Docker socket for testcontainers
+      - /var/run/docker.sock:/var/run/docker.sock
     environment:
       - AWS_ENDPOINT_URL=http://localstack:4566
       - S3_TEMP_BUCKET=equalify-pdf-temp

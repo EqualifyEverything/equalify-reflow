@@ -179,9 +179,90 @@ async def test_redis_queue_operations(redis_client):
     assert json.loads(result[1]) == message
 ```
 
+#### Shared Test Fixtures
+
+**IMPORTANT:** Always use shared fixtures from `tests/conftest_fixtures/` to avoid duplication.
+
+**Available Fixtures:**
+
+```python
+# Mock Clients (tests/conftest_fixtures/clients.py)
+from tests.conftest_fixtures import (
+    mock_redis_client,      # AsyncMock for Redis operations
+    mock_s3_client,         # MagicMock for S3 operations
+    mock_ai_service,        # AsyncMock for AI service
+    mock_presidio_analyzer, # MagicMock for PII detection
+)
+
+# Data Factories (tests/conftest_fixtures/data_factories.py)
+from tests.conftest_fixtures import (
+    generate_job_id,                # Generate unique UUID
+    generate_document_id,           # Generate unique UUID
+    create_pii_queue_payload,       # Create PII queue payload
+    create_processing_queue_payload,# Create processing queue payload
+    create_test_pdf_content,        # Generate minimal valid PDF
+    create_test_upload_file,        # Create FastAPI UploadFile mock
+)
+
+# Test Helpers (tests/conftest_fixtures/helpers.py)
+from tests.conftest_fixtures import (
+    assert_job_state,         # Assert job status/confidence
+    assert_s3_upload,         # Assert S3 upload called correctly
+    assert_redis_set,         # Assert Redis set called correctly
+    setup_s3_error,           # Configure S3 to raise errors
+    setup_redis_error,        # Configure Redis to raise errors
+)
+```
+
+**Example Usage:**
+
+```python
+import pytest
+from tests.conftest_fixtures.data_factories import generate_job_id
+
+@pytest.mark.asyncio
+async def test_queue_service(mock_redis_client):
+    """Test using shared mock_redis_client fixture."""
+    from src.services.queue_service import QueueService
+
+    queue_service = QueueService(redis_client=mock_redis_client)
+    job_id = generate_job_id()  # Use factory instead of hardcoded UUID
+
+    await queue_service.queue_pii_job(job_id, f"temp/{job_id}/doc.pdf")
+
+    mock_redis_client.lpush.assert_called_once()
+```
+
+**Parameterized Tests:**
+
+Use `@pytest.mark.parametrize` to reduce duplicate test code:
+
+```python
+@pytest.mark.parametrize("error_type,error_msg,expected", [
+    (OSError, "Device not ready", 400),
+    (IOError, "File closed", 400),
+    (ConnectionError, "Network error", 500),
+])
+async def test_error_handling(storage_service, error_type, error_msg, expected):
+    """Test multiple error scenarios with single test function."""
+    storage_service.s3_client.upload_fileobj.side_effect = error_type(error_msg)
+
+    with pytest.raises(HTTPException) as exc:
+        await storage_service.store_document(upload_file)
+
+    assert exc.value.status_code == expected
+```
+
+**Benefits:**
+- **No duplication:** One canonical implementation per fixture
+- **Consistency:** All tests use same mock behavior
+- **Maintainability:** Change once, apply everywhere
+- **Parameterization:** Test multiple scenarios without duplication
+
 #### Test Coverage
 
 - **Target:** >80% overall coverage
+- **Current:** 83.92% (584 tests passing)
 - **New Code:** All new code should have tests
 - **Bug Fixes:** Add regression tests
 - **Critical Paths:** Aim for 100% coverage on critical business logic

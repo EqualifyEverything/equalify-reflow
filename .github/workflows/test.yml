@@ -154,7 +154,7 @@ jobs:
           name: integration-test-results
           path: .pytest_cache/
 
-  # Job 3: Docker-based full test suite (fallback/verification)
+  # Job 3: Docker-based full test suite
   docker-tests:
     name: Full Test Suite (Docker)
     runs-on: ubuntu-latest

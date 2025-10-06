@@ -35,6 +35,8 @@ dev = [
     "pytest-cov>=6.0.0",
     "pytest-mock>=3.15.1",
     "reportlab>=4.4.4",
+    "pytest-xdist>=3.8.0",
+    "pytest-timeout>=2.4.0",
 ]
 
 
@@ -45,6 +47,9 @@ python_classes = ["Test*"]
 python_functions = ["test_*"]
 addopts = "-v --tb=short --strict-markers --maxfail=10 --cov=src --cov-report=term-missing --cov-report=html --cov-report=xml"
 pythonpath = ["src"]
+# Timeout settings (5s default, can override per test)
+timeout = 5
+timeout_func_only = true
 markers = [
     "unit: Unit tests (fast <100ms, isolated, fully mocked dependencies)",
     "integration: Integration tests (medium <5s, real Redis/S3, mocked AI)",

@@ -63,35 +63,35 @@ logs:
 health:
 	./scripts/health-check.sh
 
-# Run all tests
+# Run all tests (with parallelization)
 test:
-	uv run pytest tests/ -v
+	uv run pytest tests/ -v -n auto
 
-# Run fast unit tests (no Docker needed, <2min)
+# Run fast unit tests (no Docker needed, <30s with parallelization)
 test-fast:
-	@echo "Running fast unit tests (<2min, no Docker needed)..."
-	uv run pytest tests/unit -m unit -v --tb=short --maxfail=10
+	@echo "Running fast unit tests (<30s with parallelization)..."
+	uv run pytest tests/unit -m unit -v --tb=short --maxfail=10 -n auto
 
 # Alias for test-fast
 test-unit: test-fast
 
-# Run integration tests (real Redis/S3 via testcontainers, ~5min)
+# Run integration tests (real Redis/S3, <2min with parallelization)
 test-integration:
-	@echo "Running integration tests (real Redis/S3, ~5min)..."
-	uv run pytest tests/integration -m integration -v --tb=short --maxfail=5
+	@echo "Running integration tests (real Redis/S3, <2min)..."
+	uv run pytest tests/integration -m integration -v --tb=short --maxfail=5 -n 4
 
-# Run E2E tests (full workflows, ~10min)
+# Run E2E tests (full workflows, <5min)
 test-e2e:
-	@echo "Running E2E tests (full workflows, ~10min)..."
-	uv run pytest tests/e2e -m slow -v --tb=short --maxfail=3
+	@echo "Running E2E tests (full workflows, <5min)..."
+	uv run pytest tests/e2e -m slow -v --tb=short --maxfail=3 -n 2
 
 # Alias for test-e2e
 test-slow: test-e2e
 
-# Run all tests in Docker (most comprehensive)
+# Run all tests in Docker (most comprehensive, <5min with parallelization)
 test-all:
-	@echo "Running all tests in Docker..."
-	docker compose -f docker-compose.yml -f docker-compose.dev.yml exec api-gateway uv run pytest tests/ -v
+	@echo "Running all tests in Docker with parallelization..."
+	docker compose -f docker-compose.yml -f docker-compose.dev.yml exec api-gateway uv run pytest tests/ -v -n auto
 
 # Redis CLI
 redis-cli:
@@ -105,9 +105,9 @@ build:
 shell:
 	docker compose -f docker-compose.yml -f docker-compose.dev.yml exec api-gateway /bin/bash
 
-# Run tests inside Docker container
+# Run tests inside Docker container (with parallelization)
 test-docker:
-	docker compose -f docker-compose.yml -f docker-compose.dev.yml exec api-gateway uv run pytest tests/ -v
+	docker compose -f docker-compose.yml -f docker-compose.dev.yml exec api-gateway uv run pytest tests/ -v -n auto
 
 # View API logs only
 logs-api:
@@ -132,10 +132,10 @@ metrics-url:
 	@echo "Opening API metrics at http://localhost:8001/metrics"
 	@open http://localhost:8001/metrics 2>/dev/null || xdg-open http://localhost:8001/metrics 2>/dev/null || echo "Please open http://localhost:8001/metrics in your browser"
 
-# Coverage commands
+# Coverage commands (parallelization with coverage)
 coverage:
-	@echo "Running tests with coverage..."
-	docker compose -f docker-compose.yml -f docker-compose.dev.yml exec api-gateway uv run pytest tests/ --cov=src --cov-report=term-missing --cov-report=html --cov-report=xml -v
+	@echo "Running tests with coverage (parallelized)..."
+	docker compose -f docker-compose.yml -f docker-compose.dev.yml exec api-gateway uv run pytest tests/ --cov=src --cov-report=term-missing --cov-report=html --cov-report=xml -v -n auto
 
 coverage-html: coverage
 	@echo "Opening HTML coverage report..."

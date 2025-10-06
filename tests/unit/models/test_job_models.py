@@ -13,6 +13,8 @@ from shared.models import (
 )
 
 
+@pytest.mark.unit
+
 class TestJobSubmission:
     """Test JobSubmission model validation and serialization."""
 

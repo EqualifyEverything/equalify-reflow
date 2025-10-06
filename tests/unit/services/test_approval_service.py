@@ -285,7 +285,8 @@ async def test_process_approval_stores_decision_metadata(
     reviewed_by = "reviewer@uic.edu"
     mock_job_service.get_job.return_value = {
         "job_id": job_id,
-        "s3_key": "temp/test.pdf"
+        "s3_key": "temp/test.pdf",
+        "status": "awaiting_approval"
     }
 
     # Act
@@ -317,7 +318,8 @@ async def test_process_denial_continues_on_cleanup_failure(
     job_id = "cleanup-fail-job"
     mock_job_service.get_job.return_value = {
         "job_id": job_id,
-        "s3_key": "temp/fail.pdf"
+        "s3_key": "temp/fail.pdf",
+        "status": "awaiting_approval"
     }
     # Simulate S3 cleanup failure
     mock_s3_client.delete_object.side_effect = Exception("S3 error")

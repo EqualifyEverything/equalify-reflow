@@ -1,21 +1,20 @@
 """Shared fixtures for integration tests.
 
 Provides fixtures for:
-- Real Redis and S3 clients via testcontainers
+- Real Redis and S3 clients connected to Docker services
 - Service instances with real infrastructure (mocked AI only)
 - Test data generators
 - Cleanup helpers
 """
 
 import pytest
+import pytest_asyncio
 import uuid
 import asyncio
 from datetime import datetime, timezone
 from unittest.mock import AsyncMock, MagicMock, patch
 from typing import AsyncGenerator
 import redis.asyncio as aioredis
-from testcontainers.redis import RedisContainer
-from testcontainers.localstack import LocalStackContainer
 import boto3
 
 from src.services.storage_service import StorageService
@@ -29,35 +28,14 @@ from src.config import settings
 
 
 # ============================================================================
-# TESTCONTAINER FIXTURES - Real Infrastructure
+# DOCKER SERVICE FIXTURES - Real Infrastructure
 # ============================================================================
 
-@pytest.fixture(scope="session")
-def redis_container():
-    """Start Redis container for integration tests (session-scoped)."""
-    container = RedisContainer("redis:7-alpine")
-    container.start()
-    yield container
-    container.stop()
-
-
-@pytest.fixture(scope="session")
-def localstack_container():
-    """Start LocalStack container for S3 integration tests (session-scoped)."""
-    container = LocalStackContainer(image="localstack/localstack:latest")
-    container.with_services("s3")
-    container.start()
-    yield container
-    container.stop()
-
-
-@pytest.fixture
-async def real_redis_client(redis_container) -> AsyncGenerator[aioredis.Redis, None]:
-    """Real Redis client connected to testcontainer with per-test cleanup."""
-    # Get connection details from container
-    host = redis_container.get_container_host_ip()
-    port = redis_container.get_exposed_port(6379)
-    redis_url = f"redis://{host}:{port}/0"
+@pytest_asyncio.fixture
+async def real_redis_client() -> AsyncGenerator[aioredis.Redis, None]:
+    """Real Redis client connected to Docker service with per-test cleanup."""
+    # Connect to redis service in docker-compose network
+    redis_url = settings.redis_url
 
     client = await aioredis.from_url(redis_url, decode_responses=True)
 
@@ -69,12 +47,11 @@ async def real_redis_client(redis_container) -> AsyncGenerator[aioredis.Redis, N
 
 
 @pytest.fixture
-def real_s3_client(localstack_container):
-    """Real S3 client connected to LocalStack testcontainer with per-test cleanup."""
-    # Get LocalStack endpoint
-    host = localstack_container.get_container_host_ip()
-    port = localstack_container.get_exposed_port(4566)
-    endpoint_url = f"http://{host}:{port}"
+def real_s3_client():
+    """Real S3 client connected to LocalStack Docker service with per-test cleanup."""
+    # Connect to localstack service in docker-compose network
+    # AWS_ENDPOINT_URL is set in docker-compose.dev.yml
+    endpoint_url = settings.aws_endpoint_url
 
     # Use SYNC boto3 client (not async) - matches existing StorageService
     s3_client = boto3.client(
@@ -109,7 +86,7 @@ def real_s3_client(localstack_container):
 # REAL SERVICE FIXTURES - Using Real Infrastructure
 # ============================================================================
 
-@pytest.fixture
+@pytest_asyncio.fixture
 async def storage_service(real_s3_client):
     """Create StorageService with REAL S3 (LocalStack)."""
     return StorageService(
@@ -119,19 +96,19 @@ async def storage_service(real_s3_client):
     )
 
 
-@pytest.fixture
+@pytest_asyncio.fixture
 async def queue_service(real_redis_client):
     """Create QueueService with REAL Redis."""
     return QueueService(redis_client=real_redis_client)
 
 
-@pytest.fixture
+@pytest_asyncio.fixture
 async def job_service(real_redis_client):
     """Create JobService with REAL Redis."""
     return JobService(redis_client=real_redis_client)
 
 
-@pytest.fixture
+@pytest_asyncio.fixture
 async def approval_service(real_redis_client, real_s3_client, job_service, queue_service):
     """Create ApprovalService with real dependencies."""
     return ApprovalService(
@@ -210,7 +187,7 @@ def mock_ai_enhancement():
 # WORKER FIXTURES - Using Real Services
 # ============================================================================
 
-@pytest.fixture
+@pytest_asyncio.fixture
 async def pii_worker(storage_service, queue_service, job_service, mock_pii_analyzer):
     """Create PIIWorker instance with REAL services and MOCKED PII analyzer."""
     from src.services.pii_service import PIIDetectionService
@@ -236,7 +213,7 @@ async def pii_worker(storage_service, queue_service, job_service, mock_pii_analy
     return worker
 
 
-@pytest.fixture
+@pytest_asyncio.fixture
 async def processing_worker(storage_service, queue_service, job_service, mock_pdf_converter, mock_ai_enhancement):
     """Create ProcessingWorker instance with REAL services and MOCKED AI."""
     from src.services.processing_service import ProcessingService

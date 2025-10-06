@@ -21,6 +21,8 @@ pytestmark = pytest.mark.unit
 # ============================================================================
 
 
+@pytest.mark.unit
+
 def test_classify_confidence_level_high():
     """Test high confidence classification (>= 0.85)."""
     assert classify_confidence_level(0.85) == "high"

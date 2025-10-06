@@ -1,4 +1,4 @@
-.PHONY: help dev prod up down logs health test test-unit test-integration test-slow clean build shell test-docker logs-api grafana-url prometheus-url metrics-url coverage coverage-html coverage-report
+.PHONY: help dev prod up down logs health test test-fast test-unit test-integration test-e2e test-slow test-all clean build shell test-docker logs-api grafana-url prometheus-url metrics-url coverage coverage-html coverage-report
 
 # Default target
 help:
@@ -14,9 +14,12 @@ help:
 	@echo ""
 	@echo "Testing & Coverage:"
 	@echo "  make test         - Run all tests"
-	@echo "  make test-unit    - Run unit tests only (fast)"
-	@echo "  make test-integration - Run integration tests (uses testcontainers)"
-	@echo "  make test-slow    - Run slow tests (integration + performance)"
+	@echo "  make test-fast    - Run fast unit tests (<2min, no Docker needed)"
+	@echo "  make test-unit    - Run unit tests only (same as test-fast)"
+	@echo "  make test-integration - Run integration tests (real Redis/S3, ~5min)"
+	@echo "  make test-e2e     - Run E2E tests (full workflows, ~10min)"
+	@echo "  make test-slow    - Run slow/E2E tests (same as test-e2e)"
+	@echo "  make test-all     - Run all tests in Docker (comprehensive)"
 	@echo "  make coverage     - Run tests with coverage report"
 	@echo "  make coverage-html - Generate and open HTML coverage report"
 	@echo "  make coverage-report - Show coverage summary"
@@ -64,20 +67,31 @@ health:
 test:
 	uv run pytest tests/ -v
 
-# Run unit tests only (fast, no integration)
-test-unit:
-	@echo "Running unit tests (excluding integration tests)..."
-	uv run pytest -m "not integration" -v
+# Run fast unit tests (no Docker needed, <2min)
+test-fast:
+	@echo "Running fast unit tests (<2min, no Docker needed)..."
+	uv run pytest tests/unit -m unit -v --tb=short --maxfail=10
 
-# Run integration tests (uses testcontainers)
+# Alias for test-fast
+test-unit: test-fast
+
+# Run integration tests (real Redis/S3 via testcontainers, ~5min)
 test-integration:
-	@echo "Running integration tests (requires Docker for testcontainers)..."
-	uv run pytest -m integration -v
+	@echo "Running integration tests (real Redis/S3, ~5min)..."
+	uv run pytest tests/integration -m integration -v --tb=short --maxfail=5
 
-# Run slow tests (integration + performance)
-test-slow:
-	@echo "Running slow tests (integration + performance)..."
-	uv run pytest -m slow -v
+# Run E2E tests (full workflows, ~10min)
+test-e2e:
+	@echo "Running E2E tests (full workflows, ~10min)..."
+	uv run pytest tests/e2e -m slow -v --tb=short --maxfail=3
+
+# Alias for test-e2e
+test-slow: test-e2e
+
+# Run all tests in Docker (most comprehensive)
+test-all:
+	@echo "Running all tests in Docker..."
+	docker-compose -f docker-compose.yml -f docker-compose.dev.yml exec api-gateway uv run pytest tests/ -v
 
 # Redis CLI
 redis-cli:

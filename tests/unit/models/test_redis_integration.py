@@ -19,6 +19,9 @@ from shared.models import (
 )
 
 
+@pytest.mark.unit
+@pytest.mark.requires_redis
+
 class TestRedisKeyGeneration:
     """Test Redis key generation functions."""
 

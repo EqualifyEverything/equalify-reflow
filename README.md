@@ -93,7 +93,13 @@ make logs-api       # View API logs only
 make health         # Run health checks
 make test           # Run tests
 
-# Testing & Coverage
+# Testing (Tiered Test Suite)
+make test-fast      # Unit tests (<2min, no Docker needed)
+make test-integration # Integration tests (~5min, real Redis/S3)
+make test-e2e       # E2E tests (~10min, full workflows)
+make test-all       # All tests in Docker (most comprehensive)
+
+# Coverage
 make coverage       # Run tests with coverage report
 make coverage-html  # Generate and open HTML coverage report
 make coverage-report # Show coverage summary
@@ -108,19 +114,71 @@ make redis-cli      # Connect to Redis CLI
 make clean          # Remove containers and volumes
 ```
 
+### Running Tests
+
+The test suite is organized into three tiers for optimal developer feedback:
+
+#### Fast Unit Tests (<2min)
+```bash
+make test-fast    # or: make test-unit
+```
+- **What**: Pure unit tests with mocked dependencies
+- **When**: Every code change, before committing
+- **No Docker needed**: Runs directly with `uv run pytest`
+- **Coverage**: ~101 tests in `tests/unit/`
+
+#### Integration Tests (~5min)
+```bash
+make test-integration
+```
+- **What**: Tests with real Redis/S3 via testcontainers
+- **When**: Before opening PR
+- **Requires**: Docker for testcontainers
+- **Coverage**: ~28 tests in `tests/integration/`
+
+#### E2E Tests (~10min)
+```bash
+make test-e2e     # or: make test-slow
+```
+- **What**: Full workflow tests with minimal mocking
+- **When**: Before merging to main
+- **Requires**: Docker for testcontainers
+- **Coverage**: ~63 tests in `tests/e2e/`
+
+#### All Tests (Comprehensive)
+```bash
+make test-all     # Runs in Docker
+```
+- **What**: Complete test suite (591 tests)
+- **When**: Final verification before deployment
+- **Requires**: `make dev` (Docker stack running)
+
+#### Test by Marker
+```bash
+# Run specific test categories
+uv run pytest -m unit            # Unit tests only
+uv run pytest -m integration     # Integration tests only
+uv run pytest -m slow            # Slow/E2E tests only
+uv run pytest -m performance     # Performance tests
+uv run pytest -m requires_redis  # Redis-dependent tests
+uv run pytest -m requires_s3     # S3-dependent tests
+```
+
 ### CI/CD
 
 All tests run automatically via GitHub Actions on:
-- Every push to any branch
-- Every pull request to `main` or `develop`
-- Manual workflow dispatch
+- **Every push**: Fast unit tests (<2min)
+- **PRs to main/develop**: Integration + E2E tests (~15min total)
+- **Merge to main**: Full test suite
+- **Weekly**: Performance tests (Sundays at 2 AM UTC)
 
 **Status:** PRs cannot merge until all tests pass.
 
-**Test Jobs:**
-- **Unit Tests** - Fast tests (<2min) with coverage reporting
-- **Integration Tests** - Redis/S3 integration (<5min) with coverage reporting
-- **Docker Full Suite** - Complete verification (<10min) with coverage reporting
+**CI Workflows:**
+- **[test-fast.yml](.github/workflows/test-fast.yml)** - Unit tests on every push
+- **[test-integration.yml](.github/workflows/test-integration.yml)** - Integration tests on PRs
+- **[test-e2e.yml](.github/workflows/test-e2e.yml)** - E2E tests on main branch
+- **[test-performance.yml](.github/workflows/test-performance.yml)** - Weekly performance benchmarks
 
 ### Test Coverage
 

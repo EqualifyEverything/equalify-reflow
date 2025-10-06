@@ -4,7 +4,7 @@ import pytest
 from unittest.mock import Mock, patch
 
 from src.services.pii_analyzer import PIIAnalyzer, ENTITY_TYPES
-from tests.edge_cases.helpers import (
+from tests.e2e.edge_cases.helpers import (
     generate_pii_text,
     generate_false_positive_text,
     generate_valid_academic_content,

@@ -6,6 +6,9 @@ from pydantic import ValidationError
 from src.config import Settings
 
 
+@pytest.mark.slow
+@pytest.mark.edge_case
+
 class TestConfigurationValidation:
     """Tests for configuration validation edge cases."""
 

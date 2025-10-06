@@ -33,6 +33,8 @@ dev = [
     "mypy>=1.5.0",
     "httpx>=0.27.0",
     "pytest-cov>=6.0.0",
+    "pytest-mock>=3.15.1",
+    "reportlab>=4.4.4",
 ]
 
 [tool.pytest.ini_options]
@@ -43,13 +45,15 @@ python_functions = ["test_*"]
 addopts = "-v --tb=short --strict-markers --maxfail=10 --cov=src --cov-report=term-missing --cov-report=html --cov-report=xml"
 pythonpath = ["src"]
 markers = [
-    "unit: Unit tests (fast, isolated, mocked dependencies)",
-    "integration: Integration tests (real Redis/S3, mocked AI/Docling)",
-    "e2e: End-to-end tests (full pipeline with real infrastructure)",
-    "slow: Slow-running tests (>1s)",
+    "unit: Unit tests (fast <100ms, isolated, fully mocked dependencies)",
+    "integration: Integration tests (medium <5s, real Redis/S3, mocked AI)",
+    "slow: Slow E2E tests (>5s, full workflows with minimal mocking)",
     "requires_redis: Needs Redis service",
     "requires_s3: Needs S3/LocalStack service",
-    "requires_ai: Needs Anthropic API (mocked in CI)",
+    "requires_ai: Needs Anthropic API (usually mocked)",
+    "performance: Load and stress tests (weekly runs)",
+    "resilience: Failure recovery and error handling scenarios",
+    "edge_case: Boundary conditions and unusual inputs",
 ]
 filterwarnings = [
     "ignore::DeprecationWarning:spacy.*",
@@ -114,5 +118,4 @@ dev = [
     "pytest-asyncio>=1.2.0",
     "pytest-mock>=3.15.1",
     "reportlab>=4.4.4",
-    "testcontainers>=4.13.1",
 ]

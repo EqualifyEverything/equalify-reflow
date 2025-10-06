@@ -12,6 +12,8 @@ from shared.models import (
 )
 
 
+@pytest.mark.unit
+
 class TestPIIQueuePayload:
     """Test PIIQueuePayload model validation."""
 

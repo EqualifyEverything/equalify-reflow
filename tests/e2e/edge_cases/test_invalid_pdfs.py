@@ -6,7 +6,7 @@ from fastapi import HTTPException, UploadFile
 
 from src.services.storage_service import StorageService
 from src.config import settings
-from tests.edge_cases.helpers import (
+from tests.e2e.edge_cases.helpers import (
     create_corrupted_pdf,
     create_encrypted_pdf,
     create_empty_pdf,

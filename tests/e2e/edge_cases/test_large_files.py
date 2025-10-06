@@ -6,7 +6,7 @@ from fastapi import HTTPException, UploadFile
 
 from src.services.storage_service import StorageService
 from src.config import settings
-from tests.edge_cases.helpers import generate_large_pdf
+from tests.e2e.edge_cases.helpers import generate_large_pdf
 
 
 @pytest.fixture

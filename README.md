@@ -54,12 +54,14 @@ See `make help` for all available commands.
 The test suite is organized into three tiers for optimal feedback:
 
 ```bash
-make test-fast         # Unit tests (<2min) - Run before every commit
-make test-integration  # Integration tests (~5min) - Run before PR
-make test-e2e          # E2E tests (~10min) - Run before merge
+make test-fast         # Unit tests (<30s with parallelization) - Run before every commit
+make test-integration  # Integration tests (<2min with parallelization) - Run before PR
+make test-e2e          # E2E tests (<5min with parallelization) - Run before merge
 ```
 
-**Current Coverage:** 82% (503/503 tests passing ✅)
+**Current Coverage:** 83.70% (536/536 tests passing ✅)
+
+**Performance:** Full test suite runs in **~30 seconds** with parallelization (`pytest-xdist`)
 
 See [CI/CD Documentation](docs/ci-cd.md) for detailed testing information.
 

@@ -185,8 +185,19 @@ jobs:
           restore-keys: |
             ${{ runner.os }}-buildx-
 
+      - name: Create .env file from example
+        run: cp .env.example .env
+
       - name: Build Docker images
         run: make build
+
+      - name: Start services
+        run: docker compose -f docker-compose.yml -f docker-compose.dev.yml up -d
+
+      - name: Wait for services to be ready
+        run: |
+          echo "Waiting for API Gateway to be ready..."
+          timeout 60 bash -c 'until docker compose -f docker-compose.yml -f docker-compose.dev.yml exec -T api-gateway echo "ready"; do sleep 2; done'
 
       - name: Run tests in Docker
         run: |
@@ -216,6 +227,10 @@ jobs:
         with:
           name: docker-test-results
           path: .pytest_cache/
+
+      - name: Stop services
+        if: always()
+        run: docker compose -f docker-compose.yml -f docker-compose.dev.yml down
 
   # Job 4: Test result summary
   test-summary:

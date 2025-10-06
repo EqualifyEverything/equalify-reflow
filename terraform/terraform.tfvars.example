@@ -1,0 +1,50 @@
+# Equalify PDF Converter - Terraform Variables
+# Copy this file to terraform.tfvars and fill in your values
+# DO NOT commit terraform.tfvars to version control
+
+# AWS Configuration
+aws_region  = "us-east-1"
+environment = "production"
+
+# ECS Configuration
+ecs_task_cpu       = 2048 # 2 vCPU
+ecs_task_memory    = 4096 # 4GB
+ecs_desired_count  = 2
+ecs_min_capacity   = 1
+ecs_max_capacity   = 5
+
+# Redis Configuration
+redis_node_type       = "cache.t4g.small" # $25/month
+redis_num_cache_nodes = 1
+
+# S3 Configuration
+s3_temp_lifecycle_days = 7
+
+# Monitoring
+enable_cloudwatch_alarms = true
+alarm_email              = "your-email@example.com"
+
+# AI Provider Configuration
+ai_provider = "bedrock" # "anthropic" or "bedrock"
+
+# Bedrock Configuration (if ai_provider = "bedrock")
+bedrock_model_id       = "anthropic.claude-3-haiku-20240307-v1:0"
+enable_bedrock_metrics = true
+
+# Anthropic API Configuration (if ai_provider = "anthropic")
+# Secrets - OPTION 1: Set via environment variable (recommended)
+# export TF_VAR_anthropic_api_key="your-api-key"
+
+# Secrets - OPTION 2: Set in this file (less secure, excluded from git)
+# anthropic_api_key = "your-api-key"
+
+# Domain Configuration (optional)
+# domain_name           = "pdf-converter.example.com"
+# create_route53_record = false
+
+# Additional Tags
+additional_tags = {
+  Department = "UIC-DASE"
+  ManagedBy  = "Dylan Isaac"
+  CostCenter = "Accessibility"
+}

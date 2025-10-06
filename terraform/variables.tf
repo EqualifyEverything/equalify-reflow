@@ -1,0 +1,169 @@
+# Equalify PDF Converter - Terraform Variables
+
+variable "aws_region" {
+  description = "AWS region for deployment"
+  type        = string
+  default     = "us-east-1"
+}
+
+variable "environment" {
+  description = "Environment name (dev, staging, production)"
+  type        = string
+  default     = "production"
+}
+
+variable "project_name" {
+  description = "Project name for resource naming"
+  type        = string
+  default     = "equalify-pdf"
+}
+
+# VPC Configuration
+variable "vpc_cidr" {
+  description = "CIDR block for VPC"
+  type        = string
+  default     = "10.0.0.0/16"
+}
+
+variable "availability_zones_count" {
+  description = "Number of availability zones to use"
+  type        = number
+  default     = 2
+}
+
+# ECS Configuration
+variable "ecs_task_cpu" {
+  description = "CPU units for ECS task (1024 = 1 vCPU)"
+  type        = number
+  default     = 2048 # 2 vCPU
+}
+
+variable "ecs_task_memory" {
+  description = "Memory for ECS task in MB"
+  type        = number
+  default     = 4096 # 4GB
+}
+
+variable "ecs_desired_count" {
+  description = "Desired number of ECS tasks"
+  type        = number
+  default     = 2
+}
+
+variable "ecs_min_capacity" {
+  description = "Minimum number of ECS tasks for auto-scaling"
+  type        = number
+  default     = 1
+}
+
+variable "ecs_max_capacity" {
+  description = "Maximum number of ECS tasks for auto-scaling"
+  type        = number
+  default     = 5
+}
+
+# Redis Configuration
+variable "redis_node_type" {
+  description = "ElastiCache Redis node type"
+  type        = string
+  default     = "cache.t4g.small" # 0.5 vCPU, 1.37GB RAM
+}
+
+variable "redis_num_cache_nodes" {
+  description = "Number of Redis cache nodes"
+  type        = number
+  default     = 1
+}
+
+# S3 Configuration
+variable "s3_temp_lifecycle_days" {
+  description = "Days before temp files are deleted"
+  type        = number
+  default     = 7
+}
+
+# Application Configuration
+variable "container_port" {
+  description = "Port exposed by the Docker container"
+  type        = number
+  default     = 8080
+}
+
+variable "health_check_path" {
+  description = "Health check endpoint path"
+  type        = string
+  default     = "/health"
+}
+
+# Domain Configuration (optional)
+variable "domain_name" {
+  description = "Domain name for ALB (leave empty for default AWS domain)"
+  type        = string
+  default     = ""
+}
+
+variable "create_route53_record" {
+  description = "Whether to create Route53 DNS record"
+  type        = bool
+  default     = false
+}
+
+# Secrets (should be provided via environment variables or tfvars file)
+variable "anthropic_api_key" {
+  description = "Anthropic API key for AI processing"
+  type        = string
+  sensitive   = true
+  default     = "" # Set via TF_VAR_anthropic_api_key or terraform.tfvars
+}
+
+# Monitoring
+variable "enable_cloudwatch_alarms" {
+  description = "Enable CloudWatch alarms for monitoring"
+  type        = bool
+  default     = true
+}
+
+variable "alarm_email" {
+  description = "Email address for CloudWatch alarm notifications"
+  type        = string
+  default     = ""
+}
+
+# AI Provider Configuration
+variable "ai_provider" {
+  description = "AI provider to use: 'anthropic' or 'bedrock'"
+  type        = string
+  default     = "bedrock"
+  validation {
+    condition     = contains(["anthropic", "bedrock"], var.ai_provider)
+    error_message = "AI provider must be either 'anthropic' or 'bedrock'."
+  }
+}
+
+variable "bedrock_model_id" {
+  description = "AWS Bedrock model ID for Claude"
+  type        = string
+  default     = "anthropic.claude-3-haiku-20240307-v1:0"
+}
+
+variable "enable_bedrock_metrics" {
+  description = "Enable CloudWatch metrics for Bedrock usage"
+  type        = bool
+  default     = true
+}
+
+# Secrets (should be provided via environment variables or tfvars file)
+# Only required if ai_provider = "anthropic"
+variable "anthropic_api_key" {
+  description = "Anthropic API key for AI processing (only needed if ai_provider='anthropic')"
+  type        = string
+  sensitive   = true
+  default     = "" # Set via TF_VAR_anthropic_api_key or terraform.tfvars
+}
+
+# Tags
+variable "additional_tags" {
+  description = "Additional tags to apply to all resources"
+  type        = map(string)
+  default     = {}
+}

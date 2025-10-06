@@ -98,7 +98,7 @@ class TestLargeFileHandling:
 
     @pytest.mark.slow
     @pytest.mark.asyncio
-    async def test_150mb_pdf_rejected(self, storage_service, mocker):
+    async def test_150mb_pdf_rejected(self, storage_service, mock_s3_client, mocker):
         """Test that significantly oversized file is rejected."""
         # Generate 150MB file (well over limit)
         huge_pdf = generate_large_pdf(150)
@@ -161,7 +161,7 @@ class TestLargeFileHandling:
 
     @pytest.mark.slow
     @pytest.mark.asyncio
-    async def test_large_file_upload_timeout(self, storage_service, mock_s3_client, mocker):
+    async def test_large_file_upload_timeout(self, mocker):
         """Test handling of upload timeout with large file."""
         large_pdf = generate_large_pdf(95)
         file = BytesIO(large_pdf)
@@ -171,8 +171,16 @@ class TestLargeFileHandling:
         upload_file.file = file
         upload_file.content_type = "application/pdf"
 
-        # Simulate timeout
+        # Create a fresh mock S3 client that raises exception
+        mock_s3_client = mocker.MagicMock()
         mock_s3_client.upload_fileobj.side_effect = Exception("Upload timeout")
+
+        # Create storage service with failing mock
+        storage_service = StorageService(
+            s3_client=mock_s3_client,
+            temp_bucket=settings.s3_temp_bucket,
+            results_bucket=settings.s3_results_bucket,
+        )
 
         with pytest.raises(HTTPException) as exc:
             await storage_service.store_document(upload_file)

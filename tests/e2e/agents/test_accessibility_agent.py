@@ -31,39 +31,53 @@ def test_accessibility_agent_initialization():
             "system_prompt": "System prompt",
             "user_prompt_template": "User prompt {page_markdown}"
         }):
-            agent = AccessibilityAgent()
+            with patch("src.agents.accessibility_agent.settings") as mock_settings:
+                mock_settings.ai_provider = "anthropic"
+                mock_settings.claude_model = "claude-3-5-sonnet-20241022"
 
-            # Should create PydanticAI agent with correct model
-            MockAgent.assert_called_once()
-            call_args = MockAgent.call_args
-            assert "anthropic:" in call_args[0][0]
-            assert call_args.kwargs["output_type"] == PageImprovementResult
-            assert call_args.kwargs["system_prompt"] == "System prompt"
+                agent = AccessibilityAgent()
+
+                # Should create PydanticAI agent with correct model
+                MockAgent.assert_called_once()
+                call_args = MockAgent.call_args
+                # For Anthropic, model is a string
+                assert isinstance(call_args[0][0], str)
+                assert "anthropic:" in call_args[0][0]
+                assert call_args.kwargs["output_type"] == PageImprovementResult
+                assert call_args.kwargs["system_prompt"] == "System prompt"
 
 
 def test_accessibility_agent_loads_prompts_from_yaml():
     """Test agent loads prompts from YAML file."""
-    yaml_content = """
+    yaml_content = b"""
 system_prompt: "Test system prompt"
 user_prompt_template: "Test user prompt: {page_markdown}"
 """
     with patch("builtins.open", mock_open(read_data=yaml_content)):
         with patch("src.agents.accessibility_agent.Agent"):
-            agent = AccessibilityAgent()
+            with patch("src.agents.accessibility_agent.settings") as mock_settings:
+                mock_settings.ai_provider = "anthropic"
+                mock_settings.claude_model = "claude-3-5-sonnet-20241022"
 
-            # Should load prompts from YAML
-            assert agent.user_prompt_template == "Test user prompt: {page_markdown}"
+                agent = AccessibilityAgent()
+
+                # Should load prompts from YAML
+                assert agent.user_prompt_template == "Test user prompt: {page_markdown}"
 
 
 def test_accessibility_agent_uses_fallback_prompts_if_yaml_missing():
     """Test agent uses default prompts if YAML file not found."""
     with patch("builtins.open", side_effect=FileNotFoundError()):
         with patch("src.agents.accessibility_agent.Agent"):
-            agent = AccessibilityAgent()
+            with patch("src.agents.accessibility_agent.settings") as mock_settings:
+                mock_settings.ai_provider = "anthropic"
+                mock_settings.claude_model = "claude-3-5-sonnet-20241022"
 
-            # Should have fallback prompts
-            assert "accessibility specialist" in agent.user_prompt_template.lower() or \
-                   "improve" in agent.user_prompt_template.lower()
+                agent = AccessibilityAgent()
+
+                # Should have fallback prompts
+                assert "accessibility specialist" in agent.user_prompt_template.lower() or \
+                       "improve" in agent.user_prompt_template.lower()
 
 
 def test_accessibility_agent_system_prompt_configured():
@@ -89,6 +103,7 @@ def test_accessibility_agent_model_settings_from_config():
             "user_prompt_template": "User: {page_markdown}"
         }):
             with patch("src.agents.accessibility_agent.settings") as mock_settings:
+                mock_settings.ai_provider = "anthropic"
                 mock_settings.claude_model = "claude-3-5-haiku-20241022"
 
                 agent = AccessibilityAgent()
@@ -239,38 +254,46 @@ async def test_process_page_error_handling():
 
 def test_load_prompts_reads_yaml_file():
     """Test _load_prompts reads from correct YAML file path."""
-    yaml_content = """
+    yaml_content = b"""
 system_prompt: "YAML system prompt"
 user_prompt_template: "YAML user: {page_markdown}"
 """
     with patch("builtins.open", mock_open(read_data=yaml_content)) as mock_file:
         with patch("src.agents.accessibility_agent.Agent"):
-            agent = AccessibilityAgent()
+            with patch("src.agents.accessibility_agent.settings") as mock_settings:
+                mock_settings.ai_provider = "anthropic"
+                mock_settings.claude_model = "claude-3-5-sonnet-20241022"
 
-            # Should have opened prompts file
-            mock_file.assert_called()
-            # Check file path contains accessibility_prompts.yaml
-            call_args = str(mock_file.call_args)
-            assert "accessibility_prompts.yaml" in call_args
+                agent = AccessibilityAgent()
+
+                # Should have opened prompts file
+                mock_file.assert_called()
+                # Check file path contains accessibility_prompts.yaml
+                call_args = str(mock_file.call_args)
+                assert "accessibility_prompts.yaml" in call_args
 
 
 def test_default_prompts_structure():
     """Test _default_prompts returns correctly structured dict."""
     with patch("builtins.open", side_effect=FileNotFoundError()):
         with patch("src.agents.accessibility_agent.Agent"):
-            agent = AccessibilityAgent()
+            with patch("src.agents.accessibility_agent.settings") as mock_settings:
+                mock_settings.ai_provider = "anthropic"
+                mock_settings.claude_model = "claude-3-5-sonnet-20241022"
 
-            # Get default prompts
-            prompts = agent._default_prompts()
+                agent = AccessibilityAgent()
 
-            # Should have required keys
-            assert "system_prompt" in prompts
-            assert "user_prompt_template" in prompts
+                # Get default prompts
+                prompts = agent._default_prompts()
 
-            # Prompts should contain relevant keywords
-            assert isinstance(prompts["system_prompt"], str)
-            assert isinstance(prompts["user_prompt_template"], str)
-            assert "{page_markdown}" in prompts["user_prompt_template"]
+                # Should have required keys
+                assert "system_prompt" in prompts
+                assert "user_prompt_template" in prompts
+
+                # Prompts should contain relevant keywords
+                assert isinstance(prompts["system_prompt"], str)
+                assert isinstance(prompts["user_prompt_template"], str)
+                assert "{page_markdown}" in prompts["user_prompt_template"]
 
 
 # ============================================================================

@@ -1,4 +1,11 @@
-"""Document accessibility agent using Claude via PydanticAI."""
+"""Document accessibility agent with AWS Bedrock and Anthropic API support.
+
+This module provides an AccessibilityAgent that supports both:
+- AWS Bedrock (recommended for AWS deployments)
+- Anthropic Direct API (for local development or non-AWS deployments)
+
+The provider is selected via the AI_PROVIDER environment variable.
+"""
 
 import base64
 import logging
@@ -36,23 +43,64 @@ class PageImprovementResult(BaseModel):
 
 
 class AccessibilityAgent:
-    """Claude-powered agent for improving PDF-to-markdown accessibility."""
+    """Claude-powered agent supporting AWS Bedrock and Anthropic API."""
 
     def __init__(self) -> None:
-        """Initialize the accessibility agent with Claude Haiku."""
+        """Initialize the accessibility agent with configured AI provider."""
         # Load prompts from YAML config
         prompts = self._load_prompts()
 
-        # Initialize PydanticAI agent with Claude Haiku
+        # Create model based on configured provider
+        model = self._create_model()
+
+        # Initialize PydanticAI agent
         self.agent: Agent[None, PageImprovementResult] = Agent(
-            f"anthropic:{settings.claude_model}",
+            model,
             output_type=PageImprovementResult,
             system_prompt=prompts["system_prompt"],
         )
 
         self.user_prompt_template = prompts["user_prompt_template"]
 
-        logger.info(f"Accessibility agent initialized with {settings.claude_model}")
+        logger.info(
+            f"Accessibility agent initialized with provider: {settings.ai_provider}"
+        )
+
+    def _create_model(self):
+        """Create AI model based on configured provider.
+
+        Returns:
+            Model instance for PydanticAI Agent
+
+        Raises:
+            ValueError: If ai_provider is not supported
+        """
+        provider = settings.ai_provider.lower()
+
+        if provider == "bedrock":
+            from pydantic_ai.models.bedrock import BedrockConverseModel
+
+            # BedrockConverseModel takes model_name as the model ID string
+            # Region is configured via AWS SDK (boto3) environment or credentials
+            model = BedrockConverseModel(
+                model_name=settings.bedrock_model_id,
+            )
+            logger.info(
+                f"Using AWS Bedrock model: {settings.bedrock_model_id}"
+            )
+            return model
+
+        elif provider == "anthropic":
+            # Direct Anthropic API
+            model_name = f"anthropic:{settings.claude_model}"
+            logger.info(f"Using Anthropic API with model: {settings.claude_model}")
+            return model_name
+
+        else:
+            raise ValueError(
+                f"Unsupported AI provider: {provider}. "
+                f"Must be 'bedrock' or 'anthropic'."
+            )
 
     def _load_prompts(self) -> dict:
         """Load prompt templates from YAML configuration.
@@ -116,7 +164,8 @@ Fix heading hierarchy, add alt text, ensure semantic markup.""",
             Exception: If AI processing fails after all retries
         """
         logger.info(
-            f"Processing page {page_num} with Claude (attempt {retry_attempt})"
+            f"Processing page {page_num} with {settings.ai_provider} "
+            f"(attempt {retry_attempt})"
         )
 
         # Format user prompt with markdown content

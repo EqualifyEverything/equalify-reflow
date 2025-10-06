@@ -528,6 +528,7 @@ async def test_process_document_retries_s3_uploads(
 
 
 @pytest.mark.asyncio
+@pytest.mark.timeout(10)
 async def test_process_document_retry_exhaustion_handling(
     sample_job_payload,
     mock_storage_service,

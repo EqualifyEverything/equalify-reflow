@@ -83,6 +83,7 @@ class TestPIIServiceS3Failures:
     """Test PII service handling of S3 failures."""
 
     @pytest.mark.asyncio
+    @pytest.mark.timeout(10)
     async def test_s3_download_timeout_retry_succeeds(
         self, pii_service, mock_s3_client, mocker
     ):
@@ -393,6 +394,7 @@ class TestS3FailureRecovery:
         assert mock_redis_client.hset.call_count >= 1
 
     @pytest.mark.asyncio
+    @pytest.mark.timeout(10)
     async def test_transient_s3_error_eventual_success(
         self, pii_service, mock_s3_client, mocker
     ):

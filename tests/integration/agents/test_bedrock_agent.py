@@ -1,11 +1,19 @@
 """Integration tests for AccessibilityAgent with AWS Bedrock.
 
 Tests real Bedrock API interactions (requires AWS credentials).
-These tests are skipped if AWS credentials are not configured or if
-SKIP_BEDROCK_TESTS environment variable is set.
+These tests are skipped if:
+- AWS credentials are not configured
+- SKIP_BEDROCK_TESTS=1 environment variable is set
+- AI_PROVIDER is not set to "bedrock"
+- AWS_ENDPOINT_URL is set (LocalStack doesn't support Bedrock)
 
 Run with: pytest tests/integration/agents/test_bedrock_agent.py -v
 Skip with: SKIP_BEDROCK_TESTS=1 pytest tests/integration/
+
+Note: These tests will NOT run in the standard Docker development environment
+because LocalStack does not support the AWS Bedrock Converse API. They require
+real AWS credentials and are intended for manual testing or CI/CD environments
+with proper AWS access configured.
 """
 
 import os
@@ -25,9 +33,12 @@ pytestmark = pytest.mark.integration
 
 
 # Skip all tests if Bedrock tests should be skipped
+# Note: These tests require REAL AWS credentials and cannot use LocalStack
 skip_bedrock = pytest.mark.skipif(
-    os.getenv("SKIP_BEDROCK_TESTS") == "1" or settings.ai_provider != "bedrock",
-    reason="Bedrock integration tests skipped (SKIP_BEDROCK_TESTS=1 or AI_PROVIDER!=bedrock)"
+    os.getenv("SKIP_BEDROCK_TESTS") == "1"
+    or settings.ai_provider != "bedrock"
+    or settings.aws_endpoint_url is not None,  # Skip if using LocalStack
+    reason="Bedrock integration tests skipped (SKIP_BEDROCK_TESTS=1, AI_PROVIDER!=bedrock, or using LocalStack)"
 )
 
 

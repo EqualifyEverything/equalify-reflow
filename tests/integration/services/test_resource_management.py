@@ -144,12 +144,16 @@ class TestWorkerResourceManagement:
             # Start worker in background (it will run indefinitely)
             worker_task = asyncio.create_task(start_pii_worker())
 
-            # Give it a moment to initialize
-            await asyncio.sleep(0.1)
+            # Wait for worker to be ready (with timeout)
+            from src.workers.pii_worker import get_pii_worker
+            worker = None
+            for _ in range(50):  # 50 * 0.01s = 0.5s max wait
+                worker = get_pii_worker()
+                if worker and worker.running:
+                    break
+                await asyncio.sleep(0.01)
 
             # Stop worker
-            from src.workers.pii_worker import get_pii_worker
-            worker = get_pii_worker()
             if worker:
                 worker.stop()
 
@@ -189,8 +193,14 @@ class TestWorkerResourceManagement:
             # Start worker in background
             worker_task = asyncio.create_task(start_processing_worker())
 
-            # Give it a moment to initialize
-            await asyncio.sleep(0.1)
+            # Wait for worker to be ready (with timeout)
+            from src.workers import processing_worker
+            worker = None
+            for _ in range(50):  # 50 * 0.01s = 0.5s max wait
+                worker = processing_worker._worker_instance
+                if worker and worker.running:
+                    break
+                await asyncio.sleep(0.01)
 
             # Stop worker
             from src.workers.processing_worker import stop_processing_worker
@@ -277,17 +287,31 @@ class TestMultipleWorkerCycles:
             # Start worker
             worker_task = asyncio.create_task(worker.start())
 
-            # Give it a moment
-            await asyncio.sleep(0.05)
+            # Wait for worker to be running (with timeout)
+            for _ in range(50):  # 50 * 0.01s = 0.5s max wait
+                if worker.running:
+                    break
+                await asyncio.sleep(0.01)
+
+            # Verify worker started
+            assert worker.running is True
 
             # Stop worker
             worker.stop()
 
-            # Wait for worker to finish
-            try:
-                await asyncio.wait_for(worker_task, timeout=1.0)
-            except asyncio.TimeoutError:
+            # Wait for worker to fully stop
+            for _ in range(100):  # 100 * 0.01s = 1s max wait
+                if not worker.running:
+                    break
+                await asyncio.sleep(0.01)
+
+            # Cancel the task if still running
+            if not worker_task.done():
                 worker_task.cancel()
+                try:
+                    await worker_task
+                except asyncio.CancelledError:
+                    pass
 
             # Verify worker stopped
             assert worker.running is False
@@ -355,10 +379,15 @@ class TestResourceCleanupOnExceptions:
         # Start worker
         worker_task = asyncio.create_task(worker.start())
 
-        # Give it time to hit the error
-        await asyncio.sleep(0.2)
+        # Wait for worker to start and hit error multiple times
+        # Worker continues running despite errors (by design), so we wait
+        # for it to process a few error cycles
+        for _ in range(30):  # 30 * 0.05s = 1.5s max wait
+            await asyncio.sleep(0.05)
+            if queue_service.dequeue.call_count >= 2:  # Hit error at least twice
+                break
 
-        # Stop worker
+        # Stop worker (worker continues running despite errors)
         worker.stop()
 
         # Wait for worker to finish

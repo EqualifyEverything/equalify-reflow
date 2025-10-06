@@ -341,12 +341,13 @@ class TestConcurrentTokenValidation:
 
         # Validate concurrently while changing status
         async def change_status():
-            await asyncio.sleep(0.01)  # Small delay
+            # Run a few validations first, then change status mid-flight
+            await asyncio.gather(*[approval_service.validate_approval_token(approval_token) for _ in range(5)])
             await job_service.update_job_status(sample_job_id, STATUS_PROCESSING)
 
         validation_tasks = [
             approval_service.validate_approval_token(approval_token)
-            for _ in range(50)
+            for _ in range(45)  # Reduced since change_status does 5
         ]
 
         # Run validations and status change concurrently
@@ -424,9 +425,6 @@ class TestHighConcurrency:
 
             await asyncio.gather(*tasks, return_exceptions=True)
             total_operations += 50
-
-            # Brief pause between batches
-            await asyncio.sleep(0.1)
 
         # Verify total operations attempted
         assert total_operations == 250

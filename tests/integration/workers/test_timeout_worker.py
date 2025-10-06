@@ -81,10 +81,9 @@ class TestShouldRunTask:
 
     def test_should_run_after_interval(self, timeout_worker):
         """Test that task should run after interval elapsed."""
-        last_run = datetime.now(timezone.utc)
-        # Sleep a tiny bit to ensure time passes
-        import time
-        time.sleep(0.01)
+        # Use a timestamp in the past to avoid sleep
+        from datetime import timedelta
+        last_run = datetime.now(timezone.utc) - timedelta(seconds=1)
 
         result = timeout_worker._should_run_task(last_run, 0)
         assert result is True
@@ -190,8 +189,11 @@ class TestWorkerLifecycle:
         # Start worker task
         worker_task = asyncio.create_task(timeout_worker.start())
 
-        # Give it a moment to start
-        await asyncio.sleep(0.1)
+        # Wait for worker to be running (with timeout)
+        for _ in range(50):  # 50 * 0.01s = 0.5s max wait
+            if timeout_worker.running:
+                break
+            await asyncio.sleep(0.01)
 
         # Stop worker
         timeout_worker.stop()
@@ -210,8 +212,11 @@ class TestWorkerLifecycle:
         # Start worker task
         worker_task = asyncio.create_task(timeout_worker.start())
 
-        # Give it a moment to start
-        await asyncio.sleep(0.1)
+        # Wait for worker to be running (with timeout)
+        for _ in range(50):  # 50 * 0.01s = 0.5s max wait
+            if timeout_worker.running:
+                break
+            await asyncio.sleep(0.01)
 
         # Cancel worker
         worker_task.cancel()
@@ -231,8 +236,11 @@ class TestWorkerLifecycle:
         # Start worker task
         worker_task = asyncio.create_task(timeout_worker.start())
 
-        # Give it time to hit the error and recover
-        await asyncio.sleep(0.5)
+        # Wait for worker to run and handle error (with timeout)
+        for _ in range(50):  # 50 * 0.01s = 0.5s max wait
+            if timeout_worker.running and timeout_worker._run_approval_check.call_count > 0:
+                break
+            await asyncio.sleep(0.01)
 
         # Stop worker
         timeout_worker.stop()

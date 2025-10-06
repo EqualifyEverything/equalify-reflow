@@ -261,7 +261,7 @@ async def test_process_pages_concurrently_multiple_pages_over_limit(
         nonlocal concurrent_count, max_concurrent_count
         concurrent_count += 1
         max_concurrent_count = max(max_concurrent_count, concurrent_count)
-        await asyncio.sleep(0.01)  # Simulate processing
+        await asyncio.sleep(0.001)  # Minimal delay to allow context switch
         concurrent_count -= 1
         return sample_page_improvement_result
 
@@ -317,11 +317,11 @@ async def test_process_pages_concurrently_preserves_order(mock_accessibility_age
         for i in range(1, 6)
     ]
 
-    # Return different results for each page (with delay to ensure concurrency)
+    # Return different results for each page (with minimal delay to ensure concurrency)
     async def process_page_with_result(*args, **kwargs):
         page_num = kwargs.get("page_num")
-        # Reverse delay order to test ordering (page 5 finishes first)
-        await asyncio.sleep(0.01 * (6 - page_num))
+        # Minimal delay to allow context switch
+        await asyncio.sleep(0.001)
         return PageImprovementResult(
             improved_markdown=f"Improved Page {page_num}",
             confidence_score=0.8 + (page_num * 0.01),

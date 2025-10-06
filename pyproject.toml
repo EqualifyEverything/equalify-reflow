@@ -37,17 +37,6 @@ dev = [
     "reportlab>=4.4.4",
 ]
 
-# Use CPU-only PyTorch to avoid 4GB of CUDA dependencies
-# GPU acceleration not needed for document processing
-# ECS Fargate doesn't support GPUs anyway
-[tool.uv.sources]
-torch = { index = "pytorch-cpu" }
-torchvision = { index = "pytorch-cpu" }
-
-[[tool.uv.index]]
-name = "pytorch-cpu"
-url = "https://download.pytorch.org/whl/cpu"
-explicit = true  # Only torch/torchvision use this index
 
 [tool.pytest.ini_options]
 testpaths = ["tests"]

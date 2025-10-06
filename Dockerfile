@@ -25,7 +25,11 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
 # Copy dependency files
 COPY pyproject.toml uv.lock* ./
 
-# Sync dependencies with uv
+# Install CPU-only PyTorch first (avoids 4GB of CUDA dependencies)
+# GPU not supported on ECS Fargate, and document processing doesn't benefit from GPU
+RUN uv pip install --system torch torchvision --index-url https://download.pytorch.org/whl/cpu
+
+# Sync dependencies with uv (will skip torch/torchvision since already installed)
 # --frozen: Use exact versions from lock file
 # Fallback to regular sync if no lock file exists
 RUN uv sync --frozen || uv sync

@@ -39,7 +39,7 @@ help:
 	@echo "Observability:"
 	@echo "  make grafana-url  - Open Grafana (http://localhost:3000)"
 	@echo "  make prometheus-url - Open Prometheus (http://localhost:9090)"
-	@echo "  make metrics-url  - Open API metrics (http://localhost:8001/metrics)"
+	@echo "  make metrics-url  - Open API metrics (http://localhost:8000/metrics)"
 	@echo ""
 
 # Development environment
@@ -107,7 +107,7 @@ shell:
 
 # Run tests inside Docker container (with parallelization)
 test-docker:
-	docker compose -f docker-compose.yml -f docker-compose.dev.yml exec api-gateway uv run pytest tests/ -v -n auto
+	docker compose -f docker-compose.yml -f docker-compose.dev.yml exec api-gateway uv run pytest tests/ -v
 
 # View API logs only
 logs-api:
@@ -129,8 +129,8 @@ prometheus-url:
 	@open http://localhost:9090 2>/dev/null || xdg-open http://localhost:9090 2>/dev/null || echo "Please open http://localhost:9090 in your browser"
 
 metrics-url:
-	@echo "Opening API metrics at http://localhost:8001/metrics"
-	@open http://localhost:8001/metrics 2>/dev/null || xdg-open http://localhost:8001/metrics 2>/dev/null || echo "Please open http://localhost:8001/metrics in your browser"
+	@echo "Opening API metrics at http://localhost:8000/metrics"
+	@open http://localhost:8000/metrics 2>/dev/null || xdg-open http://localhost:8000/metrics 2>/dev/null || echo "Please open http://localhost:8000/metrics in your browser"
 
 # Coverage commands (parallelization with coverage)
 coverage:

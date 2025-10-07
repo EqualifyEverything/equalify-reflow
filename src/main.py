@@ -19,6 +19,8 @@ from .api import documents, health, approval
 from .workers.pii_worker import start_pii_worker
 from .workers.processing_worker import start_processing_worker
 from .workers.timeout_worker import start_timeout_worker
+from .dependencies import get_redis_client
+from .services.rate_limit_service import RateLimitService
 
 # Configure logging
 logging.basicConfig(
@@ -36,6 +38,13 @@ async def lifespan(app: FastAPI):
     Starts background workers when the application starts
     and ensures cleanup on shutdown.
     """
+    # Startup: Initialize shared services
+    logger.info("Initializing shared services...")
+    redis_gen = get_redis_client()
+    redis_client = await anext(redis_gen)
+    app.state.rate_limiter = RateLimitService(redis=redis_client)
+    logger.info("Rate limiter initialized")
+
     # Startup: Launch background workers
     logger.info("Starting background workers...")
 

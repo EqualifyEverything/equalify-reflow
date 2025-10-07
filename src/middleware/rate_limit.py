@@ -42,19 +42,12 @@ class RateLimitMiddleware(BaseHTTPMiddleware):
         # Get client IP
         client_ip = self._get_client_ip(request)
 
-        # Get rate limit service
-        rate_limiter = None
-        try:
-            rate_limit_gen = get_rate_limit_service()
-            rate_limiter = await anext(rate_limit_gen)
-        except Exception as e:
-            logger.error(f"Failed to get rate limiter: {e}", exc_info=True)
-            # Fail open - allow request if rate limiter unavailable
-            return await call_next(request)
+        # Get rate limit service from app state
+        rate_limiter = getattr(request.app.state, "rate_limiter", None)
 
-        # If rate limiter failed to initialize, fail open
+        # If rate limiter not available, fail open
         if rate_limiter is None:
-            logger.warning("Rate limiter not available, allowing request")
+            logger.warning("Rate limiter not available in app state, allowing request")
             return await call_next(request)
 
         # Check rate limits based on endpoint

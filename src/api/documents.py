@@ -43,8 +43,7 @@ class JobResultResponse(BaseModel):
     """Response for completed job result."""
     job_id: str
     status: str
-    html_url: Optional[str] = None
-    mdx_url: Optional[str] = None
+    markdown_url: Optional[str] = None
     confidence_score: Optional[float] = None
     processing_time_seconds: Optional[int] = None
     estimated_completion_at: Optional[str] = None
@@ -165,8 +164,7 @@ async def get_job_result(
         return JobResultResponse(
             job_id=job_id,
             status="completed",
-            html_url=storage.get_result_url(job_id, "html"),
-            mdx_url=storage.get_result_url(job_id, "mdx"),
+            markdown_url=storage.get_result_url(job_id, "md"),
             confidence_score=float(job_data.get("confidence_score", 0.0)),
             processing_time_seconds=int(job_data.get("processing_time_seconds", 0))
         )

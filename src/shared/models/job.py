@@ -171,13 +171,9 @@ class JobStatus(BaseModel):
         default=None,
         description="Approval expiration timestamp"
     )
-    html_url: Optional[str] = Field(
+    markdown_url: Optional[str] = Field(
         default=None,
-        description="S3 URL for HTML output"
-    )
-    mdx_url: Optional[str] = Field(
-        default=None,
-        description="S3 URL for MDX output"
+        description="S3 URL for Markdown output"
     )
     confidence_score: Optional[float] = Field(
         default=None,
@@ -217,8 +213,7 @@ class JobStatus(BaseModel):
                 "pii_findings": None,
                 "approval_token": None,
                 "expires_at": None,
-                "html_url": "https://equalify-output.s3.amazonaws.com/...",
-                "mdx_url": "https://equalify-output.s3.amazonaws.com/...",
+                "markdown_url": "https://equalify-output.s3.amazonaws.com/...",
                 "confidence_score": 0.87,
                 "error_message": None,
                 "approval_decision": None

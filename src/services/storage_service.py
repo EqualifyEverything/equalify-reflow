@@ -104,7 +104,7 @@ class StorageService:
 
         Args:
             job_id: Job identifier
-            file_type: File extension (html or mdx)
+            file_type: File extension (md)
 
         Returns:
             S3 URL for the result file
@@ -178,8 +178,8 @@ class StorageService:
 
         Args:
             job_id: Job identifier
-            content: HTML or MDX content as string
-            format: File format ('html' or 'mdx')
+            content: Markdown content as string
+            format: File format ('md')
 
         Returns:
             Public URL to the result file
@@ -191,8 +191,7 @@ class StorageService:
 
         # Set correct Content-Type based on format
         content_type_map = {
-            'html': 'text/html',
-            'mdx': 'text/markdown'
+            'md': 'text/markdown'
         }
         content_type = content_type_map.get(format, 'text/plain')
 
@@ -225,6 +224,58 @@ class StorageService:
             raise HTTPException(
                 status_code=500,
                 detail=f"Failed to upload result: {str(e)}"
+            )
+
+    async def upload_image(
+        self,
+        job_id: str,
+        image_data: bytes,
+        image_name: str
+    ) -> str:
+        """Upload extracted image (figure/table) to results bucket.
+
+        Images are stored in a subfolder structure: {job_id}/images/{image_name}
+        This allows grouping all assets for a job together.
+
+        Args:
+            job_id: Job identifier
+            image_data: PNG image bytes
+            image_name: Filename for image (e.g., "figure-1.png", "table-2.png")
+
+        Returns:
+            Public URL to the uploaded image
+
+        Raises:
+            HTTPException: If upload fails
+        """
+        s3_key = f"{job_id}/images/{image_name}"
+
+        try:
+            self.s3_client.put_object(
+                Bucket=self.results_bucket,
+                Key=s3_key,
+                Body=image_data,
+                ContentType='image/png',
+                CacheControl='public, max-age=31536000'  # Cache for 1 year
+            )
+
+            # Return public URL
+            if settings.aws_endpoint_url:
+                return f"{settings.aws_endpoint_url}/{self.results_bucket}/{s3_key}"
+            else:
+                region = settings.aws_region or "us-east-1"
+                return f"https://{self.results_bucket}.s3.{region}.amazonaws.com/{s3_key}"
+
+        except ClientError as e:
+            error_code = e.response.get('Error', {}).get('Code', 'Unknown')
+            raise HTTPException(
+                status_code=500,
+                detail=f"Failed to upload image {image_name}: {error_code}"
+            ) from e
+        except Exception as e:
+            raise HTTPException(
+                status_code=500,
+                detail=f"Failed to upload image {image_name}: {str(e)}"
             )
 
     async def delete_temp_file(self, s3_key: str) -> bool:

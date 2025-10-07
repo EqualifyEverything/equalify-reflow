@@ -53,10 +53,17 @@ class PIIAnalyzer:
         """
         self.confidence_threshold = confidence_threshold
 
-        # Configure spaCy NLP engine
+        # Configure spaCy NLP engine with entity filtering
+        # Ignore non-PII entities that cause warnings: MONEY, CARDINAL, PRODUCT, EVENT
         nlp_configuration = {
             "nlp_engine_name": "spacy",
-            "models": [{"lang_code": "en", "model_name": "en_core_web_sm"}]
+            "models": [{
+                "lang_code": "en",
+                "model_name": "en_core_web_sm"
+            }],
+            "ner_model_configuration": {
+                "labels_to_ignore": ["MONEY", "CARDINAL", "PRODUCT", "EVENT", "ORDINAL", "QUANTITY"]
+            }
         }
 
         # Create NLP engine

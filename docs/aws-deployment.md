@@ -2,6 +2,14 @@
 
 This guide walks you through deploying the Equalify PDF Converter to AWS using Terraform and ECS Fargate.
 
+## Important: Region Configuration
+
+- **SSO Region:** `us-east-2` (AWS Identity Center - authentication only)
+- **Resource Region:** `us-east-1` (All infrastructure: ECS, S3, Redis, ALB)
+- **AWS Account:** `380610849750` (UIC)
+
+All deployment commands use `us-east-1` for resources, regardless of SSO region.
+
 ## Table of Contents
 
 - [Prerequisites](#prerequisites)
@@ -42,22 +50,54 @@ This guide walks you through deploying the Equalify PDF Converter to AWS using T
 
 ### AWS Account Setup
 
-1. **Create AWS Account** (if you don't have one)
-   - Sign up at https://aws.amazon.com/
+#### UIC Team Members (AWS SSO)
 
-2. **Configure AWS CLI**
+1. **Configure AWS SSO**
    ```bash
-   aws configure
-   # AWS Access Key ID: [Your access key]
-   # AWS Secret Access Key: [Your secret key]
-   # Default region: us-east-1
-   # Default output format: json
+   aws configure sso
+
+   # Enter these values:
+   SSO session name: uic
+   SSO start URL: https://d-9a672cc795.awsapps.com/start
+   SSO region: us-east-2
+   SSO registration scopes: [press Enter]
+
+   # Browser will open - authorize the request
+   # Select: Account 380610849750, Role: AWSAdministratorAccess
+
+   # Then configure CLI defaults:
+   CLI default region: us-east-1
+   CLI output format: json
+   CLI profile name: uic
+   ```
+
+2. **Set AWS Profile**
+   ```bash
+   export AWS_PROFILE=uic
+
+   # Make it permanent (add to ~/.zshrc or ~/.bashrc):
+   echo 'export AWS_PROFILE=uic' >> ~/.zshrc
    ```
 
 3. **Verify AWS Access**
    ```bash
    aws sts get-caller-identity
+   # Should show: Account 380610849750
    ```
+
+**Note:** SSO authenticates in `us-east-2` (Identity Center region), but all infrastructure deploys to `us-east-1` (resource region).
+
+#### External Collaborators (IAM User)
+
+If IT created an IAM user for you:
+
+```bash
+aws configure
+# AWS Access Key ID: [Your access key]
+# AWS Secret Access Key: [Your secret key]
+# Default region: us-east-1
+# Default output format: json
+```
 
 ---
 
@@ -83,26 +123,22 @@ This guide walks you through deploying the Equalify PDF Converter to AWS using T
    ecs_desired_count = 2     # Number of tasks
 
    # Monitoring
-   alarm_email = "your-email@uic.edu"
+   alarm_email = "disaac4@uic.edu"
+
+   # AI Provider Configuration
+   ai_provider = "bedrock"  # Using AWS Bedrock (no API key needed)
+   bedrock_model_id = "anthropic.claude-3-5-haiku-20241022"
+   enable_bedrock_metrics = true
 
    # Additional tags
    additional_tags = {
      Department = "UIC-DASE"
-     ManagedBy  = "Your Name"
+     ManagedBy  = "Dylan Isaac"
+     CostCenter = "Accessibility"
    }
    ```
 
-3. **Set Anthropic API Key** (choose one method):
-
-   **Method A: Environment Variable (Recommended)**
-   ```bash
-   export TF_VAR_anthropic_api_key="sk-ant-your-api-key"
-   ```
-
-   **Method B: In terraform.tfvars (Less Secure)**
-   ```hcl
-   anthropic_api_key = "sk-ant-your-api-key"
-   ```
+   **Note:** This configuration uses AWS Bedrock with IAM-based authentication. No API keys required!
 
 ### Step 2: Initialize Terraform
 
@@ -398,7 +434,13 @@ aws iam get-role-policy \
 | Data Transfer | 50GB/month | ~$5 |
 | CloudWatch Logs | 5GB/month | ~$2.50 |
 | **Total Infrastructure** | | **~$117.50** |
-| Anthropic API | ~$0.20/document | Variable |
+| AWS Bedrock (Claude 3.5 Haiku) | ~$0.15-0.25/document | Variable |
+
+**Note:** Bedrock costs include:
+- Input tokens: Document text + image analysis of each page
+- Output tokens: Reasoning + corrected accessible text
+- Typical 20-page PDF: ~$0.20/document
+- Cost scales with document length and page count
 
 ### Cost Optimization Tips
 
@@ -425,10 +467,14 @@ aws ce get-cost-and-usage \
 
 ### Secrets Management
 
-**Anthropic API Key** is stored in AWS Secrets Manager:
+**Using AWS Bedrock (Current Setup):**
+- ✅ No API keys or secrets required
+- ✅ Authentication via IAM roles (more secure)
+- ✅ Task role has Bedrock permissions for Claude models
 
+**If using Anthropic API instead:**
 ```bash
-# Update secret
+# Update secret in AWS Secrets Manager
 aws secretsmanager update-secret \
     --secret-id equalify-pdf-anthropic-api-key \
     --secret-string "sk-ant-new-api-key"
@@ -439,9 +485,10 @@ aws ecs update-service --cluster ${ECS_CLUSTER} --service ${ECS_SERVICE} --force
 
 ### IAM Best Practices
 
-- ✅ Task role has minimal S3/CloudWatch permissions
-- ✅ Execution role can only access specific secrets
+- ✅ Task role has minimal S3/CloudWatch/Bedrock permissions
+- ✅ Execution role can only pull images and read secrets
 - ✅ No hardcoded credentials in code
+- ✅ IAM-based authentication for all AWS services
 
 ### Network Security
 
@@ -510,6 +557,7 @@ terraform destroy
 
 ---
 
-**Last Updated**: 2025-10-06
+**Last Updated**: 2025-10-07
 **Terraform Version**: 1.0+
 **AWS Provider Version**: 5.0+
+**AI Provider**: AWS Bedrock (Claude 3.5 Haiku)

@@ -164,7 +164,7 @@ services:
 docker-compose up -d
 
 # Run the monolith application
-uv run uvicorn src.main:app --reload --host 0.0.0.0 --port 8000
+uv run uvicorn src.main:app --reload --host 0.0.0.0 --port 8080
 ```
 
 The application `src/main.py` starts:

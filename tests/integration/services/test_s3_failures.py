@@ -91,7 +91,11 @@ class TestPIIServiceS3Failures:
     async def test_s3_download_timeout_retry_succeeds(
         self, pii_service, mock_s3_client, mocker
     ):
-        """Test S3 download retries on timeout and eventually succeeds."""
+        """Test S3 download retries on timeout and eventually succeeds.
+
+        StorageService now handles retries internally, so we mock S3 client
+        to fail twice then succeed. The PII service should see one successful call.
+        """
         job = PIIQueuePayload(
             job_id="550e8400-e29b-41d4-a716-446655440001",
             s3_key="temp/test.pdf",
@@ -100,18 +104,12 @@ class TestPIIServiceS3Failures:
 
         pdf_content = b"%PDF-1.4\nTest PDF\n%%EOF"
 
-        # Mock storage service download to fail twice then succeed
-        download_call_count = [0]
-
-        async def mock_download(s3_key):
-            download_call_count[0] += 1
-            if download_call_count[0] == 1:
-                raise HTTPException(status_code=500, detail="Request timeout")
-            elif download_call_count[0] == 2:
-                raise HTTPException(status_code=503, detail="Service unavailable")
-            return pdf_content
-
-        pii_service.storage.download_temp_file = mock_download
+        # Mock S3 client to fail twice (retryable errors), then succeed
+        mock_s3_client.get_object.side_effect = [
+            ClientError({'Error': {'Code': 'RequestTimeout'}}, 'GetObject'),
+            ClientError({'Error': {'Code': 'ServiceUnavailable'}}, 'GetObject'),
+            {'Body': mocker.Mock(read=mocker.Mock(return_value=pdf_content))}
+        ]
 
         # Mock PDF extraction
         mocker.patch(
@@ -122,8 +120,8 @@ class TestPIIServiceS3Failures:
         # Execute
         await pii_service.process_pii_job(job)
 
-        # Verify download was called 3 times (2 failures + 1 success)
-        assert download_call_count[0] == 3
+        # Verify S3 was called 3 times (2 failures + 1 success) by StorageService retry logic
+        assert mock_s3_client.get_object.call_count == 3
 
     @pytest.mark.asyncio
     async def test_s3_download_throttling_retry(
@@ -363,10 +361,9 @@ class TestProcessingServiceS3Failures:
         # Execute - should NOT raise, but catch exception and mark job as failed
         result = await processing_service.process_document(job)
 
-        # NOTE: Due to storage_service wrapping ClientError in HTTPException(500),
-        # the retry logic treats AccessDenied as retryable. This is inefficient but safe.
-        # The upload will be attempted 3 times (max_attempts=3) before failing.
-        assert mock_s3_client.put_object.call_count == 3
+        # StorageService retry logic correctly identifies AccessDenied as non-retryable
+        # so it fails immediately without retry (call_count = 1)
+        assert mock_s3_client.put_object.call_count == 1
 
         # Verify result indicates failure
         assert result is not None

@@ -86,13 +86,9 @@ class ProcessingService:
                 operation_name=f"Update job {job.job_id} status to processing"
             )
 
-            # Step 2: Download PDF from S3 (with retry on network/throttling errors)
+            # Step 2: Download PDF from S3 (StorageService handles retries internally)
             logger.info(f"Downloading PDF from s3://{settings.s3_temp_bucket}/{job.s3_key}")
-            pdf_content = await retry_with_backoff(
-                lambda: self.storage.download_temp_file(s3_key=job.s3_key),
-                max_attempts=3,
-                operation_name=f"Download PDF from S3 for job {job.job_id}"
-            )
+            pdf_content = await self.storage.download_temp_file(s3_key=job.s3_key)
             logger.info(f"Downloaded {len(pdf_content)} bytes")
 
             # Step 3: Convert PDF with Docling (markdown + page images)
@@ -130,14 +126,11 @@ class ProcessingService:
                         image_name = f"{img.image_type}-{ref_index}.png"
 
                         # Upload to S3 with retry
-                        image_url = await retry_with_backoff(
-                            lambda: self.storage.upload_image(
-                                job_id=job.job_id,
-                                image_data=img_bytes,
-                                image_name=image_name
-                            ),
-                            max_attempts=3,
-                            operation_name=f"Upload image {image_name} for job {job.job_id}"
+                        # StorageService handles retries internally
+                        image_url = await self.storage.upload_image(
+                            job_id=job.job_id,
+                            image_data=img_bytes,
+                            image_name=image_name
                         )
 
                         # Store metadata for later reference
@@ -217,14 +210,11 @@ class ProcessingService:
 
             # Step 8: Upload results to S3 with versioning (with retry on network errors)
             logger.info(f"Uploading markdown to S3 results bucket")
-            result_url = await retry_with_backoff(
-                lambda: self.storage.upload_result(
-                    job_id=job.job_id,
-                    content=final_markdown.encode("utf-8"),
-                    format="md"
-                ),
-                max_attempts=3,
-                operation_name=f"Upload result to S3 for job {job.job_id}"
+            # StorageService handles retries internally
+            result_url = await self.storage.upload_result(
+                job_id=job.job_id,
+                content=final_markdown.encode("utf-8"),
+                format="md"
             )
 
             # Step 9: Update job status with metadata (with retry for Redis failures)

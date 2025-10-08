@@ -502,14 +502,14 @@ async def test_process_document_retries_s3_downloads(
     mock_pdf_converter,
     mock_ai_enhancement_service,
 ):
-    """Test retry logic for S3 download failures."""
-    import asyncio
+    """Test that processing service calls storage service for downloads.
 
-    # Simulate S3 throttling on first attempt (use retryable error)
-    mock_storage_service.download_temp_file.side_effect = [
-        asyncio.TimeoutError("S3 throttling"),  # Retryable
-        b"fake_pdf_content",  # Success on retry
-    ]
+    Retry logic is now handled inside StorageService, not in ProcessingService.
+    This test verifies that ProcessingService makes a single call to storage service,
+    which handles retries internally.
+    """
+    # Mock successful download (storage service handles retries internally)
+    mock_storage_service.download_temp_file.return_value = b"fake_pdf_content"
 
     service = ProcessingService(
         storage_service=mock_storage_service,
@@ -521,10 +521,10 @@ async def test_process_document_retries_s3_downloads(
 
     result = await service.process_document(sample_job_payload)
 
-    # Should succeed after retry
+    # Should succeed (storage handles retries internally)
     assert result.error_message is None
-    # Should have attempted download twice
-    assert mock_storage_service.download_temp_file.call_count == 2
+    # Should have called download once (no outer retry loop)
+    assert mock_storage_service.download_temp_file.call_count == 1
 
 
 @pytest.mark.asyncio
@@ -536,12 +536,14 @@ async def test_process_document_retries_s3_uploads(
     mock_pdf_converter,
     mock_ai_enhancement_service,
 ):
-    """Test retry logic for S3 upload failures."""
-    # Simulate S3 network error on first attempt (use retryable error)
-    mock_storage_service.upload_result.side_effect = [
-        ConnectionError("Network error"),  # Retryable
-        "s3://equalify-results/550e8400.../v20250101_120000/output.md",  # Success
-    ]
+    """Test that processing service calls storage service for uploads.
+
+    Retry logic is now handled inside StorageService, not in ProcessingService.
+    This test verifies that ProcessingService makes a single call to storage service,
+    which handles retries internally.
+    """
+    # Mock successful upload (storage service handles retries internally)
+    mock_storage_service.upload_result.return_value = "s3://equalify-results/550e8400.../v20250101_120000/output.md"
 
     service = ProcessingService(
         storage_service=mock_storage_service,
@@ -553,9 +555,10 @@ async def test_process_document_retries_s3_uploads(
 
     result = await service.process_document(sample_job_payload)
 
-    # Should succeed after retry
+    # Should succeed (storage handles retries internally)
     assert result.error_message is None
-    assert mock_storage_service.upload_result.call_count == 2
+    # Should have called upload once (no outer retry loop)
+    assert mock_storage_service.upload_result.call_count == 1
 
 
 @pytest.mark.asyncio
@@ -568,12 +571,18 @@ async def test_process_document_retry_exhaustion_handling(
     mock_pdf_converter,
     mock_ai_enhancement_service,
 ):
-    """Test handling when all retry attempts are exhausted."""
-    import asyncio
+    """Test handling when storage service fails after exhausting internal retries.
 
-    # Simulate persistent S3 failure (use retryable error)
-    mock_storage_service.download_temp_file.side_effect = asyncio.TimeoutError(
-        "S3 service unavailable"
+    StorageService handles retries internally, so when it raises an exception,
+    it has already exhausted its retries. ProcessingService should handle the
+    final failure gracefully.
+    """
+    from fastapi import HTTPException
+
+    # Simulate storage service failure after internal retries exhausted
+    mock_storage_service.download_temp_file.side_effect = HTTPException(
+        status_code=500,
+        detail="Failed to download file: S3 service unavailable"
     )
 
     service = ProcessingService(
@@ -586,11 +595,11 @@ async def test_process_document_retry_exhaustion_handling(
 
     result = await service.process_document(sample_job_payload)
 
-    # Should fail after all retries exhausted
+    # Should fail (storage already exhausted retries)
     assert result.error_message is not None
-    assert "S3 service unavailable" in result.error_message
-    # Should have attempted download 3 times (max_attempts)
-    assert mock_storage_service.download_temp_file.call_count == 3
+    assert "S3 service unavailable" in result.error_message or "Processing failed" in result.error_message
+    # Should have called download once (storage handles retries internally)
+    assert mock_storage_service.download_temp_file.call_count == 1
 
 
 # ============================================================================

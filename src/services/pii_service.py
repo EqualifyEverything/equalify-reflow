@@ -82,12 +82,8 @@ class PIIDetectionService:
                 operation_name=f"Update job {job.job_id} status to PII_SCANNING"
             )
 
-            # Step 1: Download PDF from S3 (with retry on network/throttling errors)
-            pdf_content = await retry_with_backoff(
-                lambda: self.storage.download_temp_file(job.s3_key),
-                max_attempts=3,
-                operation_name=f"Download PDF from S3 for job {job.job_id}"
-            )
+            # Step 1: Download PDF from S3 (StorageService handles retries internally)
+            pdf_content = await self.storage.download_temp_file(job.s3_key)
             logger.info(f"Downloaded PDF for job {job.job_id}: {len(pdf_content)} bytes")
 
             # Step 2: Extract text content (with retry on transient extraction errors)

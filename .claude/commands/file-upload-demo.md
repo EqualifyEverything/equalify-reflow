@@ -20,10 +20,10 @@ Verify system is ready:
 docker ps --format "table {{.Names}}\t{{.Status}}" | grep equalify-pdf
 
 # Check API health
-curl -s http://localhost:8000/health | jq .
+curl -s http://localhost:8080/health | jq .
 
 # Check queue status
-curl -s http://localhost:8000/api/dev/monitoring/queues | jq .
+curl -s http://localhost:8080/api/dev/monitoring/queues | jq .
 ```
 
 Expected: All services healthy, queues empty
@@ -37,7 +37,7 @@ Upload the PDF to start processing:
 ```bash
 PDF_FILE="<PDF_FILE_PATH or project-docs/pdfs/11_structured_programming.pdf>"
 
-curl -X POST http://localhost:8000/api/documents/submit \
+curl -X POST http://localhost:8080/api/documents/submit \
   -F "file=@$PDF_FILE" \
   -F 'metadata={"title":"Demo Document","source":"walkthrough"}' \
   2>/dev/null | jq .
@@ -70,7 +70,7 @@ Check job status (wait 2-5 seconds first):
 ```bash
 JOB_ID="<job_id from step 2>"
 
-curl -s http://localhost:8000/api/documents/$JOB_ID/status | jq .
+curl -s http://localhost:8080/api/documents/$JOB_ID/status | jq .
 ```
 
 **Possible outcomes**:
@@ -108,7 +108,7 @@ If status is `awaiting_approval`, submit approval:
 ```bash
 APPROVAL_TOKEN="<approval_token from step 3>"
 
-curl -X POST http://localhost:8000/api/approval/$APPROVAL_TOKEN/approve \
+curl -X POST http://localhost:8080/api/approval/$APPROVAL_TOKEN/approve \
   -H "Content-Type: application/json" \
   -d '{
     "decision": "approved",
@@ -140,10 +140,10 @@ Check processing status (poll every 10-15 seconds):
 
 ```bash
 # Check job status
-curl -s http://localhost:8000/api/documents/$JOB_ID/status | jq .
+curl -s http://localhost:8080/api/documents/$JOB_ID/status | jq .
 
 # Check queue depth
-curl -s http://localhost:8000/api/dev/monitoring/queues | jq .
+curl -s http://localhost:8080/api/dev/monitoring/queues | jq .
 
 # Watch logs (optional)
 docker logs equalify-pdf-api-gateway --tail 50 --follow
@@ -172,10 +172,10 @@ Once status changes to `completed`:
 
 ```bash
 # Check final status
-curl -s http://localhost:8000/api/documents/$JOB_ID/status | jq .
+curl -s http://localhost:8080/api/documents/$JOB_ID/status | jq .
 
 # Get results
-curl -s http://localhost:8000/api/documents/$JOB_ID/result | jq .
+curl -s http://localhost:8080/api/documents/$JOB_ID/result | jq .
 ```
 
 **Expected Response**:
@@ -247,7 +247,7 @@ submitted → pii_scanning → awaiting_approval → processing → completed
 If status is `failed`:
 
 ```bash
-curl -s http://localhost:8000/api/documents/$JOB_ID/result | jq .
+curl -s http://localhost:8080/api/documents/$JOB_ID/result | jq .
 ```
 
 **Common failures**:

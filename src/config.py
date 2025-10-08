@@ -34,7 +34,7 @@ class Settings(BaseSettings):
 
     # API Configuration
     api_host: str = "0.0.0.0"
-    api_port: int = Field(ge=1, le=65535, default=8000)
+    api_port: int = Field(ge=1, le=65535, default=8080)
     log_level: str = "INFO"
     environment: str = "production"  # "dev" or "production"
 

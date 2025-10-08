@@ -140,8 +140,7 @@ async def test_get_job_result_completed(client):
         assert response.status_code == status.HTTP_200_OK
         data = response.json()
         assert data["status"] == "completed"
-        assert "html_url" in data
-        assert "mdx_url" in data
+        assert "markdown_url" in data
         assert data["confidence_score"] == 0.87
     finally:
         app.dependency_overrides.clear()

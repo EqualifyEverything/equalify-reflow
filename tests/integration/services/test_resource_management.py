@@ -118,6 +118,7 @@ class TestWorkerResourceManagement:
     """Tests for worker resource management patterns."""
 
     @pytest.mark.asyncio
+    @pytest.mark.timeout(10)  # Worker startup and shutdown can take time
     async def test_pii_worker_initialization_pattern(self):
         """Test that PII worker uses correct initialization pattern."""
         from src.workers.pii_worker import start_pii_worker
@@ -169,6 +170,7 @@ class TestWorkerResourceManagement:
             mock_s3_gen.assert_called_once()
 
     @pytest.mark.asyncio
+    @pytest.mark.timeout(10)  # Worker startup and shutdown can take time
     async def test_processing_worker_initialization_pattern(self):
         """Test that Processing worker uses correct initialization pattern."""
         from src.workers.processing_worker import start_processing_worker

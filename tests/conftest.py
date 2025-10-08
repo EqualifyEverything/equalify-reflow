@@ -69,6 +69,7 @@ def sample_pdf_conversion_result(sample_page_data):
         total_pages=1,
         full_markdown="# Test Document\n\nSample content",
         has_page_images=True,
+        extracted_images=[],
     )
 
 

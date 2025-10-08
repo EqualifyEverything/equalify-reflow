@@ -226,6 +226,7 @@ class TestWorkerLifecycle:
             await worker_task
 
     @pytest.mark.asyncio
+    @pytest.mark.timeout(10)
     async def test_worker_recovers_from_task_errors(self, timeout_worker):
         """Test that worker continues after task errors."""
         # Mock approval check to raise exception

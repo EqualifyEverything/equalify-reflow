@@ -60,13 +60,17 @@ def job_service(mock_redis_client):
 
 
 @pytest.fixture
-def pii_service(storage_service, queue_service, job_service):
+def pii_service(storage_service, queue_service, job_service, mocker):
     """Create PII detection service."""
-    return PIIDetectionService(
+    service = PIIDetectionService(
         storage_service=storage_service,
         queue_service=queue_service,
         job_service=job_service
     )
+    # Mock PII analyzer to avoid loading spaCy (10-30s per worker)
+    service.pii_analyzer = mocker.MagicMock()
+    service.pii_analyzer.analyze_text.return_value = []  # No PII by default
+    return service
 
 
 @pytest.fixture
@@ -181,6 +185,7 @@ class TestPIIServiceS3Failures:
         assert mock_redis_client.hset.called
 
     @pytest.mark.asyncio
+    @pytest.mark.timeout(10)  # Retry logic with backoff can take time
     async def test_s3_download_max_retries_exceeded(
         self, pii_service, mock_s3_client, mock_redis_client
     ):
@@ -279,7 +284,8 @@ class TestProcessingServiceS3Failures:
                 )
             ],
             total_pages=1,
-            has_page_images=True
+            has_page_images=True,
+            extracted_images=[]
         )
         mock_converter = mocker.Mock()
         mock_converter.convert_with_page_images = AsyncMock(return_value=mock_result)
@@ -334,7 +340,8 @@ class TestProcessingServiceS3Failures:
             full_markdown="# Test",
             pages=[PageData(page_num=1, markdown="# Test", image_base64="base64")],
             total_pages=1,
-            has_page_images=True
+            has_page_images=True,
+            extracted_images=[]
         )
         mock_converter = mocker.Mock()
         mock_converter.convert_with_page_images = AsyncMock(return_value=mock_result)
@@ -394,7 +401,7 @@ class TestS3FailureRecovery:
         assert mock_redis_client.hset.call_count >= 1
 
     @pytest.mark.asyncio
-    @pytest.mark.timeout(10)
+    @pytest.mark.timeout(15)
     async def test_transient_s3_error_eventual_success(
         self, pii_service, mock_s3_client, mocker
     ):

@@ -6,6 +6,13 @@
 aws_region  = "us-east-1"
 environment = "production"
 
+# AWS Profile (OPTION 1: Set via environment variable - recommended)
+# export AWS_PROFILE=uic
+# aws_profile = "" # Leave empty if using AWS_PROFILE env var
+
+# AWS Profile (OPTION 2: Set directly in this file)
+# aws_profile = "uic" # Your AWS CLI profile name
+
 # ECS Configuration
 ecs_task_cpu       = 2048 # 2 vCPU
 ecs_task_memory    = 4096 # 4GB

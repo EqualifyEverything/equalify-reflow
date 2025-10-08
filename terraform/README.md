@@ -4,11 +4,25 @@ This directory contains Terraform configuration for deploying the Equalify PDF C
 
 ## Quick Start
 
-```bash
-# 1. Copy variables file
-cp terraform.tfvars.example terraform.tfvars
+### First Time Setup
 
-# 2. Edit terraform.tfvars with your values
+**Option 1: Automated Setup (Recommended)**
+```bash
+# Run the setup script
+./setup-profile.sh
+
+# Follow prompts to configure AWS credentials
+# Then proceed with terraform init
+```
+
+**Option 2: Manual Setup**
+```bash
+# 1. Configure AWS credentials (see TEAM_SETUP.md for details)
+export AWS_PROFILE=uic
+
+# 2. Copy and edit variables file
+cp terraform.tfvars.example terraform.tfvars
+# Edit terraform.tfvars with your email and preferences
 
 # 3. Initialize Terraform
 terraform init
@@ -19,6 +33,8 @@ terraform plan
 # 5. Apply infrastructure
 terraform apply
 ```
+
+**New team member?** See [TEAM_SETUP.md](./TEAM_SETUP.md) for detailed AWS credential configuration.
 
 **Note:** By default, the infrastructure uses AWS Bedrock (no API key required - uses IAM roles). If you want to use the Anthropic API instead, set:
 ```bash

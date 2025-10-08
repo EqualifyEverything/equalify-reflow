@@ -6,6 +6,12 @@ variable "aws_region" {
   default     = "us-east-1"
 }
 
+variable "aws_profile" {
+  description = "AWS CLI profile to use (leave empty to use default credentials)"
+  type        = string
+  default     = "" # Set via AWS_PROFILE environment variable or terraform.tfvars
+}
+
 variable "environment" {
   description = "Environment name (dev, staging, production)"
   type        = string
@@ -106,14 +112,6 @@ variable "create_route53_record" {
   description = "Whether to create Route53 DNS record"
   type        = bool
   default     = false
-}
-
-# Secrets (should be provided via environment variables or tfvars file)
-variable "anthropic_api_key" {
-  description = "Anthropic API key for AI processing"
-  type        = string
-  sensitive   = true
-  default     = "" # Set via TF_VAR_anthropic_api_key or terraform.tfvars
 }
 
 # Monitoring

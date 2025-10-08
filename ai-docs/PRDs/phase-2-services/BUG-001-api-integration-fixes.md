@@ -158,10 +158,10 @@ router = APIRouter(prefix="/api/approval", tags=["Approval"])
 **Verification:**
 ```bash
 make dev
-curl -X GET http://localhost:8000/api/approval/review/test-token
+curl -X GET http://localhost:8080/api/approval/review/test-token
 # Should return 404 with proper error message, not route not found
 
-curl -X POST http://localhost:8000/api/approval/test-token/approve \
+curl -X POST http://localhost:8080/api/approval/test-token/approve \
   -H "Content-Type: application/json" \
   -d '{"decision":"approved","justification":"Test reason","reviewed_by":"test@example.com"}'
 # Should return 404 with proper error message, not route not found
@@ -249,12 +249,12 @@ return ProcessingResult(
 **Verification:**
 ```bash
 # After fix, submit a document and verify it processes successfully
-curl -X POST http://localhost:8000/api/documents/submit \
+curl -X POST http://localhost:8080/api/documents/submit \
   -F "file=@test.pdf"
 # Note the job_id
 
 # Wait for processing, then check result
-curl http://localhost:8000/api/documents/{job_id}/result
+curl http://localhost:8080/api/documents/{job_id}/result
 # Should show completed status with mdx_url
 ```
 
@@ -291,11 +291,11 @@ await self.job.update_job_status(
 **Verification:**
 ```bash
 # Submit a document that will fail (e.g., corrupted PDF)
-curl -X POST http://localhost:8000/api/documents/submit \
+curl -X POST http://localhost:8080/api/documents/submit \
   -F "file=@corrupted.pdf"
 
 # Check job status should show failed with error message
-curl http://localhost:8000/api/documents/{job_id}/status
+curl http://localhost:8080/api/documents/{job_id}/status
 # Should return: {"status": "failed", "error": "..."}
 ```
 
@@ -317,11 +317,11 @@ curl http://localhost:8000/api/documents/{job_id}/status
 **Verification:**
 ```bash
 # Submit document
-curl -X POST http://localhost:8000/api/documents/submit -F "file=@test.pdf"
+curl -X POST http://localhost:8080/api/documents/submit -F "file=@test.pdf"
 # Returns: {"job_id": "abc-123", ...}
 
 # Check status with new path
-curl http://localhost:8000/api/documents/status/abc-123
+curl http://localhost:8080/api/documents/status/abc-123
 # Should return job status
 ```
 
@@ -388,14 +388,14 @@ curl http://localhost:8000/api/documents/status/abc-123
 make dev
 
 # Test 1: Submit and process clean document
-curl -X POST http://localhost:8000/api/documents/submit -F "file=@clean.pdf"
+curl -X POST http://localhost:8080/api/documents/submit -F "file=@clean.pdf"
 # Wait, check status, verify completion
 
 # Test 2: Submit document requiring approval
-curl -X POST http://localhost:8000/api/documents/submit -F "file=@pii.pdf"
+curl -X POST http://localhost:8080/api/documents/submit -F "file=@pii.pdf"
 # Check status, get approval URL
-curl http://localhost:8000/api/approval/review/{token}
-curl -X POST http://localhost:8000/api/approval/{token}/approve \
+curl http://localhost:8080/api/approval/review/{token}
+curl -X POST http://localhost:8080/api/approval/{token}/approve \
   -H "Content-Type: application/json" \
   -d '{"decision":"approved","justification":"Valid reason","reviewed_by":"test@uic.edu"}'
 # Verify processing completes

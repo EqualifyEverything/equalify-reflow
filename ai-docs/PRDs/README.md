@@ -122,8 +122,8 @@
 - Enabled unified networking with Docker DNS resolution
 - Hot-reload working with volume mounts (./src and ./tests)
 - All 135 tests passing in containerized environment
-- Health endpoint accessible: http://localhost:8000/health
-- API docs at http://localhost:8000/docs
+- Health endpoint accessible: http://localhost:8080/health
+- API docs at http://localhost:8080/docs
 - Development dependencies (httpx, pytest) included in development stage
 - Matches production AWS ECS deployment pattern
 
@@ -132,7 +132,7 @@
 - ✅ Health check returns healthy status with Redis + S3 connectivity
 - ✅ Hot-reload verified - code changes trigger automatic reload
 - ✅ All 135 tests pass in container: `make test-docker`
-- ✅ API accessible at localhost:8000
+- ✅ API accessible at localhost:8080
 - ✅ Zero application code changes
 
 **Unblocks**: PRD-005, PRD-006, PRD-007, PRD-008

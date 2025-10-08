@@ -653,7 +653,7 @@ open http://localhost:3000
 ### Functional Verification
 ```bash
 # Submit a test job
-curl -F "file=@test.pdf" http://localhost:8000/api/documents/submit
+curl -F "file=@test.pdf" http://localhost:8080/api/documents/submit
 
 # Watch queue depth in Grafana
 # Navigate to Queue Monitor dashboard
@@ -668,7 +668,7 @@ curl -F "file=@test.pdf" http://localhost:8000/api/documents/submit
 ```bash
 # Submit 10 jobs
 for i in {1..10}; do
-  curl -F "file=@test.pdf" http://localhost:8000/api/documents/submit &
+  curl -F "file=@test.pdf" http://localhost:8080/api/documents/submit &
 done
 
 # Grafana validation:

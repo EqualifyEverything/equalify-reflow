@@ -174,7 +174,7 @@ if job_data["status"] == "awaiting_approval" and "pii_findings" in job_data:
 ### Test 1: Token Returned in Status Response ✅
 
 ```bash
-$ curl -s http://localhost:8000/api/documents/38b154dc-d761-4f5f-8dd2-57a202fa17f1/status | \
+$ curl -s http://localhost:8080/api/documents/38b154dc-d761-4f5f-8dd2-57a202fa17f1/status | \
   python3 -c "import sys, json; data = json.load(sys.stdin); \
   print(f'Status: {data[\"status\"]}'); \
   print(f'Has PII: {data[\"pii_findings\"] is not None}'); \
@@ -188,7 +188,7 @@ Approval token: _JndzZOoRYI2tv14tDHCaZEEegmavbwT0ytzADQqJPM
 ### Test 2: Token Works with Review Endpoint ✅
 
 ```bash
-$ curl -s http://localhost:8000/api/approval/review/_JndzZOoRYI2tv14tDHCaZEEegmavbwT0ytzADQqJPM | \
+$ curl -s http://localhost:8080/api/approval/review/_JndzZOoRYI2tv14tDHCaZEEegmavbwT0ytzADQqJPM | \
   jq '{job_id, status, pii_count: (.pii_findings | length)}'
 
 {
@@ -201,7 +201,7 @@ $ curl -s http://localhost:8000/api/approval/review/_JndzZOoRYI2tv14tDHCaZEEegma
 ### Test 3: Token Works with Approval Endpoint ✅
 
 ```bash
-$ curl -X POST http://localhost:8000/api/approval/_JndzZOoRYI2tv14tDHCaZEEegmavbwT0ytzADQqJPM/approve \
+$ curl -X POST http://localhost:8080/api/approval/_JndzZOoRYI2tv14tDHCaZEEegmavbwT0ytzADQqJPM/approve \
   -H "Content-Type: application/json" \
   -d '{"decision":"approved","reviewed_by":"test@example.com","justification":"Testing"}' | \
   jq '.'
@@ -219,22 +219,22 @@ The intended workflow now works without Redis access:
 
 ```bash
 # Step 1: Submit document
-curl -X POST http://localhost:8000/api/documents/submit -F "file=@doc.pdf"
+curl -X POST http://localhost:8080/api/documents/submit -F "file=@doc.pdf"
 # Returns: {"job_id": "abc-123", "status": "pii_scanning"}
 
 # Step 2: Get status and token
-curl http://localhost:8000/api/documents/abc-123/status
+curl http://localhost:8080/api/documents/abc-123/status
 # Returns: {
 #   "status": "awaiting_approval",
 #   "approval_token": "_JndzZOoRYI2tv14tDHCaZEEegmavbwT0ytzADQqJPM"
 # }
 
 # Step 3: Review PII findings (token = authentication)
-curl http://localhost:8000/api/approval/review/_JndzZOoRYI2tv14tDHCaZEEegmavbwT0ytzADQqJPM
+curl http://localhost:8080/api/approval/review/_JndzZOoRYI2tv14tDHCaZEEegmavbwT0ytzADQqJPM
 # Returns: {"job_id": "abc-123", "pii_findings": [...]}
 
 # Step 4: Approve (token = authentication)
-curl -X POST http://localhost:8000/api/approval/_JndzZOoRYI2tv14tDHCaZEEegmavbwT0ytzADQqJPM/approve \
+curl -X POST http://localhost:8080/api/approval/_JndzZOoRYI2tv14tDHCaZEEegmavbwT0ytzADQqJPM/approve \
   -H "Content-Type: application/json" \
   -d '{"decision":"approved","reviewed_by":"faculty@uic.edu"}'
 # Returns: {"message": "Job approved for processing successfully"}
@@ -311,14 +311,14 @@ But for Phase 2 (API-only integrations), **only the token is needed**.
 ### Test Evidence
 ```bash
 # Before fix: approval_url field exists but is null
-$ curl http://localhost:8000/api/documents/{job_id}/status | jq .
+$ curl http://localhost:8080/api/documents/{job_id}/status | jq .
 {
   "status": "awaiting_approval",
   "approval_url": null  # ❌ Wrong field, always null
 }
 
 # After fix: approval_token field exists and contains token
-$ curl http://localhost:8000/api/documents/{job_id}/status | jq .
+$ curl http://localhost:8080/api/documents/{job_id}/status | jq .
 {
   "status": "awaiting_approval",
   "approval_token": "_JndzZOoRYI2tv14tDHCaZEEegmavbwT0ytzADQqJPM"  # ✅ Correct

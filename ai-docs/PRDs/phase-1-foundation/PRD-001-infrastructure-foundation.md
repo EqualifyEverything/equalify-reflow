@@ -64,7 +64,7 @@ This is a **monolith with background task queue** pattern, not microservices.
 docker-compose up -d
 
 # Run the monolith application (FastAPI + workers)
-uv run uvicorn src.main:app --reload --host 0.0.0.0 --port 8000
+uv run uvicorn src.main:app --reload --host 0.0.0.0 --port 8080
 ```
 
 ## Acceptance Criteria

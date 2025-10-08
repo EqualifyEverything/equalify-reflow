@@ -39,7 +39,7 @@ help:
 	@echo "Observability:"
 	@echo "  make grafana-url  - Open Grafana (http://localhost:3000)"
 	@echo "  make prometheus-url - Open Prometheus (http://localhost:9090)"
-	@echo "  make metrics-url  - Open API metrics (http://localhost:8000/metrics)"
+	@echo "  make metrics-url  - Open API metrics (http://localhost:8080/metrics)"
 	@echo ""
 
 # Development environment
@@ -88,10 +88,10 @@ test-e2e:
 # Alias for test-e2e
 test-slow: test-e2e
 
-# Run all tests in Docker (most comprehensive, <5min with parallelization)
+# Run all tests in Docker (most comprehensive, <2min with parallelization)
 test-all:
 	@echo "Running all tests in Docker with parallelization..."
-	docker compose -f docker-compose.yml -f docker-compose.dev.yml exec api-gateway uv run pytest tests/ -v -n auto
+	docker compose -f docker-compose.yml -f docker-compose.dev.yml exec api-gateway sh -c "rm -f .coverage .coverage.* && uv run pytest tests/ -v -n 4"
 
 # Redis CLI
 redis-cli:
@@ -129,13 +129,13 @@ prometheus-url:
 	@open http://localhost:9090 2>/dev/null || xdg-open http://localhost:9090 2>/dev/null || echo "Please open http://localhost:9090 in your browser"
 
 metrics-url:
-	@echo "Opening API metrics at http://localhost:8000/metrics"
-	@open http://localhost:8000/metrics 2>/dev/null || xdg-open http://localhost:8000/metrics 2>/dev/null || echo "Please open http://localhost:8000/metrics in your browser"
+	@echo "Opening API metrics at http://localhost:8080/metrics"
+	@open http://localhost:8080/metrics 2>/dev/null || xdg-open http://localhost:8080/metrics 2>/dev/null || echo "Please open http://localhost:8080/metrics in your browser"
 
 # Coverage commands (parallelization with coverage)
 coverage:
 	@echo "Running tests with coverage (parallelized)..."
-	docker compose -f docker-compose.yml -f docker-compose.dev.yml exec api-gateway uv run pytest tests/ --cov=src --cov-report=term-missing --cov-report=html --cov-report=xml -v -n auto
+	docker compose -f docker-compose.yml -f docker-compose.dev.yml exec api-gateway sh -c "rm -f .coverage .coverage.* && uv run pytest tests/ --cov=src --cov-report=term-missing --cov-report=html --cov-report=xml -v -n 4"
 
 coverage-html: coverage
 	@echo "Opening HTML coverage report..."

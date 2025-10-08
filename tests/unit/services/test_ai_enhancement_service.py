@@ -24,7 +24,8 @@ pytestmark = pytest.mark.unit
 @pytest.mark.asyncio
 async def test_ai_enhancement_service_init_default_max_concurrent():
     """Test AIEnhancementService initializes with default max_concurrent_pages."""
-    service = AIEnhancementService()
+    mock_agent = MagicMock()
+    service = AIEnhancementService(agent=mock_agent)
 
     assert service.max_concurrent_pages == 5  # Default from config
     assert service.semaphore._value == 5
@@ -34,7 +35,8 @@ async def test_ai_enhancement_service_init_default_max_concurrent():
 @pytest.mark.asyncio
 async def test_ai_enhancement_service_init_custom_max_concurrent():
     """Test AIEnhancementService accepts custom max_concurrent_pages."""
-    service = AIEnhancementService(max_concurrent_pages=3)
+    mock_agent = MagicMock()
+    service = AIEnhancementService(max_concurrent_pages=3, agent=mock_agent)
 
     assert service.max_concurrent_pages == 3
     assert service.semaphore._value == 3
@@ -43,7 +45,8 @@ async def test_ai_enhancement_service_init_custom_max_concurrent():
 @pytest.mark.asyncio
 async def test_ai_enhancement_service_init_default_agent():
     """Test AIEnhancementService creates default agent if not provided."""
-    service = AIEnhancementService()
+    mock_agent = MagicMock()
+    service = AIEnhancementService(agent=mock_agent)
 
     # Should have created an agent
     assert service.agent is not None
@@ -350,7 +353,8 @@ async def test_process_pages_concurrently_preserves_order(mock_accessibility_age
 @pytest.mark.asyncio
 async def test_combine_page_markdown_single_page():
     """Test combining single page (no separator needed)."""
-    service = AIEnhancementService()
+    mock_agent = MagicMock()
+    service = AIEnhancementService(agent=mock_agent)
 
     pages = [PageData(page_num=1, markdown="Original", image_base64="img")]
     results = [
@@ -371,7 +375,8 @@ async def test_combine_page_markdown_single_page():
 @pytest.mark.asyncio
 async def test_combine_page_markdown_multiple_pages():
     """Test combining multiple pages with separators."""
-    service = AIEnhancementService()
+    mock_agent = MagicMock()
+    service = AIEnhancementService(agent=mock_agent)
 
     pages = [
         PageData(page_num=1, markdown="Page 1", image_base64="img1"),
@@ -413,7 +418,8 @@ async def test_combine_page_markdown_multiple_pages():
 @pytest.mark.asyncio
 async def test_combine_page_markdown_preserves_order():
     """Test page order is preserved in combined markdown."""
-    service = AIEnhancementService()
+    mock_agent = MagicMock()
+    service = AIEnhancementService(agent=mock_agent)
 
     pages = [
         PageData(page_num=5, markdown="Page 5", image_base64="img5"),

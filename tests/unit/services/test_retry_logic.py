@@ -150,6 +150,7 @@ class TestRetryWithBackoff:
         assert mock_func.call_count == 1  # No retries
 
     @pytest.mark.asyncio
+    @pytest.mark.timeout(10)
     async def test_max_retries_respected(self):
         """Test that max_attempts is respected for retryable errors."""
         retryable_error = ClientError(

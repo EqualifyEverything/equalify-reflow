@@ -125,7 +125,7 @@ class TestModelRedisCompatibility:
             status="processing",
             created_at=now,
             updated_at=now,
-            html_url="https://s3.amazonaws.com/output.html",
+            markdown_url="https://s3.amazonaws.com/output.md",
             confidence_score=0.87
         )
 

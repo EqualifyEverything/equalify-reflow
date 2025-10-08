@@ -145,12 +145,11 @@ class TestJobStatus:
             status="completed",
             created_at=now,
             updated_at=now,
-            html_url="https://s3.amazonaws.com/output.html",
-            mdx_url="https://s3.amazonaws.com/output.mdx",
+            markdown_url="https://s3.amazonaws.com/output.md",
             confidence_score=0.87
         )
         assert status.status == "completed"
-        assert status.html_url is not None
+        assert status.markdown_url is not None
         assert status.confidence_score == 0.87
 
     def test_failed_status_with_error(self):

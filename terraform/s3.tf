@@ -25,6 +25,8 @@ resource "aws_s3_bucket_lifecycle_configuration" "temp" {
     id     = "delete-old-files"
     status = "Enabled"
 
+    filter {} # Empty filter applies to all objects
+
     expiration {
       days = var.s3_temp_lifecycle_days
     }

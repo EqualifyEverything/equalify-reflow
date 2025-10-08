@@ -47,10 +47,10 @@ RUN uv sync --frozen --all-extras || uv sync --all-extras
 COPY src/ ./src/
 
 # Expose API port
-EXPOSE 8000
+EXPOSE 8080
 
 # Development command with hot-reload
-CMD ["uv", "run", "uvicorn", "src.main:app", "--reload", "--host", "0.0.0.0", "--port", "8000"]
+CMD ["uv", "run", "uvicorn", "src.main:app", "--reload", "--host", "0.0.0.0", "--port", "8080"]
 
 # ==============================================================================
 # Stage 4: Production - Optimized for deployment
@@ -63,10 +63,10 @@ COPY src/ ./src/
 # Health check for orchestration (ECS, Kubernetes, Docker Compose)
 # Checks /health endpoint every 30 seconds
 HEALTHCHECK --interval=30s --timeout=10s --start-period=40s --retries=3 \
-  CMD python -c "import urllib.request; urllib.request.urlopen('http://localhost:8000/health').read()" || exit 1
+  CMD python -c "import urllib.request; urllib.request.urlopen('http://localhost:8080/health').read()" || exit 1
 
 # Expose API port
-EXPOSE 8000
+EXPOSE 8080
 
 # Production command (no reload for stability)
-CMD ["uv", "run", "uvicorn", "src.main:app", "--host", "0.0.0.0", "--port", "8000", "--workers", "1"]
+CMD ["uv", "run", "uvicorn", "src.main:app", "--host", "0.0.0.0", "--port", "8080", "--workers", "1"]

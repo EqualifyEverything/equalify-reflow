@@ -150,7 +150,7 @@ ZRANGEBYSCORE eq-pdf:timeouts:approval 0 {current_time}
 All services communicate via Docker DNS:
 - Redis: `redis:6379` (NOT `localhost:6379`)
 - LocalStack S3: `localstack:4566`
-- API: `api-gateway:8000`
+- API: `api-gateway:8080`
 
 ### 4. Environment Configuration
 Settings loaded from `.env` via Pydantic Settings:
@@ -367,8 +367,8 @@ make redis-cli      # Redis CLI
 ### Check Infrastructure Health
 ```bash
 make health         # Run health checks
-curl http://localhost:8000/health
-curl http://localhost:8000/metrics
+curl http://localhost:8080/health
+curl http://localhost:8080/metrics
 ```
 
 ### Common Issues

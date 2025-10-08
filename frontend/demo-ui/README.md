@@ -39,7 +39,7 @@ make dev
 # http://localhost:5173
 
 # API runs at:
-# http://localhost:8000
+# http://localhost:8080
 ```
 
 The frontend runs in a Docker container with hot-reload enabled. Edit files in `frontend/demo-ui/src/` and changes will appear automatically in the browser.
@@ -224,13 +224,13 @@ Create `.env` file (see `.env.example`):
 
 ```bash
 # API Configuration
-VITE_API_URL=http://localhost:8000
+VITE_API_URL=http://localhost:8080
 
 # Optional: Grafana URL (if PRD-009A complete)
 VITE_GRAFANA_URL=http://localhost:3000
 ```
 
-**Important:** In Docker, `VITE_API_URL` must be `http://localhost:8000` because the browser (not the container) makes API requests.
+**Important:** In Docker, `VITE_API_URL` must be `http://localhost:8080` because the browser (not the container) makes API requests.
 
 ## Accessibility
 
@@ -268,7 +268,7 @@ docker-compose restart demo-ui
 
 ```bash
 # Verify API is running
-curl http://localhost:8000/health
+curl http://localhost:8080/health
 
 # Check CORS configuration
 # Should allow localhost:5173 origin
@@ -303,7 +303,7 @@ docker inspect equalify-pdf-demo-ui
 This is a demo tool for internal use. For issues:
 
 1. Check Docker logs: `make logs`
-2. Verify backend API is healthy: `curl http://localhost:8000/health`
+2. Verify backend API is healthy: `curl http://localhost:8080/health`
 3. Review browser console for errors
 4. Check network tab for failed requests
 

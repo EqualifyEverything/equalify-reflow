@@ -26,12 +26,12 @@ Thank you for your interest in contributing! This document provides guidelines f
 3. **Verify everything is running:**
    ```bash
    make health
-   curl http://localhost:8000/health
+   curl http://localhost:8080/health
    ```
 
 4. **View API documentation:**
    ```bash
-   open http://localhost:8000/docs
+   open http://localhost:8080/docs
    ```
 
 ### Making Changes

@@ -70,10 +70,10 @@ cd /path/to/equalify-pdf-converter
 make dev
 
 # 3. Verify API is running
-curl http://localhost:8000/health
+curl http://localhost:8080/health
 
 # 4. Access API documentation
-open http://localhost:8000/docs
+open http://localhost:8080/docs
 ```
 
 That's it! The entire stack (Redis, LocalStack, FastAPI) runs in Docker with unified networking.
@@ -82,7 +82,7 @@ That's it! The entire stack (Redis, LocalStack, FastAPI) runs in Docker with uni
 
 - **Redis**: Started and waiting on port 6379
 - **LocalStack**: S3 buckets created automatically (equalify-pdf-temp, equalify-pdf-results)
-- **FastAPI API**: Running on port 8000 with hot-reload enabled
+- **FastAPI API**: Running on port 8080 with hot-reload enabled
 - **Background Workers**: Will run as threads within the API container (Phase 2)
 
 ## Infrastructure Components
@@ -121,7 +121,7 @@ That's it! The entire stack (Redis, LocalStack, FastAPI) runs in Docker with uni
 
 **Purpose**: Single Python application running all API and background processing
 
-**Container**: `api-gateway` (running on port 8000)
+**Container**: `api-gateway` (running on port 8080)
 
 **Components** (all in one process):
 - **FastAPI REST API**: Document submission, status tracking, results retrieval
@@ -164,7 +164,7 @@ Check that the API is responding:
 
 ```bash
 # Health check endpoint
-curl http://localhost:8000/health
+curl http://localhost:8080/health
 
 # Should return:
 # {
@@ -715,7 +715,7 @@ If you encounter issues not covered in this guide:
 
 1. Check container logs: `make logs` or `make logs-api`
 2. Access container shell for debugging: `make shell`
-3. Run health check: `curl http://localhost:8000/health`
+3. Run health check: `curl http://localhost:8080/health`
 4. Review troubleshooting section above
 5. Check GitHub issues or create a new one
 

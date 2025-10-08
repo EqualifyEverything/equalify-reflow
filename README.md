@@ -28,13 +28,13 @@ Converts PDFs into Semantic Markup with:
 make dev
 
 # 2. Verify it's running
-curl http://localhost:8000/health
+curl http://localhost:8080/health
 
 # 3. View API docs
-open http://localhost:8000/docs
+open http://localhost:8080/docs
 ```
 
-That's it! The API is running at http://localhost:8000 with hot reload enabled.
+That's it! The API is running at http://localhost:8080 with hot reload enabled.
 
 ## Essential Commands
 

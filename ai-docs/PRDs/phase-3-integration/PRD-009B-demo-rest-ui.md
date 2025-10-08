@@ -90,11 +90,11 @@ Currently, the PDF converter API can only be tested via:
          │                              │
          │                              │
          ▼                              ▼
-    localhost:5173              localhost:8000
+    localhost:5173              localhost:8080
     (User's browser)           (API requests from browser)
 ```
 
-**Key Insight:** Frontend runs in Docker BUT user accesses it in browser at `localhost:5173`. Browser makes API calls to `localhost:8000` (which Docker exposes).
+**Key Insight:** Frontend runs in Docker BUT user accesses it in browser at `localhost:5173`. Browser makes API calls to `localhost:8080` (which Docker exposes).
 
 ### Application Structure
 
@@ -319,7 +319,7 @@ export default {
  * - GET /health
  */
 
-const API_BASE_URL = import.meta.env.VITE_API_URL || 'http://localhost:8000';
+const API_BASE_URL = import.meta.env.VITE_API_URL || 'http://localhost:8080';
 
 // Types (from OpenAPI spec)
 export interface JobSubmissionResponse {
@@ -652,7 +652,7 @@ export function QueueMonitor() {
   const { data } = useQuery({
     queryKey: ['queues'],
     queryFn: async () => {
-      const response = await fetch('http://localhost:8000/api/dev/monitoring/queues');
+      const response = await fetch('http://localhost:8080/api/dev/monitoring/queues');
       return response.json();
     },
     refetchInterval: 2000,
@@ -722,7 +722,7 @@ services:
     ports:
       - "5173:5173"  # Vite dev server
     environment:
-      - VITE_API_URL=http://localhost:8000  # Browser makes requests to localhost
+      - VITE_API_URL=http://localhost:8080  # Browser makes requests to localhost
       - VITE_GRAFANA_URL=http://localhost:3000
     volumes:
       # Hot reload - mount source code
@@ -736,7 +736,7 @@ services:
         condition: service_healthy
 ```
 
-**Important:** The frontend CONTAINER can reach `api-gateway:8000`, but the USER'S BROWSER reaches `localhost:8000`. That's why `VITE_API_URL=http://localhost:8000`.
+**Important:** The frontend CONTAINER can reach `api-gateway:8000`, but the USER'S BROWSER reaches `localhost:8080`. That's why `VITE_API_URL=http://localhost:8080`.
 
 ### Dev-Only Monitoring Endpoints (Backend Addition)
 
@@ -912,7 +912,7 @@ Makefile (UPDATE - add `make demo-ui` target)
 - [ ] Frontend runs in Docker container
 - [ ] Hot reload working (code changes update browser)
 - [ ] Accessible at http://localhost:5173
-- [ ] Can communicate with API at http://localhost:8000
+- [ ] Can communicate with API at http://localhost:8080
 - [ ] Starts with `make dev` or `docker-compose up`
 
 ### 2. Document Workflow

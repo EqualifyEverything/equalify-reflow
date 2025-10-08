@@ -38,12 +38,15 @@ services:
     build:
       target: development  # Use development stage for hot-reload
     ports:
-      - "8000:8000"  # API endpoints (includes /metrics)
+      - "8080:8080"  # API endpoints (includes /metrics)
     volumes:
       # Mount source code for hot-reload (read-only to prevent accidental writes)
       - ./src:/app/src:ro
       # Mount tests for containerized test runs
       - ./tests:/app/tests:ro
+      # Mount pytest configuration
+      - ./pytest.ini:/app/pytest.ini:ro
+      - ./pyproject.toml:/app/pyproject.toml:ro
       # Mount Docker socket for testcontainers
       - /var/run/docker.sock:/var/run/docker.sock
     environment:
@@ -53,7 +56,7 @@ services:
       - LOG_LEVEL=DEBUG
       - ENVIRONMENT=dev
       - ENABLE_METRICS=true
-    command: ["uv", "run", "uvicorn", "src.main:app", "--reload", "--host", "0.0.0.0", "--port", "8000"]
+    command: ["uv", "run", "uvicorn", "src.main:app", "--reload", "--host", "0.0.0.0", "--port", "8080"]
     depends_on:
       redis:
         condition: service_healthy
@@ -70,7 +73,7 @@ services:
     ports:
       - "5173:5173"  # Vite dev server
     environment:
-      - VITE_API_URL=http://localhost:8000  # Browser makes requests to localhost
+      - VITE_API_URL=http://localhost:8080  # Browser makes requests to localhost
       - VITE_GRAFANA_URL=http://localhost:3000
     volumes:
       # Hot reload - mount source code

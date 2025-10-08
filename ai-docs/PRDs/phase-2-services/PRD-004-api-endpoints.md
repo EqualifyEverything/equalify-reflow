@@ -312,8 +312,8 @@ docker-compose up -d localstack redis
 # Run the FastAPI application
 uv run uvicorn src.main:app --reload --host 0.0.0.0 --port 8000
 
-# API available at http://localhost:8000
-# Swagger docs at http://localhost:8000/docs
+# API available at http://localhost:8080
+# Swagger docs at http://localhost:8080/docs
 ```
 
 ## Technical Notes

@@ -2,6 +2,7 @@
 
 from typing import AsyncGenerator, Optional
 import boto3
+from botocore.config import Config
 import redis.asyncio as redis
 from fastapi import Depends
 
@@ -14,21 +15,38 @@ from .services.rate_limit_service import RateLimitService
 
 # Client dependencies with proper resource cleanup
 async def get_s3_client():
-    """Get S3 client (LocalStack or AWS) with resource cleanup.
+    """Get S3 client (LocalStack or AWS) with optimized retry configuration.
+
+    Configures boto3 with:
+    - Adaptive retry mode (intelligent throttling and backoff)
+    - Connection pooling (50 connections)
+    - Reasonable timeouts (10s connect, 60s read)
 
     Yields:
-        Configured boto3 S3 client
+        Configured boto3 S3 client with production-ready settings
 
     Note:
         This is an async generator for FastAPI dependency injection.
         The client will be properly closed after the request completes.
     """
+    # Boto3 retry configuration for production resilience
+    retry_config = Config(
+        retries={
+            'mode': 'adaptive',  # Smart retry with client-side rate limiting
+            'max_attempts': 3,   # Max attempts (note: app-level retry adds more)
+        },
+        connect_timeout=10,      # Connection timeout (seconds)
+        read_timeout=60,         # Read timeout (seconds)
+        max_pool_connections=50, # Connection pool size
+    )
+
     client = boto3.client(
         "s3",
         endpoint_url=settings.aws_endpoint_url,
         region_name=settings.aws_region,
         aws_access_key_id=settings.aws_access_key_id,
         aws_secret_access_key=settings.aws_secret_access_key,
+        config=retry_config,
     )
     try:
         yield client

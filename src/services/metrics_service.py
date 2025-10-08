@@ -68,6 +68,32 @@ worker_jobs_processed_total = Counter(
 redis_up = Gauge("redis_up", "Redis connectivity (1=up, 0=down)")
 s3_up = Gauge("s3_up", "S3 connectivity (1=up, 0=down)")
 
+# Prometheus Metrics for S3 Operations
+s3_operations_total = Counter(
+    "s3_operations_total",
+    "Total S3 operations",
+    ["operation", "bucket", "result"]  # result: success, error, circuit_open
+)
+
+s3_operation_duration_seconds = Histogram(
+    "s3_operation_duration_seconds",
+    "S3 operation duration in seconds",
+    ["operation", "bucket"],
+    buckets=[0.1, 0.5, 1.0, 2.0, 5.0, 10.0, 30.0, 60.0]  # 100ms to 60s
+)
+
+s3_circuit_breaker_state = Gauge(
+    "s3_circuit_breaker_state",
+    "Circuit breaker state (0=closed, 1=half_open, 2=open)",
+    ["circuit_name"]
+)
+
+s3_retry_attempts_total = Counter(
+    "s3_retry_attempts_total",
+    "Total S3 retry attempts",
+    ["operation", "attempt"]
+)
+
 
 class MetricsService:
     """Service for metrics tracking and cleanup."""

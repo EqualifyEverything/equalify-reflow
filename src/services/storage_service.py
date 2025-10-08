@@ -10,6 +10,8 @@ from fastapi import HTTPException, UploadFile
 from botocore.exceptions import ClientError
 
 from ..config import settings
+from ..utils.circuit_breaker import CircuitBreaker, CircuitBreakerOpen
+from ..utils.retry_helpers import retry_with_backoff, retry_with_backoff_sync
 
 logger = logging.getLogger(__name__)
 
@@ -29,6 +31,26 @@ class StorageService:
         self.temp_bucket = temp_bucket
         self.results_bucket = results_bucket
 
+        # Circuit breakers for S3 operation types
+        self.upload_circuit = CircuitBreaker(
+            name="s3-upload",
+            failure_threshold=5,
+            success_threshold=2,
+            timeout=60.0
+        )
+        self.download_circuit = CircuitBreaker(
+            name="s3-download",
+            failure_threshold=5,
+            success_threshold=2,
+            timeout=60.0
+        )
+        self.delete_circuit = CircuitBreaker(
+            name="s3-delete",
+            failure_threshold=5,
+            success_threshold=2,
+            timeout=60.0
+        )
+
     async def store_document(self, file: UploadFile) -> tuple[str, str]:
         """
         Store uploaded document in S3 temp bucket.
@@ -41,7 +63,13 @@ class StorageService:
 
         Raises:
             HTTPException: If file validation fails or upload fails
+            CircuitBreakerOpen: If S3 upload circuit breaker is open
         """
+        # Check circuit breaker first
+        self.upload_circuit.check_state()
+        if self.upload_circuit.is_open:
+            raise CircuitBreakerOpen("S3 upload circuit breaker is open due to repeated failures")
+
         # Validate PDF format
         if file.content_type != "application/pdf":
             raise HTTPException(
@@ -80,13 +108,28 @@ class StorageService:
         s3_key = f"temp/{job_id}.pdf"
 
         try:
-            # Upload to S3
-            self.s3_client.upload_fileobj(
-                file.file,
-                self.temp_bucket,
-                s3_key
+            # Upload to S3 with retry logic
+            await retry_with_backoff_sync(
+                lambda: self.s3_client.upload_fileobj(
+                    file.file,
+                    self.temp_bucket,
+                    s3_key
+                ),
+                max_attempts=3,
+                base_delay=1.0,
+                operation_name=f"upload {s3_key}"
             )
+
+            # Record success in circuit breaker
+            self.upload_circuit.record_success()
+
+        except CircuitBreakerOpen:
+            # Circuit breaker already logged the issue
+            raise
         except Exception as e:
+            # Record failure in circuit breaker
+            self.upload_circuit.record_failure()
+
             raise HTTPException(
                 status_code=500,
                 detail=f"Failed to upload file to storage: {str(e)}"
@@ -134,7 +177,7 @@ class StorageService:
 
     async def download_temp_file(self, s3_key: str) -> bytes:
         """
-        Download file from temp bucket.
+        Download file from temp bucket with retry and circuit breaker.
 
         Args:
             s3_key: S3 key of file to download
@@ -144,14 +187,36 @@ class StorageService:
 
         Raises:
             HTTPException: If download fails
+            CircuitBreakerOpen: If S3 download circuit breaker is open
         """
+        # Check circuit breaker
+        self.download_circuit.check_state()
+        if self.download_circuit.is_open:
+            raise CircuitBreakerOpen("S3 download circuit breaker is open due to repeated failures")
+
         try:
-            response = self.s3_client.get_object(
-                Bucket=self.temp_bucket,
-                Key=s3_key
+            # Download with retry logic
+            response = await retry_with_backoff_sync(
+                lambda: self.s3_client.get_object(
+                    Bucket=self.temp_bucket,
+                    Key=s3_key
+                ),
+                max_attempts=3,
+                base_delay=1.0,
+                operation_name=f"download {s3_key}"
             )
+
+            # Record success
+            self.download_circuit.record_success()
+
             return response['Body'].read()
+
+        except CircuitBreakerOpen:
+            raise
         except ClientError as e:
+            # Record failure
+            self.download_circuit.record_failure()
+
             if e.response['Error']['Code'] == 'NoSuchKey':
                 raise HTTPException(
                     status_code=404,
@@ -162,6 +227,9 @@ class StorageService:
                 detail=f"Failed to download file: {str(e)}"
             )
         except Exception as e:
+            # Record failure
+            self.download_circuit.record_failure()
+
             raise HTTPException(
                 status_code=500,
                 detail=f"Unexpected error downloading file: {str(e)}"
@@ -174,7 +242,7 @@ class StorageService:
         format: str
     ) -> str:
         """
-        Upload processed result to results bucket.
+        Upload processed result to results bucket with retry and circuit breaker.
 
         Args:
             job_id: Job identifier
@@ -186,7 +254,13 @@ class StorageService:
 
         Raises:
             HTTPException: If upload fails
+            CircuitBreakerOpen: If S3 upload circuit breaker is open
         """
+        # Check circuit breaker
+        self.upload_circuit.check_state()
+        if self.upload_circuit.is_open:
+            raise CircuitBreakerOpen("S3 upload circuit breaker is open due to repeated failures")
+
         s3_key = f"{job_id}.{format}"
 
         # Set correct Content-Type based on format
@@ -196,16 +270,24 @@ class StorageService:
         content_type = content_type_map.get(format, 'text/plain')
 
         try:
-            # Upload to results bucket
-            # Handle both str and bytes content
+            # Upload to results bucket with retry
             body = content if isinstance(content, bytes) else content.encode('utf-8')
-            self.s3_client.put_object(
-                Bucket=self.results_bucket,
-                Key=s3_key,
-                Body=body,
-                ContentType=content_type,
-                CacheControl='public, max-age=31536000'  # Cache for 1 year
+
+            await retry_with_backoff_sync(
+                lambda: self.s3_client.put_object(
+                    Bucket=self.results_bucket,
+                    Key=s3_key,
+                    Body=body,
+                    ContentType=content_type,
+                    CacheControl='public, max-age=31536000'
+                ),
+                max_attempts=3,
+                base_delay=1.0,
+                operation_name=f"upload result {s3_key}"
             )
+
+            # Record success
+            self.upload_circuit.record_success()
 
             # Return public URL using same logic as get_result_url
             if settings.aws_endpoint_url:
@@ -213,7 +295,13 @@ class StorageService:
             else:
                 region = settings.aws_region or "us-east-1"
                 return f"https://{self.results_bucket}.s3.{region}.amazonaws.com/{s3_key}"
+
+        except CircuitBreakerOpen:
+            raise
         except ClientError as e:
+            # Record failure
+            self.upload_circuit.record_failure()
+
             # Preserve ClientError for retry logic to categorize properly
             error_code = e.response.get('Error', {}).get('Code', 'Unknown')
             raise HTTPException(
@@ -221,6 +309,9 @@ class StorageService:
                 detail=f"Failed to upload result: {error_code}"
             ) from e
         except Exception as e:
+            # Record failure
+            self.upload_circuit.record_failure()
+
             raise HTTPException(
                 status_code=500,
                 detail=f"Failed to upload result: {str(e)}"
@@ -232,7 +323,7 @@ class StorageService:
         image_data: bytes,
         image_name: str
     ) -> str:
-        """Upload extracted image (figure/table) to results bucket.
+        """Upload extracted image (figure/table) to results bucket with retry and circuit breaker.
 
         Images are stored in a subfolder structure: {job_id}/images/{image_name}
         This allows grouping all assets for a job together.
@@ -247,17 +338,31 @@ class StorageService:
 
         Raises:
             HTTPException: If upload fails
+            CircuitBreakerOpen: If S3 upload circuit breaker is open
         """
+        # Check circuit breaker
+        self.upload_circuit.check_state()
+        if self.upload_circuit.is_open:
+            raise CircuitBreakerOpen("S3 upload circuit breaker is open due to repeated failures")
+
         s3_key = f"{job_id}/images/{image_name}"
 
         try:
-            self.s3_client.put_object(
-                Bucket=self.results_bucket,
-                Key=s3_key,
-                Body=image_data,
-                ContentType='image/png',
-                CacheControl='public, max-age=31536000'  # Cache for 1 year
+            await retry_with_backoff_sync(
+                lambda: self.s3_client.put_object(
+                    Bucket=self.results_bucket,
+                    Key=s3_key,
+                    Body=image_data,
+                    ContentType='image/png',
+                    CacheControl='public, max-age=31536000'
+                ),
+                max_attempts=3,
+                base_delay=1.0,
+                operation_name=f"upload image {image_name}"
             )
+
+            # Record success
+            self.upload_circuit.record_success()
 
             # Return public URL
             if settings.aws_endpoint_url:
@@ -266,13 +371,21 @@ class StorageService:
                 region = settings.aws_region or "us-east-1"
                 return f"https://{self.results_bucket}.s3.{region}.amazonaws.com/{s3_key}"
 
+        except CircuitBreakerOpen:
+            raise
         except ClientError as e:
+            # Record failure
+            self.upload_circuit.record_failure()
+
             error_code = e.response.get('Error', {}).get('Code', 'Unknown')
             raise HTTPException(
                 status_code=500,
                 detail=f"Failed to upload image {image_name}: {error_code}"
             ) from e
         except Exception as e:
+            # Record failure
+            self.upload_circuit.record_failure()
+
             raise HTTPException(
                 status_code=500,
                 detail=f"Failed to upload image {image_name}: {str(e)}"

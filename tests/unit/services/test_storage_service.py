@@ -130,43 +130,43 @@ class TestUploadResult:
     """Tests for upload_result method."""
 
     @pytest.mark.asyncio
-    async def test_upload_html_result(self, storage_service, mock_s3_client):
-        """Test uploading HTML result."""
+    async def test_upload_markdown_result(self, storage_service, mock_s3_client):
+        """Test uploading Markdown result."""
         mock_s3_client.put_object.return_value = None
 
         url = await storage_service.upload_result(
             job_id="job123",
-            content="<html>Accessible content</html>",
-            format="html"
+            content="# Accessible content",
+            format="md"
         )
 
-        assert "job123.html" in url
+        assert "job123.md" in url
         mock_s3_client.put_object.assert_called_once()
         call_kwargs = mock_s3_client.put_object.call_args.kwargs
-        assert call_kwargs["ContentType"] == "text/html"
+        assert call_kwargs["ContentType"] == "text/markdown"
         assert call_kwargs["Bucket"] == settings.s3_results_bucket
 
     @pytest.mark.asyncio
-    async def test_upload_mdx_result(self, storage_service, mock_s3_client):
-        """Test uploading MDX result."""
+    async def test_upload_unsupported_format(self, storage_service, mock_s3_client):
+        """Test uploading with unsupported format defaults to text/plain."""
         mock_s3_client.put_object.return_value = None
 
         url = await storage_service.upload_result(
             job_id="job456",
             content="# Markdown content",
-            format="mdx"
+            format="txt"
         )
 
-        assert "job456.mdx" in url
+        assert "job456.txt" in url
         call_kwargs = mock_s3_client.put_object.call_args.kwargs
-        assert call_kwargs["ContentType"] == "text/markdown"
+        assert call_kwargs["ContentType"] == "text/plain"
 
     @pytest.mark.asyncio
     async def test_upload_result_with_cache_control(self, storage_service, mock_s3_client):
         """Test that cache control header is set."""
         mock_s3_client.put_object.return_value = None
 
-        await storage_service.upload_result("job789", "content", "html")
+        await storage_service.upload_result("job789", "content", "md")
 
         call_kwargs = mock_s3_client.put_object.call_args.kwargs
         assert "CacheControl" in call_kwargs
@@ -178,7 +178,7 @@ class TestUploadResult:
         mock_s3_client.put_object.side_effect = Exception("S3 error")
 
         with pytest.raises(HTTPException) as exc:
-            await storage_service.upload_result("job123", "content", "html")
+            await storage_service.upload_result("job123", "content", "md")
 
         assert exc.value.status_code == 500
         assert "Failed to upload result" in exc.value.detail
@@ -289,17 +289,17 @@ class TestGetResultUrl:
     @pytest.mark.asyncio
     async def test_get_result_url(self, storage_service):
         """Test result URL generation."""
-        url = storage_service.get_result_url("job123", "html")
+        url = storage_service.get_result_url("job123", "md")
 
-        assert "job123.html" in url
+        assert "job123.md" in url
         assert settings.s3_results_bucket in url
 
     @pytest.mark.asyncio
-    async def test_get_result_url_mdx(self, storage_service):
-        """Test MDX result URL generation."""
-        url = storage_service.get_result_url("job456", "mdx")
+    async def test_get_result_url_with_extension(self, storage_service):
+        """Test result URL generation with custom extension."""
+        url = storage_service.get_result_url("job456", "txt")
 
-        assert "job456.mdx" in url
+        assert "job456.txt" in url
 
 
 class TestCheckS3Access:

@@ -60,6 +60,7 @@ markers = [
     "performance: Load and stress tests (weekly runs)",
     "resilience: Failure recovery and error handling scenarios",
     "edge_case: Boundary conditions and unusual inputs",
+    "timeout: Override default timeout for specific tests",
 ]
 filterwarnings = [
     "ignore::DeprecationWarning:spacy.*",

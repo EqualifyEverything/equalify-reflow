@@ -19,6 +19,7 @@ from src.services.pdf_converter import PageData, PDFConversionResult
 from src.agents.accessibility_agent import PageImprovementResult
 
 # Import shared fixtures to make them available to all tests
+# Note: Using string-based plugin registration to avoid import-time side effects
 pytest_plugins = ["tests.conftest_fixtures.clients", "tests.conftest_fixtures.data_factories"]
 
 

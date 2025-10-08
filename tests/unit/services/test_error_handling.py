@@ -327,27 +327,38 @@ class TestIntegrationErrorHandling:
     @pytest.mark.asyncio
     async def test_rate_limit_collision_resistance(self):
         """Test that rate limiting handles high concurrency without collisions."""
-        mock_redis = AsyncMock()
-        # Pipeline methods are sync, only execute() is async
+        # Track all zadd calls to verify uniqueness
+        members_used = []
+
+        async def track_zadd(key, mapping):
+            """Async function to track zadd calls."""
+            members_used.extend(mapping.keys())
+            return len(mapping)
+
+        # Create properly configured mocks
+        mock_redis = MagicMock()
+
+        # Create a single pipeline instance to reuse (avoids AsyncMock proliferation)
         mock_pipeline = MagicMock()
-        mock_pipeline.execute = AsyncMock(return_value=[None, 0])
-        mock_redis.pipeline.return_value = mock_pipeline
-        mock_redis.zadd = AsyncMock(return_value=1)
-        mock_redis.expire = AsyncMock()
+        mock_pipeline.zremrangebyscore = MagicMock(return_value=None)
+        mock_pipeline.zcard = MagicMock(return_value=None)
+        mock_pipeline.execute = AsyncMock(return_value=[None, 0])  # Always under limit
+
+        # Return same pipeline instance every time
+        mock_redis.pipeline = MagicMock(return_value=mock_pipeline)
+
+        # Configure async methods with proper awaitable returns
+        mock_redis.zadd = AsyncMock(side_effect=track_zadd)
+        mock_redis.expire = AsyncMock(return_value=True)
+        mock_redis.zrange = AsyncMock(return_value=[])
 
         service = RateLimitService(mock_redis)
 
         # Simulate 100 concurrent requests
-        members_used = []
-
-        async def track_zadd(key, mapping):
-            members_used.extend(mapping.keys())
-            return len(mapping)
-
-        mock_redis.zadd = track_zadd
-
         for _ in range(100):
             await service.check_submit_rate_limit("192.168.1.1")
 
         # All members should be unique despite high concurrency
-        assert len(members_used) == len(set(members_used))
+        # Note: check_submit_rate_limit makes 2 calls (per-IP and global)
+        assert len(members_used) == len(set(members_used)), \
+            f"Found {len(members_used)} total members but {len(set(members_used))} unique"

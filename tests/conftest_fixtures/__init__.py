@@ -9,46 +9,11 @@ Modules:
     data_factories: Test data generators (UUIDs, jobs, documents)
     helpers: Assertion and setup helpers
     services: Pre-configured service instances with mocked dependencies
+
+Note: Fixtures are registered via pytest_plugins in tests/conftest.py.
+      Do not import from submodules here to avoid pytest assert rewrite warnings.
 """
 
-# Export all fixtures for pytest discovery
-from tests.conftest_fixtures.clients import (
-    mock_redis_client,
-    mock_s3_client,
-    mock_ai_service,
-)
-from tests.conftest_fixtures.data_factories import (
-    generate_job_id,
-    generate_document_id,
-    create_test_job_dict,
-    create_pii_queue_payload,
-    create_processing_queue_payload,
-    create_s3_key,
-    create_test_pdf_content,
-    create_test_upload_file,
-)
-from tests.conftest_fixtures.helpers import (
-    assert_job_state,
-    assert_s3_upload,
-    assert_redis_set,
-)
-
-__all__ = [
-    # Clients
-    "mock_redis_client",
-    "mock_s3_client",
-    "mock_ai_service",
-    # Data factories
-    "generate_job_id",
-    "generate_document_id",
-    "create_test_job_dict",
-    "create_pii_queue_payload",
-    "create_processing_queue_payload",
-    "create_s3_key",
-    "create_test_pdf_content",
-    "create_test_upload_file",
-    # Helpers
-    "assert_job_state",
-    "assert_s3_upload",
-    "assert_redis_set",
-]
+# Do NOT import from submodules here - causes pytest assert rewrite warnings
+# Fixtures are automatically discovered via pytest_plugins registration in conftest.py
+__all__ = []

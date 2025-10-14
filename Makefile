@@ -14,7 +14,7 @@ help:
 	@echo ""
 	@echo "Testing & Coverage:"
 	@echo "  make test         - Run all tests"
-	@echo "  make test-fast    - Run fast unit tests (<2min, no Docker needed)"
+	@echo "  make test-fast    - Run fast unit tests in Docker (<30s with parallelization)"
 	@echo "  make test-unit    - Run unit tests only (same as test-fast)"
 	@echo "  make test-integration - Run integration tests (real Redis/S3, ~5min)"
 	@echo "  make test-e2e     - Run E2E tests (full workflows, ~10min)"
@@ -63,27 +63,27 @@ logs:
 health:
 	./scripts/health-check.sh
 
-# Run all tests (with parallelization)
+# Run all tests (with parallelization, runs in Docker)
 test:
-	uv run pytest tests/ -v -n auto
+	docker compose -f docker-compose.yml -f docker-compose.dev.yml exec api-gateway uv run pytest tests/ -v -n auto
 
-# Run fast unit tests (no Docker needed, <30s with parallelization)
+# Run fast unit tests (<30s with parallelization, runs in Docker)
 test-fast:
 	@echo "Running fast unit tests (<30s with parallelization)..."
-	uv run pytest tests/unit -m unit -v --tb=short --maxfail=10 -n auto
+	docker compose -f docker-compose.yml -f docker-compose.dev.yml exec api-gateway uv run pytest tests/unit -m unit -v --tb=short --maxfail=10 -n auto
 
 # Alias for test-fast
 test-unit: test-fast
 
-# Run integration tests (real Redis/S3, <2min with parallelization)
+# Run integration tests (real Redis/S3, <2min with parallelization, runs in Docker)
 test-integration:
 	@echo "Running integration tests (real Redis/S3, <2min)..."
-	uv run pytest tests/integration -m integration -v --tb=short --maxfail=5 -n 4
+	docker compose -f docker-compose.yml -f docker-compose.dev.yml exec api-gateway uv run pytest tests/integration -m integration -v --tb=short --maxfail=5 -n 4
 
-# Run E2E tests (full workflows, <5min)
+# Run E2E tests (full workflows, <5min, runs in Docker)
 test-e2e:
 	@echo "Running E2E tests (full workflows, <5min)..."
-	uv run pytest tests/e2e -m slow -v --tb=short --maxfail=3 -n 2
+	docker compose -f docker-compose.yml -f docker-compose.dev.yml exec api-gateway uv run pytest tests/e2e -m slow -v --tb=short --maxfail=3 -n 2
 
 # Alias for test-e2e
 test-slow: test-e2e

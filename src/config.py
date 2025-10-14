@@ -10,10 +10,10 @@ class Settings(BaseSettings):
     model_config = SettingsConfigDict(env_file=".env", extra="ignore")
 
     # AWS Configuration
-    aws_endpoint_url: str = "http://localstack:4566"
+    aws_endpoint_url: str | None = None  # Set to "http://localstack:4566" for local dev, None for production
     aws_region: str = "us-east-1"
-    aws_access_key_id: str = "test"
-    aws_secret_access_key: str = "test"
+    aws_access_key_id: str | None = None  # Uses IAM role in production, "test" for local dev
+    aws_secret_access_key: str | None = None  # Uses IAM role in production, "test" for local dev
 
     # S3 Buckets
     s3_temp_bucket: str = "equalify-temp"

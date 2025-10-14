@@ -1,6 +1,7 @@
 """Dependency injection for shared clients and services."""
 
 from typing import AsyncGenerator, Optional
+from functools import lru_cache
 import boto3
 from botocore.config import Config
 import redis.asyncio as redis
@@ -11,6 +12,46 @@ from .services.storage_service import StorageService
 from .services.queue_service import QueueService
 from .services.job_service import JobService
 from .services.rate_limit_service import RateLimitService
+
+
+# Singleton S3 client for connection reuse
+_s3_client = None
+
+@lru_cache()
+def _get_s3_client_singleton():
+    """Create singleton S3 client for connection reuse across requests.
+
+    In production AWS: Uses IAM role credentials (no keys needed)
+    In local dev: Uses LocalStack endpoint with test credentials
+    """
+    retry_config = Config(
+        retries={
+            'mode': 'adaptive',
+            'max_attempts': 3,
+        },
+        connect_timeout=10,
+        read_timeout=60,
+        max_pool_connections=50,
+    )
+
+    # Build kwargs - only include credentials if explicitly set (for LocalStack)
+    kwargs = {
+        "service_name": "s3",
+        "region_name": settings.aws_region,
+        "config": retry_config,
+    }
+
+    # Only set endpoint_url if configured (LocalStack)
+    if settings.aws_endpoint_url:
+        kwargs["endpoint_url"] = settings.aws_endpoint_url
+
+    # Only set credentials if explicitly configured (LocalStack)
+    # In production, boto3 uses IAM role automatically
+    if settings.aws_access_key_id and settings.aws_secret_access_key:
+        kwargs["aws_access_key_id"] = settings.aws_access_key_id
+        kwargs["aws_secret_access_key"] = settings.aws_secret_access_key
+
+    return boto3.client(**kwargs)
 
 
 # Client dependencies with proper resource cleanup
@@ -26,33 +67,10 @@ async def get_s3_client():
         Configured boto3 S3 client with production-ready settings
 
     Note:
-        This is an async generator for FastAPI dependency injection.
-        The client will be properly closed after the request completes.
+        This returns a singleton client to enable connection pooling
+        and circuit breaker state persistence across requests.
     """
-    # Boto3 retry configuration for production resilience
-    retry_config = Config(
-        retries={
-            'mode': 'adaptive',  # Smart retry with client-side rate limiting
-            'max_attempts': 3,   # Max attempts (note: app-level retry adds more)
-        },
-        connect_timeout=10,      # Connection timeout (seconds)
-        read_timeout=60,         # Read timeout (seconds)
-        max_pool_connections=50, # Connection pool size
-    )
-
-    client = boto3.client(
-        "s3",
-        endpoint_url=settings.aws_endpoint_url,
-        region_name=settings.aws_region,
-        aws_access_key_id=settings.aws_access_key_id,
-        aws_secret_access_key=settings.aws_secret_access_key,
-        config=retry_config,
-    )
-    try:
-        yield client
-    finally:
-        # Boto3 client doesn't need explicit closing in sync mode
-        pass
+    yield _get_s3_client_singleton()
 
 
 async def get_redis_client() -> AsyncGenerator[redis.Redis, None]:
@@ -76,30 +94,37 @@ async def get_redis_client() -> AsyncGenerator[redis.Redis, None]:
         await client.aclose()
 
 
+# Singleton StorageService for circuit breaker persistence
+@lru_cache()
+def _get_storage_service_singleton():
+    """Create singleton StorageService for circuit breaker persistence."""
+    return StorageService(
+        s3_client=_get_s3_client_singleton(),
+        temp_bucket=settings.s3_temp_bucket,
+        results_bucket=settings.s3_results_bucket,
+    )
+
+
 # Service dependencies
-async def get_storage_service(
-    s3_client = Depends(get_s3_client)
-) -> StorageService:
+async def get_storage_service() -> StorageService:
     """Get storage service instance.
 
-    Args:
-        s3_client: S3 client (auto-injected by FastAPI Depends)
-
     Returns:
-        Configured StorageService instance
+        Singleton StorageService instance with persistent circuit breakers
 
     Note:
+        This returns a singleton service to ensure:
+        - Circuit breaker state persists across requests
+        - S3 connection pooling is effective
+        - Health checks are fast and reliable
+
         In FastAPI routes, use: storage_service: StorageService = Depends(get_storage_service)
 
         For workers, do NOT use this function. Instead:
         s3_client = await anext(get_s3_client())
         storage_service = StorageService(s3_client=s3_client, ...)
     """
-    return StorageService(
-        s3_client=s3_client,
-        temp_bucket=settings.s3_temp_bucket,
-        results_bucket=settings.s3_results_bucket,
-    )
+    return _get_storage_service_singleton()
 
 
 async def get_queue_service(

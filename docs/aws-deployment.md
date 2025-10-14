@@ -6,7 +6,6 @@ This guide walks you through deploying the Equalify PDF Converter to AWS using T
 
 - **SSO Region:** `us-east-2` (AWS Identity Center - authentication only)
 - **Resource Region:** `us-east-1` (All infrastructure: ECS, S3, Redis, ALB)
-- **AWS Account:** `380610849750` (UIC)
 
 All deployment commands use `us-east-1` for resources, regardless of SSO region.
 
@@ -63,7 +62,7 @@ All deployment commands use `us-east-1` for resources, regardless of SSO region.
    SSO registration scopes: [press Enter]
 
    # Browser will open - authorize the request
-   # Select: Account 380610849750, Role: AWSAdministratorAccess
+   # Select the Equalify AWS account and AWSAdministratorAccess role
 
    # Then configure CLI defaults:
    CLI default region: us-east-1
@@ -82,7 +81,7 @@ All deployment commands use `us-east-1` for resources, regardless of SSO region.
 3. **Verify AWS Access**
    ```bash
    aws sts get-caller-identity
-   # Should show: Account 380610849750
+   # Should show: Your user ARN and the Equalify account information
    ```
 
 **Note:** SSO authenticates in `us-east-2` (Identity Center region), but all infrastructure deploys to `us-east-1` (resource region).

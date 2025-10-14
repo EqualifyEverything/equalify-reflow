@@ -23,7 +23,7 @@ SSO region: us-east-2
 SSO registration scopes: [press Enter]
 
 # Browser will open - authorize the request
-# Select: Account 380610849750, Role: AWSAdministratorAccess
+# Select the Equalify AWS account and AWSAdministratorAccess role
 
 # Then:
 CLI default region: us-east-1
@@ -39,7 +39,7 @@ export AWS_PROFILE=uic
 **Verify:**
 ```bash
 aws sts get-caller-identity
-# Should show: arn:aws:sts::380610849750:assumed-role/...
+# Should show your user ARN and the Equalify account information
 ```
 
 #### Option B: IAM User (External Collaborators)

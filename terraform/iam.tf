@@ -85,7 +85,9 @@ resource "aws_iam_role_policy" "ecs_task_s3" {
           "s3:GetObject",
           "s3:PutObject",
           "s3:DeleteObject",
-          "s3:ListBucket"
+          "s3:ListBucket",
+          "s3:HeadBucket",
+          "s3:GetBucketLocation"
         ]
         Resource = [
           aws_s3_bucket.temp.arn,

@@ -88,7 +88,7 @@ resource "aws_s3_bucket_public_access_block" "results" {
   bucket = aws_s3_bucket.results.id
 
   block_public_acls       = true
-  block_public_policy     = true
+  block_public_policy     = false # MUST be false to allow public bucket policy
   ignore_public_acls      = true
   restrict_public_buckets = false # Allow public read for results
 }
@@ -109,6 +109,9 @@ resource "aws_s3_bucket_cors_configuration" "results" {
 # Bucket policy for results (public read access)
 resource "aws_s3_bucket_policy" "results" {
   bucket = aws_s3_bucket.results.id
+
+  # Ensure public access block is updated first
+  depends_on = [aws_s3_bucket_public_access_block.results]
 
   policy = jsonencode({
     Version = "2012-10-17"

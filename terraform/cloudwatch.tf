@@ -113,8 +113,9 @@ resource "aws_cloudwatch_metric_alarm" "unhealthy_tasks" {
 }
 
 # CloudWatch Dashboard for Bedrock and Infrastructure Monitoring
+# TODO: Fix dashboard metric configurations - temporarily disabled
 resource "aws_cloudwatch_dashboard" "bedrock_monitoring" {
-  count          = var.enable_bedrock_metrics ? 1 : 0
+  count          = 0 # Temporarily disabled due to metric configuration issues
   dashboard_name = "${var.project_name}-bedrock-monitoring"
 
   dashboard_body = jsonencode({
@@ -658,5 +659,5 @@ resource "aws_cloudwatch_dashboard" "bedrock_monitoring" {
 # Dashboard Output
 output "bedrock_dashboard_url" {
   description = "URL to CloudWatch Dashboard for Bedrock monitoring"
-  value = var.enable_bedrock_metrics ? "https://console.aws.amazon.com/cloudwatch/home?region=${var.aws_region}#dashboards:name=${aws_cloudwatch_dashboard.bedrock_monitoring[0].dashboard_name}" : "Dashboard disabled (enable_bedrock_metrics=false)"
+  value = length(aws_cloudwatch_dashboard.bedrock_monitoring) > 0 ? "https://console.aws.amazon.com/cloudwatch/home?region=${var.aws_region}#dashboards:name=${aws_cloudwatch_dashboard.bedrock_monitoring[0].dashboard_name}" : "Dashboard temporarily disabled (will be re-enabled after fixing metric configurations)"
 }

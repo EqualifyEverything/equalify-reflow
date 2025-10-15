@@ -221,19 +221,3 @@ make test-all
    ```bash
    make test-fast  # Always run this first
    ```
-
-### Test Standards
-
-- **Fast unit tests:** <100ms per test
-- **Integration tests:** <5s per test
-- **E2E tests:** <30s per test
-- **Coverage target:** >80% overall
-- **Documentation:** Docstrings for complex test scenarios
-
-## Future Enhancements
-
-- **Nightly builds:** Full test suite on schedule
-- **Performance benchmarks:** Track metrics over time
-- **Parallel test execution:** Reduce CI duration
-- **Coverage requirements:** Block merges below threshold
-- **Smoke tests:** Quick production health checks

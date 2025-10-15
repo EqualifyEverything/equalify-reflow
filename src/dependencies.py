@@ -50,6 +50,10 @@ def _get_s3_client_singleton():
     if settings.aws_access_key_id and settings.aws_secret_access_key:
         kwargs["aws_access_key_id"] = settings.aws_access_key_id
         kwargs["aws_secret_access_key"] = settings.aws_secret_access_key
+        # When using access keys (LocalStack), ignore AWS_PROFILE from environment
+        # This prevents boto3 from trying to load a profile when we have explicit credentials
+        import os
+        os.environ.pop("AWS_PROFILE", None)
 
     return boto3.client(**kwargs)
 

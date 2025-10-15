@@ -51,6 +51,8 @@ services:
       - /var/run/docker.sock:/var/run/docker.sock
     environment:
       # AWS LocalStack configuration (for containers only)
+      # NOTE: AWS_PROFILE is NOT set here - it's only for AWS deployments (.env)
+      # LocalStack uses AWS_ACCESS_KEY_ID/AWS_SECRET_ACCESS_KEY instead
       - AWS_ENDPOINT_URL=http://localstack:4566
       - AWS_ACCESS_KEY_ID=test
       - AWS_SECRET_ACCESS_KEY=test

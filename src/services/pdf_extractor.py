@@ -1,5 +1,6 @@
 """PDF text extraction service using Docling."""
 
+import asyncio
 import logging
 from typing import BinaryIO
 from io import BytesIO
@@ -12,6 +13,26 @@ logger = logging.getLogger(__name__)
 class PDFExtractionError(Exception):
     """Raised when PDF text extraction fails."""
     pass
+
+
+def _convert_pdf_sync(tmp_path: str):
+    """Synchronous Docling PDF conversion (runs in thread pool).
+
+    This function contains the CPU-intensive Docling processing that
+    would otherwise block the asyncio event loop. It's designed to be
+    called via asyncio.to_thread() to run in a background thread.
+
+    Args:
+        tmp_path: Path to temporary PDF file
+
+    Returns:
+        Docling conversion result
+
+    Raises:
+        Exception: If Docling conversion fails
+    """
+    converter = DocumentConverter()
+    return converter.convert(tmp_path)
 
 
 async def extract_pdf_text(pdf_content: bytes) -> str:
@@ -46,11 +67,9 @@ async def extract_pdf_text(pdf_content: bytes) -> str:
             tmp_path = tmp_file.name
 
         try:
-            # Initialize Docling converter
-            converter = DocumentConverter()
-
-            # Convert PDF to document structure
-            result = converter.convert(tmp_path)
+            # Run CPU-intensive Docling conversion in thread pool to avoid blocking event loop
+            # This allows HTTP responses to be sent immediately while PDF processing continues
+            result = await asyncio.to_thread(_convert_pdf_sync, tmp_path)
 
             # Extract markdown text (Docling's structured output)
             text = result.document.export_to_markdown()

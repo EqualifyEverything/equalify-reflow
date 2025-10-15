@@ -65,6 +65,18 @@ make test-e2e          # E2E tests (<5min with parallelization) - Run before mer
 
 See [CI/CD Documentation](docs/ci-cd.md) for detailed testing information.
 
+## AWS Deployment
+
+The application is deployed on AWS ECS. Quick commands:
+
+```bash
+make aws-health   # Check deployment health
+make aws-logs     # View CloudWatch logs
+make aws-status   # Show ECS service status
+```
+
+**For full deployment guide, troubleshooting, and operations:** See [AWS Guide](docs/aws-guide.md)
+
 ## Architecture
 
 **Pattern:** Monolith with Background Task Queue (single Python application)
@@ -118,7 +130,7 @@ See [Architecture Overview](docs/architecture.md) for detailed system design.
 - **[Testing Strategy](docs/testing-strategy.md)** - Test organization and best practices
 
 ### AWS Deployment
-- **[AWS Deployment Guide](docs/aws-deployment.md)** - Complete Terraform infrastructure and deployment
+- **[AWS Guide](docs/aws-guide.md)** - Complete deployment, testing, and operations guide
 - **[AWS Bedrock Integration](docs/aws-bedrock-summary.md)** - Using Claude via AWS Bedrock
 - **[Bedrock Migration Guide](docs/aws-bedrock-migration.md)** - Detailed migration from Anthropic API
 

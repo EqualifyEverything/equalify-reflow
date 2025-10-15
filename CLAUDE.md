@@ -153,9 +153,22 @@ All services communicate via Docker DNS:
 - API: `api-gateway:8080`
 
 ### 4. Environment Configuration
-Settings loaded from `.env` via Pydantic Settings:
-- Development: Uses LocalStack
-- Production: Uses real AWS
+
+**Local Development:**
+- `.env` contains application config (NO AWS credentials)
+- `docker-compose.dev.yml` sets AWS credentials for containers
+- LocalStack runs inside Docker network
+
+**AWS Operations:**
+- Use AWS profiles from `~/.aws/config` (see `.aws-config-example`)
+- Makefile commands handle profiles automatically:
+  ```bash
+  make aws-health   # Check deployment
+  make aws-logs     # View CloudWatch logs
+  make aws-status   # ECS service status
+  ```
+
+**Never:** Source `.env` manually in your shell - it's for Docker Compose only
 
 ## Testing Architecture
 

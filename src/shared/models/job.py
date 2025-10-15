@@ -117,8 +117,7 @@ class JobStatus(BaseModel):
         pii_findings: Optional list of detected PII entities
         approval_token: Optional token for approval workflow
         expires_at: Optional expiration for approval token
-        html_url: Optional S3 URL for HTML output
-        mdx_url: Optional S3 URL for MDX output
+        markdown_url: Optional S3 URL for Markdown output
         confidence_score: Optional AI confidence score
         error_message: Optional error details
         approval_decision: Optional approval request details

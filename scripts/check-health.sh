@@ -14,13 +14,8 @@ echo -e "${BLUE}Health Check Diagnostics${NC}"
 echo -e "${BLUE}========================================${NC}"
 echo ""
 
-# Ensure clean environment
-unset AWS_ENDPOINT_URL
-unset LOCALSTACK_ENDPOINT_URL
-
-if [ -z "$AWS_PROFILE" ]; then
-    export AWS_PROFILE=uic
-fi
+# Set AWS profile for all AWS CLI commands (from environment or default)
+export AWS_PROFILE=${AWS_PROFILE:-default}
 
 cd terraform
 ECS_CLUSTER=$(terraform output -raw ecs_cluster_name)

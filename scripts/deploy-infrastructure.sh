@@ -30,15 +30,8 @@ exec 2>&1
 echo "Deployment started at: $(date)"
 echo ""
 
-# Ensure we're using real AWS (not LocalStack)
-unset AWS_ENDPOINT_URL
-unset LOCALSTACK_ENDPOINT_URL
-
-# Ensure AWS_PROFILE is set
-if [ -z "$AWS_PROFILE" ]; then
-    export AWS_PROFILE=uic
-    echo -e "${YELLOW}Setting AWS_PROFILE=uic${NC}"
-fi
+# Set AWS profile for all AWS CLI commands (from environment or default)
+export AWS_PROFILE=${AWS_PROFILE:-default}
 
 echo -e "${BLUE}Step 1: Verifying AWS Credentials${NC}"
 echo "Profile: $AWS_PROFILE"
@@ -114,10 +107,6 @@ echo -e "${GREEN}Infrastructure Created Successfully!${NC}"
 echo -e "${GREEN}========================================${NC}"
 echo ""
 
-# Save outputs
-terraform output > ../outputs.txt
-echo -e "${GREEN}✓ Outputs saved to outputs.txt${NC}"
-
 # Get key outputs
 ECR_REPO=$(terraform output -raw ecr_repository_url)
 ECS_CLUSTER=$(terraform output -raw ecs_cluster_name)
@@ -127,7 +116,7 @@ echo ""
 echo -e "${BLUE}Next Steps:${NC}"
 echo "1. Build and push Docker image:"
 echo -e "   ${GREEN}cd ..${NC}"
-echo -e "   ${GREEN}./scripts/deploy-docker.sh${NC}"
+echo -e "   ${GREEN}./scripts/deploy-app.sh${NC}"
 echo ""
 echo "Key Resources Created:"
 echo "  ECR Repository: $ECR_REPO"

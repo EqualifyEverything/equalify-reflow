@@ -1,4 +1,4 @@
-.PHONY: help dev prod up down logs health test test-fast test-unit test-integration test-e2e test-slow test-all clean build shell test-docker logs-api grafana-url prometheus-url metrics-url coverage coverage-html coverage-report
+.PHONY: help dev prod up down logs health test test-fast test-unit test-integration test-e2e test-slow test-all clean build shell test-docker logs-api grafana-url prometheus-url metrics-url coverage coverage-html coverage-report aws-health aws-logs aws-status aws-deploy aws-shell localstack-debug
 
 # Default target
 help:
@@ -40,6 +40,15 @@ help:
 	@echo "  make grafana-url  - Open Grafana (http://localhost:3000)"
 	@echo "  make prometheus-url - Open Prometheus (http://localhost:9090)"
 	@echo "  make metrics-url  - Open API metrics (http://localhost:8080/metrics)"
+	@echo ""
+	@echo "AWS Operations (requires AWS_PROFILE=uic or aws sso login):"
+	@echo "  make aws-health   - Check AWS deployment health"
+	@echo "  make aws-logs     - Tail CloudWatch logs"
+	@echo "  make aws-status   - Show ECS service status"
+	@echo "  make aws-deploy   - Deploy to AWS (infrastructure + Docker)"
+	@echo ""
+	@echo "Debugging:"
+	@echo "  make localstack-debug - Debug LocalStack from host (rarely needed)"
 	@echo ""
 
 # Development environment
@@ -144,3 +153,66 @@ coverage-html: coverage
 coverage-report:
 	@echo "Coverage summary:"
 	docker compose -f docker-compose.yml -f docker-compose.dev.yml exec api-gateway uv run coverage report
+
+# ============================================================================
+# AWS Operations (uses AWS_PROFILE from environment or .env)
+# ============================================================================
+# Note: These commands use AWS CLI profiles from ~/.aws/config
+# Setup: 1) Set AWS_PROFILE in .env, 2) Configure profile in ~/.aws/config
+# Default profile: "default" (change AWS_PROFILE in .env to use a different profile)
+
+AWS_PROFILE ?= default
+
+aws-health:
+	@echo "Checking AWS deployment health..."
+	@AWS_PROFILE=$(AWS_PROFILE) curl -s http://equalify-pdf-alb-633052607.us-east-1.elb.amazonaws.com/health | jq || echo "Error: jq not installed or API not responding"
+
+aws-logs:
+	@echo "Tailing CloudWatch logs (Ctrl+C to exit)..."
+	AWS_PROFILE=$(AWS_PROFILE) aws logs tail /ecs/equalify-pdf --follow --region us-east-1
+
+aws-status:
+	@echo "ECS Service Status:"
+	@AWS_PROFILE=$(AWS_PROFILE) aws ecs describe-services \
+		--cluster equalify-pdf-cluster \
+		--services equalify-pdf-service \
+		--region us-east-1 \
+		--query 'services[0].{Desired:desiredCount,Running:runningCount,Status:status,Deployment:deployments[0].rolloutState}' \
+		--output table
+
+aws-deploy:
+	@echo "Deploying to AWS..."
+	@./scripts/deploy-infrastructure.sh && ./scripts/deploy-app.sh
+
+aws-shell:
+	@echo "Connecting to ECS container..."
+	@TASK_ARN=$$(AWS_PROFILE=$(AWS_PROFILE) aws ecs list-tasks \
+		--cluster equalify-pdf-cluster \
+		--service-name equalify-pdf-service \
+		--region us-east-1 \
+		--query 'taskArns[0]' \
+		--output text) && \
+	AWS_PROFILE=$(AWS_PROFILE) aws ecs execute-command \
+		--cluster equalify-pdf-cluster \
+		--task $$TASK_ARN \
+		--container app \
+		--interactive \
+		--command "/bin/bash"
+
+# ============================================================================
+# LocalStack Debugging (from host)
+# ============================================================================
+# Note: Rarely needed - most debugging happens via app or docker exec
+# This uses AWS CLI from your host machine against LocalStack
+
+localstack-debug:
+	@echo "LocalStack debugging commands (from host):"
+	@echo ""
+	@echo "List S3 buckets:"
+	@echo "  AWS_PROFILE=localstack aws s3 ls"
+	@echo ""
+	@echo "List objects in temp bucket:"
+	@echo "  AWS_PROFILE=localstack aws s3 ls s3://equalify-pdf-temp/"
+	@echo ""
+	@echo "Note: LocalStack must be running (make dev)"
+	@echo "Note: Requires ~/.aws/config with localstack profile (see .aws-config-example)"

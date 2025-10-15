@@ -30,15 +30,8 @@ exec 2>&1
 echo "Docker deployment started at: $(date)"
 echo ""
 
-# Ensure we're using real AWS (not LocalStack)
-unset AWS_ENDPOINT_URL
-unset LOCALSTACK_ENDPOINT_URL
-
-# Ensure AWS_PROFILE is set
-if [ -z "$AWS_PROFILE" ]; then
-    export AWS_PROFILE=uic
-    echo -e "${YELLOW}Setting AWS_PROFILE=uic${NC}"
-fi
+# Set AWS profile for all AWS CLI commands (from environment or default)
+export AWS_PROFILE=${AWS_PROFILE:-default}
 
 # Get Terraform outputs
 echo -e "${BLUE}Step 1: Getting Infrastructure Details${NC}"
@@ -47,7 +40,7 @@ cd terraform
 # Check if terraform state exists
 if [ ! -f terraform.tfstate ]; then
     echo -e "${RED}Error: terraform.tfstate not found${NC}"
-    echo -e "${RED}Please run ./scripts/deploy-aws.sh first${NC}"
+    echo -e "${RED}Please run ./scripts/deploy-infrastructure.sh first${NC}"
     exit 1
 fi
 

@@ -1,0 +1,48 @@
+# AWS CLI Configuration for Equalify PDF Converter
+# Copy this to ~/.aws/config (merge with existing profiles)
+#
+# Usage:
+#   AWS_PROFILE=YOUR-PROFILE-NAME aws ecs describe-services ...
+#   AWS_PROFILE=localstack aws s3 ls  (from host, debugging only)
+
+# ============================================================================
+# Production - Real AWS
+# ============================================================================
+# Replace the placeholders below with your actual AWS SSO values:
+# - YOUR-SSO-START-URL: From your AWS SSO portal (e.g., https://d-XXXXX.awsapps.com/start)
+# - YOUR-ACCOUNT-ID: Your 12-digit AWS account ID
+# - YOUR-ROLE-NAME: The IAM role you assume (e.g., AdministratorAccess, PowerUserAccess)
+# - YOUR-PROFILE-NAME: Choose a profile name (e.g., company-prod, myorg-dev)
+
+[profile YOUR-PROFILE-NAME]
+sso_start_url = YOUR-SSO-START-URL
+sso_region = us-east-1
+sso_account_id = YOUR-ACCOUNT-ID
+sso_role_name = YOUR-ROLE-NAME
+region = us-east-1
+output = json
+
+# ============================================================================
+# Local Development - LocalStack (from host machine)
+# ============================================================================
+# NOTE: This profile is for AWS CLI from your HOST machine against LocalStack.
+# Most of the time, you don't need this - the app in Docker handles LocalStack.
+# Only use for manual debugging: AWS_PROFILE=localstack aws s3 ls
+[profile localstack]
+region = us-east-1
+output = json
+# IMPORTANT: Use 'localhost' not 'localstack' - we're calling from host
+endpoint_url = http://localhost:4566
+# Dummy credentials (LocalStack doesn't validate these)
+aws_access_key_id = test
+aws_secret_access_key = test
+
+# ============================================================================
+# Notes
+# ============================================================================
+# 1. LocalStack profile uses 'localhost:4566' because AWS CLI runs on HOST
+# 2. Docker containers use 'localstack:4566' (from .env file, Docker DNS)
+# 3. For most dev work, you don't need the localstack profile at all
+# 4. Real workflow:
+#    - Local dev: make dev (Docker handles LocalStack automatically)
+#    - AWS ops: AWS_PROFILE=YOUR-PROFILE-NAME aws ...

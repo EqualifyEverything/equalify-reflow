@@ -166,12 +166,11 @@ jobs:
 
       - name: Free disk space
         run: |
-          echo "Before cleanup:"
-          df -h
-          sudo rm -rf /opt/hostedtoolcache
-          sudo rm -rf /usr/share/dotnet
-          sudo rm -rf /usr/local/lib/android
-          echo "After cleanup:"
+          # Remove large unnecessary directories in parallel
+          sudo rm -rf /opt/hostedtoolcache &
+          sudo rm -rf /usr/share/dotnet &
+          sudo rm -rf /usr/local/lib/android &
+          wait
           df -h
 
       - name: Set up Docker Buildx
@@ -181,7 +180,7 @@ jobs:
         uses: actions/cache@v4
         with:
           path: /tmp/.buildx-cache
-          key: ${{ runner.os }}-buildx-${{ github.sha }}
+          key: ${{ runner.os }}-buildx-${{ hashFiles('Dockerfile', 'pyproject.toml', 'uv.lock') }}
           restore-keys: |
             ${{ runner.os }}-buildx-
 
@@ -189,7 +188,17 @@ jobs:
         run: cp .env.example .env
 
       - name: Build Docker images
-        run: make build
+        run: |
+          docker buildx build \
+            --target development \
+            --cache-from type=local,src=/tmp/.buildx-cache \
+            --cache-to type=local,dest=/tmp/.buildx-cache-new,mode=max \
+            --tag equalify-pdf-api-gateway:latest \
+            --load \
+            .
+          # Move cache to avoid unbounded growth
+          rm -rf /tmp/.buildx-cache
+          mv /tmp/.buildx-cache-new /tmp/.buildx-cache
 
       - name: Start services
         run: docker compose -f docker-compose.yml -f docker-compose.dev.yml up -d

@@ -24,10 +24,6 @@ ENTITY_TYPES = [
     "US_DRIVER_LICENSE",   # Driver's license numbers (pattern-based)
 ]
 
-# Confidence threshold for PII detection
-# Configurable via settings.pii_confidence_threshold (default 0.85)
-DEFAULT_CONFIDENCE_THRESHOLD = settings.pii_confidence_threshold
-
 
 class PIIAnalyzer:
     """Wrapper for Microsoft Presidio PII detection.
@@ -45,13 +41,13 @@ class PIIAnalyzer:
         confidence_threshold: Minimum confidence score (0.0-1.0, default 0.85)
     """
 
-    def __init__(self, confidence_threshold: float = DEFAULT_CONFIDENCE_THRESHOLD):
+    def __init__(self, confidence_threshold: float | None = None):
         """Initialize Presidio analyzer with spaCy NLP engine.
 
         Args:
-            confidence_threshold: Minimum confidence score (0.0-1.0)
+            confidence_threshold: Minimum confidence score (0.0-1.0), defaults to settings value
         """
-        self.confidence_threshold = confidence_threshold
+        self.confidence_threshold = confidence_threshold if confidence_threshold is not None else settings.pii_confidence_threshold
 
         # Configure spaCy NLP engine with entity filtering
         # Ignore non-PII entities that cause warnings: MONEY, CARDINAL, PRODUCT, EVENT
@@ -72,7 +68,7 @@ class PIIAnalyzer:
         # Initialize Presidio analyzer
         self.analyzer = AnalyzerEngine(nlp_engine=nlp_engine)
 
-        logger.info(f"Initialized PIIAnalyzer with threshold {confidence_threshold}")
+        logger.info(f"Initialized PIIAnalyzer with threshold {self.confidence_threshold}")
 
     def analyze_text(self, text: str) -> List[PIIFinding]:
         """Analyze text for PII using Presidio.
@@ -124,13 +120,13 @@ class PIIAnalyzer:
 _analyzer_instance: PIIAnalyzer | None = None
 
 
-def get_pii_analyzer(confidence_threshold: float = DEFAULT_CONFIDENCE_THRESHOLD) -> PIIAnalyzer:
+def get_pii_analyzer(confidence_threshold: float | None = None) -> PIIAnalyzer:
     """Get or create global PIIAnalyzer instance.
 
     Lazy-loads the analyzer to avoid initialization overhead.
 
     Args:
-        confidence_threshold: Minimum confidence score (0.0-1.0)
+        confidence_threshold: Minimum confidence score (0.0-1.0), defaults to settings value
 
     Returns:
         PIIAnalyzer: Shared analyzer instance

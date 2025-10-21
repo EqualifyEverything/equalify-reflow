@@ -124,15 +124,25 @@ async def approval_service(real_redis_client, real_s3_client, job_service, queue
 # ============================================================================
 
 @pytest.fixture(autouse=True)
-def mock_anthropic_api():
-    """Auto-mock Anthropic API to avoid needing API keys in integration tests."""
-    import os
-    # Set fake API key to avoid initialization errors
-    os.environ['ANTHROPIC_API_KEY'] = 'test-key-for-integration-tests'
-    yield
-    # Clean up
-    if 'ANTHROPIC_API_KEY' in os.environ and os.environ['ANTHROPIC_API_KEY'] == 'test-key-for-integration-tests':
-        del os.environ['ANTHROPIC_API_KEY']
+def mock_ai_settings():
+    """Auto-mock AI settings for Bedrock (no API keys needed)."""
+    from unittest.mock import patch, MagicMock
+
+    # Mock settings to use bedrock provider
+    with patch('src.agents.accessibility_agent.settings') as mock_settings:
+        mock_settings.ai_provider = 'bedrock'
+        mock_settings.bedrock_model_id = 'anthropic.claude-3-haiku-20240307-v1:0'
+        mock_settings.bedrock_region = 'us-east-1'
+        mock_settings.claude_max_tokens = 4096
+        mock_settings.claude_temperature = 0.2
+
+        # Mock BedrockConverseModel and Agent to avoid AWS/API calls
+        with patch('pydantic_ai.models.bedrock.BedrockConverseModel'):
+            with patch('src.agents.accessibility_agent.Agent') as MockAgent:
+                # Make Agent() return a mock with a run method
+                mock_agent = MagicMock()
+                MockAgent.return_value = mock_agent
+                yield
 
 
 @pytest.fixture

@@ -165,7 +165,7 @@ AWS_PROFILE ?= default
 
 aws-health:
 	@echo "Checking AWS deployment health..."
-	@AWS_PROFILE=$(AWS_PROFILE) curl -s http://equalify-pdf-alb-633052607.us-east-1.elb.amazonaws.com/health | jq || echo "Error: jq not installed or API not responding"
+	AWS_PROFILE=$(AWS_PROFILE) ./scripts/health-check.sh --prod
 
 aws-logs:
 	@echo "Tailing CloudWatch logs (Ctrl+C to exit)..."

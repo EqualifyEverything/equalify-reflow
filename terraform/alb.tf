@@ -42,48 +42,49 @@ resource "aws_lb_target_group" "app" {
 }
 
 # HTTP Listener
+# If HTTPS is configured, redirect HTTP to HTTPS
+# Otherwise, forward directly to target group
 resource "aws_lb_listener" "http" {
   load_balancer_arn = aws_lb.main.arn
   port              = "80"
   protocol          = "HTTP"
 
   default_action {
-    type             = "forward"
-    target_group_arn = aws_lb_target_group.app.arn
+    type = var.domain_name != "" ? "redirect" : "forward"
+
+    # Redirect to HTTPS if domain configured
+    dynamic "redirect" {
+      for_each = var.domain_name != "" ? [1] : []
+      content {
+        port        = "443"
+        protocol    = "HTTPS"
+        status_code = "HTTP_301" # Permanent redirect
+      }
+    }
+
+    # Forward directly if no domain (development mode)
+    target_group_arn = var.domain_name == "" ? aws_lb_target_group.app.arn : null
   }
 }
 
-# HTTPS Listener (optional - requires ACM certificate)
-# Uncomment and configure when you have a domain and certificate
-# resource "aws_lb_listener" "https" {
-#   load_balancer_arn = aws_lb.main.arn
-#   port              = "443"
-#   protocol          = "HTTPS"
-#   ssl_policy        = "ELBSecurityPolicy-TLS-1-2-2017-01"
-#   certificate_arn   = aws_acm_certificate.cert.arn
-#
-#   default_action {
-#     type             = "forward"
-#     target_group_arn = aws_lb_target_group.app.arn
-#   }
-# }
+# HTTPS Listener (requires ACM certificate)
+resource "aws_lb_listener" "https" {
+  # Only create HTTPS listener if domain is configured
+  count = var.domain_name != "" ? 1 : 0
 
-# HTTP to HTTPS redirect (enable when HTTPS listener is configured)
-# resource "aws_lb_listener_rule" "redirect_http_to_https" {
-#   listener_arn = aws_lb_listener.http.arn
-#
-#   action {
-#     type = "redirect"
-#     redirect {
-#       port        = "443"
-#       protocol    = "HTTPS"
-#       status_code = "HTTP_301"
-#     }
-#   }
-#
-#   condition {
-#     path_pattern {
-#       values = ["*"]
-#     }
-#   }
-# }
+  load_balancer_arn = aws_lb.main.arn
+  port              = "443"
+  protocol          = "HTTPS"
+  ssl_policy        = "ELBSecurityPolicy-TLS13-1-2-2021-06" # Modern TLS 1.3 policy
+  certificate_arn   = aws_acm_certificate_validation.cert[0].certificate_arn
+
+  default_action {
+    type             = "forward"
+    target_group_arn = aws_lb_target_group.app.arn
+  }
+
+  tags = {
+    Name = "${var.project_name}-https-listener"
+  }
+}
+

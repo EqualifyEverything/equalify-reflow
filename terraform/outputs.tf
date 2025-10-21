@@ -12,7 +12,22 @@ output "alb_dns_name" {
 
 output "alb_url" {
   description = "URL of the Application Load Balancer"
-  value       = "http://${aws_lb.main.dns_name}"
+  value       = var.domain_name != "" ? "https://${var.domain_name}" : "http://${aws_lb.main.dns_name}"
+}
+
+output "application_url" {
+  description = "Primary application URL (with HTTPS if domain configured)"
+  value       = var.domain_name != "" ? "https://${var.domain_name}" : "http://${aws_lb.main.dns_name}"
+}
+
+output "domain_configuration" {
+  description = "Domain configuration details"
+  value = {
+    production_domain = var.domain_name != "" ? var.domain_name : "Not configured"
+    staging_domain    = var.staging_domain_name != "" ? var.staging_domain_name : "Not configured"
+    alb_dns_name      = aws_lb.main.dns_name
+    https_enabled     = var.domain_name != "" ? true : false
+  }
 }
 
 output "ecr_repository_url" {
@@ -80,12 +95,15 @@ output "bedrock_model_id" {
 output "deployment_info" {
   description = "Key information for deployment"
   value = {
-    ecr_repository = aws_ecr_repository.app.repository_url
-    ecs_cluster    = aws_ecs_cluster.main.name
-    ecs_service    = aws_ecs_service.app.name
-    alb_url        = "http://${aws_lb.main.dns_name}"
-    region         = var.aws_region
-    ai_provider    = var.ai_provider
-    bedrock_model  = var.ai_provider == "bedrock" ? var.bedrock_model_id : "N/A"
+    ecr_repository    = aws_ecr_repository.app.repository_url
+    ecs_cluster       = aws_ecs_cluster.main.name
+    ecs_service       = aws_ecs_service.app.name
+    application_url   = var.domain_name != "" ? "https://${var.domain_name}" : "http://${aws_lb.main.dns_name}"
+    alb_dns_name      = aws_lb.main.dns_name
+    region            = var.aws_region
+    ai_provider       = var.ai_provider
+    bedrock_model     = var.ai_provider == "bedrock" ? var.bedrock_model_id : "N/A"
+    https_enabled     = var.domain_name != "" ? true : false
+    production_domain = var.domain_name != "" ? var.domain_name : "Not configured"
   }
 }

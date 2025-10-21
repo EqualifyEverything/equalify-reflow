@@ -103,13 +103,19 @@ variable "health_check_path" {
 
 # Domain Configuration (optional)
 variable "domain_name" {
-  description = "Domain name for ALB (leave empty for default AWS domain)"
+  description = "Production domain name for ALB (e.g., pdf.equalify.uic.edu). Leave empty for default AWS domain"
+  type        = string
+  default     = ""
+}
+
+variable "staging_domain_name" {
+  description = "Staging domain name for ALB (e.g., staging-pdf.equalify.uic.edu). Leave empty to skip"
   type        = string
   default     = ""
 }
 
 variable "create_route53_record" {
-  description = "Whether to create Route53 DNS record"
+  description = "Whether to create Route53 DNS record (only if using Route 53 for DNS)"
   type        = bool
   default     = false
 }

@@ -88,8 +88,8 @@ async def submit_document(
     )
 
 
-@router.get("/{job_id}/status", response_model=JobStatusResponse)
-async def get_job_status(
+@router.get("/{job_id}", response_model=JobStatusResponse)
+async def get_job(
     job_id: str,
     job_service: JobService = Depends(get_job_service)
 ):

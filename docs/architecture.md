@@ -69,10 +69,10 @@ The Equalify PDF Converter is a monolithic Python application with background ta
 │  ┌──────────────────────────────────────────────────────┐   │
 │  │              API ENDPOINTS                           │   │
 │  │  • POST /api/documents/submit                        │   │
-│  │  • GET  /api/documents/{id}/status                   │   │
+│  │  • GET  /api/documents/{id}                          │   │
 │  │  • GET  /api/documents/{id}/result                   │   │
-│  │  • POST /api/documents/{id}/approve                  │   │
-│  │  • POST /api/documents/{id}/reject                   │   │
+│  │  • GET  /api/approval/{token}/review                 │   │
+│  │  • POST /api/approval/{token}/decision               │   │
 │  │  • GET  /health                                      │   │
 │  └──────────────────────────────────────────────────────┘   │
 │  ┌──────────────────────────────────────────────────────┐   │
@@ -195,12 +195,12 @@ src/
 
 **`api/documents.py`** - Document lifecycle management
 - `POST /api/documents/submit` - Submit PDF for processing (returns job_id)
-- `GET /api/documents/{job_id}/status` - Check processing status
+- `GET /api/documents/{job_id}` - Check processing status
 - `GET /api/documents/{job_id}/result` - Retrieve processed HTML/MDX with presigned URLs
 
 **`api/approval.py`** - Human approval workflow
-- `POST /api/documents/{job_id}/approve` - Approve PII-flagged document (requires token)
-- `POST /api/documents/{job_id}/reject` - Reject PII-flagged document (requires token)
+- `GET /api/approval/{token}/review` - Get job details for PII review (requires token)
+- `POST /api/approval/{token}/decision` - Submit approval/denial decision (requires token)
 
 **`api/health.py`** - Health checks and metrics
 - `GET /health` - Application health status (Redis/S3 connectivity)

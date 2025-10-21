@@ -146,11 +146,11 @@ Check job status (wait 5-10 seconds first for PII scan to complete):
 sleep 5
 
 # Check status
-curl -s "$API_URL/api/documents/$JOB_ID/status" | jq .
+curl -s "$API_URL/api/documents/$JOB_ID" | jq .
 
 # If still scanning, wait and check again
 sleep 10
-curl -s "$API_URL/api/documents/$JOB_ID/status" | jq . | tee /tmp/pii_status.json
+curl -s "$API_URL/api/documents/$JOB_ID" | jq . | tee /tmp/pii_status.json
 ```
 
 **Possible outcomes**:
@@ -202,7 +202,7 @@ cat > /tmp/approval.json << 'EOF'
 EOF
 
 # Submit approval using file
-curl -X POST "$API_URL/api/approval/$APPROVAL_TOKEN/approve" \
+curl -X POST "$API_URL/api/approval/$APPROVAL_TOKEN/decision" \
   -H "Content-Type: application/json" \
   -d @/tmp/approval.json \
   -s | jq . | tee /tmp/approval_response.json
@@ -234,9 +234,9 @@ Check processing status (poll every 10-15 seconds):
 # Poll for completion (AI processing takes 2-8 minutes)
 for i in {1..30}; do
   echo "=== Check $i ($(date +%H:%M:%S)) ==="
-  curl -s "$API_URL/api/documents/$JOB_ID/status" | jq .
+  curl -s "$API_URL/api/documents/$JOB_ID" | jq .
 
-  STATUS=$(curl -s "$API_URL/api/documents/$JOB_ID/status" | jq -r '.status')
+  STATUS=$(curl -s "$API_URL/api/documents/$JOB_ID" | jq -r '.status')
 
   if [ "$STATUS" == "completed" ] || [ "$STATUS" == "failed" ]; then
     echo "✅ Processing finished with status: $STATUS"
@@ -284,7 +284,7 @@ Once status changes to `completed`:
 
 ```bash
 # Check final status
-curl -s "$API_URL/api/documents/$JOB_ID/status" | jq .
+curl -s "$API_URL/api/documents/$JOB_ID" | jq .
 
 # Get results
 curl -s "$API_URL/api/documents/$JOB_ID/result" | jq . | tee /tmp/final_result.json

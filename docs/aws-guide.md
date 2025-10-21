@@ -221,7 +221,7 @@ echo "Job ID: $JOB_ID"
 ```bash
 # Poll status
 for i in {1..30}; do
-    STATUS=$(curl -s $ALB_URL/api/documents/$JOB_ID/status | jq -r '.status')
+    STATUS=$(curl -s $ALB_URL/api/documents/$JOB_ID | jq -r '.status')
     echo "[$i] Status: $STATUS"
     [ "$STATUS" = "completed" ] || [ "$STATUS" = "failed" ] && break
     sleep 2

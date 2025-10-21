@@ -52,7 +52,7 @@ async def test_approval_token_expiration_enforced():
             transport=ASGITransport(app=app),
             base_url="http://test"
         ) as client:
-            response = await client.get("/api/approval/review/expired-token-123")
+            response = await client.get("/api/approval/expired-token-123/review")
 
         # Assert expired token rejected
         assert response.status_code == 404
@@ -105,7 +105,7 @@ async def test_approval_no_pii_data_in_url():
             transport=ASGITransport(app=app),
             base_url="http://test"
         ) as client:
-            response = await client.get("/api/approval/review/secure-token-456")
+            response = await client.get("/api/approval/secure-token-456/review")
 
         # Assert PII data only in response body, not in URL
         assert response.status_code == 200
@@ -172,7 +172,7 @@ async def test_approval_decision_sanitization():
             base_url="http://test"
         ) as client:
             response = await client.post(
-                "/api/approval/test-token-789/approve",
+                "/api/approval/test-token-789/decision",
                 json=malicious_payload
             )
 
@@ -214,7 +214,7 @@ async def test_approval_input_validation_boundaries():
         ) as client:
             # Test justification too short (< 10 chars)
             response = await client.post(
-                "/api/approval/validation-token-999/approve",
+                "/api/approval/validation-token-999/decision",
                 json={
                     "decision": "approved",
                     "justification": "Short",
@@ -225,7 +225,7 @@ async def test_approval_input_validation_boundaries():
 
             # Test justification too long (> 1000 chars)
             response = await client.post(
-                "/api/approval/validation-token-999/approve",
+                "/api/approval/validation-token-999/decision",
                 json={
                     "decision": "approved",
                     "justification": "A" * 1001,
@@ -236,7 +236,7 @@ async def test_approval_input_validation_boundaries():
 
             # Test invalid decision value
             response = await client.post(
-                "/api/approval/validation-token-999/approve",
+                "/api/approval/validation-token-999/decision",
                 json={
                     "decision": "maybe",  # Not "approved" or "denied"
                     "justification": "Valid justification text here",
@@ -247,7 +247,7 @@ async def test_approval_input_validation_boundaries():
 
             # Test reviewed_by too short (< 3 chars)
             response = await client.post(
-                "/api/approval/validation-token-999/approve",
+                "/api/approval/validation-token-999/decision",
                 json={
                     "decision": "approved",
                     "justification": "Valid justification text here",
@@ -277,7 +277,7 @@ async def test_approval_token_not_leaked_in_error_messages():
             transport=ASGITransport(app=app),
             base_url="http://test"
         ) as client:
-            response = await client.get(f"/api/approval/review/{sensitive_token}")
+            response = await client.get(f"/api/approval/{sensitive_token}/review")
 
         # Assert token not in error message
         assert response.status_code == 404
@@ -337,7 +337,7 @@ async def test_approval_decision_idempotency():
         ) as client:
             # First submission
             response1 = await client.post(
-                "/api/approval/idempotent-token/approve",
+                "/api/approval/idempotent-token/decision",
                 json=decision_payload
             )
             assert response1.status_code == 200
@@ -348,7 +348,7 @@ async def test_approval_decision_idempotency():
 
             # Second submission (should be handled gracefully)
             response2 = await client.post(
-                "/api/approval/idempotent-token/approve",
+                "/api/approval/idempotent-token/decision",
                 json=decision_payload
             )
             # Should succeed (idempotent) - doesn't break system

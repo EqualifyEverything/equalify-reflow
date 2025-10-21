@@ -78,7 +78,7 @@ async def test_get_job_status_success(client):
 
     try:
         # Get status
-        response = client.get("/api/documents/test-job-id/status")
+        response = client.get("/api/documents/test-job-id")
 
         # Assertions
         assert response.status_code == status.HTTP_200_OK
@@ -101,7 +101,7 @@ async def test_get_job_status_not_found(client):
 
     try:
         # Get status
-        response = client.get("/api/documents/nonexistent-job/status")
+        response = client.get("/api/documents/nonexistent-job")
 
         # Assertions
         assert response.status_code == status.HTTP_404_NOT_FOUND

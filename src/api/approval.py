@@ -85,7 +85,7 @@ class ApprovalResponse(BaseModel):
 
 
 @router.get(
-    "/review/{token}",
+    "/{token}/review",
     response_model=ReviewDetailsResponse,
     summary="Get job details for review",
     description="Retrieve job details and PII findings for human review interface"
@@ -113,7 +113,7 @@ async def get_review_details(
         HTTPException 500: Server error
 
     Example:
-        GET /api/review/abc123def456...
+        GET /api/approval/{token}/review
         Returns:
         {
             "job_id": "550e8400-e29b-41d4-a716-446655440000",
@@ -163,12 +163,12 @@ async def get_review_details(
 
 
 @router.post(
-    "/{token}/approve",
+    "/{token}/decision",
     response_model=ApprovalResponse,
     summary="Submit approval decision",
     description="Submit approval or denial decision for PII-flagged document"
 )
-async def submit_approval(
+async def submit_decision(
     token: str,
     decision_input: ApprovalDecisionInput,
     redis_client=Depends(get_redis_client),
@@ -194,7 +194,7 @@ async def submit_approval(
         HTTPException 500: Server error processing decision
 
     Example:
-        POST /api/approve/abc123def456...
+        POST /api/approval/{token}/decision
         Body:
         {
             "decision": "approved",

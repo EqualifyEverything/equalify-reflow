@@ -131,12 +131,12 @@ frontend/demo-ui/
 
 **Document Management:**
 - `POST /api/documents/submit` - Upload PDF
-- `GET /api/documents/{job_id}/status` - Get job status
+- `GET /api/documents/{job_id}` - Get job status
 - `GET /api/documents/{job_id}/result` - Get processing results
 
 **Approval Workflow:**
-- `GET /api/approval/review/{token}` - Get PII review data
-- `POST /api/approval/{token}/approve` - Submit approval decision
+- `GET /api/approval/{token}/review` - Get PII review data
+- `POST /api/approval/{token}/decision` - Submit approval decision
 
 **System Health:**
 - `GET /health` - System health check

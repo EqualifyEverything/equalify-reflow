@@ -166,39 +166,38 @@ jobs:
 
       - name: Free disk space
         run: |
+          echo "=== Before cleanup ==="
+          df -h
+          echo "=== Removing large directories ==="
           # Remove large unnecessary directories in parallel
           sudo rm -rf /opt/hostedtoolcache &
           sudo rm -rf /usr/share/dotnet &
           sudo rm -rf /usr/local/lib/android &
+          sudo rm -rf /usr/local/share/boost &
+          sudo rm -rf /usr/local/.ghcup &
+          sudo rm -rf /opt/ghc &
+          sudo rm -rf /usr/share/swift &
           wait
+          echo "=== Docker cleanup ==="
+          docker system prune -af --volumes || true
+          echo "=== After cleanup ==="
           df -h
-
-      - name: Set up Docker Buildx
-        uses: docker/setup-buildx-action@v3
-
-      - name: Cache Docker layers
-        uses: actions/cache@v4
-        with:
-          path: /tmp/.buildx-cache
-          key: ${{ runner.os }}-buildx-${{ hashFiles('Dockerfile', 'pyproject.toml', 'uv.lock') }}
-          restore-keys: |
-            ${{ runner.os }}-buildx-
 
       - name: Create .env file from example
         run: cp .env.example .env
 
       - name: Build Docker images
+        env:
+          DOCKER_BUILDKIT: 1
+          COMPOSE_DOCKER_CLI_BUILD: 1
+          BUILDKIT_PROGRESS: plain
         run: |
-          docker buildx build \
-            --target development \
-            --cache-from type=local,src=/tmp/.buildx-cache \
-            --cache-to type=local,dest=/tmp/.buildx-cache-new,mode=max \
-            --tag equalify-pdf-api-gateway:latest \
-            --load \
-            .
-          # Move cache to avoid unbounded growth
-          rm -rf /tmp/.buildx-cache
-          mv /tmp/.buildx-cache-new /tmp/.buildx-cache
+          # Use docker compose build which is more space-efficient than buildx export/import
+          docker compose -f docker-compose.yml -f docker-compose.dev.yml build \
+            --build-arg BUILDKIT_INLINE_CACHE=1
+
+          # Tag for consistency with manual builds
+          docker tag equalify-pdf-converter-api-gateway:latest equalify-pdf-api-gateway:latest || true
 
       - name: Start services
         run: docker compose -f docker-compose.yml -f docker-compose.dev.yml up -d

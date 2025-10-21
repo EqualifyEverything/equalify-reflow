@@ -244,7 +244,6 @@ class TestConfigurationValidation:
             settings = Settings(
                 api_host="",
                 log_level="",
-                claude_model="",
             )
             # Some empty strings might be invalid
             assert isinstance(settings.api_host, str)
@@ -330,44 +329,6 @@ class TestConfigurationValidation:
             Settings(
                 metrics_cleanup_interval_hours=87600,  # 10 years - exceeds max 168 hours
             )
-
-    def test_anthropic_api_key_validation(self):
-        """Test Anthropic API key field."""
-        # Test with valid-looking key
-        settings = Settings(anthropic_api_key="sk-test-key-12345")
-
-        # Should be stored as SecretStr
-        assert settings.anthropic_api_key is not None
-        # Access secret value
-        secret_value = settings.anthropic_api_key.get_secret_value()
-        assert "sk-test-key" in secret_value
-
-    def test_empty_anthropic_api_key(self):
-        """Test empty Anthropic API key."""
-        try:
-            settings = Settings(anthropic_api_key="")
-            # Empty key might be rejected
-            assert settings.anthropic_api_key is not None
-        except (ValidationError, ValueError):
-            # Should require non-empty key
-            pass
-
-    def test_invalid_claude_model_name(self):
-        """Test invalid Claude model name."""
-        invalid_models = [
-            "",
-            "gpt-4",  # Wrong provider
-            "claude",
-            "model-does-not-exist",
-        ]
-
-        for model in invalid_models:
-            try:
-                settings = Settings(claude_model=model)
-                # Might accept any string
-                assert isinstance(settings.claude_model, str)
-            except (ValidationError, ValueError):
-                pass
 
     def test_negative_claude_max_tokens(self):
         """Test negative Claude max tokens."""

@@ -51,17 +51,13 @@ class Settings(BaseSettings):
     estimated_processing_minutes: int = Field(ge=1, le=60, default=5)
 
     # AI Provider Configuration
-    ai_provider: str = "bedrock"  # "anthropic" or "bedrock"
+    ai_provider: str = "bedrock"  # Only "bedrock" is supported
 
-    # Bedrock Configuration (used if ai_provider = "bedrock")
+    # Bedrock Configuration
     bedrock_region: str = "us-east-1"
     bedrock_model_id: str = "anthropic.claude-3-haiku-20240307-v1:0"
 
-    # Anthropic API Configuration (used if ai_provider = "anthropic")
-    anthropic_api_key: SecretStr | None = None
-    claude_model: str = "claude-3-5-haiku-20241022"
-
-    # Shared Claude Settings (works with both providers)
+    # Claude Model Settings
     claude_max_tokens: int = Field(ge=1, le=100000, default=4096)
     claude_temperature: float = Field(ge=0.0, le=2.0, default=0.2)
 

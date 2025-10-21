@@ -93,14 +93,6 @@ resource "aws_ecs_task_definition" "app" {
         }
       ]
 
-      # Only include Anthropic API key secret if using Anthropic provider
-      secrets = var.ai_provider == "anthropic" ? [
-        {
-          name      = "ANTHROPIC_API_KEY"
-          valueFrom = aws_secretsmanager_secret.anthropic_api_key.arn
-        }
-      ] : []
-
       logConfiguration = {
         logDriver = "awslogs"
         options = {

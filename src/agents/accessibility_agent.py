@@ -1,10 +1,7 @@
-"""Document accessibility agent with AWS Bedrock and Anthropic API support.
+"""Document accessibility agent with AWS Bedrock support.
 
-This module provides an AccessibilityAgent that supports both:
-- AWS Bedrock (recommended for AWS deployments)
-- Anthropic Direct API (for local development or non-AWS deployments)
-
-The provider is selected via the AI_PROVIDER environment variable.
+This module provides an AccessibilityAgent that uses AWS Bedrock
+for Claude model access in both development and production environments.
 """
 
 import base64
@@ -43,10 +40,10 @@ class PageImprovementResult(BaseModel):
 
 
 class AccessibilityAgent:
-    """Claude-powered agent supporting AWS Bedrock and Anthropic API."""
+    """Claude-powered agent using AWS Bedrock."""
 
     def __init__(self) -> None:
-        """Initialize the accessibility agent with configured AI provider."""
+        """Initialize the accessibility agent with AWS Bedrock."""
         # Load prompts from YAML config
         prompts = self._load_prompts()
 
@@ -67,13 +64,13 @@ class AccessibilityAgent:
         )
 
     def _create_model(self):
-        """Create AI model based on configured provider.
+        """Create AWS Bedrock model for Claude access.
 
         Returns:
-            Model instance for PydanticAI Agent
+            BedrockConverseModel instance for PydanticAI Agent
 
         Raises:
-            ValueError: If ai_provider is not supported
+            ValueError: If ai_provider is not set to 'bedrock'
         """
         provider = settings.ai_provider.lower()
 
@@ -90,16 +87,10 @@ class AccessibilityAgent:
             )
             return model
 
-        elif provider == "anthropic":
-            # Direct Anthropic API
-            model_name = f"anthropic:{settings.claude_model}"
-            logger.info(f"Using Anthropic API with model: {settings.claude_model}")
-            return model_name
-
         else:
             raise ValueError(
                 f"Unsupported AI provider: {provider}. "
-                f"Must be 'bedrock' or 'anthropic'."
+                f"Only 'bedrock' is supported."
             )
 
     def _load_prompts(self) -> dict:

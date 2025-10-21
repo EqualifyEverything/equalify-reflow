@@ -135,12 +135,12 @@ variable "alarm_email" {
 
 # AI Provider Configuration
 variable "ai_provider" {
-  description = "AI provider to use: 'anthropic' or 'bedrock'"
+  description = "AI provider to use (only 'bedrock' is supported)"
   type        = string
   default     = "bedrock"
   validation {
-    condition     = contains(["anthropic", "bedrock"], var.ai_provider)
-    error_message = "AI provider must be either 'anthropic' or 'bedrock'."
+    condition     = var.ai_provider == "bedrock"
+    error_message = "AI provider must be 'bedrock'. Only AWS Bedrock is supported."
   }
 }
 
@@ -154,15 +154,6 @@ variable "enable_bedrock_metrics" {
   description = "Enable CloudWatch metrics for Bedrock usage"
   type        = bool
   default     = true
-}
-
-# Secrets (should be provided via environment variables or tfvars file)
-# Only required if ai_provider = "anthropic"
-variable "anthropic_api_key" {
-  description = "Anthropic API key for AI processing (only needed if ai_provider='anthropic')"
-  type        = string
-  sensitive   = true
-  default     = "" # Set via TF_VAR_anthropic_api_key or terraform.tfvars
 }
 
 # Tags

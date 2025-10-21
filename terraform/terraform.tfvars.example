@@ -32,18 +32,11 @@ enable_cloudwatch_alarms = true
 alarm_email              = "your-email@example.com"
 
 # AI Provider Configuration
-ai_provider = "bedrock" # "anthropic" or "bedrock"
+ai_provider = "bedrock" # Only "bedrock" is supported
 
-# Bedrock Configuration (if ai_provider = "bedrock")
+# Bedrock Configuration
 bedrock_model_id       = "anthropic.claude-3-haiku-20240307-v1:0"
 enable_bedrock_metrics = true
-
-# Anthropic API Configuration (if ai_provider = "anthropic")
-# Secrets - OPTION 1: Set via environment variable (recommended)
-# export TF_VAR_anthropic_api_key="your-api-key"
-
-# Secrets - OPTION 2: Set in this file (less secure, excluded from git)
-# anthropic_api_key = "your-api-key"
 
 # Domain Configuration (optional)
 # domain_name           = "pdf-converter.example.com"

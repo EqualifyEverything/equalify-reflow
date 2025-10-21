@@ -36,11 +36,7 @@ terraform apply
 
 **New team member?** See [TEAM_SETUP.md](./TEAM_SETUP.md) for detailed AWS credential configuration.
 
-**Note:** By default, the infrastructure uses AWS Bedrock (no API key required - uses IAM roles). If you want to use the Anthropic API instead, set:
-```bash
-export TF_VAR_ai_provider="anthropic"
-export TF_VAR_anthropic_api_key="sk-ant-your-key"
-```
+**Note:** The infrastructure uses AWS Bedrock exclusively (no API key required - uses IAM roles).
 
 ## Files
 
@@ -53,7 +49,6 @@ export TF_VAR_anthropic_api_key="sk-ant-your-key"
 - `ecr.tf` - ECR repository for Docker images
 - `redis.tf` - ElastiCache Redis cluster
 - `iam.tf` - IAM roles and policies
-- `secrets.tf` - AWS Secrets Manager (for Anthropic API key if needed)
 - `bedrock.tf` - AWS Bedrock IAM permissions and monitoring
 - `alb.tf` - Application Load Balancer
 - `ecs.tf` - ECS cluster, task, and service
@@ -102,8 +97,6 @@ Internet → ALB (Public Subnets)
 ### Security
 - IAM execution role (ECR, Secrets Manager)
 - IAM task role (S3, CloudWatch, Bedrock)
-- Secrets Manager (Anthropic API key - optional, only for Anthropic provider)
-
 ### Monitoring
 - CloudWatch Log Group
 - CloudWatch Dashboard (Bedrock metrics, token usage, cost estimation)
@@ -114,13 +107,10 @@ Internet → ALB (Public Subnets)
 
 ### AI Provider Configuration
 
-**Default:** AWS Bedrock (no API key required, uses IAM roles)
+**Uses AWS Bedrock exclusively** (no API key required, uses IAM roles)
 
-- `ai_provider` - AI provider to use: "bedrock" or "anthropic" (default: "bedrock")
+- `ai_provider` - AI provider (only "bedrock" is supported, default: "bedrock")
 - `bedrock_model_id` - Bedrock model ID (default: "anthropic.claude-3-haiku-20240307-v1:0")
-
-**Only required if using Anthropic API:**
-- `anthropic_api_key` - Set via environment variable: `export TF_VAR_anthropic_api_key="sk-ant-your-key"`
 
 ### Infrastructure Configuration
 

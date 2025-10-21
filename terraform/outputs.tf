@@ -82,7 +82,7 @@ output "execution_role_arn" {
 
 # AI Provider Configuration
 output "ai_provider" {
-  description = "Configured AI provider (anthropic or bedrock)"
+  description = "Configured AI provider (bedrock only)"
   value       = var.ai_provider
 }
 

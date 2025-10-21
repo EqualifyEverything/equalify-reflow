@@ -25,26 +25,29 @@ pytestmark = pytest.mark.unit
 
 
 def test_accessibility_agent_initialization():
-    """Test AccessibilityAgent initializes with Claude model."""
+    """Test AccessibilityAgent initializes with Bedrock model."""
     with patch("src.agents.accessibility_agent.Agent") as MockAgent:
-        with patch.object(AccessibilityAgent, "_load_prompts", return_value={
-            "system_prompt": "System prompt",
-            "user_prompt_template": "User prompt {page_markdown}"
-        }):
-            with patch("src.agents.accessibility_agent.settings") as mock_settings:
-                mock_settings.ai_provider = "anthropic"
-                mock_settings.claude_model = "claude-3-5-sonnet-20241022"
+        with patch("pydantic_ai.models.bedrock.BedrockConverseModel") as MockBedrock:
+            with patch.object(AccessibilityAgent, "_load_prompts", return_value={
+                "system_prompt": "System prompt",
+                "user_prompt_template": "User prompt {page_markdown}"
+            }):
+                with patch("src.agents.accessibility_agent.settings") as mock_settings:
+                    mock_settings.ai_provider = "bedrock"
+                    mock_settings.bedrock_model_id = "anthropic.claude-3-haiku-20240307-v1:0"
 
-                agent = AccessibilityAgent()
+                    agent = AccessibilityAgent()
 
-                # Should create PydanticAI agent with correct model
-                MockAgent.assert_called_once()
-                call_args = MockAgent.call_args
-                # For Anthropic, model is a string
-                assert isinstance(call_args[0][0], str)
-                assert "anthropic:" in call_args[0][0]
-                assert call_args.kwargs["output_type"] == PageImprovementResult
-                assert call_args.kwargs["system_prompt"] == "System prompt"
+                    # Should create Bedrock model with correct model_id
+                    MockBedrock.assert_called_once_with(
+                        model_name="anthropic.claude-3-haiku-20240307-v1:0"
+                    )
+
+                    # Should create PydanticAI agent with Bedrock model
+                    MockAgent.assert_called_once()
+                    call_args = MockAgent.call_args
+                    assert call_args.kwargs["output_type"] == PageImprovementResult
+                    assert call_args.kwargs["system_prompt"] == "System prompt"
 
 
 def test_accessibility_agent_loads_prompts_from_yaml():
@@ -55,29 +58,31 @@ user_prompt_template: "Test user prompt: {page_markdown}"
 """
     with patch("builtins.open", mock_open(read_data=yaml_content)):
         with patch("src.agents.accessibility_agent.Agent"):
-            with patch("src.agents.accessibility_agent.settings") as mock_settings:
-                mock_settings.ai_provider = "anthropic"
-                mock_settings.claude_model = "claude-3-5-sonnet-20241022"
+            with patch("pydantic_ai.models.bedrock.BedrockConverseModel"):
+                with patch("src.agents.accessibility_agent.settings") as mock_settings:
+                    mock_settings.ai_provider = "bedrock"
+                    mock_settings.bedrock_model_id = "anthropic.claude-3-haiku-20240307-v1:0"
 
-                agent = AccessibilityAgent()
+                    agent = AccessibilityAgent()
 
-                # Should load prompts from YAML
-                assert agent.user_prompt_template == "Test user prompt: {page_markdown}"
+                    # Should load prompts from YAML
+                    assert agent.user_prompt_template == "Test user prompt: {page_markdown}"
 
 
 def test_accessibility_agent_uses_fallback_prompts_if_yaml_missing():
     """Test agent uses default prompts if YAML file not found."""
     with patch("builtins.open", side_effect=FileNotFoundError()):
         with patch("src.agents.accessibility_agent.Agent"):
-            with patch("src.agents.accessibility_agent.settings") as mock_settings:
-                mock_settings.ai_provider = "anthropic"
-                mock_settings.claude_model = "claude-3-5-sonnet-20241022"
+            with patch("pydantic_ai.models.bedrock.BedrockConverseModel"):
+                with patch("src.agents.accessibility_agent.settings") as mock_settings:
+                    mock_settings.ai_provider = "bedrock"
+                    mock_settings.bedrock_model_id = "anthropic.claude-3-haiku-20240307-v1:0"
 
-                agent = AccessibilityAgent()
+                    agent = AccessibilityAgent()
 
-                # Should have fallback prompts
-                assert "accessibility specialist" in agent.user_prompt_template.lower() or \
-                       "improve" in agent.user_prompt_template.lower()
+                    # Should have fallback prompts
+                    assert "accessibility specialist" in agent.user_prompt_template.lower() or \
+                           "improve" in agent.user_prompt_template.lower()
 
 
 def test_accessibility_agent_system_prompt_configured():
@@ -85,32 +90,39 @@ def test_accessibility_agent_system_prompt_configured():
     test_system_prompt = "Custom system prompt for testing"
 
     with patch("src.agents.accessibility_agent.Agent") as MockAgent:
-        with patch.object(AccessibilityAgent, "_load_prompts", return_value={
-            "system_prompt": test_system_prompt,
-            "user_prompt_template": "User: {page_markdown}"
-        }):
-            agent = AccessibilityAgent()
+        with patch("pydantic_ai.models.bedrock.BedrockConverseModel"):
+            with patch.object(AccessibilityAgent, "_load_prompts", return_value={
+                "system_prompt": test_system_prompt,
+                "user_prompt_template": "User: {page_markdown}"
+            }):
+                with patch("src.agents.accessibility_agent.settings") as mock_settings:
+                    mock_settings.ai_provider = "bedrock"
+                    mock_settings.bedrock_model_id = "anthropic.claude-3-haiku-20240307-v1:0"
 
-            # Should pass system prompt to Agent
-            assert MockAgent.call_args.kwargs["system_prompt"] == test_system_prompt
+                    agent = AccessibilityAgent()
+
+                    # Should pass system prompt to Agent
+                    assert MockAgent.call_args.kwargs["system_prompt"] == test_system_prompt
 
 
 def test_accessibility_agent_model_settings_from_config():
-    """Test agent uses model from config."""
-    with patch("src.agents.accessibility_agent.Agent") as MockAgent:
-        with patch.object(AccessibilityAgent, "_load_prompts", return_value={
-            "system_prompt": "System",
-            "user_prompt_template": "User: {page_markdown}"
-        }):
-            with patch("src.agents.accessibility_agent.settings") as mock_settings:
-                mock_settings.ai_provider = "anthropic"
-                mock_settings.claude_model = "claude-3-5-haiku-20241022"
+    """Test agent uses Bedrock model_id from config."""
+    with patch("src.agents.accessibility_agent.Agent"):
+        with patch("pydantic_ai.models.bedrock.BedrockConverseModel") as MockBedrock:
+            with patch.object(AccessibilityAgent, "_load_prompts", return_value={
+                "system_prompt": "System",
+                "user_prompt_template": "User: {page_markdown}"
+            }):
+                with patch("src.agents.accessibility_agent.settings") as mock_settings:
+                    mock_settings.ai_provider = "bedrock"
+                    mock_settings.bedrock_model_id = "anthropic.claude-3-5-sonnet-20241022-v2:0"
 
-                agent = AccessibilityAgent()
+                    agent = AccessibilityAgent()
 
-                # Should use model from settings
-                model_arg = MockAgent.call_args[0][0]
-                assert "claude-3-5-haiku-20241022" in model_arg
+                    # Should use bedrock_model_id from settings
+                    MockBedrock.assert_called_once_with(
+                        model_name="anthropic.claude-3-5-sonnet-20241022-v2:0"
+                    )
 
 
 # ============================================================================
@@ -122,129 +134,147 @@ def test_accessibility_agent_model_settings_from_config():
 async def test_process_page_success():
     """Test successful page processing with multimodal input."""
     with patch("src.agents.accessibility_agent.Agent"):
-        agent = AccessibilityAgent()
+        with patch("pydantic_ai.models.bedrock.BedrockConverseModel"):
+            with patch("src.agents.accessibility_agent.settings") as mock_settings:
+                mock_settings.ai_provider = "bedrock"
+                mock_settings.bedrock_model_id = "anthropic.claude-3-haiku-20240307-v1:0"
 
-        # Mock agent.run to return result
-        mock_result = MagicMock()
-        mock_result.output = PageImprovementResult(
-            improved_markdown="# Improved Page\n\nContent",
-            confidence_score=0.92,
-            processing_notes="Added alt text"
-        )
+                agent = AccessibilityAgent()
 
-        agent.agent = AsyncMock()
-        agent.agent.run = AsyncMock(return_value=mock_result)
+                # Mock agent.run to return result
+                mock_result = MagicMock()
+                mock_result.output = PageImprovementResult(
+                    improved_markdown="# Improved Page\n\nContent",
+                    confidence_score=0.92,
+                    processing_notes="Added alt text"
+                )
 
-        # Test page data
-        page_markdown = "# Original Page\n\nContent"
-        page_image_base64 = base64.b64encode(b"fake_image_data").decode("utf-8")
+                agent.agent = AsyncMock()
+                agent.agent.run = AsyncMock(return_value=mock_result)
 
-        result = await agent.process_page(
-            page_num=1,
-            page_markdown=page_markdown,
-            page_image_base64=page_image_base64,
-            retry_attempt=1
-        )
+                # Test page data
+                page_markdown = "# Original Page\n\nContent"
+                page_image_base64 = base64.b64encode(b"fake_image_data").decode("utf-8")
 
-        # Should return improvement result
-        assert result.improved_markdown == "# Improved Page\n\nContent"
-        assert result.confidence_score == 0.92
-        assert result.processing_notes == "Added alt text"
+                result = await agent.process_page(
+                    page_num=1,
+                    page_markdown=page_markdown,
+                    page_image_base64=page_image_base64,
+                    retry_attempt=1
+                )
 
-        # Should have called agent.run
-        agent.agent.run.assert_called_once()
+                # Should return improvement result
+                assert result.improved_markdown == "# Improved Page\n\nContent"
+                assert result.confidence_score == 0.92
+                assert result.processing_notes == "Added alt text"
+
+                # Should have called agent.run
+                agent.agent.run.assert_called_once()
 
 
 @pytest.mark.asyncio
 async def test_process_page_multimodal_input_formatting():
     """Test multimodal input (text + image) is formatted correctly."""
     with patch("src.agents.accessibility_agent.Agent"):
-        agent = AccessibilityAgent()
-        agent.user_prompt_template = "Process: {page_markdown}"
+        with patch("pydantic_ai.models.bedrock.BedrockConverseModel"):
+            with patch("src.agents.accessibility_agent.settings") as mock_settings:
+                mock_settings.ai_provider = "bedrock"
+                mock_settings.bedrock_model_id = "anthropic.claude-3-haiku-20240307-v1:0"
 
-        mock_result = MagicMock()
-        mock_result.output = PageImprovementResult(
-            improved_markdown="Improved", confidence_score=0.9, processing_notes="OK"
-        )
+                agent = AccessibilityAgent()
+                agent.user_prompt_template = "Process: {page_markdown}"
 
-        agent.agent = AsyncMock()
-        agent.agent.run = AsyncMock(return_value=mock_result)
+                mock_result = MagicMock()
+                mock_result.output = PageImprovementResult(
+                    improved_markdown="Improved", confidence_score=0.9, processing_notes="OK"
+                )
 
-        page_markdown = "Test content"
-        page_image_base64 = base64.b64encode(b"image_bytes").decode("utf-8")
+                agent.agent = AsyncMock()
+                agent.agent.run = AsyncMock(return_value=mock_result)
 
-        await agent.process_page(
-            page_num=1,
-            page_markdown=page_markdown,
-            page_image_base64=page_image_base64
-        )
+                page_markdown = "Test content"
+                page_image_base64 = base64.b64encode(b"image_bytes").decode("utf-8")
 
-        # Verify agent.run called with correct multimodal input
-        call_args = agent.agent.run.call_args
-        messages = call_args[0][0]
+                await agent.process_page(
+                    page_num=1,
+                    page_markdown=page_markdown,
+                    page_image_base64=page_image_base64
+                )
 
-        # Should have text message and binary content
-        assert len(messages) == 2
-        assert "Process: Test content" in messages[0]
+                # Verify agent.run called with correct multimodal input
+                call_args = agent.agent.run.call_args
+                messages = call_args[0][0]
 
-        # Second message should be BinaryContent
-        from pydantic_ai.messages import BinaryContent
-        assert isinstance(messages[1], BinaryContent)
-        assert messages[1].media_type == "image/png"
+                # Should have text message and binary content
+                assert len(messages) == 2
+                assert "Process: Test content" in messages[0]
+
+                # Second message should be BinaryContent
+                from pydantic_ai.messages import BinaryContent
+                assert isinstance(messages[1], BinaryContent)
+                assert messages[1].media_type == "image/png"
 
 
 @pytest.mark.asyncio
 async def test_process_page_model_settings_passed():
     """Test model settings (max_tokens, temperature) are passed correctly."""
     with patch("src.agents.accessibility_agent.Agent"):
-        agent = AccessibilityAgent()
+        with patch("pydantic_ai.models.bedrock.BedrockConverseModel"):
+            with patch("src.agents.accessibility_agent.settings") as mock_settings:
+                mock_settings.ai_provider = "bedrock"
+                mock_settings.bedrock_model_id = "anthropic.claude-3-haiku-20240307-v1:0"
+                mock_settings.claude_max_tokens = 4096
+                mock_settings.claude_temperature = 0.3
 
-        mock_result = MagicMock()
-        mock_result.output = PageImprovementResult(
-            improved_markdown="Improved", confidence_score=0.9, processing_notes="OK"
-        )
+                agent = AccessibilityAgent()
 
-        agent.agent = AsyncMock()
-        agent.agent.run = AsyncMock(return_value=mock_result)
+                mock_result = MagicMock()
+                mock_result.output = PageImprovementResult(
+                    improved_markdown="Improved", confidence_score=0.9, processing_notes="OK"
+                )
 
-        with patch("src.agents.accessibility_agent.settings") as mock_settings:
-            mock_settings.claude_max_tokens = 4096
-            mock_settings.claude_temperature = 0.3
+                agent.agent = AsyncMock()
+                agent.agent.run = AsyncMock(return_value=mock_result)
 
-            page_image_base64 = base64.b64encode(b"img").decode("utf-8")
+                page_image_base64 = base64.b64encode(b"img").decode("utf-8")
 
-            await agent.process_page(
-                page_num=1,
-                page_markdown="Test",
-                page_image_base64=page_image_base64
-            )
+                await agent.process_page(
+                    page_num=1,
+                    page_markdown="Test",
+                    page_image_base64=page_image_base64
+                )
 
-            # Verify model_settings passed
-            call_kwargs = agent.agent.run.call_args.kwargs
-            assert "model_settings" in call_kwargs
-            assert call_kwargs["model_settings"]["max_tokens"] == 4096
-            assert call_kwargs["model_settings"]["temperature"] == 0.3
+                # Verify model_settings passed
+                call_kwargs = agent.agent.run.call_args.kwargs
+                assert "model_settings" in call_kwargs
+                assert call_kwargs["model_settings"]["max_tokens"] == 4096
+                assert call_kwargs["model_settings"]["temperature"] == 0.3
 
 
 @pytest.mark.asyncio
 async def test_process_page_error_handling():
-    """Test exception handling when Claude API fails."""
+    """Test exception handling when Bedrock API fails."""
     with patch("src.agents.accessibility_agent.Agent"):
-        agent = AccessibilityAgent()
+        with patch("pydantic_ai.models.bedrock.BedrockConverseModel"):
+            with patch("src.agents.accessibility_agent.settings") as mock_settings:
+                mock_settings.ai_provider = "bedrock"
+                mock_settings.bedrock_model_id = "anthropic.claude-3-haiku-20240307-v1:0"
 
-        # Mock agent.run to raise exception
-        agent.agent = AsyncMock()
-        agent.agent.run = AsyncMock(side_effect=Exception("Claude API rate limit"))
+                agent = AccessibilityAgent()
 
-        page_image_base64 = base64.b64encode(b"img").decode("utf-8")
+                # Mock agent.run to raise exception
+                agent.agent = AsyncMock()
+                agent.agent.run = AsyncMock(side_effect=Exception("Bedrock API throttling"))
 
-        # Should raise exception
-        with pytest.raises(Exception, match="Claude API rate limit"):
-            await agent.process_page(
-                page_num=1,
-                page_markdown="Test",
-                page_image_base64=page_image_base64
-            )
+                page_image_base64 = base64.b64encode(b"img").decode("utf-8")
+
+                # Should raise exception
+                with pytest.raises(Exception, match="Bedrock API throttling"):
+                    await agent.process_page(
+                        page_num=1,
+                        page_markdown="Test",
+                        page_image_base64=page_image_base64
+                    )
 
 
 # ============================================================================
@@ -260,40 +290,42 @@ user_prompt_template: "YAML user: {page_markdown}"
 """
     with patch("builtins.open", mock_open(read_data=yaml_content)) as mock_file:
         with patch("src.agents.accessibility_agent.Agent"):
-            with patch("src.agents.accessibility_agent.settings") as mock_settings:
-                mock_settings.ai_provider = "anthropic"
-                mock_settings.claude_model = "claude-3-5-sonnet-20241022"
+            with patch("pydantic_ai.models.bedrock.BedrockConverseModel"):
+                with patch("src.agents.accessibility_agent.settings") as mock_settings:
+                    mock_settings.ai_provider = "bedrock"
+                    mock_settings.bedrock_model_id = "anthropic.claude-3-haiku-20240307-v1:0"
 
-                agent = AccessibilityAgent()
+                    agent = AccessibilityAgent()
 
-                # Should have opened prompts file
-                mock_file.assert_called()
-                # Check file path contains accessibility_prompts.yaml
-                call_args = str(mock_file.call_args)
-                assert "accessibility_prompts.yaml" in call_args
+                    # Should have opened prompts file
+                    mock_file.assert_called()
+                    # Check file path contains accessibility_prompts.yaml
+                    call_args = str(mock_file.call_args)
+                    assert "accessibility_prompts.yaml" in call_args
 
 
 def test_default_prompts_structure():
     """Test _default_prompts returns correctly structured dict."""
     with patch("builtins.open", side_effect=FileNotFoundError()):
         with patch("src.agents.accessibility_agent.Agent"):
-            with patch("src.agents.accessibility_agent.settings") as mock_settings:
-                mock_settings.ai_provider = "anthropic"
-                mock_settings.claude_model = "claude-3-5-sonnet-20241022"
+            with patch("pydantic_ai.models.bedrock.BedrockConverseModel"):
+                with patch("src.agents.accessibility_agent.settings") as mock_settings:
+                    mock_settings.ai_provider = "bedrock"
+                    mock_settings.bedrock_model_id = "anthropic.claude-3-haiku-20240307-v1:0"
 
-                agent = AccessibilityAgent()
+                    agent = AccessibilityAgent()
 
-                # Get default prompts
-                prompts = agent._default_prompts()
+                    # Get default prompts
+                    prompts = agent._default_prompts()
 
-                # Should have required keys
-                assert "system_prompt" in prompts
-                assert "user_prompt_template" in prompts
+                    # Should have required keys
+                    assert "system_prompt" in prompts
+                    assert "user_prompt_template" in prompts
 
-                # Prompts should contain relevant keywords
-                assert isinstance(prompts["system_prompt"], str)
-                assert isinstance(prompts["user_prompt_template"], str)
-                assert "{page_markdown}" in prompts["user_prompt_template"]
+                    # Prompts should contain relevant keywords
+                    assert isinstance(prompts["system_prompt"], str)
+                    assert isinstance(prompts["user_prompt_template"], str)
+                    assert "{page_markdown}" in prompts["user_prompt_template"]
 
 
 # ============================================================================
@@ -304,18 +336,23 @@ def test_default_prompts_structure():
 def test_get_accessibility_agent_singleton():
     """Test get_accessibility_agent returns same instance."""
     with patch("src.agents.accessibility_agent.Agent"):
-        # Reset singleton
-        import src.agents.accessibility_agent as agent_module
-        agent_module._agent_instance = None
+        with patch("pydantic_ai.models.bedrock.BedrockConverseModel"):
+            with patch("src.agents.accessibility_agent.settings") as mock_settings:
+                mock_settings.ai_provider = "bedrock"
+                mock_settings.bedrock_model_id = "anthropic.claude-3-haiku-20240307-v1:0"
 
-        # First call creates instance
-        agent1 = get_accessibility_agent()
+                # Reset singleton
+                import src.agents.accessibility_agent as agent_module
+                agent_module._agent_instance = None
 
-        # Second call returns same instance
-        agent2 = get_accessibility_agent()
+                # First call creates instance
+                agent1 = get_accessibility_agent()
 
-        # Should be same object
-        assert agent1 is agent2
+                # Second call returns same instance
+                agent2 = get_accessibility_agent()
 
-        # Clean up
-        agent_module._agent_instance = None
+                # Should be same object
+                assert agent1 is agent2
+
+                # Clean up
+                agent_module._agent_instance = None

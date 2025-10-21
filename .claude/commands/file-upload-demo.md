@@ -1,13 +1,58 @@
-# File Upload Demo - Complete API Workflow Walkthrough
+ File Upload Demo - Complete API Workflow Walkthrough
 
 Walk through the complete end-to-end API workflow by uploading and processing a PDF document.
 
 ## Arguments
 
 `<PDF_FILE_PATH>` - Optional path to PDF file (defaults to `project-docs/pdfs/11_structured_programming.pdf`)
+`<production>` - Optional flag: if set to "production", uses production URL (https://pdf.equalify.uic.edu/), otherwise uses localhost
 
-Example: `/file-upload-demo`
-Example: `/file-upload-demo project-docs/pdfs/01_plos_one_covid_xray.pdf`
+Example: `/file-upload-demo` (local with default PDF)
+Example: `/file-upload-demo /path/to/custom.pdf` (local with custom PDF)
+Example: `/file-upload-demo production` (production with default PDF)
+Example: `/file-upload-demo /path/to/custom.pdf production` (production with custom PDF)
+
+---
+
+## Environment Setup
+
+First, determine the API URL based on environment:
+
+```bash
+# Set API_URL based on whether "production" argument is present
+if [[ "$1" == "production" ]] || [[ "$2" == "production" ]]; then
+  API_URL="https://pdf.equalify.uic.edu"
+  ENV_NAME="PRODUCTION"
+else
+  API_URL="http://localhost:8080"
+  ENV_NAME="LOCAL"
+fi
+
+echo "🌍 Running against: $ENV_NAME ($API_URL)"
+```
+
+**IMPORTANT - Curl Usage Notes:**
+
+Due to shell escaping issues with curl, follow these guidelines:
+1. **Never use inline JSON with spaces in -d flag** - Use files or shell variables instead
+2. **For file uploads with metadata** - Keep metadata simple or use variables
+3. **For approval requests** - Always write JSON to file first, then use -d @file
+4. **Test commands** - If curl gives "blank argument" errors, refactor to use files
+
+Example of what NOT to do:
+```bash
+# ❌ FAILS - Spaces in JSON string confuse curl
+curl -d '{"key": "value with spaces"}' ...
+```
+
+Example of what TO do:
+```bash
+# ✅ WORKS - Write JSON to file first
+cat > /tmp/payload.json << 'EOF'
+{"key": "value with spaces"}
+EOF
+curl -d @/tmp/payload.json ...
+```
 
 ---
 
@@ -16,17 +61,21 @@ Example: `/file-upload-demo project-docs/pdfs/01_plos_one_covid_xray.pdf`
 Verify system is ready:
 
 ```bash
-# Check Docker containers
-docker ps --format "table {{.Names}}\t{{.Status}}" | grep equalify-pdf
-
 # Check API health
-curl -s http://localhost:8080/health | jq .
+curl -s $API_URL/health | jq .
 
-# Check queue status
-curl -s http://localhost:8080/api/dev/monitoring/queues | jq .
+# For LOCAL only - Check Docker containers
+if [ "$ENV_NAME" == "LOCAL" ]; then
+  docker ps --format "table {{.Names}}\t{{.Status}}" | grep equalify-pdf
+
+  # Check queue status (dev endpoint only available locally)
+  curl -s $API_URL/api/dev/monitoring/queues | jq .
+fi
 ```
 
 Expected: All services healthy, queues empty
+
+**Note:** Production does not expose dev monitoring endpoints for security reasons.
 
 ---
 
@@ -34,13 +83,32 @@ Expected: All services healthy, queues empty
 
 Upload the PDF to start processing:
 
-```bash
-PDF_FILE="<PDF_FILE_PATH or project-docs/pdfs/11_structured_programming.pdf>"
+**IMPORTANT:** Use a shell script to avoid curl escaping issues with file uploads:
 
-curl -X POST http://localhost:8080/api/documents/submit \
+```bash
+# Set PDF file path (use argument or default)
+PDF_FILE="${1:-project-docs/pdfs/11_structured_programming.pdf}"
+
+# Create submission script
+cat > /tmp/submit_pdf.sh << SCRIPT
+#!/bin/bash
+curl -X POST $API_URL/api/documents/submit \
   -F "file=@$PDF_FILE" \
-  -F 'metadata={"title":"Demo Document","source":"walkthrough"}' \
-  2>/dev/null | jq .
+  -F 'metadata={"title":"Demo","source":"walkthrough"}' \
+  -s | jq .
+SCRIPT
+
+chmod +x /tmp/submit_pdf.sh
+/tmp/submit_pdf.sh | tee /tmp/submit_response.json
+```
+
+Alternative approach (if script method fails):
+```bash
+# Keep metadata simple - no spaces
+curl -X POST $API_URL/api/documents/submit \
+  -F "file=@$PDF_FILE" \
+  -F 'metadata={"title":"Demo","source":"test"}' \
+  -s | jq .
 ```
 
 **Expected Response**:
@@ -55,6 +123,12 @@ curl -X POST http://localhost:8080/api/documents/submit \
 
 **Save the job_id** for next steps.
 
+```bash
+# Extract job_id from response
+JOB_ID=$(cat /tmp/submit_response.json | jq -r '.job_id')
+echo "Job ID: $JOB_ID"
+```
+
 **What happened**:
 - PDF uploaded to S3 temp storage
 - Job record created
@@ -65,12 +139,18 @@ curl -X POST http://localhost:8080/api/documents/submit \
 
 ## Step 3: Monitor PII Scanning
 
-Check job status (wait 2-5 seconds first):
+Check job status (wait 5-10 seconds first for PII scan to complete):
 
 ```bash
-JOB_ID="<job_id from step 2>"
+# Wait for PII scan to complete
+sleep 5
 
-curl -s http://localhost:8080/api/documents/$JOB_ID/status | jq .
+# Check status
+curl -s "$API_URL/api/documents/$JOB_ID/status" | jq .
+
+# If still scanning, wait and check again
+sleep 10
+curl -s "$API_URL/api/documents/$JOB_ID/status" | jq . | tee /tmp/pii_status.json
 ```
 
 **Possible outcomes**:
@@ -105,18 +185,30 @@ curl -s http://localhost:8080/api/documents/$JOB_ID/status | jq .
 
 If status is `awaiting_approval`, submit approval:
 
-```bash
-APPROVAL_TOKEN="<approval_token from step 3>"
+**CRITICAL:** Must use file-based JSON to avoid curl escaping errors:
 
-curl -X POST http://localhost:8080/api/approval/$APPROVAL_TOKEN/approve \
+```bash
+# Extract approval token from PII status
+APPROVAL_TOKEN=$(cat /tmp/pii_status.json | jq -r '.approval_token')
+echo "Approval Token: $APPROVAL_TOKEN"
+
+# Create approval JSON file
+cat > /tmp/approval.json << 'EOF'
+{
+  "decision": "approved",
+  "reviewed_by": "demo@equalify.uic.edu",
+  "justification": "Course material - instructor contact information is acceptable"
+}
+EOF
+
+# Submit approval using file
+curl -X POST "$API_URL/api/approval/$APPROVAL_TOKEN/approve" \
   -H "Content-Type: application/json" \
-  -d '{
-    "decision": "approved",
-    "reviewed_by": "demo@example.com",
-    "justification": "Course material - instructor contact info is acceptable"
-  }' \
-  2>/dev/null | jq .
+  -d @/tmp/approval.json \
+  -s | jq . | tee /tmp/approval_response.json
 ```
+
+**Note:** The approval endpoint may take 10-30 seconds to respond, especially in production. Be patient.
 
 **Expected Response**:
 ```json
@@ -139,14 +231,26 @@ curl -X POST http://localhost:8080/api/approval/$APPROVAL_TOKEN/approve \
 Check processing status (poll every 10-15 seconds):
 
 ```bash
-# Check job status
-curl -s http://localhost:8080/api/documents/$JOB_ID/status | jq .
+# Poll for completion (AI processing takes 2-8 minutes)
+for i in {1..30}; do
+  echo "=== Check $i ($(date +%H:%M:%S)) ==="
+  curl -s "$API_URL/api/documents/$JOB_ID/status" | jq .
 
-# Check queue depth
-curl -s http://localhost:8080/api/dev/monitoring/queues | jq .
+  STATUS=$(curl -s "$API_URL/api/documents/$JOB_ID/status" | jq -r '.status')
 
-# Watch logs (optional)
-docker logs equalify-pdf-api-gateway --tail 50 --follow
+  if [ "$STATUS" == "completed" ] || [ "$STATUS" == "failed" ]; then
+    echo "✅ Processing finished with status: $STATUS"
+    break
+  fi
+
+  sleep 15
+done
+
+# For LOCAL only - Check queue depth and logs
+if [ "$ENV_NAME" == "LOCAL" ]; then
+  curl -s $API_URL/api/dev/monitoring/queues | jq .
+  docker logs equalify-pdf-api-gateway --tail 50
+fi
 ```
 
 **Status**: `processing`
@@ -164,6 +268,14 @@ docker logs equalify-pdf-api-gateway --tail 50 --follow
 
 **Typical duration**: 2-8 minutes (depends on page count)
 
+**⚠️ Known Production Issue:**
+As of 2025-10-20, production AI processing is not working correctly:
+- Jobs complete in ~60 seconds (too fast for AI)
+- Confidence score returns 0.0 (should be 0.7-0.9)
+- Processing time returns 0 seconds
+- Output is Docling-only conversion (missing AI enhancements)
+- **Root cause:** Processing worker may be skipping PydanticAI agent step
+
 ---
 
 ## Step 6: Retrieve Results
@@ -172,10 +284,10 @@ Once status changes to `completed`:
 
 ```bash
 # Check final status
-curl -s http://localhost:8080/api/documents/$JOB_ID/status | jq .
+curl -s "$API_URL/api/documents/$JOB_ID/status" | jq .
 
 # Get results
-curl -s http://localhost:8080/api/documents/$JOB_ID/result | jq .
+curl -s "$API_URL/api/documents/$JOB_ID/result" | jq . | tee /tmp/final_result.json
 ```
 
 **Expected Response**:
@@ -200,14 +312,26 @@ curl -s http://localhost:8080/api/documents/$JOB_ID/result | jq .
 Download the processed markdown file to your Downloads folder:
 
 ```bash
+# Extract markdown URL from result
+MARKDOWN_URL=$(cat /tmp/final_result.json | jq -r '.markdown_url')
+echo "Markdown URL: $MARKDOWN_URL"
+
+# Generate output filename with timestamp
+TIMESTAMP=$(date +%Y%m%d_%H%M%S)
+OUTPUT_FILE="~/Downloads/equalify_result_${TIMESTAMP}.md"
+
 # Download Markdown to Downloads folder
-curl -s "<markdown_url>" -o ~/Downloads/result.md
+curl -s "$MARKDOWN_URL" -o "$OUTPUT_FILE"
 
 # Verify file was downloaded
-ls -lh ~/Downloads/result.md
+ls -lh "$OUTPUT_FILE"
+
+# Preview first 30 lines
+echo "=== First 30 lines of output ==="
+head -30 "$OUTPUT_FILE"
 
 # Open in default application
-open ~/Downloads/result.md
+open "$OUTPUT_FILE"
 ```
 
 **Verify**:
@@ -247,7 +371,7 @@ submitted → pii_scanning → awaiting_approval → processing → completed
 If status is `failed`:
 
 ```bash
-curl -s http://localhost:8080/api/documents/$JOB_ID/result | jq .
+curl -s "$API_URL/api/documents/$JOB_ID/result" | jq .
 ```
 
 **Common failures**:
@@ -255,10 +379,18 @@ curl -s http://localhost:8080/api/documents/$JOB_ID/result | jq .
 - Invalid PDF format
 - OCR failures (scanned PDFs)
 - AI processing timeouts
+- S3 upload/download failures
+- AWS Bedrock API errors (production)
 
-Check logs:
+Check logs (LOCAL only):
 ```bash
 docker logs equalify-pdf-api-gateway --tail 100
+```
+
+For production errors, check AWS CloudWatch logs:
+```bash
+# From terraform directory
+make aws-logs
 ```
 
 ---
@@ -268,14 +400,39 @@ docker logs equalify-pdf-api-gateway --tail 100
 **Execution Style**: Act as a tour guide walking the user through the system. Explain what's happening at each step and why it matters.
 
 **Execute these steps**:
-1. Run pre-flight checks and explain system readiness
-2. Submit PDF, capture job_id, and explain what happens behind the scenes
-3. Poll status until not `pii_scanning` and explain PII detection purpose
-4. If `awaiting_approval`, explain why human review is required, then submit approval
-5. Poll status until not `processing` and explain AI enhancement process
-6. Retrieve results and explain what was generated
-7. Download file to ~/Downloads and confirm location
-8. Report complete workflow with timestamps and insights
+1. Determine environment (local vs production) from arguments
+2. Set API_URL and ENV_NAME variables
+3. Run pre-flight checks and explain system readiness
+4. Submit PDF using shell script method to avoid curl escaping issues
+5. Extract job_id and save to variable
+6. Poll status until not `pii_scanning` and explain PII detection purpose
+7. If `awaiting_approval`, extract approval_token and submit approval using file-based JSON
+8. Poll status until not `processing` (expect 2-8 minutes for AI)
+9. Retrieve results and save to /tmp files
+10. Download markdown to ~/Downloads with timestamped filename
+11. Report complete workflow with timestamps and insights
+
+**Critical Implementation Details**:
+
+1. **Always use shell scripts or files for curl with JSON**
+   - Direct curl with -d and JSON strings containing spaces WILL FAIL
+   - Use `cat > file.json << 'EOF'` then `curl -d @file.json`
+   - Or create .sh scripts with curl commands
+
+2. **Variable expansion in heredocs**
+   - Use `<< 'EOF'` (quoted) to prevent variable expansion
+   - Use `<< EOF` (unquoted) if you need variable substitution
+   - For API_URL in scripts, use unquoted heredocs or direct variable substitution
+
+3. **Save all responses to /tmp files**
+   - Use `| tee /tmp/response.json` to save and display
+   - Extract values with jq: `$(cat /tmp/file.json | jq -r '.field')`
+   - Makes debugging easier and allows data flow between steps
+
+4. **Production timing differences**
+   - Production approval endpoint may take 10-30s to respond (be patient)
+   - AI processing should take 2-8 minutes (if faster, it failed silently)
+   - Check confidence_score and processing_time_seconds to verify AI ran
 
 **Narrative Guidelines**:
 - Use friendly, explanatory language ("Now we're submitting the PDF to the API...")
@@ -283,6 +440,7 @@ docker logs equalify-pdf-api-gateway --tail 100
 - Point out what's happening in the background ("The worker is now processing in the `pii_scan` queue...")
 - Celebrate milestones ("✅ PII scan complete! Found 1 email address...")
 - Provide context about timing ("This typically takes 2-5 seconds...")
+- Flag anomalies ("⚠️ Completed in 60s - expected 2-8min for AI processing")
 
 **Report format**:
 ```
@@ -298,4 +456,98 @@ Total time: X minutes
 Confidence: 87% (High)
 
 📝 Your processed document is now in your Downloads folder!
+```
+
+---
+
+## Troubleshooting
+
+### Curl "blank argument where content is expected" Error
+
+**Problem:** When running curl with inline JSON containing spaces:
+```bash
+# ❌ This FAILS
+curl -d '{"key": "value with spaces"}' ...
+```
+
+**Root cause:** Shell escapes and special characters in JSON confuse curl argument parsing
+
+**Solution:** Always use file-based JSON:
+```bash
+# ✅ This WORKS
+cat > /tmp/data.json << 'EOF'
+{"key": "value with spaces"}
+EOF
+curl -d @/tmp/data.json ...
+```
+
+### Production AI Processing Not Working
+
+**Symptoms:**
+- Job completes in ~60 seconds (too fast)
+- `confidence_score: 0.0`
+- `processing_time_seconds: 0`
+- Output is basic Docling conversion only (no AI enhancements)
+
+**Investigation steps:**
+1. Check CloudWatch logs: `cd terraform && make aws-logs`
+2. Look for "Processing worker" startup messages
+3. Check for AWS Bedrock API errors
+4. Verify environment variables (BEDROCK_MODEL_ID, AWS credentials)
+5. Check ECS task configuration
+
+**Known issue (2025-10-20):** Production processing worker appears to skip PydanticAI agent step entirely.
+
+### File Upload Metadata Issues
+
+**Problem:** File upload with complex metadata fails
+
+**Solution:** Keep metadata simple or use a shell script:
+```bash
+# Simple metadata (works)
+curl -F "file=@path.pdf" -F 'metadata={"title":"Demo","source":"test"}' ...
+
+# Complex metadata (use script)
+cat > /tmp/upload.sh << 'SCRIPT'
+#!/bin/bash
+curl -F "file=@$PDF_FILE" \
+  -F 'metadata={"title":"Complex Title","source":"walkthrough"}' \
+  $API_URL/api/documents/submit
+SCRIPT
+chmod +x /tmp/upload.sh
+/tmp/upload.sh
+```
+
+### Approval Endpoint Slow Response
+
+**Symptom:** Approval request hangs or takes 10-30 seconds
+
+**Explanation:** This is normal behavior in production. The endpoint:
+1. Records approval decision in Redis
+2. Moves job to processing queue
+3. May wait for worker to pick up job
+4. Returns success response
+
+**Solution:** Be patient, don't kill the request. Use timeouts:
+```bash
+curl --max-time 60 -d @/tmp/approval.json ...
+```
+
+### Variables Not Expanding in Heredocs
+
+**Problem:** `$API_URL` appears literally in output
+
+**Root cause:** Quoted heredoc `<< 'EOF'` prevents variable expansion
+
+**Solution:** Use unquoted heredoc for variable substitution:
+```bash
+# Variables NOT expanded
+cat > file.sh << 'EOF'
+curl $API_URL/health
+EOF
+
+# Variables expanded
+cat > file.sh << EOF
+curl $API_URL/health
+EOF
 ```

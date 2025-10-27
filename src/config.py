@@ -90,5 +90,8 @@ class Settings(BaseSettings):
     job_ttl_failed: int = Field(ge=3600, le=365*24*3600, default=30*24*3600)      # 30 days for failed jobs, min 1 hour, max 1 year
     job_ttl_denied: int = Field(ge=3600, le=30*24*3600, default=7*24*3600)       # 7 days for denied jobs, min 1 hour, max 30 days
 
+    # Testing Configuration
+    disable_workers: bool = False  # Set to True to disable background workers (for testing)
+
 
 settings = Settings()

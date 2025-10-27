@@ -11,6 +11,7 @@ import pytest
 import pytest_asyncio
 import uuid
 import asyncio
+import os
 from datetime import datetime, timezone
 from unittest.mock import AsyncMock, MagicMock, patch
 from typing import AsyncGenerator
@@ -28,21 +29,58 @@ from src.config import settings
 
 
 # ============================================================================
+# TEST CONFIGURATION - Disable Background Workers
+# ============================================================================
+
+@pytest.fixture(scope="session", autouse=True)
+def disable_background_workers():
+    """Disable background workers for all integration tests.
+
+    Integration tests use real Redis/S3 services but should NOT have live
+    workers consuming from queues. This fixture sets DISABLE_WORKERS=true
+    before any tests run.
+    """
+    os.environ["DISABLE_WORKERS"] = "true"
+    yield
+    # Cleanup: remove the environment variable after tests
+    os.environ.pop("DISABLE_WORKERS", None)
+
+
+# ============================================================================
 # DOCKER SERVICE FIXTURES - Real Infrastructure
 # ============================================================================
 
 @pytest_asyncio.fixture
-async def real_redis_client() -> AsyncGenerator[aioredis.Redis, None]:
-    """Real Redis client connected to Docker service with per-test cleanup."""
-    # Connect to redis service in docker-compose network
+async def real_redis_client(request) -> AsyncGenerator[aioredis.Redis, None]:
+    """Real Redis client connected to Docker service with per-test cleanup.
+
+    When running tests in parallel with pytest-xdist, each worker gets a separate
+    Redis database (0-15) to avoid race conditions from flushall() cleanup.
+    """
+    # Get worker ID from pytest-xdist (e.g., "gw0", "gw1", "gw2", "gw3")
+    # If not using xdist, worker_id will be "master"
+    worker_id = getattr(request.config, 'workerinput', {}).get('workerid', 'master')
+
+    # Map worker ID to Redis database number (0-15)
+    if worker_id == 'master':
+        db = 0  # Single-threaded test run
+    else:
+        # Extract number from "gw0", "gw1", etc.
+        db = int(worker_id.replace('gw', '')) % 16  # Redis has DBs 0-15
+
+    # Connect to specific Redis database for this worker
     redis_url = settings.redis_url
+    if '?' in redis_url:
+        redis_url = f"{redis_url}&db={db}"
+    else:
+        redis_url = f"{redis_url}/{db}"
 
     client = await aioredis.from_url(redis_url, decode_responses=True)
 
     yield client
 
-    # Cleanup: flush all data after each test
-    await client.flushall()
+    # Cleanup: flush only THIS database (not all databases)
+    await client.flushdb()  # Changed from flushall() to flushdb()
     await client.aclose()
 
 
@@ -54,13 +92,24 @@ def real_s3_client():
     endpoint_url = settings.aws_endpoint_url
 
     # Use SYNC boto3 client (not async) - matches existing StorageService
-    s3_client = boto3.client(
-        "s3",
-        endpoint_url=endpoint_url,
-        aws_access_key_id="test",
-        aws_secret_access_key="test",
-        region_name="us-east-1",
-    )
+    # IMPORTANT: Temporarily unset AWS_PROFILE to prevent boto3 from trying to load profiles
+    import os
+    aws_profile_backup = os.environ.get('AWS_PROFILE')
+    if 'AWS_PROFILE' in os.environ:
+        del os.environ['AWS_PROFILE']
+
+    try:
+        s3_client = boto3.client(
+            "s3",
+            endpoint_url=endpoint_url,
+            aws_access_key_id="test",
+            aws_secret_access_key="test",
+            region_name="us-east-1",
+        )
+    finally:
+        # Restore AWS_PROFILE if it was set
+        if aws_profile_backup is not None:
+            os.environ['AWS_PROFILE'] = aws_profile_backup
 
     # Create test buckets
     try:

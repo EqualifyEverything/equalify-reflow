@@ -45,50 +45,59 @@ async def lifespan(app: FastAPI):
     app.state.rate_limiter = RateLimitService(redis=redis_client)
     logger.info("Rate limiter initialized")
 
-    # Startup: Launch background workers
-    logger.info("Starting background workers...")
+    # Startup: Launch background workers (unless disabled for testing)
+    if settings.disable_workers:
+        logger.warning("⚠️  Background workers DISABLED (DISABLE_WORKERS=true)")
+        logger.warning("   This should only be used for integration testing")
+        shutdown_event = None
+        pii_worker_task = None
+        processing_worker_task = None
+        timeout_worker_task = None
+    else:
+        logger.info("Starting background workers...")
 
-    # Create shutdown event to signal graceful shutdown
-    shutdown_event = asyncio.Event()
+        # Create shutdown event to signal graceful shutdown
+        shutdown_event = asyncio.Event()
 
-    # Pass shutdown event to workers
-    pii_worker_task = asyncio.create_task(start_pii_worker(shutdown_event))
-    processing_worker_task = asyncio.create_task(start_processing_worker(shutdown_event))
-    timeout_worker_task = asyncio.create_task(start_timeout_worker(shutdown_event))
-    logger.info("PII, Processing, and Timeout worker tasks created")
+        # Pass shutdown event to workers
+        pii_worker_task = asyncio.create_task(start_pii_worker(shutdown_event))
+        processing_worker_task = asyncio.create_task(start_processing_worker(shutdown_event))
+        timeout_worker_task = asyncio.create_task(start_timeout_worker(shutdown_event))
+        logger.info("PII, Processing, and Timeout worker tasks created")
 
     yield
 
-    # Shutdown: Graceful shutdown with timeout
-    logger.info("Initiating graceful shutdown of background workers...")
-    shutdown_event.set()
+    # Shutdown: Graceful shutdown with timeout (only if workers were started)
+    if not settings.disable_workers and shutdown_event is not None:
+        logger.info("Initiating graceful shutdown of background workers...")
+        shutdown_event.set()
 
-    # Wait for workers to finish current job (max 30 seconds)
-    try:
-        await asyncio.wait_for(
-            asyncio.gather(
-                pii_worker_task,
-                processing_worker_task,
-                timeout_worker_task,
-                return_exceptions=True
-            ),
-            timeout=30.0
-        )
-        logger.info("All background workers stopped gracefully")
-    except asyncio.TimeoutError:
-        logger.warning("Graceful shutdown timeout, forcing cancellation")
-        pii_worker_task.cancel()
-        processing_worker_task.cancel()
-        timeout_worker_task.cancel()
+        # Wait for workers to finish current job (max 30 seconds)
         try:
-            await asyncio.gather(
-                pii_worker_task,
-                processing_worker_task,
-                timeout_worker_task,
-                return_exceptions=True
+            await asyncio.wait_for(
+                asyncio.gather(
+                    pii_worker_task,
+                    processing_worker_task,
+                    timeout_worker_task,
+                    return_exceptions=True
+                ),
+                timeout=30.0
             )
-        except Exception as e:
-            logger.error(f"Error during forced shutdown: {e}")
+            logger.info("All background workers stopped gracefully")
+        except asyncio.TimeoutError:
+            logger.warning("Graceful shutdown timeout, forcing cancellation")
+            pii_worker_task.cancel()
+            processing_worker_task.cancel()
+            timeout_worker_task.cancel()
+            try:
+                await asyncio.gather(
+                    pii_worker_task,
+                    processing_worker_task,
+                    timeout_worker_task,
+                    return_exceptions=True
+                )
+            except Exception as e:
+                logger.error(f"Error during forced shutdown: {e}")
 
 
 # Create FastAPI app with lifespan

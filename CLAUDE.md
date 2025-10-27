@@ -181,10 +181,12 @@ All services communicate via Docker DNS:
 - Tests business logic only
 
 **Integration Tests** (`tests/integration/`):
-- Real Redis + S3 (via testcontainers)
-- Medium speed (<5s per test)
-- Catches serialization bugs, race conditions
-- AI/ML still mocked (expensive)
+- **Uses:** Python testcontainers library (redis:7-alpine, localstack)
+- **Execution:** Host machine via `make test-integration` (not inside Docker)
+- **Isolation:** Fresh containers per test session, true test isolation
+- **Services:** Real Redis + Real S3 (LocalStack), AI/ML mocked
+- **Speed:** ~7 seconds total (19 tests), no shared state issues
+- **Benefits:** Catches serialization bugs, race conditions, Redis atomicity
 
 **E2E Tests** (`tests/e2e/`):
 - Full workflows with minimal mocking
@@ -226,8 +228,8 @@ from tests.conftest_fixtures.helpers import (
 # Fast feedback (before commit)
 make test-fast          # ~30s with parallelization
 
-# Before opening PR
-make test-integration   # ~2min with real Redis/S3
+# Before opening PR (requires Docker Desktop running)
+make test-integration   # ~7s with testcontainers
 
 # Before merging
 make test-e2e           # ~5min full workflows
@@ -235,8 +237,11 @@ make test-e2e           # ~5min full workflows
 # Run specific test
 uv run pytest tests/unit/services/test_storage_service.py::test_name -v
 
+# Run integration tests directly
+uv run pytest tests/integration -m integration -v
+
 # Debug with verbose output
-uv run pytest tests/path/to/test.py -vv -s
+uv run pytest tests/path/to/test.py -vvs
 ```
 
 ### Test Markers

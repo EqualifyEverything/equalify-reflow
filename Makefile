@@ -84,10 +84,11 @@ test-fast:
 # Alias for test-fast
 test-unit: test-fast
 
-# Run integration tests (real Redis/S3, <2min with parallelization, runs in Docker)
+# Run integration tests (testcontainers on host, <2min)
 test-integration:
-	@echo "Running integration tests (real Redis/S3, <2min)..."
-	docker compose -f docker-compose.yml -f docker-compose.dev.yml exec api-gateway uv run pytest tests/integration -m integration -v --tb=short --maxfail=5 -n 4
+	@echo "Running integration tests with testcontainers..."
+	@echo "NOTE: Docker Desktop must be running on host machine"
+	uv run pytest tests/integration -m integration -v --tb=short --maxfail=5
 
 # Run E2E tests (full workflows, <5min, runs in Docker)
 test-e2e:

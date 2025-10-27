@@ -1,7 +1,7 @@
 """Shared fixtures for integration tests.
 
 Provides fixtures for:
-- Real Redis and S3 clients connected to Docker services
+- Real Redis and S3 via testcontainers (true isolation)
 - Service instances with real infrastructure (mocked AI only)
 - Test data generators
 - Cleanup helpers
@@ -10,13 +10,14 @@ Provides fixtures for:
 import pytest
 import pytest_asyncio
 import uuid
-import asyncio
 import os
 from datetime import datetime, timezone
 from unittest.mock import AsyncMock, MagicMock, patch
 from typing import AsyncGenerator
 import redis.asyncio as aioredis
 import boto3
+from testcontainers.redis import RedisContainer
+from testcontainers.localstack import LocalStackContainer
 
 from src.services.storage_service import StorageService
 from src.services.queue_service import QueueService
@@ -47,69 +48,79 @@ def disable_background_workers():
 
 
 # ============================================================================
-# DOCKER SERVICE FIXTURES - Real Infrastructure
+# TESTCONTAINER FIXTURES - Isolated Infrastructure
+# ============================================================================
+
+@pytest.fixture(scope="session")
+def redis_container():
+    """Session-scoped Redis container via testcontainers.
+
+    Container starts once per test session, providing isolated Redis instance.
+    Testcontainers automatically assigns random port to avoid conflicts.
+    """
+    with RedisContainer("redis:7-alpine") as redis:
+        yield redis
+
+
+@pytest.fixture(scope="session")
+def localstack_container():
+    """Session-scoped LocalStack container via testcontainers.
+
+    Container starts once per test session, providing isolated S3 service.
+    """
+    with LocalStackContainer(image="localstack/localstack:latest") as localstack:
+        localstack.with_services("s3")
+        yield localstack
+
+
+# ============================================================================
+# CLIENT FIXTURES - Fresh Clients Per Test
 # ============================================================================
 
 @pytest_asyncio.fixture
-async def real_redis_client(request) -> AsyncGenerator[aioredis.Redis, None]:
-    """Real Redis client connected to Docker service with per-test cleanup.
+async def real_redis_client(redis_container) -> AsyncGenerator[aioredis.Redis, None]:
+    """Real Redis client connected to testcontainer with per-test cleanup.
 
-    When running tests in parallel with pytest-xdist, each worker gets a separate
-    Redis database (0-15) to avoid race conditions from flushall() cleanup.
+    Each test gets a fresh Redis database with automatic cleanup before and after.
+    No shared state between tests - true isolation.
     """
-    # Get worker ID from pytest-xdist (e.g., "gw0", "gw1", "gw2", "gw3")
-    # If not using xdist, worker_id will be "master"
-    worker_id = getattr(request.config, 'workerinput', {}).get('workerid', 'master')
+    # Build Redis connection URL from testcontainer
+    host = redis_container.get_container_host_ip()
+    port = redis_container.get_exposed_port(6379)
+    connection_url = f"redis://{host}:{port}"
 
-    # Map worker ID to Redis database number (0-15)
-    if worker_id == 'master':
-        db = 0  # Single-threaded test run
-    else:
-        # Extract number from "gw0", "gw1", etc.
-        db = int(worker_id.replace('gw', '')) % 16  # Redis has DBs 0-15
+    client = await aioredis.from_url(connection_url, decode_responses=True)
 
-    # Connect to specific Redis database for this worker
-    redis_url = settings.redis_url
-    if '?' in redis_url:
-        redis_url = f"{redis_url}&db={db}"
-    else:
-        redis_url = f"{redis_url}/{db}"
-
-    client = await aioredis.from_url(redis_url, decode_responses=True)
+    # Cleanup before test (fresh start)
+    await client.flushdb()
 
     yield client
 
-    # Cleanup: flush only THIS database (not all databases)
-    await client.flushdb()  # Changed from flushall() to flushdb()
+    # Cleanup after test (prevent state leakage)
+    await client.flushdb()
     await client.aclose()
 
 
 @pytest.fixture
-def real_s3_client():
-    """Real S3 client connected to LocalStack Docker service with per-test cleanup."""
-    # Connect to localstack service in docker-compose network
-    # AWS_ENDPOINT_URL is set in docker-compose.dev.yml
-    endpoint_url = settings.aws_endpoint_url
+def real_s3_client(localstack_container):
+    """Real S3 client connected to LocalStack testcontainer with per-test cleanup.
 
-    # Use SYNC boto3 client (not async) - matches existing StorageService
-    # IMPORTANT: Temporarily unset AWS_PROFILE to prevent boto3 from trying to load profiles
-    import os
-    aws_profile_backup = os.environ.get('AWS_PROFILE')
-    if 'AWS_PROFILE' in os.environ:
-        del os.environ['AWS_PROFILE']
+    Each test gets a fresh S3 environment with buckets pre-created.
+    Testcontainers handles container lifecycle and cleanup.
+    """
+    # Build LocalStack endpoint URL from testcontainer
+    host = localstack_container.get_container_host_ip()
+    port = localstack_container.get_exposed_port(4566)
+    endpoint_url = f"http://{host}:{port}"
 
-    try:
-        s3_client = boto3.client(
-            "s3",
-            endpoint_url=endpoint_url,
-            aws_access_key_id="test",
-            aws_secret_access_key="test",
-            region_name="us-east-1",
-        )
-    finally:
-        # Restore AWS_PROFILE if it was set
-        if aws_profile_backup is not None:
-            os.environ['AWS_PROFILE'] = aws_profile_backup
+    # Create S3 client (no AWS_PROFILE issues with testcontainers)
+    s3_client = boto3.client(
+        "s3",
+        endpoint_url=endpoint_url,
+        aws_access_key_id="test",
+        aws_secret_access_key="test",
+        region_name="us-east-1",
+    )
 
     # Create test buckets
     try:
@@ -137,7 +148,7 @@ def real_s3_client():
 
 @pytest_asyncio.fixture
 async def storage_service(real_s3_client):
-    """Create StorageService with REAL S3 (LocalStack)."""
+    """Create StorageService with REAL S3 (testcontainer LocalStack)."""
     return StorageService(
         s3_client=real_s3_client,
         temp_bucket=settings.s3_temp_bucket,
@@ -147,13 +158,13 @@ async def storage_service(real_s3_client):
 
 @pytest_asyncio.fixture
 async def queue_service(real_redis_client):
-    """Create QueueService with REAL Redis."""
+    """Create QueueService with REAL Redis (testcontainer)."""
     return QueueService(redis_client=real_redis_client)
 
 
 @pytest_asyncio.fixture
 async def job_service(real_redis_client):
-    """Create JobService with REAL Redis."""
+    """Create JobService with REAL Redis (testcontainer)."""
     return JobService(redis_client=real_redis_client)
 
 

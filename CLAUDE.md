@@ -635,11 +635,11 @@ For MCP integration, use these library IDs:
 ## Documentation
 
 Key docs in `docs/`:
-- [Infrastructure Setup](docs/infrastructure-setup.md) - Complete setup guide
-- [Architecture](docs/architecture.md) - Detailed system design
-- [Testing Strategy](docs/testing-strategy.md) - Test organization
-- [CI/CD](docs/ci-cd.md) - GitHub Actions workflows
-- [Contributing](CONTRIBUTING.md) - Development workflow
+- [Environment Setup](docs/environment-setup.md) - Complete setup guide with local dev and AWS operations
+- [Architecture](docs/architecture.md) - Detailed system design with AWS Bedrock integration
+- [CI/CD](docs/ci-cd.md) - Testing strategy, test tiers, and GitHub Actions workflows
+- [Contributing](CONTRIBUTING.md) - Development workflow and code standards
+- [AWS Guide](docs/aws-guide.md) - AWS deployment and operations
 
 ## Project Status
 

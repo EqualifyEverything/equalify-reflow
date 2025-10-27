@@ -2,7 +2,7 @@
 
 [![Test Suite](https://github.com/EqualifyEverything/equalify-pdf-converter/actions/workflows/test.yml/badge.svg)](https://github.com/EqualifyEverything/equalify-pdf-converter/actions/workflows/test.yml)
 
-> ⚠️ **ACTIVE DEVELOPMENT** - This project is currently in Phase 2 development. Core infrastructure is complete, but API endpoints and processing workers are still being implemented. See [Project Status](docs/project-status.md) for current progress.
+> ⚠️ **ACTIVE DEVELOPMENT** - This project is currently in Phase 2 development. Core infrastructure is complete, but API endpoints and processing workers are still being implemented. See Project Status section below for current progress.
 
 Transform PDF documents into accessible, semantic HTML for the University of Illinois Chicago (UIC).
 
@@ -120,19 +120,15 @@ See [Architecture Overview](docs/architecture.md) for detailed system design.
 ## Documentation
 
 ### Getting Started
-- **[Infrastructure Setup](docs/infrastructure-setup.md)** - Complete setup guide with troubleshooting
+- **[Environment Setup](docs/environment-setup.md)** - Complete setup guide with troubleshooting
 - **[Contributing Guidelines](CONTRIBUTING.md)** - Development workflow and code standards
-- **[Project Status](docs/project-status.md)** - Current phase and roadmap
 
 ### Technical Documentation
-- **[Architecture Overview](docs/architecture.md)** - Detailed system design and data flows
-- **[CI/CD Pipeline](docs/ci-cd.md)** - Testing strategy and GitHub Actions workflows
-- **[Testing Strategy](docs/testing-strategy.md)** - Test organization and best practices
+- **[Architecture Overview](docs/architecture.md)** - Detailed system design, data flows, and AWS Bedrock integration
+- **[CI/CD Pipeline](docs/ci-cd.md)** - Testing strategy, test tiers, and GitHub Actions workflows
 
 ### AWS Deployment
 - **[AWS Guide](docs/aws-guide.md)** - Complete deployment, testing, and operations guide
-- **[AWS Bedrock Integration](docs/aws-bedrock-summary.md)** - Using Claude via AWS Bedrock
-- **[Bedrock Migration Guide](docs/aws-bedrock-migration.md)** - Detailed migration from Anthropic API
 
 ### Infrastructure Configuration
 - **[Redis Configuration](infrastructure/redis/README.md)** - Redis setup and operations
@@ -173,7 +169,7 @@ See [Contributing Guidelines](CONTRIBUTING.md) for detailed workflow.
 
 Having issues?
 
-1. Check [Infrastructure Setup Guide](docs/infrastructure-setup.md)
+1. Check [Environment Setup Guide](docs/environment-setup.md)
 2. Run `make health` to validate infrastructure
 3. Review logs: `make logs` or `make logs-api`
 4. Try `make help` for all available commands
@@ -199,8 +195,6 @@ Having issues?
 **Planned:**
 - 📋 Phase 3: Frontend application (Astro + ShadCN)
 - 📋 Phase 4: AWS ECS deployment
-
-See [Project Status](docs/project-status.md) for detailed roadmap.
 
 ---
 

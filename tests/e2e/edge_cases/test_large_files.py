@@ -109,15 +109,18 @@ class TestLargeFileHandling:
 
     @pytest.mark.slow
     @pytest.mark.asyncio
+    @pytest.mark.timeout(60)  # Extend timeout for large file generation
+    @pytest.mark.xdist_group(name="large_files")  # Force serial execution in xdist
     async def test_150mb_pdf_rejected(self, storage_service, mock_s3_client, mocker, large_file_lock):
         """Test that significantly oversized file is rejected.
 
         Note: This test generates a 150MB PDF which can cause OOM in parallel execution.
-        Filelock ensures it runs sequentially with other large file tests.
+        The xdist_group marker and filelock ensure serial execution to prevent memory exhaustion.
+        If crashes occur, run with: pytest tests/e2e/edge_cases/test_large_files.py -v
         """
         with large_file_lock:
             # Generate 150MB file (well over limit)
-            # This is memory-intensive - lock prevents parallel execution
+            # This is memory-intensive - xdist_group ensures serial execution
             huge_pdf = generate_large_pdf(150)
             file = BytesIO(huge_pdf)
 
@@ -179,8 +182,13 @@ class TestLargeFileHandling:
 
     @pytest.mark.slow
     @pytest.mark.asyncio
+    @pytest.mark.timeout(60)  # Extend timeout for large file generation
+    @pytest.mark.xdist_group(name="large_files")  # Force serial execution in xdist
     async def test_large_file_upload_timeout(self, mocker, large_file_lock):
-        """Test handling of upload timeout with large file."""
+        """Test handling of upload timeout with large file.
+
+        Note: Generates 95MB PDF - marked with xdist_group for serial execution.
+        """
         with large_file_lock:
             large_pdf = generate_large_pdf(95)
             file = BytesIO(large_pdf)

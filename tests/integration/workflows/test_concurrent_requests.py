@@ -9,11 +9,15 @@ Tests scenarios using REAL Redis (via testcontainers):
 
 These tests validate system behavior under concurrent access patterns
 to ensure data consistency and prevent race conditions.
+
+NOTE: These tests require Docker resources and should be run with limited
+parallelism to avoid testcontainers conflicts. Use: pytest -n 2 tests/integration/workflows/
 """
 
 import pytest
 import asyncio
 import uuid
+import os
 from datetime import datetime, timezone, timedelta
 
 from src.shared.models.queue import PIIQueuePayload, ProcessingQueuePayload
@@ -29,6 +33,7 @@ from src.shared.constants.statuses import (
 
 @pytest.mark.integration
 @pytest.mark.slow
+@pytest.mark.xdist_group(name="concurrent_integration")  # Limit parallelism for testcontainers
 class TestConcurrentSubmissions:
     """Tests for concurrent PDF submissions using REAL Redis."""
 
@@ -88,6 +93,7 @@ class TestConcurrentSubmissions:
 
 @pytest.mark.integration
 @pytest.mark.slow
+@pytest.mark.xdist_group(name="concurrent_integration")  # Limit parallelism for testcontainers
 class TestRaceConditionDoubleApproval:
     """Tests for race conditions in approval workflow using REAL Redis."""
 
@@ -198,6 +204,7 @@ class TestRaceConditionDoubleApproval:
 
 @pytest.mark.integration
 @pytest.mark.slow
+@pytest.mark.xdist_group(name="concurrent_integration")  # Limit parallelism for testcontainers
 class TestConcurrentStatusUpdates:
     """Tests for concurrent job status transitions in REAL Redis."""
 
@@ -269,6 +276,7 @@ class TestConcurrentStatusUpdates:
 
 @pytest.mark.integration
 @pytest.mark.slow
+@pytest.mark.xdist_group(name="concurrent_integration")  # Limit parallelism for testcontainers
 class TestConcurrentTokenValidation:
     """Tests for concurrent approval token validation using REAL Redis."""
 
@@ -367,6 +375,7 @@ class TestConcurrentTokenValidation:
 
 @pytest.mark.integration
 @pytest.mark.slow
+@pytest.mark.xdist_group(name="concurrent_integration")  # Limit parallelism for testcontainers
 class TestHighConcurrency:
     """Tests for high concurrency scenarios using REAL Redis."""
 

@@ -354,9 +354,13 @@ class TestResourceCleanupOnExceptions:
         assert exception_caught
 
     @pytest.mark.asyncio
-    async def test_cleanup_on_worker_exception(self):
+    @pytest.mark.timeout(15)  # Extend timeout for this test (worker sleeps 5s on error)
+    async def test_cleanup_on_worker_exception(self, mocker):
         """Test that resources are cleaned up when worker raises exception."""
         from src.workers.pii_worker import PIIWorker
+
+        # Mock WORKER_SLEEP_SECONDS to avoid long waits
+        mocker.patch("src.workers.pii_worker.WORKER_SLEEP_SECONDS", 0.1)
 
         mock_redis = AsyncMock()
         mock_s3 = MagicMock()
@@ -381,22 +385,25 @@ class TestResourceCleanupOnExceptions:
         # Start worker
         worker_task = asyncio.create_task(worker.start())
 
-        # Wait for worker to start and hit error multiple times
-        # Worker continues running despite errors (by design), so we wait
-        # for it to process a few error cycles
-        for _ in range(30):  # 30 * 0.05s = 1.5s max wait
+        # Wait for worker to start and hit error at least once
+        # With mocked 0.1s sleep, this should complete quickly
+        for _ in range(50):  # 50 * 0.05s = 2.5s max wait
             await asyncio.sleep(0.05)
-            if queue_service.dequeue.call_count >= 2:  # Hit error at least twice
+            if queue_service.dequeue.call_count >= 1:  # Hit error at least once
                 break
 
         # Stop worker (worker continues running despite errors)
         worker.stop()
 
-        # Wait for worker to finish
+        # Wait for worker to finish (increased timeout for safety)
         try:
-            await asyncio.wait_for(worker_task, timeout=1.0)
+            await asyncio.wait_for(worker_task, timeout=2.0)
         except asyncio.TimeoutError:
             worker_task.cancel()
+            try:
+                await worker_task
+            except asyncio.CancelledError:
+                pass
 
         # Worker should have stopped despite errors
         assert worker.running is False

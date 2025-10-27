@@ -1,4 +1,4 @@
-.PHONY: help dev prod up down logs health test test-fast test-unit test-integration test-e2e test-slow test-all clean build shell test-docker logs-api grafana-url prometheus-url metrics-url coverage coverage-html coverage-report aws-health aws-logs aws-status aws-deploy aws-shell localstack-debug
+.PHONY: help dev prod up down logs health test test-fast test-unit test-integration test-concurrent test-e2e test-large-files test-slow test-all clean build shell test-docker logs-api grafana-url prometheus-url metrics-url coverage coverage-html coverage-report aws-health aws-logs aws-status aws-deploy aws-shell localstack-debug
 
 # Default target
 help:
@@ -13,13 +13,15 @@ help:
 	@echo "  make test         - Run tests locally"
 	@echo ""
 	@echo "Testing & Coverage:"
-	@echo "  make test         - Run all tests"
+	@echo "  make test         - Run all tests (excludes concurrent & large file tests)"
 	@echo "  make test-fast    - Run fast unit tests in Docker (<30s with parallelization)"
 	@echo "  make test-unit    - Run unit tests only (same as test-fast)"
-	@echo "  make test-integration - Run integration tests (real Redis/S3, ~5min)"
-	@echo "  make test-e2e     - Run E2E tests (full workflows, ~10min)"
+	@echo "  make test-integration - Run integration tests (real Redis/S3, ~2min)"
+	@echo "  make test-concurrent - Run concurrent integration tests (single-threaded, ~1min)"
+	@echo "  make test-e2e     - Run E2E tests (full workflows, ~5min, excludes large files)"
+	@echo "  make test-large-files - Run large file edge case tests (single-threaded, ~2min)"
 	@echo "  make test-slow    - Run slow/E2E tests (same as test-e2e)"
-	@echo "  make test-all     - Run all tests in Docker (comprehensive)"
+	@echo "  make test-all     - Run all tests including special tests (comprehensive)"
 	@echo "  make coverage     - Run tests with coverage report"
 	@echo "  make coverage-html - Generate and open HTML coverage report"
 	@echo "  make coverage-report - Show coverage summary"
@@ -73,8 +75,9 @@ health:
 	./scripts/health-check.sh
 
 # Run all tests (with parallelization, runs in Docker)
+# Note: Excludes concurrent and large file tests which need single-threaded execution
 test:
-	docker compose -f docker-compose.yml -f docker-compose.dev.yml exec api-gateway uv run pytest tests/ -v -n auto
+	docker compose -f docker-compose.yml -f docker-compose.dev.yml exec api-gateway uv run pytest tests/ -v -n auto --ignore=tests/integration/workflows/test_concurrent_requests.py --ignore=tests/e2e/edge_cases/test_large_files.py
 
 # Run fast unit tests (<30s with parallelization, runs in Docker)
 test-fast:
@@ -88,20 +91,38 @@ test-unit: test-fast
 test-integration:
 	@echo "Running integration tests with testcontainers..."
 	@echo "NOTE: Docker Desktop must be running on host machine"
-	uv run pytest tests/integration -m integration -v --tb=short --maxfail=5
+	uv run pytest tests/integration -m integration -v --tb=short --maxfail=5 --ignore=tests/integration/workflows/test_concurrent_requests.py
+
+# Run concurrent integration tests (requires Docker, single-threaded to avoid resource conflicts)
+test-concurrent:
+	@echo "Running concurrent integration tests (single-threaded)..."
+	@echo "NOTE: These tests use testcontainers and must run without parallelization"
+	uv run pytest tests/integration/workflows/test_concurrent_requests.py -v --tb=short
 
 # Run E2E tests (full workflows, <5min, runs in Docker)
+# Excludes large file tests which need single-threaded execution
 test-e2e:
 	@echo "Running E2E tests (full workflows, <5min)..."
-	docker compose -f docker-compose.yml -f docker-compose.dev.yml exec api-gateway uv run pytest tests/e2e -m slow -v --tb=short --maxfail=3 -n 2
+	docker compose -f docker-compose.yml -f docker-compose.dev.yml exec api-gateway uv run pytest tests/e2e -m slow -v --tb=short --maxfail=3 -n 2 --ignore=tests/e2e/edge_cases/test_large_files.py
+
+# Run large file edge case tests (single-threaded to avoid OOM)
+test-large-files:
+	@echo "Running large file tests (single-threaded)..."
+	docker compose -f docker-compose.yml -f docker-compose.dev.yml exec api-gateway uv run pytest tests/e2e/edge_cases/test_large_files.py -v --tb=short
 
 # Alias for test-e2e
 test-slow: test-e2e
 
 # Run all tests in Docker (most comprehensive, <2min with parallelization)
+# Excludes concurrent and large file tests which need single-threaded execution
 test-all:
 	@echo "Running all tests in Docker with parallelization..."
-	docker compose -f docker-compose.yml -f docker-compose.dev.yml exec api-gateway sh -c "rm -f .coverage .coverage.* && uv run pytest tests/ -v -n 4"
+	docker compose -f docker-compose.yml -f docker-compose.dev.yml exec api-gateway sh -c "rm -f .coverage .coverage.* && uv run pytest tests/ -v -n 4 --ignore=tests/integration/workflows/test_concurrent_requests.py --ignore=tests/e2e/edge_cases/test_large_files.py"
+	@echo "\n=== Running concurrent integration tests (single-threaded) ==="
+	@$(MAKE) test-concurrent
+	@echo "\n=== Running large file tests (single-threaded) ==="
+	@$(MAKE) test-large-files
+	@echo "\n✅ Complete test suite finished!"
 
 # Redis CLI
 redis-cli:

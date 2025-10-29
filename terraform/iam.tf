@@ -97,3 +97,72 @@ resource "aws_iam_role_policy" "ecs_task_cloudwatch" {
     ]
   })
 }
+
+# SSM Permissions for ECS Exec (allows container to communicate with Session Manager)
+# This lets the container "answer the phone" when you try to exec into it
+resource "aws_iam_role_policy" "ecs_task_ssm" {
+  name = "${var.project_name}-ecs-task-ssm"
+  role = aws_iam_role.ecs_task_role.id
+
+  policy = jsonencode({
+    Version = "2012-10-17"
+    Statement = [
+      {
+        Effect = "Allow"
+        Action = [
+          "ssmmessages:CreateControlChannel", # Opens a control channel for commands
+          "ssmmessages:CreateDataChannel",    # Opens a data channel for input/output
+          "ssmmessages:OpenControlChannel",   # Keeps control channel open
+          "ssmmessages:OpenDataChannel"       # Keeps data channel open
+        ]
+        Resource = "*" # These are session-level permissions, no specific resource
+      }
+    ]
+  })
+}
+
+# IAM Policy for User Access Control (attach to specific IAM users/roles)
+# This controls WHO can actually connect via exec
+resource "aws_iam_policy" "ecs_exec_access" {
+  name        = "${var.project_name}-ecs-exec-access"
+  description = "Allows ECS exec access for authorized users (debugging production)"
+
+  policy = jsonencode({
+    Version = "2012-10-17"
+    Statement = [
+      {
+        Effect = "Allow"
+        Action = [
+          "ecs:ExecuteCommand",    # Permission to run exec command
+          "ecs:DescribeTasks",     # Permission to see task details
+          "ecs:DescribeServices"   # Permission to see service info
+        ]
+        Resource = [
+          "arn:aws:ecs:${var.aws_region}:${data.aws_caller_identity.current.account_id}:task/${aws_ecs_cluster.main.name}/*",
+          "arn:aws:ecs:${var.aws_region}:${data.aws_caller_identity.current.account_id}:service/${aws_ecs_cluster.main.name}/*"
+        ]
+      },
+      {
+        Effect = "Allow"
+        Action = [
+          "ssm:StartSession" # Permission to start an SSM session
+        ]
+        Resource = [
+          "arn:aws:ecs:${var.aws_region}:${data.aws_caller_identity.current.account_id}:task/${aws_ecs_cluster.main.name}/*",
+          "arn:aws:ssm:${var.aws_region}::document/AmazonECS-ExecuteInteractiveCommand"
+        ]
+      }
+    ]
+  })
+
+  tags = {
+    Name = "${var.project_name}-ecs-exec-access"
+  }
+}
+
+# Output the policy ARN so you know what to attach to users
+# You'll manually attach this to IAM users who need exec access
+output "ecs_exec_policy_arn" {
+  description = "IAM policy ARN for ECS exec access - attach this to users who need shell access"
+  value       = aws_iam_policy.ecs_exec_access.arn
+}

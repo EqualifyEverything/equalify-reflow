@@ -125,6 +125,11 @@ resource "aws_ecs_service" "app" {
   desired_count   = var.ecs_desired_count
   launch_type     = "FARGATE"
 
+  # Enable ECS Exec for interactive debugging
+  # This allows authorized users to run commands inside the container
+  # NOTE: Exec session logs are automatically sent to CloudWatch (see ecs_exec_logs log group)
+  enable_execute_command = true
+
   network_configuration {
     subnets          = module.vpc.private_subnets
     security_groups  = [aws_security_group.ecs_tasks.id]
@@ -153,7 +158,8 @@ resource "aws_ecs_service" "app" {
   depends_on = [
     aws_lb_listener.http,
     aws_iam_role_policy.ecs_task_s3,
-    aws_iam_role_policy.ecs_task_cloudwatch
+    aws_iam_role_policy.ecs_task_cloudwatch,
+    aws_cloudwatch_log_group.ecs_exec_logs
   ]
 
   tags = {

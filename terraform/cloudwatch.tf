@@ -661,3 +661,21 @@ output "bedrock_dashboard_url" {
   description = "URL to CloudWatch Dashboard for Bedrock monitoring"
   value = length(aws_cloudwatch_dashboard.bedrock_monitoring) > 0 ? "https://console.aws.amazon.com/cloudwatch/home?region=${var.aws_region}#dashboards:name=${aws_cloudwatch_dashboard.bedrock_monitoring[0].dashboard_name}" : "Dashboard temporarily disabled (will be re-enabled after fixing metric configurations)"
 }
+
+# CloudWatch Log Group for ECS Exec Session Logging
+# This creates an audit trail of all commands run via ECS exec
+resource "aws_cloudwatch_log_group" "ecs_exec_logs" {
+  name              = "/ecs/exec/${var.project_name}"
+  retention_in_days = var.environment == "production" ? 90 : 7 # Keep exec logs for 90 days in prod
+
+  tags = {
+    Name        = "${var.project_name}-exec-logs"
+    Description = "Audit trail for ECS exec sessions"
+  }
+}
+
+# Output the log group so you know where to find exec session logs
+output "ecs_exec_logs_url" {
+  description = "CloudWatch Logs URL for ECS exec sessions (audit trail)"
+  value       = "https://console.aws.amazon.com/cloudwatch/home?region=${var.aws_region}#logsV2:log-groups/log-group/${replace(aws_cloudwatch_log_group.ecs_exec_logs.name, "/", "$252F")}"
+}

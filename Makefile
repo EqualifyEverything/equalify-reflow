@@ -187,11 +187,19 @@ AWS_PROFILE ?= default
 
 aws-health:
 	@echo "Checking AWS deployment health..."
-	AWS_PROFILE=$(AWS_PROFILE) ./scripts/health-check.sh --prod
+	@AWS_PROFILE=$(AWS_PROFILE) ./scripts/health-check.sh --prod || \
+		(echo "\nCommand failed. Checking if SSO login needed..." && \
+		 AWS_PROFILE=$(AWS_PROFILE) aws sso login && \
+		 echo "Retrying health check..." && \
+		 AWS_PROFILE=$(AWS_PROFILE) ./scripts/health-check.sh --prod)
 
 aws-logs:
 	@echo "Tailing CloudWatch logs (Ctrl+C to exit)..."
-	AWS_PROFILE=$(AWS_PROFILE) aws logs tail /ecs/equalify-pdf --follow --region us-east-1
+	@AWS_PROFILE=$(AWS_PROFILE) aws logs tail /ecs/equalify-pdf --follow --region us-east-1 || \
+		(echo "\nCommand failed. Checking if SSO login needed..." && \
+		 AWS_PROFILE=$(AWS_PROFILE) aws sso login && \
+		 echo "Retrying log tail..." && \
+		 AWS_PROFILE=$(AWS_PROFILE) aws logs tail /ecs/equalify-pdf --follow --region us-east-1)
 
 aws-status:
 	@echo "ECS Service Status:"
@@ -200,7 +208,16 @@ aws-status:
 		--services equalify-pdf-service \
 		--region us-east-1 \
 		--query 'services[0].{Desired:desiredCount,Running:runningCount,Status:status,Deployment:deployments[0].rolloutState}' \
-		--output table
+		--output table || \
+		(echo "\nCommand failed. Checking if SSO login needed..." && \
+		 AWS_PROFILE=$(AWS_PROFILE) aws sso login && \
+		 echo "Retrying status check..." && \
+		 AWS_PROFILE=$(AWS_PROFILE) aws ecs describe-services \
+			--cluster equalify-pdf-cluster \
+			--services equalify-pdf-service \
+			--region us-east-1 \
+			--query 'services[0].{Desired:desiredCount,Running:runningCount,Status:status,Deployment:deployments[0].rolloutState}' \
+			--output table)
 
 aws-deploy:
 	@echo "Deploying to AWS..."
@@ -208,7 +225,15 @@ aws-deploy:
 
 aws-shell:
 	@echo "Connecting to ECS container..."
-	@TASK_ARN=$$(AWS_PROFILE=$(AWS_PROFILE) aws ecs list-tasks \
+	@if ! command -v session-manager-plugin >/dev/null 2>&1; then \
+		echo "Error: AWS Session Manager plugin not found."; \
+		echo ""; \
+		echo "Install with: brew install --cask session-manager-plugin"; \
+		echo ""; \
+		echo "More info: https://docs.aws.amazon.com/systems-manager/latest/userguide/session-manager-working-with-install-plugin.html"; \
+		exit 1; \
+	fi
+	@(TASK_ARN=$$(AWS_PROFILE=$(AWS_PROFILE) aws ecs list-tasks \
 		--cluster equalify-pdf-cluster \
 		--service-name equalify-pdf-service \
 		--region us-east-1 \
@@ -217,9 +242,24 @@ aws-shell:
 	AWS_PROFILE=$(AWS_PROFILE) aws ecs execute-command \
 		--cluster equalify-pdf-cluster \
 		--task $$TASK_ARN \
-		--container app \
+		--container api-gateway \
 		--interactive \
-		--command "/bin/bash"
+		--command "/bin/bash") || \
+		(echo "\nCommand failed. Checking if SSO login needed..." && \
+		 AWS_PROFILE=$(AWS_PROFILE) aws sso login && \
+		 echo "Retrying shell connection..." && \
+		 TASK_ARN=$$(AWS_PROFILE=$(AWS_PROFILE) aws ecs list-tasks \
+			--cluster equalify-pdf-cluster \
+			--service-name equalify-pdf-service \
+			--region us-east-1 \
+			--query 'taskArns[0]' \
+			--output text) && \
+		 AWS_PROFILE=$(AWS_PROFILE) aws ecs execute-command \
+			--cluster equalify-pdf-cluster \
+			--task $$TASK_ARN \
+			--container api-gateway \
+			--interactive \
+			--command "/bin/bash")
 
 # ============================================================================
 # LocalStack Debugging (from host)

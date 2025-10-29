@@ -61,7 +61,12 @@ make aws-status   # Show ECS service status
 
 **Done!** You can now use all `make aws-*` commands.
 
-**Common issue:** If you see "Invalid security token", your SSO session expired. Just run: `aws sso login --profile <your-profile>`
+**Auto-login:** All `make aws-*` commands automatically detect expired SSO tokens and prompt you to login. No need to manually check!
+
+**Optional:** For `make aws-shell` to work, install the AWS Session Manager plugin:
+```bash
+brew install --cask session-manager-plugin  # macOS
+```
 
 ---
 
@@ -85,9 +90,12 @@ make aws-health
 **For daily operations:**
 ```bash
 make aws-health   # Check deployment
-make aws-logs     # View logs
+make aws-logs     # View logs (auto-login if token expired)
 make aws-status   # ECS status
+make aws-shell    # Connect to ECS container (requires session-manager-plugin)
 ```
+
+**Note:** All commands automatically handle expired SSO tokens - they'll prompt you to login and retry.
 
 ---
 
@@ -257,6 +265,7 @@ make aws-status
 make aws-health   # Check API health
 make aws-logs     # Tail CloudWatch logs (Ctrl+C to exit)
 make aws-status   # Show ECS service status
+make aws-shell    # Connect to ECS container (requires session-manager-plugin)
 make aws-deploy   # Full deployment (infrastructure + Docker)
 ```
 

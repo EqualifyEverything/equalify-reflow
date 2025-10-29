@@ -75,6 +75,13 @@ make aws-logs     # View CloudWatch logs
 make aws-status   # Show ECS service status
 ```
 
+**Auto-login:** All AWS commands automatically detect expired SSO tokens and prompt you to login. No need to manually run `aws sso login` first!
+
+**Prerequisites:** Install AWS Session Manager plugin for `make aws-shell`:
+```bash
+brew install --cask session-manager-plugin  # macOS
+```
+
 **For full deployment guide, troubleshooting, and operations:** See [AWS Guide](docs/aws-guide.md)
 
 ## Architecture

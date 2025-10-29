@@ -13,10 +13,11 @@ make dev          # Everything just works
 cp .aws-config-example ~/.aws/config  # Merge with existing config
 aws sso login --profile uic
 
-# Then use Makefile commands
+# Then use Makefile commands (auto-login if token expires!)
 make aws-health   # Check deployment
 make aws-logs     # View logs
 make aws-status   # ECS status
+make aws-shell    # Connect to ECS container (requires session-manager-plugin)
 ```
 
 ---
@@ -101,9 +102,14 @@ make aws-logs
 # Check ECS status
 make aws-status
 
+# Connect to ECS container (requires session-manager-plugin)
+make aws-shell
+
 # Deploy changes
 make aws-deploy
 ```
+
+**Auto-login:** All AWS commands automatically detect expired SSO tokens and prompt you to login. No need to manually check or run `aws sso login` first!
 
 All AWS commands automatically use `AWS_PROFILE=uic` (set in Makefile).
 
@@ -208,6 +214,8 @@ curl http://localhost:8080/api/...
 ```bash
 aws sso login --profile uic
 ```
+
+**Note:** All `make aws-*` commands now handle this automatically! If your token is expired, the Makefile will detect it, prompt you to login, and retry the command.
 
 ### "Which environment am I in?"
 

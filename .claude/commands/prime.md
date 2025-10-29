@@ -5,9 +5,7 @@ Understand the files in the `Read` section, and execute the `Run` commands then 
 ## Read
 
 - README.md
-- .claude/commands/
-- docs/infrastructure-setup.md
-- project-docs/local/*
+- docs/architecture.md
 - Makefile
 
 ## Execute

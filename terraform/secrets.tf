@@ -35,7 +35,7 @@ resource "aws_secretsmanager_secret_version" "docs_password" {
 # Grant ECS task execution role permission to read secrets
 resource "aws_iam_role_policy" "ecs_task_execution_secrets" {
   name = "${var.project_name}-ecs-task-execution-secrets"
-  role = aws_iam_role.ecs_task_execution_role.id
+  role = aws_iam_role.ecs_execution_role.id
 
   policy = jsonencode({
     Version = "2012-10-17"

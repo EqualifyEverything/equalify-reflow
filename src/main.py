@@ -9,6 +9,8 @@ from fastapi import FastAPI
 
 from .config import settings
 from .middleware import (
+    APIKeyAuthMiddleware,
+    DocsAuthMiddleware,
     ErrorHandlerMiddleware,
     LoggingMiddleware,
     RateLimitMiddleware,
@@ -114,6 +116,15 @@ app = FastAPI(
 setup_metrics(app)
 
 # Add middleware (order matters: last added = first executed)
+# Authentication middleware added first (executes before others)
+if settings.enable_api_key_auth:
+    app.add_middleware(APIKeyAuthMiddleware)
+    logger.info("✅ API key authentication enabled")
+
+if settings.enable_docs_auth:
+    app.add_middleware(DocsAuthMiddleware)
+    logger.info("✅ Documentation authentication enabled")
+
 app.add_middleware(ErrorHandlerMiddleware)  # Catch all errors
 app.add_middleware(RateLimitMiddleware)     # Rate limit before processing
 app.add_middleware(LoggingMiddleware)       # Log all requests

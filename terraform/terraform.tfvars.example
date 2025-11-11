@@ -42,6 +42,12 @@ enable_bedrock_metrics = true
 # domain_name           = "pdf-converter.example.com"
 # create_route53_record = false
 
+# Authentication Configuration (REQUIRED)
+# Generate production API key with: python3 -c "import uuid; print(f'uic-{uuid.uuid4()}')"
+api_keys       = "uic-YOUR-UUID-HERE"  # Comma-separated list of API keys
+docs_username  = "admin"  # Swagger UI username
+docs_password  = "CHANGE-ME-STRONG-PASSWORD"  # Swagger UI password
+
 # Additional Tags
 additional_tags = {
   Department = "UIC-DASE"

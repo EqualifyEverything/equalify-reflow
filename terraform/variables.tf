@@ -156,6 +156,27 @@ variable "enable_bedrock_metrics" {
   default     = true
 }
 
+# Authentication Configuration
+variable "api_keys" {
+  description = "Comma-separated list of valid API keys for authentication (stored in Secrets Manager)"
+  type        = string
+  sensitive   = true
+  # Set via terraform.tfvars or TF_VAR_api_keys environment variable
+}
+
+variable "docs_username" {
+  description = "Username for Swagger/OpenAPI documentation HTTP Basic auth"
+  type        = string
+  default     = "admin"
+}
+
+variable "docs_password" {
+  description = "Password for Swagger/OpenAPI documentation HTTP Basic auth (stored in Secrets Manager)"
+  type        = string
+  sensitive   = true
+  # Set via terraform.tfvars or TF_VAR_docs_password environment variable
+}
+
 # Tags
 variable "additional_tags" {
   description = "Additional tags to apply to all resources"

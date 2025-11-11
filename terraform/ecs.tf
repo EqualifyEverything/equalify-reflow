@@ -90,6 +90,34 @@ resource "aws_ecs_task_definition" "app" {
         {
           name  = "BEDROCK_MODEL_ID"
           value = var.bedrock_model_id
+        },
+        {
+          name  = "ENABLE_API_KEY_AUTH"
+          value = "true"
+        },
+        {
+          name  = "API_KEY_HEADER_NAME"
+          value = "X-API-Key"
+        },
+        {
+          name  = "ENABLE_DOCS_AUTH"
+          value = "true"
+        },
+        {
+          name  = "DOCS_USERNAME"
+          value = var.docs_username
+        }
+      ]
+
+      # Secrets (retrieved from AWS Secrets Manager)
+      secrets = [
+        {
+          name      = "API_KEYS"
+          valueFrom = aws_secretsmanager_secret.api_keys.arn
+        },
+        {
+          name      = "DOCS_PASSWORD"
+          valueFrom = aws_secretsmanager_secret.docs_password.arn
         }
       ]
 

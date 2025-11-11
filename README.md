@@ -36,6 +36,46 @@ open http://localhost:8080/docs
 
 That's it! The API is running at http://localhost:8080 with hot reload enabled.
 
+## Authentication
+
+The API includes two authentication layers for security:
+
+### API Key Authentication
+
+All API endpoints (except `/health` and `/metrics`) require an API key for access:
+
+```bash
+# Example: Submit document with API key
+curl -X POST http://localhost:8080/api/documents/submit \
+  -H "X-API-Key: uic-2bd2c716-bc67-4032-ba66-e4f35c441759" \
+  -F "file=@document.pdf"
+```
+
+**Your API key:** `uic-2bd2c716-bc67-4032-ba66-e4f35c441759` (configured in `.env`)
+
+### Swagger UI Authentication
+
+The API documentation at `/docs` uses HTTP Basic Authentication:
+
+- **URL:** http://localhost:8080/docs
+- **Username:** `dase`
+- **Password:** `a11y`
+
+Your browser will prompt for these credentials when accessing the documentation.
+
+### Disabling Authentication (Development)
+
+To disable authentication for local testing, update `.env`:
+
+```bash
+ENABLE_API_KEY_AUTH=false
+ENABLE_DOCS_AUTH=false
+```
+
+Then restart: `make down && make dev`
+
+**Note:** Re-enable authentication before deploying to production!
+
 ## Essential Commands
 
 ```bash

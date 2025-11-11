@@ -79,6 +79,8 @@ src/
 │   └── rate_limit_service.py  # Rate limiting (Redis)
 │
 ├── middleware/                # FastAPI middleware
+│   ├── api_key_auth.py        # API key authentication
+│   ├── docs_auth.py           # Swagger/docs HTTP Basic auth
 │   ├── error_handler.py       # Global exception handling
 │   ├── logging_middleware.py  # Request/response logging
 │   ├── rate_limit.py          # Rate limiting middleware
@@ -104,6 +106,145 @@ src/
     ├── token_generator.py     # Secure token generation
     └── retry_helpers.py       # Retry decorators
 ```
+
+## Authentication
+
+The API implements two independent authentication layers:
+
+### API Key Authentication
+
+**Purpose:** Secure API endpoints for programmatic access
+**Header:** `X-API-Key` (configurable via `API_KEY_HEADER_NAME`)
+**Implementation:** `src/middleware/api_key_auth.py`
+
+**Configuration (.env):**
+```bash
+# Enable/disable API key auth
+ENABLE_API_KEY_AUTH=true
+
+# Header name (default: X-API-Key)
+API_KEY_HEADER_NAME=X-API-Key
+
+# Comma-separated list of valid keys
+API_KEYS=uic-2bd2c716-bc67-4032-ba66-e4f35c441759
+```
+
+**Public Endpoints (no API key required):**
+- `/health`, `/health/ready`, `/metrics` - Always public for monitoring
+- `/api/dev/monitoring/*` - Public in dev environment only
+
+**Usage Example:**
+```bash
+# With valid API key
+curl -H "X-API-Key: uic-2bd2c716-bc67-4032-ba66-e4f35c441759" \
+  http://localhost:8080/api/documents/submit
+
+# Missing API key → 401 Unauthorized
+curl http://localhost:8080/api/documents/submit
+```
+
+**Security Features:**
+- Constant-time comparison (`secrets.compare_digest()`) prevents timing attacks
+- Multiple keys supported (comma-separated in env var)
+- Keys stored as `SecretStr` to prevent accidental logging
+- Whitespace automatically stripped from configured keys
+
+**Generating API Keys:**
+```bash
+# Generate a new UIC-prefixed UUID key
+python3 -c "import uuid; print(f'uic-{uuid.uuid4()}')"
+```
+
+### Swagger/Docs Authentication (HTTP Basic)
+
+**Purpose:** Protect API documentation in production
+**Endpoints:** `/docs`, `/openapi.json`, `/redoc`
+**Implementation:** `src/middleware/docs_auth.py`
+
+**Configuration (.env):**
+```bash
+# Enable/disable docs auth (false in dev, true in prod)
+ENABLE_DOCS_AUTH=true
+
+# HTTP Basic credentials
+DOCS_USERNAME=dase
+DOCS_PASSWORD=a11y
+```
+
+**Usage:**
+- Browser automatically prompts for username/password
+- Credentials: `dase` / `a11y` (configured in .env)
+- Environment-dependent: disabled in dev for easy testing, enabled in prod
+
+**Security Features:**
+- HTTP Basic Authentication (RFC 7617)
+- Constant-time credential comparison
+- `WWW-Authenticate` header triggers browser login prompt
+- Password stored as `SecretStr`
+
+### Middleware Stack Order
+
+Middleware executes in reverse order of registration (last added = first executed):
+
+```python
+# src/main.py
+if settings.enable_api_key_auth:
+    app.add_middleware(APIKeyAuthMiddleware)    # 1st: API key validation
+
+if settings.enable_docs_auth:
+    app.add_middleware(DocsAuthMiddleware)      # 2nd: Docs basic auth
+
+app.add_middleware(ErrorHandlerMiddleware)      # 3rd: Catch errors
+app.add_middleware(RateLimitMiddleware)         # 4th: Rate limiting
+app.add_middleware(LoggingMiddleware)           # 5th: Logging
+add_cors_middleware(app)                        # 6th: CORS headers
+```
+
+**Execution Flow:**
+1. CORS → 2. Logging → 3. Rate Limit → 4. Error Handler → 5. Docs Auth → 6. API Key Auth → 7. Endpoint
+
+### Testing Authentication
+
+**Unit Tests:**
+- `tests/unit/middleware/test_api_key_auth.py` - API key middleware (21 tests)
+- `tests/unit/middleware/test_docs_auth.py` - Docs auth middleware (18 tests)
+
+**Integration Tests:**
+- `tests/integration/api/test_api_authentication.py` - Full auth flow (10 tests)
+
+**Manual Testing:**
+```bash
+# Start services with auth enabled
+make dev
+
+# Test API endpoint without key (should fail)
+curl http://localhost:8080/api/documents/test-id
+# → 401 Unauthorized
+
+# Test with valid key (should work or 404 if job not found)
+curl -H "X-API-Key: uic-2bd2c716-bc67-4032-ba66-e4f35c441759" \
+  http://localhost:8080/api/documents/test-id
+
+# Test Swagger UI (should prompt for username/password)
+open http://localhost:8080/docs
+# → Browser login prompt: dase / a11y
+
+# Test public endpoints still work
+curl http://localhost:8080/health
+# → 200 OK (no auth required)
+```
+
+### Disabling Authentication (Testing)
+
+To disable auth for testing:
+
+```bash
+# .env
+ENABLE_API_KEY_AUTH=false
+ENABLE_DOCS_AUTH=false
+```
+
+**Important:** Always re-enable before deploying to production!
 
 ## Key Architectural Patterns
 

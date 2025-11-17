@@ -81,9 +81,14 @@ class ApprovalService:
                 expires_at_str = expires_at_str.replace("Z", "+00:00")
                 expires_at = datetime.fromisoformat(expires_at_str)
 
-                # If somehow still naive, add UTC timezone
+                # Reject naive datetimes - they should never occur in production
+                # All timestamps must be timezone-aware (created with timezone.utc)
                 if expires_at.tzinfo is None:
-                    expires_at = expires_at.replace(tzinfo=timezone.utc)
+                    logger.error(
+                        f"Naive datetime detected for job {job_id}: {expires_at_str}. "
+                        "All timestamps must be timezone-aware. Rejecting approval token."
+                    )
+                    return None
 
             except (ValueError, AttributeError) as e:
                 logger.error(

@@ -386,14 +386,14 @@ async def test_validate_approval_token_handles_z_suffix_timestamp(
 
 
 @pytest.mark.asyncio
-async def test_validate_approval_token_handles_naive_datetime(
+async def test_validate_approval_token_rejects_naive_datetime(
     approval_service,
     mock_job_service
 ):
-    """Test that validation adds UTC timezone to naive datetime if needed."""
+    """Test that validation rejects naive datetime timestamps."""
     # Arrange
     token = "naive-datetime-token"
-    # Create naive datetime (no timezone info)
+    # Create naive datetime (no timezone info) - this should NEVER happen in production
     naive_time = datetime.now() + timedelta(hours=2)
     expires_at = naive_time.isoformat()  # No timezone
 
@@ -407,9 +407,8 @@ async def test_validate_approval_token_handles_naive_datetime(
     # Act
     result = await approval_service.validate_approval_token(token)
 
-    # Assert - should handle naive datetime by adding UTC timezone
-    assert result is not None
-    assert result["job_id"] == "test-job-naive"
+    # Assert - should reject naive datetime and return None
+    assert result is None
 
 
 # Integration Tests

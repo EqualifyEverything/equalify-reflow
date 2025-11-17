@@ -38,8 +38,19 @@ def api_key_headers():
     """Generate API key headers for authenticated requests.
 
     Returns headers dict with X-API-Key for use in test requests.
+    Uses the first API key from settings to match the configured environment.
     """
-    return {"X-API-Key": "uic-142dab67-6332-45e0-a30e-ed1ff165ea40"}
+    from src.config import settings
+
+    # Get the first configured API key
+    if settings.api_keys:
+        keys = settings.api_keys.get_secret_value().split(",")
+        api_key = keys[0].strip() if keys else ""
+    else:
+        # Fallback for tests that don't require real auth
+        api_key = "test-key-fallback"
+
+    return {"X-API-Key": api_key}
 
 
 @pytest.fixture

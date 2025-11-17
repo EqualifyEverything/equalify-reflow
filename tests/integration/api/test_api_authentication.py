@@ -73,73 +73,80 @@ async def test_api_key_required_for_protected_endpoint(enable_api_key_auth):
 @pytest.mark.asyncio
 async def test_valid_api_key_allows_access(enable_api_key_auth):
     """Test that valid API key allows access to protected endpoints."""
-    # Mock dependencies
-    with patch("src.dependencies.get_job_service") as mock_job_service_dep, \
-         patch("src.main.settings") as main_settings:
+    from src.dependencies import get_job_service
+    from src.middleware.api_key_auth import APIKeyAuthMiddleware
 
-        # Configure main settings
-        main_settings.enable_api_key_auth = True
-        main_settings.enable_docs_auth = False
-        main_settings.api_key_header_name = "X-API-Key"
-        main_settings.environment = "production"
-        main_settings.api_keys = MagicMock()
-        main_settings.api_keys.get_secret_value.return_value = "test-key-123"
+    # Mock job service
+    mock_job_service = AsyncMock()
+    mock_job_service.get_job.return_value = {
+        "job_id": "test-123",
+        "status": "pii_scanning",
+        "filename": "test.pdf",
+        "created_at": "2025-01-01T00:00:00Z",
+        "updated_at": "2025-01-01T00:00:00Z"
+    }
 
-        # Mock job service
-        mock_job_service = AsyncMock()
-        mock_job_service.get_job.return_value = {
-            "job_id": "test-123",
-            "status": "pii_scanning",
-            "filename": "test.pdf",
-            "created_at": "2025-01-01T00:00:00Z"
-        }
-        mock_job_service_dep.return_value = mock_job_service
+    # Override dependencies
+    app.dependency_overrides[get_job_service] = lambda: mock_job_service
 
-        async with AsyncClient(
-            transport=ASGITransport(app=app),
-            base_url="http://test",
-            headers={"X-API-Key": "test-key-123"}
-        ) as client:
-            # Test with valid API key
-            response = await client.get("/api/documents/test-123")
+    try:
+        # Patch the middleware's validation method
+        def mock_is_valid_key(self, provided_key: str) -> bool:
+            return provided_key == "test-key-123"
 
-            # Should succeed (200) or 404 if job not found, but NOT 401
-            assert response.status_code in [200, 404]
+        with patch.object(APIKeyAuthMiddleware, '_is_valid_key', mock_is_valid_key):
+            async with AsyncClient(
+                transport=ASGITransport(app=app),
+                base_url="http://test",
+                headers={"X-API-Key": "test-key-123"}
+            ) as client:
+                # Test with valid API key
+                response = await client.get("/api/documents/test-123")
+
+                # Should succeed (200) or 404 if job not found, but NOT 401
+                assert response.status_code in [200, 404]
+    finally:
+        # Clean up overrides
+        app.dependency_overrides.clear()
 
 
 @pytest.mark.integration
 @pytest.mark.asyncio
 async def test_health_endpoint_bypasses_api_key_auth(enable_api_key_auth):
     """Test that health endpoint works without API key."""
-    # Mock dependencies for health check
-    with patch("src.dependencies.get_storage_service") as mock_storage_dep, \
-         patch("src.dependencies.get_queue_service") as mock_queue_dep, \
-         patch("src.main.settings") as main_settings:
+    from src.dependencies import get_storage_service, get_queue_service
 
-        main_settings.enable_api_key_auth = True
-        main_settings.enable_docs_auth = False
-        main_settings.environment = "production"
+    # Mock storage service
+    mock_storage = AsyncMock()
+    mock_storage.check_s3_access.return_value = True
 
-        # Mock storage service
-        mock_storage = AsyncMock()
-        mock_storage.check_s3_access.return_value = True
-        mock_storage_dep.return_value = mock_storage
+    # Mock queue service
+    mock_queue = AsyncMock()
+    mock_queue.check_redis_connection.return_value = True
+    mock_queue.check_queue_depth.return_value = 0
 
-        # Mock queue service
-        mock_queue = AsyncMock()
-        mock_queue.check_redis_connection.return_value = True
-        mock_queue.check_queue_depth.return_value = 0
-        mock_queue_dep.return_value = mock_queue
+    # Override dependencies
+    app.dependency_overrides[get_storage_service] = lambda: mock_storage
+    app.dependency_overrides[get_queue_service] = lambda: mock_queue
 
-        async with AsyncClient(
-            transport=ASGITransport(app=app),
-            base_url="http://test"
-        ) as client:
-            # Test health endpoint without API key
-            response = await client.get("/health")
+    try:
+        with patch("src.main.settings") as main_settings:
+            main_settings.enable_api_key_auth = True
+            main_settings.enable_docs_auth = False
+            main_settings.environment = "production"
 
-            # Should succeed
-            assert response.status_code == 200
+            async with AsyncClient(
+                transport=ASGITransport(app=app),
+                base_url="http://test"
+            ) as client:
+                # Test health endpoint without API key
+                response = await client.get("/health")
+
+                # Should succeed
+                assert response.status_code == 200
+    finally:
+        # Clean up overrides
+        app.dependency_overrides.clear()
 
 
 @pytest.mark.integration
@@ -321,32 +328,36 @@ async def test_both_auth_methods_work_together():
 @pytest.mark.asyncio
 async def test_rate_limiting_still_works_with_auth():
     """Test that rate limiting middleware still functions with auth enabled."""
-    # This is a basic test to ensure middleware stack works correctly
-    with patch("src.main.settings") as main_settings, \
-         patch("src.dependencies.get_storage_service") as mock_storage_dep, \
-         patch("src.dependencies.get_queue_service") as mock_queue_dep:
+    from src.dependencies import get_storage_service, get_queue_service
 
-        main_settings.enable_api_key_auth = False  # Disable for this test
-        main_settings.enable_docs_auth = False
-        main_settings.environment = "production"
+    # Mock storage service
+    mock_storage = AsyncMock()
+    mock_storage.check_s3_access.return_value = True
 
-        # Mock storage service
-        mock_storage = AsyncMock()
-        mock_storage.check_s3_access.return_value = True
-        mock_storage_dep.return_value = mock_storage
+    # Mock queue service
+    mock_queue = AsyncMock()
+    mock_queue.check_redis_connection.return_value = True
+    mock_queue.check_queue_depth.return_value = 0
 
-        # Mock queue service
-        mock_queue = AsyncMock()
-        mock_queue.check_redis_connection.return_value = True
-        mock_queue.check_queue_depth.return_value = 0
-        mock_queue_dep.return_value = mock_queue
+    # Override dependencies
+    app.dependency_overrides[get_storage_service] = lambda: mock_storage
+    app.dependency_overrides[get_queue_service] = lambda: mock_queue
 
-        async with AsyncClient(
-            transport=ASGITransport(app=app),
-            base_url="http://test"
-        ) as client:
-            # Make request to health endpoint
-            response = await client.get("/health")
+    try:
+        with patch("src.main.settings") as main_settings:
+            main_settings.enable_api_key_auth = False  # Disable for this test
+            main_settings.enable_docs_auth = False
+            main_settings.environment = "production"
 
-            # Should succeed (middleware stack intact)
-            assert response.status_code == 200
+            async with AsyncClient(
+                transport=ASGITransport(app=app),
+                base_url="http://test"
+            ) as client:
+                # Make request to health endpoint
+                response = await client.get("/health")
+
+                # Should succeed (middleware stack intact)
+                assert response.status_code == 200
+    finally:
+        # Clean up overrides
+        app.dependency_overrides.clear()

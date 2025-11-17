@@ -43,7 +43,7 @@ def expired_job_data():
 
 
 @pytest.mark.asyncio
-async def test_get_review_details_valid_token(valid_job_data):
+async def test_get_review_details_valid_token(valid_job_data, api_key_headers):
     """Test GET /api/approval/{token}/review with valid token."""
     token = valid_job_data["approval_token"]
 
@@ -71,7 +71,7 @@ async def test_get_review_details_valid_token(valid_job_data):
             transport=ASGITransport(app=app),
             base_url="http://test"
         ) as client:
-            response = await client.get(f"/api/approval/{token}/review")
+            response = await client.get(f"/api/approval/{token}/review", headers=api_key_headers)
 
         # Assert
         assert response.status_code == 200
@@ -83,7 +83,7 @@ async def test_get_review_details_valid_token(valid_job_data):
 
 
 @pytest.mark.asyncio
-async def test_get_review_details_invalid_token():
+async def test_get_review_details_invalid_token(api_key_headers):
     """Test GET /api/approval/{token}/review with invalid token."""
     with patch("src.api.approval.get_redis_client") as mock_redis_dep, \
          patch("src.api.approval.get_s3_client") as mock_s3_dep:
@@ -101,7 +101,7 @@ async def test_get_review_details_invalid_token():
             transport=ASGITransport(app=app),
             base_url="http://test"
         ) as client:
-            response = await client.get("/api/approval/invalid-token-999/review")
+            response = await client.get("/api/approval/invalid-token-999/review", headers=api_key_headers)
 
         # Assert
         assert response.status_code == 404
@@ -109,7 +109,7 @@ async def test_get_review_details_invalid_token():
 
 
 @pytest.mark.asyncio
-async def test_get_review_details_expired_token(expired_job_data):
+async def test_get_review_details_expired_token(expired_job_data, api_key_headers):
     """Test GET /api/approval/{token}/review with expired token."""
     token = expired_job_data["approval_token"]
 
@@ -135,7 +135,7 @@ async def test_get_review_details_expired_token(expired_job_data):
             transport=ASGITransport(app=app),
             base_url="http://test"
         ) as client:
-            response = await client.get(f"/api/approval/{token}/review")
+            response = await client.get(f"/api/approval/{token}/review", headers=api_key_headers)
 
         # Assert
         assert response.status_code == 404
@@ -143,43 +143,52 @@ async def test_get_review_details_expired_token(expired_job_data):
 
 
 @pytest.mark.asyncio
-async def test_submit_approval_approved_decision(valid_job_data):
+async def test_submit_approval_approved_decision(valid_job_data, api_key_headers):
     """Test POST /api/approval/{token}/decision with approved decision."""
+    import json
+    from src.dependencies import get_redis_client, get_s3_client
+
+    # Add updated_at field required by Job model
+    valid_job_data["updated_at"] = valid_job_data["created_at"]
+
     token = valid_job_data["approval_token"]
+    job_id = valid_job_data["job_id"]
     decision_payload = {
         "decision": "approved",
         "justification": "Instructor contact information is acceptable for course materials",
         "reviewed_by": "faculty@uic.edu"
     }
 
-    with patch("src.api.approval.get_redis_client") as mock_redis_dep, \
-         patch("src.api.approval.get_s3_client") as mock_s3_dep, \
-         patch("src.api.approval.JobService") as mock_job_service_class, \
-         patch("src.api.approval.QueueService") as mock_queue_service_class:
+    # Prepare job data for Redis (pii_findings must be JSON string)
+    redis_job_data = valid_job_data.copy()
+    redis_job_data["pii_findings"] = json.dumps(valid_job_data["pii_findings"])
 
-        # Mock Redis client
-        mock_redis = AsyncMock()
-        mock_redis.keys.return_value = [b"eq-pdf:job:test-job-123"]
-        mock_redis.lpush.return_value = 1
-        mock_redis.zrem.return_value = 1
-        mock_redis.hset.return_value = 1
-        mock_redis_dep.return_value = mock_redis
+    # Mock Redis client with proper method returns
+    mock_redis = AsyncMock()
+    # For get_job_by_approval_token -> get job_id from token
+    mock_redis.get.return_value = job_id
+    # For get_job -> get full job data (with pii_findings as JSON string)
+    # Note: hgetall gets called multiple times, so we use side_effect to return fresh copies
+    def return_redis_job(*args, **kwargs):
+        data = valid_job_data.copy()
+        data["pii_findings"] = json.dumps(valid_job_data["pii_findings"])
+        return data
+    mock_redis.hgetall.side_effect = return_redis_job
+    # For decision submission
+    mock_redis.lpush.return_value = 1
+    mock_redis.zrem.return_value = 1
+    mock_redis.hset.return_value = 1
+    mock_redis.set.return_value = True  # For distributed lock acquisition
+    mock_redis.delete.return_value = 1  # For lock release
 
-        # Mock S3 client
-        mock_s3 = AsyncMock()
-        mock_s3_dep.return_value = mock_s3
+    # Mock S3 client
+    mock_s3 = AsyncMock()
 
-        # Mock JobService
-        mock_job_service = AsyncMock()
-        mock_job_service.get_job.return_value = valid_job_data
-        mock_job_service.get_job_by_approval_token.return_value = valid_job_data
-        mock_job_service_class.return_value = mock_job_service
+    # Override dependencies (only Redis and S3, not services)
+    app.dependency_overrides[get_redis_client] = lambda: mock_redis
+    app.dependency_overrides[get_s3_client] = lambda: mock_s3
 
-        # Mock QueueService
-        mock_queue_service = AsyncMock()
-        mock_queue_service.enqueue.return_value = None
-        mock_queue_service_class.return_value = mock_queue_service
-
+    try:
         # Make request
         async with AsyncClient(
             transport=ASGITransport(app=app),
@@ -187,7 +196,8 @@ async def test_submit_approval_approved_decision(valid_job_data):
         ) as client:
             response = await client.post(
                 f"/api/approval/{token}/decision",
-                json=decision_payload
+                json=decision_payload,
+                headers=api_key_headers
             )
 
         # Assert
@@ -197,12 +207,15 @@ async def test_submit_approval_approved_decision(valid_job_data):
         assert data["job_id"] == valid_job_data["job_id"]
         assert "approved for processing" in data["message"]
 
-        # Verify queue service was called (via mock)
-        mock_queue_service.enqueue.assert_called_once()
+        # Verify Redis operations were called
+        mock_redis.lpush.assert_called_once()  # Queue for processing
+    finally:
+        # Clean up overrides
+        app.dependency_overrides.clear()
 
 
 @pytest.mark.asyncio
-async def test_submit_approval_denied_decision(valid_job_data):
+async def test_submit_approval_denied_decision(valid_job_data, api_key_headers):
     """Test POST /api/approval/{token}/decision with denied decision."""
     token = valid_job_data["approval_token"]
     decision_payload = {
@@ -248,7 +261,8 @@ async def test_submit_approval_denied_decision(valid_job_data):
         ) as client:
             response = await client.post(
                 f"/api/approval/{token}/decision",
-                json=decision_payload
+                json=decision_payload,
+                headers=api_key_headers
             )
 
         # Assert
@@ -263,7 +277,7 @@ async def test_submit_approval_denied_decision(valid_job_data):
 
 
 @pytest.mark.asyncio
-async def test_submit_approval_invalid_token():
+async def test_submit_approval_invalid_token(api_key_headers):
     """Test POST /api/approval/{token}/decision with invalid token."""
     decision_payload = {
         "decision": "approved",
@@ -289,7 +303,8 @@ async def test_submit_approval_invalid_token():
         ) as client:
             response = await client.post(
                 "/api/approval/invalid-token/decision",
-                json=decision_payload
+                json=decision_payload,
+                headers=api_key_headers
             )
 
         # Assert
@@ -298,7 +313,7 @@ async def test_submit_approval_invalid_token():
 
 
 @pytest.mark.asyncio
-async def test_submit_approval_validation_errors():
+async def test_submit_approval_validation_errors(api_key_headers):
     """Test POST /api/approval/{token}/decision with invalid payload."""
     token = "valid-token-abc"
 
@@ -314,7 +329,8 @@ async def test_submit_approval_validation_errors():
     ) as client:
         response = await client.post(
             f"/api/approval/{token}/decision",
-            json=invalid_payload
+            json=invalid_payload,
+            headers=api_key_headers
         )
 
     # Assert validation error

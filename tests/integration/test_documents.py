@@ -11,7 +11,7 @@ from src.dependencies import get_storage_service, get_queue_service, get_job_ser
 
 
 @pytest.mark.asyncio
-async def test_submit_document_success(client, sample_pdf):
+async def test_submit_document_success(client, sample_pdf, api_key_headers):
     """Test successful document submission."""
     # Create mock services
     mock_storage = MagicMock()
@@ -31,7 +31,7 @@ async def test_submit_document_success(client, sample_pdf):
     try:
         # Submit document
         files = {"file": ("test.pdf", io.BytesIO(sample_pdf), "application/pdf")}
-        response = client.post("/api/documents/submit", files=files)
+        response = client.post("/api/documents/submit", files=files, headers=api_key_headers)
 
         # Assertions
         assert response.status_code == status.HTTP_201_CREATED
@@ -43,7 +43,7 @@ async def test_submit_document_success(client, sample_pdf):
         app.dependency_overrides.clear()
 
 
-def test_submit_document_invalid_type(client):
+def test_submit_document_invalid_type(client, api_key_headers):
     """Test document submission with invalid file type."""
     # Create mock storage that raises validation error
     mock_storage = MagicMock()
@@ -54,7 +54,7 @@ def test_submit_document_invalid_type(client):
 
     try:
         files = {"file": ("test.txt", io.BytesIO(b"not a pdf"), "text/plain")}
-        response = client.post("/api/documents/submit", files=files)
+        response = client.post("/api/documents/submit", files=files, headers=api_key_headers)
 
         assert response.status_code == status.HTTP_400_BAD_REQUEST
     finally:
@@ -62,7 +62,7 @@ def test_submit_document_invalid_type(client):
 
 
 @pytest.mark.asyncio
-async def test_get_job_status_success(client):
+async def test_get_job_status_success(client, api_key_headers):
     """Test getting job status."""
     # Create mock job service
     mock_job = MagicMock()
@@ -78,7 +78,7 @@ async def test_get_job_status_success(client):
 
     try:
         # Get status
-        response = client.get("/api/documents/test-job-id")
+        response = client.get("/api/documents/test-job-id", headers=api_key_headers)
 
         # Assertions
         assert response.status_code == status.HTTP_200_OK
@@ -90,7 +90,7 @@ async def test_get_job_status_success(client):
 
 
 @pytest.mark.asyncio
-async def test_get_job_status_not_found(client):
+async def test_get_job_status_not_found(client, api_key_headers):
     """Test getting status for non-existent job."""
     # Create mock job service
     mock_job = MagicMock()
@@ -101,7 +101,7 @@ async def test_get_job_status_not_found(client):
 
     try:
         # Get status
-        response = client.get("/api/documents/nonexistent-job")
+        response = client.get("/api/documents/nonexistent-job", headers=api_key_headers)
 
         # Assertions
         assert response.status_code == status.HTTP_404_NOT_FOUND
@@ -110,7 +110,7 @@ async def test_get_job_status_not_found(client):
 
 
 @pytest.mark.asyncio
-async def test_get_job_result_completed(client):
+async def test_get_job_result_completed(client, api_key_headers):
     """Test getting result for completed job."""
     # Create mock services
     mock_job = MagicMock()
@@ -134,7 +134,7 @@ async def test_get_job_result_completed(client):
 
     try:
         # Get result
-        response = client.get("/api/documents/test-job-id/result")
+        response = client.get("/api/documents/test-job-id/result", headers=api_key_headers)
 
         # Assertions
         assert response.status_code == status.HTTP_200_OK
@@ -147,7 +147,7 @@ async def test_get_job_result_completed(client):
 
 
 @pytest.mark.asyncio
-async def test_get_job_result_processing(client):
+async def test_get_job_result_processing(client, api_key_headers):
     """Test getting result for job still processing."""
     # Create mock job service
     mock_job = MagicMock()
@@ -163,7 +163,7 @@ async def test_get_job_result_processing(client):
 
     try:
         # Get result
-        response = client.get("/api/documents/test-job-id/result")
+        response = client.get("/api/documents/test-job-id/result", headers=api_key_headers)
 
         # Assertions
         assert response.status_code == status.HTTP_200_OK

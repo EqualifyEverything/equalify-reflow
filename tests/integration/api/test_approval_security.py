@@ -24,7 +24,7 @@ async def test_approval_token_uniqueness():
 
 
 @pytest.mark.asyncio
-async def test_approval_token_expiration_enforced():
+async def test_approval_token_expiration_enforced(api_key_headers):
     """Test that expired tokens are rejected."""
     expired_job = {
         "job_id": "expired-test-job",
@@ -52,7 +52,7 @@ async def test_approval_token_expiration_enforced():
             transport=ASGITransport(app=app),
             base_url="http://test"
         ) as client:
-            response = await client.get("/api/approval/expired-token-123/review")
+            response = await client.get("/api/approval/expired-token-123/review", headers=api_key_headers)
 
         # Assert expired token rejected
         assert response.status_code == 404
@@ -60,7 +60,7 @@ async def test_approval_token_expiration_enforced():
 
 
 @pytest.mark.asyncio
-async def test_approval_no_pii_data_in_url():
+async def test_approval_no_pii_data_in_url(api_key_headers):
     """Test that PII findings are not exposed in URL parameters."""
     valid_job = {
         "job_id": "test-job-pii-check",
@@ -105,7 +105,7 @@ async def test_approval_no_pii_data_in_url():
             transport=ASGITransport(app=app),
             base_url="http://test"
         ) as client:
-            response = await client.get("/api/approval/secure-token-456/review")
+            response = await client.get("/api/approval/secure-token-456/review", headers=api_key_headers)
 
         # Assert PII data only in response body, not in URL
         assert response.status_code == 200
@@ -121,8 +121,10 @@ async def test_approval_no_pii_data_in_url():
 
 
 @pytest.mark.asyncio
-async def test_approval_decision_sanitization():
+async def test_approval_decision_sanitization(api_key_headers):
     """Test that user input is properly sanitized."""
+    from src.dependencies import get_redis_client, get_s3_client
+
     valid_job = {
         "job_id": "550e8400-e29b-41d4-a716-446655440010",
         "s3_key": "temp/test.pdf",
@@ -130,6 +132,7 @@ async def test_approval_decision_sanitization():
         "approval_token": "test-token-789",
         "approval_expires_at": (datetime.now(timezone.utc) + timedelta(hours=2)).isoformat(),
         "created_at": datetime.now(timezone.utc).isoformat(),
+        "updated_at": datetime.now(timezone.utc).isoformat(),
         "pii_findings": []
     }
 
@@ -140,32 +143,26 @@ async def test_approval_decision_sanitization():
         "reviewed_by": "attacker@evil.com"
     }
 
-    with patch("src.api.approval.get_redis_client") as mock_redis_dep, \
-         patch("src.api.approval.get_s3_client") as mock_s3_dep, \
-         patch("src.api.approval.JobService") as mock_job_service_class, \
-         patch("src.api.approval.QueueService") as mock_queue_service_class:
+    # Mock Redis client with proper method returns
+    mock_redis = AsyncMock()
+    # For get_job_by_approval_token
+    mock_redis.get.return_value = valid_job["job_id"]
+    mock_redis.hgetall.return_value = valid_job
+    # For decision submission
+    mock_redis.zrem.return_value = 1
+    mock_redis.lpush.return_value = 1
+    mock_redis.hset.return_value = 1
+    mock_redis.set.return_value = True  # For distributed lock
+    mock_redis.delete.return_value = 1  # For lock release
 
-        mock_redis = AsyncMock()
-        mock_redis.keys.return_value = [b"eq-pdf:job:sanitization-test-job"]
-        mock_redis.zrem.return_value = 1
-        mock_redis.lpush.return_value = 1
-        mock_redis.hset.return_value = 1
-        mock_redis_dep.return_value = mock_redis
+    # Mock S3 client
+    mock_s3 = AsyncMock()
 
-        mock_s3 = AsyncMock()
-        mock_s3_dep.return_value = mock_s3
+    # Override dependencies (only Redis and S3, not services)
+    app.dependency_overrides[get_redis_client] = lambda: mock_redis
+    app.dependency_overrides[get_s3_client] = lambda: mock_s3
 
-        # Mock JobService
-        mock_job_service = AsyncMock()
-        mock_job_service.get_job.return_value = valid_job
-        mock_job_service.get_job_by_approval_token.return_value = valid_job  # New O(1) lookup method
-        mock_job_service_class.return_value = mock_job_service
-
-        # Mock QueueService
-        mock_queue_service = AsyncMock()
-        mock_queue_service.enqueue.return_value = None
-        mock_queue_service_class.return_value = mock_queue_service
-
+    try:
         # Make request
         async with AsyncClient(
             transport=ASGITransport(app=app),
@@ -173,7 +170,8 @@ async def test_approval_decision_sanitization():
         ) as client:
             response = await client.post(
                 "/api/approval/test-token-789/decision",
-                json=malicious_payload
+                json=malicious_payload,
+                headers=api_key_headers
             )
 
         # Assert request processed (stored as string, not executed)
@@ -182,10 +180,13 @@ async def test_approval_decision_sanitization():
         # Verify justification stored as-is (string, not SQL)
         update_call = mock_redis.hset.call_args
         # Redis stores it as a string in JSON - no SQL execution
+    finally:
+        # Clean up overrides
+        app.dependency_overrides.clear()
 
 
 @pytest.mark.asyncio
-async def test_approval_input_validation_boundaries():
+async def test_approval_input_validation_boundaries(api_key_headers):
     """Test input validation edge cases."""
     valid_job = {
         "job_id": "validation-test-job",
@@ -219,7 +220,8 @@ async def test_approval_input_validation_boundaries():
                     "decision": "approved",
                     "justification": "Short",
                     "reviewed_by": "test@test.com"
-                }
+                },
+                headers=api_key_headers
             )
             assert response.status_code == 422  # Validation error
 
@@ -230,7 +232,8 @@ async def test_approval_input_validation_boundaries():
                     "decision": "approved",
                     "justification": "A" * 1001,
                     "reviewed_by": "test@test.com"
-                }
+                },
+                headers=api_key_headers
             )
             assert response.status_code == 422
 
@@ -241,7 +244,8 @@ async def test_approval_input_validation_boundaries():
                     "decision": "maybe",  # Not "approved" or "denied"
                     "justification": "Valid justification text here",
                     "reviewed_by": "test@test.com"
-                }
+                },
+                headers=api_key_headers
             )
             assert response.status_code == 422
 
@@ -252,13 +256,14 @@ async def test_approval_input_validation_boundaries():
                     "decision": "approved",
                     "justification": "Valid justification text here",
                     "reviewed_by": "ab"
-                }
+                },
+                headers=api_key_headers
             )
             assert response.status_code == 422
 
 
 @pytest.mark.asyncio
-async def test_approval_token_not_leaked_in_error_messages():
+async def test_approval_token_not_leaked_in_error_messages(api_key_headers):
     """Test that tokens are not exposed in error responses."""
     sensitive_token = "very-secret-token-should-not-leak"
 
@@ -277,7 +282,7 @@ async def test_approval_token_not_leaked_in_error_messages():
             transport=ASGITransport(app=app),
             base_url="http://test"
         ) as client:
-            response = await client.get(f"/api/approval/{sensitive_token}/review")
+            response = await client.get(f"/api/approval/{sensitive_token}/review", headers=api_key_headers)
 
         # Assert token not in error message
         assert response.status_code == 404
@@ -287,8 +292,10 @@ async def test_approval_token_not_leaked_in_error_messages():
 
 
 @pytest.mark.asyncio
-async def test_approval_decision_idempotency():
+async def test_approval_decision_idempotency(api_key_headers):
     """Test that submitting the same decision twice is safe."""
+    from src.dependencies import get_redis_client, get_s3_client
+
     valid_job = {
         "job_id": "550e8400-e29b-41d4-a716-446655440011",
         "s3_key": "temp/test.pdf",
@@ -296,6 +303,7 @@ async def test_approval_decision_idempotency():
         "approval_token": "idempotent-token",
         "approval_expires_at": (datetime.now(timezone.utc) + timedelta(hours=2)).isoformat(),
         "created_at": datetime.now(timezone.utc).isoformat(),
+        "updated_at": datetime.now(timezone.utc).isoformat(),
         "pii_findings": []
     }
 
@@ -305,32 +313,26 @@ async def test_approval_decision_idempotency():
         "reviewed_by": "faculty@uic.edu"
     }
 
-    with patch("src.api.approval.get_redis_client") as mock_redis_dep, \
-         patch("src.api.approval.get_s3_client") as mock_s3_dep, \
-         patch("src.api.approval.JobService") as mock_job_service_class, \
-         patch("src.api.approval.QueueService") as mock_queue_service_class:
+    # Mock Redis client with proper method returns
+    mock_redis = AsyncMock()
+    # For get_job_by_approval_token
+    mock_redis.get.return_value = valid_job["job_id"]
+    mock_redis.hgetall.return_value = valid_job
+    # For decision submission
+    mock_redis.zrem.return_value = 1
+    mock_redis.lpush.return_value = 1
+    mock_redis.hset.return_value = 1
+    mock_redis.set.return_value = True  # For distributed lock
+    mock_redis.delete.return_value = 1  # For lock release
 
-        mock_redis = AsyncMock()
-        mock_redis.keys.return_value = [b"eq-pdf:job:idempotent-test-job"]
-        mock_redis.zrem.return_value = 1
-        mock_redis.lpush.return_value = 1
-        mock_redis.hset.return_value = 1
-        mock_redis_dep.return_value = mock_redis
+    # Mock S3 client
+    mock_s3 = AsyncMock()
 
-        mock_s3 = AsyncMock()
-        mock_s3_dep.return_value = mock_s3
+    # Override dependencies (only Redis and S3, not services)
+    app.dependency_overrides[get_redis_client] = lambda: mock_redis
+    app.dependency_overrides[get_s3_client] = lambda: mock_s3
 
-        # Mock JobService
-        mock_job_service = AsyncMock()
-        mock_job_service.get_job.return_value = valid_job
-        mock_job_service.get_job_by_approval_token.return_value = valid_job  # New O(1) lookup method
-        mock_job_service_class.return_value = mock_job_service
-
-        # Mock QueueService
-        mock_queue_service = AsyncMock()
-        mock_queue_service.enqueue.return_value = None
-        mock_queue_service_class.return_value = mock_queue_service
-
+    try:
         async with AsyncClient(
             transport=ASGITransport(app=app),
             base_url="http://test"
@@ -338,18 +340,23 @@ async def test_approval_decision_idempotency():
             # First submission
             response1 = await client.post(
                 "/api/approval/idempotent-token/decision",
-                json=decision_payload
+                json=decision_payload,
+                headers=api_key_headers
             )
             assert response1.status_code == 200
 
-            # Reset mock for second submission
-            mock_redis.keys.return_value = [b"eq-pdf:job:idempotent-test-job"]
-            mock_job_service.get_job.return_value = valid_job
+            # Reset mock for second submission - token still returns job_id
+            mock_redis.get.return_value = valid_job["job_id"]
+            mock_redis.hgetall.return_value = valid_job
 
             # Second submission (should be handled gracefully)
             response2 = await client.post(
                 "/api/approval/idempotent-token/decision",
-                json=decision_payload
+                json=decision_payload,
+                headers=api_key_headers
             )
             # Should succeed (idempotent) - doesn't break system
             assert response2.status_code in [200, 404]  # Either reprocessed or token consumed
+    finally:
+        # Clean up overrides
+        app.dependency_overrides.clear()

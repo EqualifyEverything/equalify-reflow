@@ -25,8 +25,21 @@ pytest_plugins = ["tests.conftest_fixtures.clients", "tests.conftest_fixtures.da
 
 @pytest.fixture
 def client():
-    """Create test client."""
+    """Create test client.
+
+    Note: API key authentication is enabled by default in .env.
+    Tests that need to make API requests should use the api_key_headers fixture.
+    """
     return TestClient(app)
+
+
+@pytest.fixture
+def api_key_headers():
+    """Generate API key headers for authenticated requests.
+
+    Returns headers dict with X-API-Key for use in test requests.
+    """
+    return {"X-API-Key": "uic-142dab67-6332-45e0-a30e-ed1ff165ea40"}
 
 
 @pytest.fixture

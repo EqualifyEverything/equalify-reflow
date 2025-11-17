@@ -29,7 +29,6 @@ class APIKeyAuthMiddleware(BaseHTTPMiddleware):
             app: FastAPI application instance
         """
         super().__init__(app)
-        self._valid_keys = self._load_api_keys()
 
     def _load_api_keys(self) -> set[str]:
         """
@@ -137,6 +136,7 @@ class APIKeyAuthMiddleware(BaseHTTPMiddleware):
         Validate API key using constant-time comparison.
 
         Uses secrets.compare_digest() to prevent timing attacks.
+        Loads keys dynamically from settings to support testing and runtime updates.
 
         Args:
             provided_key: API key from request header
@@ -144,11 +144,13 @@ class APIKeyAuthMiddleware(BaseHTTPMiddleware):
         Returns:
             True if key is valid
         """
-        if not self._valid_keys:
+        valid_keys = self._load_api_keys()
+
+        if not valid_keys:
             return False
 
         # Use constant-time comparison to prevent timing attacks
-        for valid_key in self._valid_keys:
+        for valid_key in valid_keys:
             if secrets.compare_digest(provided_key, valid_key):
                 return True
 

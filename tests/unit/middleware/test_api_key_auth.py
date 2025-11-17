@@ -336,9 +336,10 @@ def test_load_api_keys_empty_string():
 
         # Execute
         middleware = APIKeyAuthMiddleware(mock_app)
+        loaded_keys = middleware._load_api_keys()
 
-        # Assert
-        assert len(middleware._valid_keys) == 0
+        # Assert - empty strings and whitespace should result in no keys
+        assert len(loaded_keys) == 0
 
 
 @pytest.mark.unit
@@ -354,9 +355,10 @@ def test_multiple_keys_loaded_correctly():
 
         # Execute
         middleware = APIKeyAuthMiddleware(mock_app)
+        loaded_keys = middleware._load_api_keys()
 
-        # Assert
-        assert len(middleware._valid_keys) == 3
-        assert "key1" in middleware._valid_keys
-        assert "key2" in middleware._valid_keys
-        assert "key3" in middleware._valid_keys
+        # Assert - keys loaded dynamically
+        assert len(loaded_keys) == 3
+        assert "key1" in loaded_keys
+        assert "key2" in loaded_keys
+        assert "key3" in loaded_keys

@@ -133,6 +133,13 @@ API_KEYS=uic-2bd2c716-bc67-4032-ba66-e4f35c441759
 - `/health`, `/health/ready`, `/metrics` - Always public for monitoring
 - `/api/dev/monitoring/*` - Public in dev environment only
 
+**Approval Endpoints Security**:
+- Approval endpoints (`/api/approval/*`) require BOTH API key authentication AND valid approval token
+- Two-layer security model:
+  1. API Key (Layer 1) - Ensures only authorized systems (UIC infrastructure) can make requests
+  2. Approval Token (Layer 2) - Ensures the requester has permission for the specific job
+- Both layers must pass for access - defense in depth
+
 **Usage Example:**
 ```bash
 # With valid API key
@@ -234,17 +241,30 @@ curl http://localhost:8080/health
 # → 200 OK (no auth required)
 ```
 
-### Disabling Authentication (Testing)
+### Authentication Configuration for Testing
 
-To disable auth for testing:
+**Integration tests require authentication to be enabled** in `.env`:
 
 ```bash
-# .env
+# .env (required for integration tests)
+ENABLE_API_KEY_AUTH=true
+ENABLE_DOCS_AUTH=true
+API_KEYS=uic-2bd2c716-bc67-4032-ba66-e4f35c441759
+DOCS_USERNAME=dase
+DOCS_PASSWORD=a11y
+```
+
+The authentication integration tests (`tests/integration/api/test_api_authentication.py`) use the app instance from `src.main`, which is configured at startup based on `.env` settings. The middleware is conditionally added based on these settings, so tests require them to be enabled.
+
+**To disable auth temporarily during development:**
+
+```bash
+# .env (only for manual testing, not recommended)
 ENABLE_API_KEY_AUTH=false
 ENABLE_DOCS_AUTH=false
 ```
 
-**Important:** Always re-enable before deploying to production!
+**Important:** Always keep authentication enabled in `.env` to ensure integration tests pass!
 
 ## Key Architectural Patterns
 

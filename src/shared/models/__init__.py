@@ -5,22 +5,22 @@ used across microservices including job tracking, queue payloads, PII
 detection, approval workflows, and processing results.
 """
 
-from .job import JobStatus, JobSubmission, VALID_TRANSITIONS
+from .approval import ApprovalDecision, ApprovalRequest
+from .job import VALID_TRANSITIONS, JobStatus, JobSubmission
 from .pii import PIIFinding, PIIResult
-from .approval import ApprovalRequest, ApprovalDecision
-from .processing import ProcessingResult, ProcessingJob
-from .queue import PIIQueuePayload, ApprovalQueuePayload, ProcessingQueuePayload
+from .processing import PageCorrectionResult, ProcessingJob, ProcessingResult, TextCorrection
+from .queue import ApprovalQueuePayload, PIIQueuePayload, ProcessingQueuePayload
 from .redis_schema import (
-    job_status_key,
-    queue_key,
-    timeout_key,
-    metrics_key,
-    PII_QUEUE,
     APPROVAL_QUEUE,
-    PROCESSING_QUEUE,
     APPROVAL_TIMEOUTS,
     DAILY_METRICS,
-    JOB_STATUS_PREFIX
+    JOB_STATUS_PREFIX,
+    PII_QUEUE,
+    PROCESSING_QUEUE,
+    job_status_key,
+    metrics_key,
+    queue_key,
+    timeout_key,
 )
 
 __all__ = [
@@ -40,6 +40,8 @@ __all__ = [
     # Processing models
     "ProcessingResult",
     "ProcessingJob",
+    "TextCorrection",
+    "PageCorrectionResult",
 
     # Queue models
     "PIIQueuePayload",

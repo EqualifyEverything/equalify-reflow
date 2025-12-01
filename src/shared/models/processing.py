@@ -1,6 +1,7 @@
 """Processing result models for completed conversions."""
 
-from typing import Optional
+from typing import Literal
+
 from pydantic import BaseModel, ConfigDict, Field
 
 
@@ -31,11 +32,11 @@ class ProcessingResult(BaseModel):
         pattern=r'^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$',
         description="UUID format job identifier"
     )
-    markdown_url: Optional[str] = Field(
+    markdown_url: str | None = Field(
         default=None,
         description="S3 URL for accessible markdown output"
     )
-    confidence_score: Optional[float] = Field(
+    confidence_score: float | None = Field(
         default=None,
         ge=0.0,
         le=1.0,
@@ -46,7 +47,7 @@ class ProcessingResult(BaseModel):
         ge=0,
         description="Total processing duration"
     )
-    error_message: Optional[str] = Field(
+    error_message: str | None = Field(
         default=None,
         max_length=2000,
         description="Error details if failed"
@@ -92,11 +93,11 @@ class ProcessingJob(BaseModel):
         ...,
         description="Current pipeline stage"
     )
-    markdown_s3_key: Optional[str] = Field(
+    markdown_s3_key: str | None = Field(
         default=None,
         description="S3 key for markdown output"
     )
-    result: Optional[ProcessingResult] = Field(
+    result: ProcessingResult | None = Field(
         default=None,
         description="Final processing result"
     )
@@ -109,6 +110,175 @@ class ProcessingJob(BaseModel):
                 "current_stage": "docling_conversion",
                 "markdown_s3_key": None,
                 "result": None
+            }
+        }
+    )
+
+
+class TextCorrection(BaseModel):
+    """Individual text correction identified by comparing page image to extracted text.
+
+    Represents a specific layout or structure error that should be corrected
+    in the markdown output to match the visual appearance of the page.
+
+    Attributes:
+        correction_type: Category of correction (heading level, list format, table, etc.)
+        original_text: Text as extracted by Docling
+        corrected_text: Text as it should appear based on visual layout
+        location_context: Surrounding text to help locate the correction point
+        line_number: Approximate line number in markdown (if determinable)
+        confidence: AI confidence in this correction (0.0-1.0)
+        explanation: Human-readable explanation of why this correction is needed
+
+    Example:
+        >>> correction = TextCorrection(
+        ...     correction_type="heading_level",
+        ...     original_text="Course Schedule",
+        ...     corrected_text="## Course Schedule",
+        ...     location_context="...previous heading...\\n\\nCourse Schedule\\n\\nWeek 1...",
+        ...     line_number=15,
+        ...     confidence=0.95,
+        ...     explanation="Visual layout shows this as a level 2 heading (larger font, bold)"
+        ... )
+    """
+    correction_type: Literal[
+        "heading_level",
+        "list_structure",
+        "table_format",
+        "paragraph_break",
+        "other"
+    ] = Field(
+        ...,
+        description="Category of layout/structure correction"
+    )
+    original_text: str = Field(
+        ...,
+        min_length=1,
+        max_length=5000,
+        description="Text as extracted by Docling"
+    )
+    corrected_text: str = Field(
+        ...,
+        min_length=1,
+        max_length=5000,
+        description="Corrected text matching visual layout"
+    )
+    location_context: str = Field(
+        ...,
+        min_length=1,
+        max_length=10000,
+        description="Surrounding text for locating the error"
+    )
+    line_number: int | None = Field(
+        default=None,
+        ge=1,
+        description="Approximate line number in markdown"
+    )
+    confidence: float = Field(
+        ...,
+        ge=0.0,
+        le=1.0,
+        description="AI confidence in this correction"
+    )
+    explanation: str = Field(
+        ...,
+        min_length=1,
+        max_length=1000,
+        description="Why this correction is needed"
+    )
+
+    model_config = ConfigDict(
+        json_schema_extra={
+            "example": {
+                "correction_type": "heading_level",
+                "original_text": "Course Schedule",
+                "corrected_text": "## Course Schedule",
+                "location_context": "...Introduction\\n\\nCourse Schedule\\n\\nWeek 1: Overview...",
+                "line_number": 15,
+                "confidence": 0.95,
+                "explanation": "Visual layout shows this as a level 2 heading with larger font and bold formatting"
+            }
+        }
+    )
+
+
+class PageCorrectionResult(BaseModel):
+    """Text correction results for a single page.
+
+    Contains all identified corrections for one page, along with metadata
+    about the correction process.
+
+    Attributes:
+        corrections: List of individual corrections identified for this page
+        overall_confidence: Overall confidence in correction quality (0.0-1.0)
+        processing_notes: Summary of what was checked and corrected
+        page_number: Page number (1-indexed)
+
+    Example:
+        >>> result = PageCorrectionResult(
+        ...     corrections=[
+        ...         TextCorrection(
+        ...             correction_type="heading_level",
+        ...             original_text="Introduction",
+        ...             corrected_text="# Introduction",
+        ...             location_context="...\\n\\nIntroduction\\n\\nThis course...",
+        ...             confidence=0.95,
+        ...             explanation="Visual layout shows level 1 heading"
+        ...         )
+        ...     ],
+        ...     overall_confidence=0.92,
+        ...     processing_notes="Checked 1 heading, 0 lists, 0 tables. Found 1 correction.",
+        ...     page_number=1
+        ... )
+    """
+    corrections: list[TextCorrection] = Field(
+        default_factory=list,
+        description="List of corrections for this page"
+    )
+    overall_confidence: float = Field(
+        ...,
+        ge=0.0,
+        le=1.0,
+        description="Overall confidence in page corrections"
+    )
+    processing_notes: str = Field(
+        ...,
+        min_length=1,
+        max_length=2000,
+        description="Summary of correction process"
+    )
+    page_number: int = Field(
+        default=0,
+        ge=0,
+        description="Page number (1-indexed, 0 if not set)"
+    )
+
+    model_config = ConfigDict(
+        json_schema_extra={
+            "example": {
+                "corrections": [
+                    {
+                        "correction_type": "heading_level",
+                        "original_text": "Introduction",
+                        "corrected_text": "# Introduction",
+                        "location_context": "...\\n\\nIntroduction\\n\\nThis course...",
+                        "line_number": 5,
+                        "confidence": 0.95,
+                        "explanation": "Visual layout shows level 1 heading with largest font"
+                    },
+                    {
+                        "correction_type": "list_structure",
+                        "original_text": "Week 1\\nWeek 2\\nWeek 3",
+                        "corrected_text": "1. Week 1\\n2. Week 2\\n3. Week 3",
+                        "location_context": "Schedule:\\n\\nWeek 1\\nWeek 2\\nWeek 3\\n\\nGrading",
+                        "line_number": 12,
+                        "confidence": 0.88,
+                        "explanation": "Visual layout shows numbered list, not plain paragraphs"
+                    }
+                ],
+                "overall_confidence": 0.91,
+                "processing_notes": "Checked 2 headings, 1 list, 0 tables. Found 2 corrections.",
+                "page_number": 1
             }
         }
     )

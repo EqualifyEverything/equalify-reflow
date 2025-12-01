@@ -261,6 +261,26 @@ class ProcessingService:
                 f"Document confidence: {confidence_score:.2f} ({confidence_level})"
             )
 
+            # Step 8b: Calculate aggregate LLM cost from all pages
+            total_llm_cost_cents = sum(
+                r.usage.cost_cents for r in correction_results if r.usage
+            )
+            llm_page_costs = [
+                {
+                    "page": r.page_number,
+                    "input_tokens": r.usage.input_tokens,
+                    "output_tokens": r.usage.output_tokens,
+                    "cost_cents": r.usage.cost_cents,
+                }
+                for r in correction_results
+                if r.usage
+            ]
+
+            logger.info(
+                f"LLM usage summary: {len(llm_page_costs)} pages, "
+                f"total cost: ${total_llm_cost_cents/100:.6f}"
+            )
+
             # Step 9: Check if corrections should be auto-approved
             should_auto_approve = (
                 confidence_score >= settings.min_confidence_for_auto_approval
@@ -301,7 +321,9 @@ class ProcessingService:
                     "processing_time_seconds": processing_time,
                     "total_pages": conversion_result.total_pages,
                     "corrections_auto_approved": True,
-                    "auto_approval_threshold": settings.min_confidence_for_auto_approval
+                    "auto_approval_threshold": settings.min_confidence_for_auto_approval,
+                    "llm_cost_cents": total_llm_cost_cents,
+                    "llm_page_costs": json.dumps(llm_page_costs),
                 }
 
                 # Add page image keys as JSON array
@@ -413,6 +435,8 @@ class ProcessingService:
                 "correction_results": json.dumps(correction_results_json),
                 "correction_approval_token": correction_approval_token,
                 "correction_expires_at": expires_at.isoformat(),
+                "llm_cost_cents": total_llm_cost_cents,
+                "llm_page_costs": json.dumps(llm_page_costs),
             }
 
             # Add page image keys as JSON array for correction review

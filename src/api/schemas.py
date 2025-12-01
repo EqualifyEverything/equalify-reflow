@@ -18,6 +18,32 @@ class PIIFinding(BaseModel):
     score: float = Field(..., description="Confidence score (0.0 to 1.0)")
 
 
+class PageLLMUsage(BaseModel):
+    """LLM token usage and cost for a single page."""
+
+    page: int = Field(..., description="Page number (1-indexed)")
+    input_tokens: int = Field(..., description="Number of input tokens consumed")
+    output_tokens: int = Field(..., description="Number of output tokens generated")
+    cost_cents: float = Field(..., description="Cost in cents for this page")
+
+
+class LLMCostInfo(BaseModel):
+    """Aggregate LLM cost information for a job.
+
+    Includes total cost and per-page breakdown for transparency.
+    """
+
+    total_cost_cents: float = Field(
+        ..., description="Total LLM cost in cents for all pages"
+    )
+    total_cost_dollars: float = Field(
+        ..., description="Total LLM cost in dollars for convenience"
+    )
+    page_costs: list[PageLLMUsage] = Field(
+        default_factory=list, description="Per-page token usage and costs"
+    )
+
+
 class CorrectionApprovalInfo(BaseModel):
     """Correction approval metadata for frontend.
 
@@ -121,4 +147,9 @@ class DocumentStatusResponse(BaseModel):
     # Estimates (when status = pii_scanning or processing)
     estimated_completion_minutes: int | None = Field(
         None, description="Estimated minutes until completion"
+    )
+
+    # LLM cost tracking (when text correction has run)
+    llm_cost: LLMCostInfo | None = Field(
+        None, description="LLM token usage and cost breakdown"
     )

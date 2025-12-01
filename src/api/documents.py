@@ -10,9 +10,54 @@ from ..dependencies import get_job_service, get_queue_service, get_storage_servi
 from ..services import JobService, QueueService, StorageService
 from .schemas import (
     DocumentStatusResponse,
+    LLMCostInfo,
+    PageLLMUsage,
 )
 
 router = APIRouter(prefix="/api/documents", tags=["Documents"])
+
+
+def _build_llm_cost_info(job: dict) -> LLMCostInfo | None:
+    """Build LLM cost info from job data if available.
+
+    Args:
+        job: Job data from Redis
+
+    Returns:
+        LLMCostInfo if cost data exists, None otherwise
+    """
+    # Check if cost data exists
+    llm_cost_cents = job.get("llm_cost_cents")
+    llm_page_costs = job.get("llm_page_costs")
+
+    if llm_cost_cents is None:
+        return None
+
+    # Parse llm_cost_cents to float
+    try:
+        total_cents = float(llm_cost_cents)
+    except (TypeError, ValueError):
+        return None
+
+    # Build page costs list
+    page_costs = []
+    if llm_page_costs:
+        # llm_page_costs should already be parsed by job_service.get_job()
+        for page_cost in llm_page_costs:
+            page_costs.append(
+                PageLLMUsage(
+                    page=page_cost.get("page", 0),
+                    input_tokens=page_cost.get("input_tokens", 0),
+                    output_tokens=page_cost.get("output_tokens", 0),
+                    cost_cents=page_cost.get("cost_cents", 0.0),
+                )
+            )
+
+    return LLMCostInfo(
+        total_cost_cents=total_cents,
+        total_cost_dollars=total_cents / 100.0,
+        page_costs=page_costs,
+    )
 
 
 # Response models
@@ -32,6 +77,7 @@ class JobResultResponse(BaseModel):
     confidence_score: float | None = None
     processing_time_seconds: int | None = None
     estimated_completion_at: str | None = None
+    llm_cost: LLMCostInfo | None = None
 
 
 @router.post("/submit", response_model=JobSubmissionResponse, status_code=status.HTTP_201_CREATED)
@@ -163,6 +209,11 @@ async def get_job(
             ],
         }
 
+        # Add LLM cost info if available
+        llm_cost = _build_llm_cost_info(job)
+        if llm_cost:
+            response_data["llm_cost"] = llm_cost
+
     elif job_status == "completed":
         # Job completed with approval decision
         response_data["confidence_score"] = job.get("confidence_score")
@@ -184,6 +235,11 @@ async def get_job(
                 final_key, bucket=storage.results_bucket
             )
         }
+
+        # Add LLM cost info if available
+        llm_cost = _build_llm_cost_info(job)
+        if llm_cost:
+            response_data["llm_cost"] = llm_cost
 
     elif job_status in ["pii_scanning", "processing"]:
         # In-progress status
@@ -228,7 +284,8 @@ async def get_job_result(
             status="completed",
             markdown_url=storage.get_result_url(job_id, "md"),
             confidence_score=float(job_data.get("confidence_score", 0.0)),
-            processing_time_seconds=int(job_data.get("processing_time_seconds", 0))
+            processing_time_seconds=int(job_data.get("processing_time_seconds", 0)),
+            llm_cost=_build_llm_cost_info(job_data)
         )
 
     # If still processing, return estimated completion

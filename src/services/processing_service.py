@@ -1,22 +1,25 @@
 """Main processing service orchestrating PDF conversion and AI enhancement."""
 
+import json
 import logging
-import time
 import re
+import time
+from datetime import UTC, datetime, timedelta
 from io import BytesIO
-from datetime import datetime
-from typing import Optional, Dict, Any
+from typing import Any
 
-from ..shared.models.queue import ProcessingQueuePayload
-from ..shared.models.processing import ProcessingResult
-from ..services.storage_service import StorageService
-from ..services.queue_service import QueueService
+from ..config import settings
 from ..services.job_service import JobService
 from ..services.pdf_converter import PDFConverter
-from ..services.ai_enhancement_service import AIEnhancementService, PageProcessingError
+from ..services.queue_service import QueueService
+from ..services.storage_service import StorageService
+from ..services.text_correction_service import PageProcessingError, TextCorrectionService
+from ..shared.constants.statuses import STATUS_AWAITING_CORRECTION_APPROVAL
+from ..shared.models.processing import ProcessingResult
+from ..shared.models.queue import ProcessingQueuePayload
 from ..utils.confidence_scoring import calculate_document_confidence
 from ..utils.retry_helpers import retry_with_backoff
-from ..config import settings
+from ..utils.token_generator import generate_secure_token
 
 logger = logging.getLogger(__name__)
 
@@ -29,8 +32,9 @@ class ProcessingService:
         storage_service: StorageService,
         queue_service: QueueService,
         job_service: JobService,
-        pdf_converter: Optional[PDFConverter] = None,
-        ai_enhancement: Optional[AIEnhancementService] = None,
+        redis_client=None,
+        pdf_converter: PDFConverter | None = None,
+        text_correction: TextCorrectionService | None = None,
     ):
         """Initialize processing service with dependencies.
 
@@ -38,14 +42,16 @@ class ProcessingService:
             storage_service: S3 storage operations
             queue_service: Redis queue operations
             job_service: Job status management
+            redis_client: Redis client for token storage
             pdf_converter: Optional PDF converter (created if not provided)
-            ai_enhancement: Optional AI service (created if not provided)
+            text_correction: Optional text correction service (created if not provided)
         """
         self.storage = storage_service
         self.queue = queue_service
         self.job = job_service
+        self.redis = redis_client
         self.pdf_converter = pdf_converter or PDFConverter()
-        self.ai_enhancement = ai_enhancement or AIEnhancementService(
+        self.text_correction = text_correction or TextCorrectionService(
             max_concurrent_pages=settings.max_concurrent_pages
         )
 
@@ -57,13 +63,25 @@ class ProcessingService:
         """Main processing pipeline for PDF documents.
 
         Pipeline steps:
-        1. Download PDF from S3
-        2. Convert PDF with Docling (extract markdown + page images)
-        3. Process pages concurrently with AI (max 5 at once)
-        4. Combine improved markdown
-        5. Calculate confidence metrics
-        6. Upload results to S3 with versioning
-        7. Update job status
+        1. Update job status to processing
+        2. Download PDF from S3
+        3. Convert PDF with Docling (extract markdown + page images)
+        4. Upload extracted images to S3
+        5. Replace image references in markdown with S3 URLs
+        6. Upload original markdown (before corrections) to S3
+        7. Upload page preview images to S3
+        8. AI text correction - compare visual layout to extracted text
+        9. Calculate confidence metrics from correction analysis
+        10. Check auto-approval threshold:
+            - If confidence >= threshold: Apply corrections and complete job (status: completed)
+            - If confidence < threshold: Store corrections for manual approval (status: awaiting_correction_approval)
+        11-15. Manual approval path only (if confidence < threshold):
+            11. Upload original markdown to S3 results bucket
+            12. Serialize correction results for approval review
+            13. Generate correction approval token
+            14. Prepare job metadata with correction results
+            15. Add to timeout tracking
+            16. Update job status to awaiting_correction_approval
 
         Args:
             job: Processing queue payload with job_id and s3_key
@@ -113,7 +131,7 @@ class ProcessingService:
             )
 
             # Step 4: Upload extracted images to S3 and build URL mapping
-            image_metadata: Dict[str, Dict[str, Any]] = {}
+            image_metadata: dict[str, dict[str, Any]] = {}
             if conversion_result.extracted_images:
                 logger.info(f"Uploading {len(conversion_result.extracted_images)} images to S3...")
                 for img in conversion_result.extracted_images:
@@ -154,103 +172,287 @@ class ProcessingService:
                 )
 
             # Step 5: Replace image references in markdown with S3 URLs
-            final_markdown = self._replace_image_references(
+            original_markdown = self._replace_image_references(
                 conversion_result.full_markdown,
                 image_metadata
             )
 
-            # Step 6: AI enhancement TEMPORARILY DISABLED
-            # TODO: Re-enable AI processing once agent configuration is finalized
-            logger.warning(
-                "AI enhancement temporarily disabled - forwarding raw Docling markdown"
+            # Step 5a: Upload ORIGINAL markdown (before AI corrections) to S3
+            logger.info("Uploading original markdown (before AI corrections) to S3")
+            try:
+                original_markdown_key = await self.storage.upload_result(
+                    job_id=job.job_id,
+                    content=original_markdown.encode("utf-8"),
+                    format="md",
+                    suffix="-original"
+                )
+                logger.info(f"Original markdown uploaded: {original_markdown_key}")
+            except Exception as e:
+                # Log error but continue with processing - original version is nice-to-have
+                logger.error(
+                    f"Failed to upload original markdown for job {job.job_id}: {e}",
+                    exc_info=True
+                )
+                # Set to None so we can track that this upload failed
+                original_markdown_key = None
+
+            # Step 6: Upload page preview images to S3 for correction review
+            logger.info(f"Uploading {len(conversion_result.pages)} page preview images to S3...")
+            page_image_keys = []
+            for page_data in conversion_result.pages:
+                try:
+                    # Decode base64 image to bytes
+                    import base64
+                    image_bytes = base64.b64decode(page_data.image_base64)
+
+                    # Upload to S3
+                    page_key = await self.storage.upload_page_image(
+                        job_id=job.job_id,
+                        page_num=page_data.page_num,
+                        image_data=image_bytes
+                    )
+
+                    page_image_keys.append(page_key)
+                    logger.debug(f"Uploaded page {page_data.page_num} image -> {page_key}")
+
+                except Exception as e:
+                    logger.error(
+                        f"Failed to upload page {page_data.page_num} image: {e}",
+                        exc_info=True
+                    )
+                    # Continue processing other pages even if one fails
+
+            logger.info(
+                f"Successfully uploaded {len(page_image_keys)}/{len(conversion_result.pages)} page images"
             )
 
-            # COMMENTED OUT: AI processing
-            # try:
-            #     improvement_results = (
-            #         await self.ai_enhancement.process_pages_concurrently(
-            #             conversion_result.pages
-            #         )
-            #     )
-            # except PageProcessingError as e:
-            #     # Page processing failed after retries
-            #     error_msg = (
-            #         f"AI processing failed for page {e.page_num} "
-            #         f"after {settings.page_retry_attempts} attempts: "
-            #         f"{e.original_error}"
-            #     )
-            #     logger.error(error_msg)
-            #     await retry_with_backoff(
-            #         lambda: self.job.update_job_status(
-            #             job.job_id, "failed", error=error_msg
-            #         ),
-            #         max_attempts=3,
-            #         operation_name=f"Update job {job.job_id} to failed (AI processing error)"
-            #     )
-            #     raise ValueError(error_msg) from e
-            #
-            # # Step 5: Combine improved markdown
-            # final_markdown = self.ai_enhancement.combine_page_markdown(
-            #     improvement_results, conversion_result.pages
-            # )
-            #
-            # # Step 6: Calculate confidence metrics
-            # page_scores = [r.confidence_score for r in improvement_results]
-            # confidence_score, confidence_level = calculate_document_confidence(
-            #     page_scores
-            # )
+            # Step 7: AI text correction - compare visual layout to extracted text
+            logger.info("Starting AI text correction analysis")
+            try:
+                correction_results = (
+                    await self.text_correction.process_pages_concurrently(
+                        conversion_result.pages
+                    )
+                )
+            except PageProcessingError as e:
+                # Page processing failed after retries
+                error_msg = (
+                    f"Text correction analysis failed for page {e.page_num} "
+                    f"after {settings.page_retry_attempts} attempts: "
+                    f"{e.original_error}"
+                )
+                logger.error(error_msg)
+                await retry_with_backoff(
+                    lambda: self.job.update_job_status(
+                        job.job_id, "failed", error=error_msg
+                    ),
+                    max_attempts=3,
+                    operation_name=f"Update job {job.job_id} to failed (text correction error)"
+                )
+                raise ValueError(error_msg) from e
 
-            # Step 7: Set default confidence (AI enhancement disabled)
-            confidence_score = 0.0
-            confidence_level = "raw_docling_output"
+            # Step 8: Calculate confidence metrics from correction results
+            page_scores = [r.overall_confidence for r in correction_results]
+            confidence_score, confidence_level = calculate_document_confidence(
+                page_scores
+            )
 
             logger.info(
                 f"Document confidence: {confidence_score:.2f} ({confidence_level})"
             )
 
-            # Step 8: Upload results to S3 with versioning (with retry on network errors)
-            logger.info(f"Uploading markdown to S3 results bucket")
-            # StorageService handles retries internally
-            result_url = await self.storage.upload_result(
-                job_id=job.job_id,
-                content=final_markdown.encode("utf-8"),
-                format="md"
+            # Step 9: Check if corrections should be auto-approved
+            should_auto_approve = (
+                confidence_score >= settings.min_confidence_for_auto_approval
+                and settings.min_confidence_for_auto_approval > 0
             )
 
-            # Step 9: Update job status with metadata (with retry for Redis failures)
+            logger.info(
+                f"Auto-approval check: confidence={confidence_score:.3f}, "
+                f"threshold={settings.min_confidence_for_auto_approval:.3f}, "
+                f"auto_approve={should_auto_approve}"
+            )
+
+            if should_auto_approve:
+                # AUTO-APPROVE PATH: Apply corrections and complete job
+                logger.info("Auto-approving corrections (confidence above threshold)")
+
+                # Apply corrections to markdown
+                final_markdown = self.text_correction.apply_all_page_corrections(
+                    conversion_result.pages, correction_results
+                )
+
+                # Upload corrected markdown to final location
+                logger.info("Uploading auto-approved corrected markdown to S3")
+                result_url = await self.storage.upload_result(
+                    job_id=job.job_id,
+                    content=final_markdown.encode("utf-8"),
+                    format="md"
+                )
+
+                # Calculate processing time
+                processing_time = int(time.time() - start_time)
+
+                # Prepare update fields for auto-approved completion
+                update_fields = {
+                    "markdown_url": result_url,
+                    "confidence_score": confidence_score,
+                    "confidence_level": confidence_level,
+                    "processing_time_seconds": processing_time,
+                    "total_pages": conversion_result.total_pages,
+                    "corrections_auto_approved": True,
+                    "auto_approval_threshold": settings.min_confidence_for_auto_approval
+                }
+
+                # Add page image keys as JSON array
+                if page_image_keys:
+                    update_fields["page_image_keys"] = json.dumps(page_image_keys)
+
+                # Add image metadata
+                if image_metadata:
+                    update_fields["images"] = image_metadata
+                    update_fields["image_count"] = len(image_metadata)
+
+                # Add original markdown key if available
+                if original_markdown_key:
+                    update_fields["original_markdown_key"] = original_markdown_key
+
+                # Update job status to completed (all fields at top level)
+                await retry_with_backoff(
+                    lambda: self.job.update_job_status(
+                        job.job_id,
+                        "completed",
+                        **update_fields
+                    ),
+                    max_attempts=3,
+                    operation_name=f"Update job {job.job_id} status to completed (auto-approved)"
+                )
+
+                threshold = settings.min_confidence_for_auto_approval
+                logger.info(
+                    f"Job {job.job_id} auto-approved and completed in {processing_time}s "
+                    f"(confidence: {confidence_score:.2f} >= threshold: {threshold:.2f})"
+                )
+
+                return ProcessingResult(
+                    job_id=job.job_id,
+                    markdown_url=result_url,
+                    confidence_score=confidence_score,
+                    processing_time_seconds=processing_time,
+                    error_message=None,
+                )
+
+            # MANUAL APPROVAL PATH: Store corrections and wait for human decision
+            logger.info(
+                f"Requiring manual approval (confidence {confidence_score:.2f} "
+                f"< threshold {settings.min_confidence_for_auto_approval:.2f})"
+            )
+
+            # Step 10: Upload corrected markdown (awaiting approval) to S3 results bucket
+            # Apply corrections and store for approval review
+            logger.info("Uploading corrected markdown (awaiting approval) to S3 results bucket")
+            corrected_markdown = self.text_correction.apply_all_page_corrections(
+                conversion_result.pages, correction_results
+            )
+            # StorageService handles retries internally
+            corrected_markdown_key = await self.storage.upload_result(
+                job_id=job.job_id,
+                content=corrected_markdown.encode("utf-8"),
+                format="md",
+                suffix="-awaiting-approval"
+            )
+
+            # Step 11: Serialize correction results for approval review
+            logger.info("Serializing correction results for human review")
+            correction_results_json = [
+                {
+                    "page": r.page_number,
+                    "corrections": [
+                        {
+                            "type": c.correction_type,
+                            "original": c.original_text[:200] if c.original_text else "",  # Truncate for storage
+                            "corrected": c.corrected_text[:200] if c.corrected_text else "",
+                            "confidence": c.confidence,
+                            "explanation": c.explanation,
+                            "location_context": c.location_context[:300] if c.location_context else ""
+                        }
+                        for c in r.corrections
+                    ],
+                    "confidence": r.overall_confidence,
+                    "notes": r.processing_notes
+                }
+                for r in correction_results
+            ]
+
+            # Step 12: Generate correction approval token
+            logger.info("Generating correction approval token")
+            correction_approval_token = generate_secure_token()
+
+            # Calculate expiration time (4 hours from now)
+            expires_at = datetime.now(UTC) + timedelta(hours=4)
+
+            # Store token mapping in Redis (token -> job_id, 4 hour TTL)
+            if self.redis:
+                token_key = f"eq-pdf:correction-token:{correction_approval_token}"
+                await self.redis.set(token_key, job.job_id, ex=14400)  # 4 hours in seconds
+                logger.info(f"Stored correction approval token in Redis (expires: {expires_at.isoformat()})")
+            else:
+                logger.warning("Redis client not available - token not stored!")
+
+            # Step 13: Prepare update fields for correction approval
             processing_time = int(time.time() - start_time)
 
-            job_metadata = {
-                "markdown_url": result_url,
+            # Build top-level update fields (no metadata blob)
+            update_fields = {
+                "original_markdown_key": original_markdown_key,
+                "corrected_markdown_key": corrected_markdown_key,
                 "confidence_score": confidence_score,
                 "confidence_level": confidence_level,
                 "processing_time_seconds": processing_time,
                 "total_pages": conversion_result.total_pages,
+                "correction_results": json.dumps(correction_results_json),
+                "correction_approval_token": correction_approval_token,
+                "correction_expires_at": expires_at.isoformat(),
             }
+
+            # Add page image keys as JSON array for correction review
+            if page_image_keys:
+                update_fields["page_image_keys"] = json.dumps(page_image_keys)
 
             # Add image metadata if images were extracted
             if image_metadata:
-                job_metadata["images"] = image_metadata
-                job_metadata["image_count"] = len(image_metadata)
+                update_fields["images"] = image_metadata
+                update_fields["image_count"] = len(image_metadata)
 
+            # Step 14: Add to timeout tracking (before status update)
+            if self.redis:
+                timeout_score = int(expires_at.timestamp())
+                await self.redis.zadd(
+                    "eq-pdf:timeouts:correction-approval",
+                    {job.job_id: timeout_score}
+                )
+                logger.info(f"Added job {job.job_id} to correction approval timeout tracking")
+
+            # Step 15: Update job status to awaiting_correction_approval (all fields at top level)
             await retry_with_backoff(
                 lambda: self.job.update_job_status(
                     job.job_id,
-                    "completed",
-                    metadata=job_metadata,
+                    STATUS_AWAITING_CORRECTION_APPROVAL,
+                    **update_fields
                 ),
                 max_attempts=3,
-                operation_name=f"Update job {job.job_id} status to completed"
+                operation_name=f"Update job {job.job_id} status to awaiting_correction_approval"
             )
 
             logger.info(
-                f"Job {job.job_id} completed successfully in {processing_time}s "
-                f"(confidence: {confidence_score:.2f} - {confidence_level})"
+                f"Job {job.job_id} ready for correction approval in {processing_time}s "
+                f"(confidence: {confidence_score:.2f} - {confidence_level}, "
+                f"expires: {expires_at.isoformat()})"
             )
 
             return ProcessingResult(
                 job_id=job.job_id,
-                markdown_url=result_url,
+                markdown_url=corrected_markdown_key,
                 confidence_score=confidence_score,
                 processing_time_seconds=processing_time,
                 error_message=None,
@@ -282,7 +484,7 @@ class ProcessingService:
                 error_message=error_msg,
             )
 
-    def _image_to_bytes(self, pil_image: "PIL.Image.Image") -> bytes:  # type: ignore
+    def _image_to_bytes(self, pil_image: Any) -> bytes:
         """Convert PIL Image to PNG bytes.
 
         Args:
@@ -298,7 +500,7 @@ class ProcessingService:
     def _replace_image_references(
         self,
         markdown: str,
-        image_metadata: Dict[str, Dict[str, Any]]
+        image_metadata: dict[str, dict[str, Any]]
     ) -> str:
         """Replace Docling internal image references with S3 URLs.
 

@@ -55,6 +55,14 @@ help:
 
 # Development environment
 dev:
+	@if ! aws sts get-caller-identity --profile $${AWS_PROFILE:-uic} > /dev/null 2>&1; then \
+		echo "⚠️  AWS credentials not found - Bedrock AI unavailable"; \
+		echo "   To enable, run:"; \
+		echo "     aws sso login --profile uic"; \
+		echo "     eval \"\$$(aws configure export-credentials --profile uic --format env)\""; \
+		echo "     make down && make dev"; \
+		echo ""; \
+	fi
 	docker compose -f docker-compose.yml -f docker-compose.dev.yml up -d
 
 # Production environment

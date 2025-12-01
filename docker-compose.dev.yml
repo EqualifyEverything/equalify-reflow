@@ -57,9 +57,12 @@ services:
       # AWS_ENDPOINT_URL_BEDROCK_RUNTIME not set → uses real AWS
       # Real AWS credentials from host environment (for Bedrock API access)
       # These override the LocalStack test credentials for services that need real AWS
-      - AWS_ACCESS_KEY_ID=${AWS_ACCESS_KEY_ID}
-      - AWS_SECRET_ACCESS_KEY=${AWS_SECRET_ACCESS_KEY}
+      # Fallback to 'test' for LocalStack when real credentials aren't available
+      - AWS_ACCESS_KEY_ID=${AWS_ACCESS_KEY_ID:-test}
+      - AWS_SECRET_ACCESS_KEY=${AWS_SECRET_ACCESS_KEY:-test}
       - AWS_SESSION_TOKEN=${AWS_SESSION_TOKEN:-}
+      # Clear AWS_PROFILE to prevent boto3 from looking for profile config in container
+      - AWS_PROFILE=
       - AWS_DEFAULT_REGION=us-east-1
       # Disable AWS Instance Metadata Service (IMDS) to prevent boto3 hang in Docker
       - AWS_EC2_METADATA_DISABLED=true

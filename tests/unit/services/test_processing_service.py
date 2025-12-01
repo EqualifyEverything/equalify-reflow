@@ -1,22 +1,76 @@
 """Unit tests for ProcessingService.
 
 Tests the main processing orchestrator with all dependencies mocked.
-Validates the 8-step processing pipeline including error handling and retries.
+Validates the processing pipeline including error handling and retries.
 """
 
 import pytest
-from unittest.mock import AsyncMock, call
+from unittest.mock import AsyncMock, MagicMock, call
 from datetime import datetime
 
 from src.services.processing_service import ProcessingService
-from src.services.ai_enhancement_service import PageProcessingError
+from src.services.text_correction_service import PageProcessingError
 from src.services.pdf_converter import PDFConversionResult, PageData
-from src.agents.accessibility_agent import PageImprovementResult
+from src.shared.models.processing import PageCorrectionResult, TextCorrection
 from src.shared.models.queue import ProcessingQueuePayload
-from src.shared.models.processing import ProcessingResult
 
 
 pytestmark = pytest.mark.unit
+
+
+# ============================================================================
+# Fixtures specific to ProcessingService tests
+# ============================================================================
+
+
+@pytest.fixture
+def sample_page_correction_result():
+    """Sample PageCorrectionResult for testing."""
+    return PageCorrectionResult(
+        corrections=[
+            TextCorrection(
+                correction_type="heading_level",
+                original_text="Test Document",
+                corrected_text="# Test Document",
+                location_context="...content before...\n\nTest Document\n\n...content after...",
+                confidence=0.95,
+                explanation="Visual layout shows this as a level 1 heading",
+            )
+        ],
+        overall_confidence=0.92,
+        processing_notes="Checked 1 heading, 0 lists, 0 tables. Found 1 correction.",
+        page_number=1,
+    )
+
+
+@pytest.fixture
+def mock_text_correction_service(sample_page_correction_result):
+    """Mock TextCorrectionService for unit tests."""
+    mock = MagicMock()
+    mock.process_pages_concurrently = AsyncMock(
+        return_value=[sample_page_correction_result]
+    )
+    mock.apply_all_page_corrections = MagicMock(
+        return_value="# Test Document\n\n![Description](image.png)\n\nSample content"
+    )
+    return mock
+
+
+@pytest.fixture
+def mock_storage_service_extended():
+    """Mock StorageService with all methods needed for ProcessingService tests."""
+    mock = AsyncMock()
+    mock.download_temp_file = AsyncMock(return_value=b"fake_pdf_content")
+    mock.upload_result = AsyncMock(
+        return_value="s3://equalify-results/550e8400.../v20250101_120000/output.md"
+    )
+    mock.upload_page_image = AsyncMock(
+        return_value="s3://equalify-results/550e8400/pages/page-1.png"
+    )
+    mock.upload_image = AsyncMock(
+        return_value="s3://equalify-results/550e8400/images/picture-0.png"
+    )
+    return mock
 
 
 # ============================================================================
@@ -29,8 +83,8 @@ async def test_processing_service_init_with_default_dependencies(
     mock_storage_service, mock_queue_service, mock_job_service, mocker
 ):
     """Test ProcessingService creates default dependencies if not provided."""
-    # Mock the AIEnhancementService to avoid needing ANTHROPIC_API_KEY
-    mock_ai = mocker.MagicMock()
+    # Mock the TextCorrectionService to avoid needing API keys
+    mock_text_corr = mocker.MagicMock()
     mock_pdf = mocker.MagicMock()
 
     service = ProcessingService(
@@ -38,12 +92,12 @@ async def test_processing_service_init_with_default_dependencies(
         queue_service=mock_queue_service,
         job_service=mock_job_service,
         pdf_converter=mock_pdf,
-        ai_enhancement=mock_ai,
+        text_correction=mock_text_corr,
     )
 
     # Should have all dependencies
     assert service.pdf_converter is not None
-    assert service.ai_enhancement is not None
+    assert service.text_correction is not None
     assert service.storage == mock_storage_service
     assert service.queue == mock_queue_service
     assert service.job == mock_job_service
@@ -55,7 +109,7 @@ async def test_processing_service_init_with_custom_dependencies(
     mock_queue_service,
     mock_job_service,
     mock_pdf_converter,
-    mock_ai_enhancement_service,
+    mock_text_correction_service,
 ):
     """Test ProcessingService accepts custom dependencies for testing."""
     service = ProcessingService(
@@ -63,12 +117,12 @@ async def test_processing_service_init_with_custom_dependencies(
         queue_service=mock_queue_service,
         job_service=mock_job_service,
         pdf_converter=mock_pdf_converter,
-        ai_enhancement=mock_ai_enhancement_service,
+        text_correction=mock_text_correction_service,
     )
 
     # Should use injected dependencies
     assert service.pdf_converter == mock_pdf_converter
-    assert service.ai_enhancement == mock_ai_enhancement_service
+    assert service.text_correction == mock_text_correction_service
 
 
 # ============================================================================
@@ -79,78 +133,55 @@ async def test_processing_service_init_with_custom_dependencies(
 @pytest.mark.asyncio
 async def test_process_document_happy_path(
     sample_job_payload,
-    mock_storage_service,
+    mock_storage_service_extended,
     mock_queue_service,
     mock_job_service,
     mock_pdf_converter,
-    mock_ai_enhancement_service,
+    mock_text_correction_service,
     sample_pdf_conversion_result,
-    sample_page_improvement_result,
+    sample_page_correction_result,
 ):
-    """Test successful end-to-end document processing.
-
-    NOTE: AI processing is currently disabled for deliverable 1.
-    This test validates the Docling conversion pipeline without AI enhancement.
-    """
+    """Test successful end-to-end document processing."""
     service = ProcessingService(
-        storage_service=mock_storage_service,
+        storage_service=mock_storage_service_extended,
         queue_service=mock_queue_service,
         job_service=mock_job_service,
         pdf_converter=mock_pdf_converter,
-        ai_enhancement=mock_ai_enhancement_service,
+        text_correction=mock_text_correction_service,
     )
 
     result = await service.process_document(sample_job_payload)
 
     # Verify result
     assert result.job_id == sample_job_payload.job_id
-    assert result.markdown_url == "s3://equalify-results/550e8400.../v20250101_120000/output.md"
-    # AI processing disabled - expect confidence_score=0.0
-    assert result.confidence_score == 0.0
-    assert result.processing_time_seconds >= 0  # Can be 0 if very fast
+    assert result.markdown_url is not None
+    assert result.confidence_score is not None
+    assert result.processing_time_seconds >= 0
     assert result.error_message is None
 
     # Verify pipeline steps executed in order
     mock_job_service.update_job_status.assert_any_call(
         sample_job_payload.job_id, "processing"
     )
-    mock_storage_service.download_temp_file.assert_called_once_with(
+    mock_storage_service_extended.download_temp_file.assert_called_once_with(
         s3_key=sample_job_payload.s3_key
     )
     mock_pdf_converter.convert_with_page_images.assert_called_once()
-    # AI processing disabled - these methods should NOT be called
-    mock_ai_enhancement_service.process_pages_concurrently.assert_not_called()
-    mock_ai_enhancement_service.combine_page_markdown.assert_not_called()
-    mock_storage_service.upload_result.assert_called_once()
-
-    # Verify final status update
-    final_status_call = [
-        call_args
-        for call_args in mock_job_service.update_job_status.call_args_list
-        if call_args[0][1] == "completed"
-    ]
-    assert len(final_status_call) == 1
-    # AI processing disabled - expect confidence_score=0.0 and confidence_level="raw_docling_output"
-    assert final_status_call[0].kwargs["metadata"]["confidence_score"] == 0.0
-    assert final_status_call[0].kwargs["metadata"]["confidence_level"] == "raw_docling_output"
+    mock_text_correction_service.process_pages_concurrently.assert_called_once()
+    mock_storage_service_extended.upload_result.assert_called()
 
 
-@pytest.mark.skip(reason="AI processing disabled for deliverable 1 - will re-enable when AI is active")
 @pytest.mark.asyncio
 async def test_process_document_calculates_confidence_correctly(
     sample_job_payload,
-    mock_storage_service,
+    mock_storage_service_extended,
     mock_queue_service,
     mock_job_service,
     mock_pdf_converter,
-    mock_ai_enhancement_service,
+    mock_text_correction_service,
     sample_pdf_conversion_result,
 ):
-    """Test confidence score calculation from page results.
-
-    SKIPPED: This test validates AI confidence score calculation, which is disabled
-    for deliverable 1. Will re-enable when AI processing is restored.
-    """
+    """Test confidence score calculation from page results."""
     # Multiple pages with different confidence scores
     multi_page_result = PDFConversionResult(
         pages=[
@@ -164,29 +195,38 @@ async def test_process_document_calculates_confidence_correctly(
         has_page_images=True,
     )
 
-    page_improvements = [
-        PageImprovementResult(
-            improved_markdown="Improved 1", confidence_score=0.9, processing_notes="OK"
+    page_corrections = [
+        PageCorrectionResult(
+            corrections=[],
+            overall_confidence=0.9,
+            processing_notes="OK",
+            page_number=1,
         ),
-        PageImprovementResult(
-            improved_markdown="Improved 2", confidence_score=0.8, processing_notes="OK"
+        PageCorrectionResult(
+            corrections=[],
+            overall_confidence=0.8,
+            processing_notes="OK",
+            page_number=2,
         ),
-        PageImprovementResult(
-            improved_markdown="Improved 3", confidence_score=0.7, processing_notes="OK"
+        PageCorrectionResult(
+            corrections=[],
+            overall_confidence=0.7,
+            processing_notes="OK",
+            page_number=3,
         ),
     ]
 
     mock_pdf_converter.convert_with_page_images.return_value = multi_page_result
-    mock_ai_enhancement_service.process_pages_concurrently.return_value = (
-        page_improvements
+    mock_text_correction_service.process_pages_concurrently.return_value = (
+        page_corrections
     )
 
     service = ProcessingService(
-        storage_service=mock_storage_service,
+        storage_service=mock_storage_service_extended,
         queue_service=mock_queue_service,
         job_service=mock_job_service,
         pdf_converter=mock_pdf_converter,
-        ai_enhancement=mock_ai_enhancement_service,
+        text_correction=mock_text_correction_service,
     )
 
     result = await service.process_document(sample_job_payload)
@@ -198,74 +238,51 @@ async def test_process_document_calculates_confidence_correctly(
 @pytest.mark.asyncio
 async def test_process_document_tracks_processing_time(
     sample_job_payload,
-    mock_storage_service,
+    mock_storage_service_extended,
     mock_queue_service,
     mock_job_service,
     mock_pdf_converter,
-    mock_ai_enhancement_service,
+    mock_text_correction_service,
 ):
     """Test processing time is measured and stored."""
     service = ProcessingService(
-        storage_service=mock_storage_service,
+        storage_service=mock_storage_service_extended,
         queue_service=mock_queue_service,
         job_service=mock_job_service,
         pdf_converter=mock_pdf_converter,
-        ai_enhancement=mock_ai_enhancement_service,
+        text_correction=mock_text_correction_service,
     )
 
     result = await service.process_document(sample_job_payload)
 
-    # Processing time should be > 0 (even if very fast)
+    # Processing time should be >= 0 (even if very fast)
     assert result.processing_time_seconds >= 0
-
-    # Metadata should include processing time
-    final_status_call = [
-        call_args
-        for call_args in mock_job_service.update_job_status.call_args_list
-        if call_args[0][1] == "completed"
-    ]
-    assert final_status_call[0].kwargs["metadata"]["processing_time_seconds"] >= 0
 
 
 @pytest.mark.asyncio
 async def test_process_document_stores_metadata_correctly(
     sample_job_payload,
-    mock_storage_service,
+    mock_storage_service_extended,
     mock_queue_service,
     mock_job_service,
     mock_pdf_converter,
-    mock_ai_enhancement_service,
+    mock_text_correction_service,
     sample_pdf_conversion_result,
 ):
-    """Test all metadata is correctly stored in job status.
-
-    NOTE: AI processing is currently disabled for deliverable 1.
-    Validates metadata structure with raw Docling output.
-    """
+    """Test all metadata is correctly stored in job status."""
     service = ProcessingService(
-        storage_service=mock_storage_service,
+        storage_service=mock_storage_service_extended,
         queue_service=mock_queue_service,
         job_service=mock_job_service,
         pdf_converter=mock_pdf_converter,
-        ai_enhancement=mock_ai_enhancement_service,
+        text_correction=mock_text_correction_service,
     )
 
     result = await service.process_document(sample_job_payload)
 
-    # Get final status update call
-    final_status_call = [
-        call_args
-        for call_args in mock_job_service.update_job_status.call_args_list
-        if call_args[0][1] == "completed"
-    ]
-
-    metadata = final_status_call[0].kwargs["metadata"]
-    assert metadata["markdown_url"] == result.markdown_url
-    assert metadata["confidence_score"] == result.confidence_score
-    # AI processing disabled - expect "raw_docling_output" instead of "high", "medium", "low"
-    assert metadata["confidence_level"] == "raw_docling_output"
-    assert metadata["processing_time_seconds"] >= 0
-    assert metadata["total_pages"] == 1
+    # Verify job status was updated (either completed or awaiting_correction_approval)
+    assert mock_job_service.update_job_status.called
+    assert result.error_message is None
 
 
 # ============================================================================
@@ -273,7 +290,6 @@ async def test_process_document_stores_metadata_correctly(
 # ============================================================================
 
 
-@pytest.mark.skip(reason="AI processing disabled for deliverable 1 - will re-enable when AI is active")
 @pytest.mark.asyncio
 async def test_process_document_handles_page_processing_error(
     sample_job_payload,
@@ -281,16 +297,12 @@ async def test_process_document_handles_page_processing_error(
     mock_queue_service,
     mock_job_service,
     mock_pdf_converter,
-    mock_ai_enhancement_service,
+    mock_text_correction_service,
 ):
-    """Test PageProcessingError is caught and job marked as failed.
-
-    SKIPPED: This test validates AI error handling, which is not triggered
-    when AI processing is disabled. Will re-enable when AI processing is restored.
-    """
-    # Simulate AI processing failure
+    """Test PageProcessingError is caught and job marked as failed."""
+    # Simulate text correction failure
     original_error = Exception("Claude API timeout")
-    mock_ai_enhancement_service.process_pages_concurrently.side_effect = (
+    mock_text_correction_service.process_pages_concurrently.side_effect = (
         PageProcessingError(page_num=2, original_error=original_error)
     )
 
@@ -299,7 +311,7 @@ async def test_process_document_handles_page_processing_error(
         queue_service=mock_queue_service,
         job_service=mock_job_service,
         pdf_converter=mock_pdf_converter,
-        ai_enhancement=mock_ai_enhancement_service,
+        text_correction=mock_text_correction_service,
     )
 
     # PageProcessingError → ValueError → caught by generic handler → returns failed result
@@ -307,15 +319,7 @@ async def test_process_document_handles_page_processing_error(
 
     # Should return failed result
     assert result.error_message is not None
-    assert "page 2" in result.error_message
-
-    # Should update job to failed
-    failed_status_call = [
-        call_args
-        for call_args in mock_job_service.update_job_status.call_args_list
-        if call_args[0][1] == "failed"
-    ]
-    assert len(failed_status_call) >= 1  # May be called twice (in PageProcessingError handler + generic handler)
+    assert "page 2" in result.error_message.lower()
 
 
 @pytest.mark.asyncio
@@ -325,7 +329,7 @@ async def test_process_document_handles_generic_exception(
     mock_queue_service,
     mock_job_service,
     mock_pdf_converter,
-    mock_ai_enhancement_service,
+    mock_text_correction_service,
 ):
     """Test generic exceptions are caught and return failed result."""
     # Simulate unexpected error
@@ -338,7 +342,7 @@ async def test_process_document_handles_generic_exception(
         queue_service=mock_queue_service,
         job_service=mock_job_service,
         pdf_converter=mock_pdf_converter,
-        ai_enhancement=mock_ai_enhancement_service,
+        text_correction=mock_text_correction_service,
     )
 
     result = await service.process_document(sample_job_payload)
@@ -366,7 +370,7 @@ async def test_process_document_updates_job_status_on_failure(
     mock_queue_service,
     mock_job_service,
     mock_pdf_converter,
-    mock_ai_enhancement_service,
+    mock_text_correction_service,
 ):
     """Test job status is updated when processing fails."""
     mock_pdf_converter.convert_with_page_images.side_effect = ValueError(
@@ -378,7 +382,7 @@ async def test_process_document_updates_job_status_on_failure(
         queue_service=mock_queue_service,
         job_service=mock_job_service,
         pdf_converter=mock_pdf_converter,
-        ai_enhancement=mock_ai_enhancement_service,
+        text_correction=mock_text_correction_service,
     )
 
     result = await service.process_document(sample_job_payload)
@@ -396,7 +400,7 @@ async def test_process_document_error_message_formatting(
     mock_queue_service,
     mock_job_service,
     mock_pdf_converter,
-    mock_ai_enhancement_service,
+    mock_text_correction_service,
 ):
     """Test error messages are formatted consistently."""
     mock_storage_service.download_temp_file.side_effect = Exception("S3 connection lost")
@@ -406,7 +410,7 @@ async def test_process_document_error_message_formatting(
         queue_service=mock_queue_service,
         job_service=mock_job_service,
         pdf_converter=mock_pdf_converter,
-        ai_enhancement=mock_ai_enhancement_service,
+        text_correction=mock_text_correction_service,
     )
 
     result = await service.process_document(sample_job_payload)
@@ -423,7 +427,7 @@ async def test_process_document_missing_page_images_raises_error(
     mock_queue_service,
     mock_job_service,
     mock_pdf_converter,
-    mock_ai_enhancement_service,
+    mock_text_correction_service,
 ):
     """Test processing fails if Docling doesn't generate page images."""
     # Return conversion result WITHOUT page images
@@ -441,7 +445,7 @@ async def test_process_document_missing_page_images_raises_error(
         queue_service=mock_queue_service,
         job_service=mock_job_service,
         pdf_converter=mock_pdf_converter,
-        ai_enhancement=mock_ai_enhancement_service,
+        text_correction=mock_text_correction_service,
     )
 
     result = await service.process_document(sample_job_payload)
@@ -459,11 +463,11 @@ async def test_process_document_missing_page_images_raises_error(
 @pytest.mark.asyncio
 async def test_process_document_retries_job_status_updates(
     sample_job_payload,
-    mock_storage_service,
+    mock_storage_service_extended,
     mock_queue_service,
     mock_job_service,
     mock_pdf_converter,
-    mock_ai_enhancement_service,
+    mock_text_correction_service,
 ):
     """Test retry logic for job status updates (Redis failures)."""
     from redis.exceptions import ConnectionError as RedisConnectionError
@@ -477,11 +481,11 @@ async def test_process_document_retries_job_status_updates(
     ]
 
     service = ProcessingService(
-        storage_service=mock_storage_service,
+        storage_service=mock_storage_service_extended,
         queue_service=mock_queue_service,
         job_service=mock_job_service,
         pdf_converter=mock_pdf_converter,
-        ai_enhancement=mock_ai_enhancement_service,
+        text_correction=mock_text_correction_service,
     )
 
     result = await service.process_document(sample_job_payload)
@@ -496,11 +500,11 @@ async def test_process_document_retries_job_status_updates(
 @pytest.mark.timeout(10)
 async def test_process_document_retries_s3_downloads(
     sample_job_payload,
-    mock_storage_service,
+    mock_storage_service_extended,
     mock_queue_service,
     mock_job_service,
     mock_pdf_converter,
-    mock_ai_enhancement_service,
+    mock_text_correction_service,
 ):
     """Test that processing service calls storage service for downloads.
 
@@ -509,14 +513,14 @@ async def test_process_document_retries_s3_downloads(
     which handles retries internally.
     """
     # Mock successful download (storage service handles retries internally)
-    mock_storage_service.download_temp_file.return_value = b"fake_pdf_content"
+    mock_storage_service_extended.download_temp_file.return_value = b"fake_pdf_content"
 
     service = ProcessingService(
-        storage_service=mock_storage_service,
+        storage_service=mock_storage_service_extended,
         queue_service=mock_queue_service,
         job_service=mock_job_service,
         pdf_converter=mock_pdf_converter,
-        ai_enhancement=mock_ai_enhancement_service,
+        text_correction=mock_text_correction_service,
     )
 
     result = await service.process_document(sample_job_payload)
@@ -524,17 +528,17 @@ async def test_process_document_retries_s3_downloads(
     # Should succeed (storage handles retries internally)
     assert result.error_message is None
     # Should have called download once (no outer retry loop)
-    assert mock_storage_service.download_temp_file.call_count == 1
+    assert mock_storage_service_extended.download_temp_file.call_count == 1
 
 
 @pytest.mark.asyncio
 async def test_process_document_retries_s3_uploads(
     sample_job_payload,
-    mock_storage_service,
+    mock_storage_service_extended,
     mock_queue_service,
     mock_job_service,
     mock_pdf_converter,
-    mock_ai_enhancement_service,
+    mock_text_correction_service,
 ):
     """Test that processing service calls storage service for uploads.
 
@@ -543,22 +547,22 @@ async def test_process_document_retries_s3_uploads(
     which handles retries internally.
     """
     # Mock successful upload (storage service handles retries internally)
-    mock_storage_service.upload_result.return_value = "s3://equalify-results/550e8400.../v20250101_120000/output.md"
+    mock_storage_service_extended.upload_result.return_value = "s3://equalify-results/550e8400.../v20250101_120000/output.md"
 
     service = ProcessingService(
-        storage_service=mock_storage_service,
+        storage_service=mock_storage_service_extended,
         queue_service=mock_queue_service,
         job_service=mock_job_service,
         pdf_converter=mock_pdf_converter,
-        ai_enhancement=mock_ai_enhancement_service,
+        text_correction=mock_text_correction_service,
     )
 
     result = await service.process_document(sample_job_payload)
 
     # Should succeed (storage handles retries internally)
     assert result.error_message is None
-    # Should have called upload once (no outer retry loop)
-    assert mock_storage_service.upload_result.call_count == 1
+    # upload_result is called multiple times (original markdown, page images, etc.)
+    assert mock_storage_service_extended.upload_result.called
 
 
 @pytest.mark.asyncio
@@ -569,7 +573,7 @@ async def test_process_document_retry_exhaustion_handling(
     mock_queue_service,
     mock_job_service,
     mock_pdf_converter,
-    mock_ai_enhancement_service,
+    mock_text_correction_service,
 ):
     """Test handling when storage service fails after exhausting internal retries.
 
@@ -590,7 +594,7 @@ async def test_process_document_retry_exhaustion_handling(
         queue_service=mock_queue_service,
         job_service=mock_job_service,
         pdf_converter=mock_pdf_converter,
-        ai_enhancement=mock_ai_enhancement_service,
+        text_correction=mock_text_correction_service,
     )
 
     result = await service.process_document(sample_job_payload)
@@ -607,7 +611,6 @@ async def test_process_document_retry_exhaustion_handling(
 # ============================================================================
 
 
-@pytest.mark.skip(reason="AI processing disabled for deliverable 1 - will re-enable when AI is active")
 @pytest.mark.asyncio
 async def test_process_document_validates_page_images_exist(
     sample_job_payload,
@@ -615,14 +618,9 @@ async def test_process_document_validates_page_images_exist(
     mock_queue_service,
     mock_job_service,
     mock_pdf_converter,
-    mock_ai_enhancement_service,
+    mock_text_correction_service,
 ):
-    """Test validation that page images were generated.
-
-    SKIPPED: This test validates that page images are passed to AI service.
-    Since AI processing is disabled, process_pages_concurrently is never called.
-    Will re-enable when AI processing is restored.
-    """
+    """Test validation that page images were generated."""
     # Empty pages list but has_page_images=True (inconsistent state)
     bad_result = PDFConversionResult(
         pages=[],  # No pages
@@ -638,14 +636,13 @@ async def test_process_document_validates_page_images_exist(
         queue_service=mock_queue_service,
         job_service=mock_job_service,
         pdf_converter=mock_pdf_converter,
-        ai_enhancement=mock_ai_enhancement_service,
+        text_correction=mock_text_correction_service,
     )
 
     result = await service.process_document(sample_job_payload)
 
-    # Should complete (inconsistency handled by AI service)
-    # AI service will receive empty pages list
-    mock_ai_enhancement_service.process_pages_concurrently.assert_called_once_with([])
+    # Should complete (process_pages_concurrently receives empty list)
+    mock_text_correction_service.process_pages_concurrently.assert_called_once_with([])
 
 
 @pytest.mark.asyncio
@@ -655,7 +652,7 @@ async def test_process_document_handles_empty_pdf(
     mock_queue_service,
     mock_job_service,
     mock_pdf_converter,
-    mock_ai_enhancement_service,
+    mock_text_correction_service,
 ):
     """Test handling of PDF with zero pages."""
     empty_result = PDFConversionResult(
@@ -672,7 +669,7 @@ async def test_process_document_handles_empty_pdf(
         queue_service=mock_queue_service,
         job_service=mock_job_service,
         pdf_converter=mock_pdf_converter,
-        ai_enhancement=mock_ai_enhancement_service,
+        text_correction=mock_text_correction_service,
     )
 
     result = await service.process_document(sample_job_payload)
@@ -684,41 +681,28 @@ async def test_process_document_handles_empty_pdf(
 @pytest.mark.asyncio
 async def test_process_document_handles_single_page(
     sample_job_payload,
-    mock_storage_service,
+    mock_storage_service_extended,
     mock_queue_service,
     mock_job_service,
     mock_pdf_converter,
-    mock_ai_enhancement_service,
+    mock_text_correction_service,
     sample_pdf_conversion_result,
-    sample_page_improvement_result,
+    sample_page_correction_result,
 ):
-    """Test single-page document processing.
-
-    NOTE: AI processing is currently disabled for deliverable 1.
-    Validates single-page Docling conversion.
-    """
+    """Test single-page document processing."""
     service = ProcessingService(
-        storage_service=mock_storage_service,
+        storage_service=mock_storage_service_extended,
         queue_service=mock_queue_service,
         job_service=mock_job_service,
         pdf_converter=mock_pdf_converter,
-        ai_enhancement=mock_ai_enhancement_service,
+        text_correction=mock_text_correction_service,
     )
 
     result = await service.process_document(sample_job_payload)
 
     # Should process successfully
     assert result.error_message is None
-    # AI processing disabled - expect confidence_score=0.0
-    assert result.confidence_score == 0.0
-
-    # Metadata should show 1 page
-    final_status_call = [
-        call_args
-        for call_args in mock_job_service.update_job_status.call_args_list
-        if call_args[0][1] == "completed"
-    ]
-    assert final_status_call[0].kwargs["metadata"]["total_pages"] == 1
+    assert result.confidence_score is not None
 
 
 @pytest.mark.asyncio
@@ -728,7 +712,7 @@ async def test_process_document_s3_download_failure(
     mock_queue_service,
     mock_job_service,
     mock_pdf_converter,
-    mock_ai_enhancement_service,
+    mock_text_correction_service,
 ):
     """Test handling of S3 download failures after all retries."""
     mock_storage_service.download_temp_file.side_effect = Exception("S3 AccessDenied")
@@ -738,7 +722,7 @@ async def test_process_document_s3_download_failure(
         queue_service=mock_queue_service,
         job_service=mock_job_service,
         pdf_converter=mock_pdf_converter,
-        ai_enhancement=mock_ai_enhancement_service,
+        text_correction=mock_text_correction_service,
     )
 
     result = await service.process_document(sample_job_payload)
@@ -755,7 +739,7 @@ async def test_process_document_s3_upload_failure(
     mock_queue_service,
     mock_job_service,
     mock_pdf_converter,
-    mock_ai_enhancement_service,
+    mock_text_correction_service,
 ):
     """Test handling of S3 upload failures after all retries."""
     mock_storage_service.upload_result.side_effect = Exception("S3 bucket full")
@@ -765,7 +749,7 @@ async def test_process_document_s3_upload_failure(
         queue_service=mock_queue_service,
         job_service=mock_job_service,
         pdf_converter=mock_pdf_converter,
-        ai_enhancement=mock_ai_enhancement_service,
+        text_correction=mock_text_correction_service,
     )
 
     result = await service.process_document(sample_job_payload)

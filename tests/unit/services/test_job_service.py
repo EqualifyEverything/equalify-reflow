@@ -103,20 +103,28 @@ class TestGetJob:
         assert result["pii_findings"] == pii_findings
 
     @pytest.mark.asyncio
-    async def test_get_job_with_metadata(self, job_service, mock_redis_client):
-        """Test retrieving job with metadata."""
-        metadata = {"page_count": 10, "file_size": 1024}
+    async def test_get_job_with_json_array_fields(self, job_service, mock_redis_client):
+        """Test retrieving job with JSON array fields (correction_results, page_image_keys)."""
+        # Phase 4: metadata is no longer parsed - only specific JSON array fields
+        correction_results = [{"page": 1, "corrections": []}]
+        page_image_keys = ["page-1.png", "page-2.png"]
+
         job_data = {
             "job_id": "job123",
-            "metadata": json.dumps(metadata),
+            "correction_results": json.dumps(correction_results),
+            "page_image_keys": json.dumps(page_image_keys),
             "created_at": "2024-01-15T10:30:00Z"
         }
         mock_redis_client.hgetall.return_value = job_data
 
         result = await job_service.get_job("job123")
 
-        # Verify metadata was deserialized
-        assert result["metadata"] == metadata
+        # Verify JSON array fields were deserialized
+        assert result["correction_results"] == correction_results
+        assert result["page_image_keys"] == page_image_keys
+
+        # Verify metadata field is NOT parsed (Phase 4 change)
+        assert "metadata" not in result
 
     @pytest.mark.asyncio
     async def test_get_job_not_found(self, job_service, mock_redis_client):
@@ -161,20 +169,28 @@ class TestUpdateJobStatus:
 
     @pytest.mark.asyncio
     async def test_update_status_with_complex_fields(self, job_service, mock_redis_client):
-        """Test status update with dict/list fields."""
+        """Test status update with dict/list fields stored at top level."""
         mock_redis_client.hset.return_value = 2
 
-        metadata = {"pages": 5, "confidence": 0.9}
+        # Phase 4: Pass fields individually, not as metadata blob
+        correction_results = [{"page": 1, "corrections": []}]
+        page_image_keys = ["page-1.png", "page-2.png"]
+
         await job_service.update_job_status(
             "job123",
             "processing",
-            metadata=metadata
+            correction_results=correction_results,
+            page_image_keys=page_image_keys
         )
 
         mapping = mock_redis_client.hset.call_args.kwargs["mapping"]
         # Complex fields should be JSON serialized
-        assert isinstance(mapping["metadata"], str)
-        assert json.loads(mapping["metadata"]) == metadata
+        assert isinstance(mapping["correction_results"], str)
+        assert json.loads(mapping["correction_results"]) == correction_results
+        assert isinstance(mapping["page_image_keys"], str)
+        assert json.loads(mapping["page_image_keys"]) == page_image_keys
+        # Verify no metadata blob exists
+        assert "metadata" not in mapping
 
 
 class TestAddPiiFindings:

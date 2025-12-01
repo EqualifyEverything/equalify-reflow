@@ -131,33 +131,53 @@ class TestUploadResult:
 
     @pytest.mark.asyncio
     async def test_upload_markdown_result(self, storage_service, mock_s3_client):
-        """Test uploading Markdown result."""
+        """Test uploading Markdown result returns S3 key."""
         mock_s3_client.put_object.return_value = None
 
-        url = await storage_service.upload_result(
+        s3_key = await storage_service.upload_result(
             job_id="job123",
             content="# Accessible content",
             format="md"
         )
 
-        assert "job123.md" in url
+        # Should return S3 key, not URL
+        assert s3_key == "job123.md"
+        assert "http" not in s3_key  # Verify it's not a URL
+        assert "s3.amazonaws.com" not in s3_key  # Verify it's not a URL
+
         mock_s3_client.put_object.assert_called_once()
         call_kwargs = mock_s3_client.put_object.call_args.kwargs
         assert call_kwargs["ContentType"] == "text/markdown"
         assert call_kwargs["Bucket"] == settings.s3_results_bucket
 
     @pytest.mark.asyncio
+    async def test_upload_result_with_suffix(self, storage_service, mock_s3_client):
+        """Test uploading result with suffix returns correct S3 key."""
+        mock_s3_client.put_object.return_value = None
+
+        s3_key = await storage_service.upload_result(
+            job_id="job456",
+            content="# Original markdown",
+            format="md",
+            suffix="original"
+        )
+
+        # Should return S3 key with suffix
+        assert s3_key == "job456-original.md"
+        assert "http" not in s3_key
+
+    @pytest.mark.asyncio
     async def test_upload_unsupported_format(self, storage_service, mock_s3_client):
         """Test uploading with unsupported format defaults to text/plain."""
         mock_s3_client.put_object.return_value = None
 
-        url = await storage_service.upload_result(
+        s3_key = await storage_service.upload_result(
             job_id="job456",
             content="# Markdown content",
             format="txt"
         )
 
-        assert "job456.txt" in url
+        assert s3_key == "job456.txt"
         call_kwargs = mock_s3_client.put_object.call_args.kwargs
         assert call_kwargs["ContentType"] == "text/plain"
 
@@ -182,6 +202,83 @@ class TestUploadResult:
 
         assert exc.value.status_code == 500
         assert "Failed to upload result" in exc.value.detail
+
+
+class TestUploadPageImage:
+    """Tests for upload_page_image method."""
+
+    @pytest.mark.asyncio
+    async def test_upload_page_image_returns_key(self, storage_service, mock_s3_client):
+        """Test uploading page image returns S3 key."""
+        mock_s3_client.put_object.return_value = None
+
+        s3_key = await storage_service.upload_page_image(
+            job_id="job123",
+            page_num=1,
+            image_data=b"PNG image data"
+        )
+
+        # Should return S3 key, not URL
+        assert s3_key == "job123/pages/page-1.png"
+        assert "http" not in s3_key  # Verify it's not a URL
+        assert "s3.amazonaws.com" not in s3_key  # Verify it's not a URL
+
+        mock_s3_client.put_object.assert_called_once()
+        call_kwargs = mock_s3_client.put_object.call_args.kwargs
+        assert call_kwargs["ContentType"] == "image/png"
+        assert call_kwargs["Bucket"] == settings.s3_temp_bucket
+        assert call_kwargs["Key"] == "job123/pages/page-1.png"
+
+    @pytest.mark.asyncio
+    async def test_upload_page_image_multiple_pages(self, storage_service, mock_s3_client):
+        """Test uploading multiple page images returns correct keys."""
+        mock_s3_client.put_object.return_value = None
+
+        # Upload page 1
+        s3_key_1 = await storage_service.upload_page_image(
+            job_id="job456",
+            page_num=1,
+            image_data=b"Page 1 PNG"
+        )
+        assert s3_key_1 == "job456/pages/page-1.png"
+
+        # Upload page 10
+        s3_key_10 = await storage_service.upload_page_image(
+            job_id="job456",
+            page_num=10,
+            image_data=b"Page 10 PNG"
+        )
+        assert s3_key_10 == "job456/pages/page-10.png"
+
+    @pytest.mark.asyncio
+    async def test_upload_page_image_with_cache_control(self, storage_service, mock_s3_client):
+        """Test that cache control header is set for page images."""
+        mock_s3_client.put_object.return_value = None
+
+        await storage_service.upload_page_image(
+            job_id="job789",
+            page_num=5,
+            image_data=b"PNG data"
+        )
+
+        call_kwargs = mock_s3_client.put_object.call_args.kwargs
+        assert "CacheControl" in call_kwargs
+        assert "604800" in call_kwargs["CacheControl"]  # 7 days
+
+    @pytest.mark.asyncio
+    async def test_upload_page_image_failure(self, storage_service, mock_s3_client):
+        """Test handling of page image upload failure."""
+        mock_s3_client.put_object.side_effect = Exception("S3 error")
+
+        with pytest.raises(HTTPException) as exc:
+            await storage_service.upload_page_image(
+                job_id="job999",
+                page_num=1,
+                image_data=b"PNG"
+            )
+
+        assert exc.value.status_code == 500
+        assert "Failed to upload page 1 image" in exc.value.detail
 
 
 class TestDeleteTempFile:
@@ -583,3 +680,91 @@ class TestDeleteFromS3:
         success = await storage_service.delete_from_s3("bucket", "key")
 
         assert success is False
+
+
+class TestGenerateUrl:
+    """Tests for generate_url method (API Refactoring Phase 1)."""
+
+    @pytest.mark.asyncio
+    async def test_generate_url_localstack(self, storage_service, monkeypatch):
+        """Test URL generation for LocalStack environment."""
+        # Mock LocalStack environment
+        monkeypatch.setattr(settings, "aws_endpoint_url", "http://localstack:4566")
+
+        url = await storage_service.generate_url("results/abc-123.md")
+
+        assert url == f"http://localstack:4566/{settings.s3_results_bucket}/results/abc-123.md"
+        assert "localstack" in url
+        assert "results/abc-123.md" in url
+
+    @pytest.mark.asyncio
+    async def test_generate_url_localstack_with_custom_bucket(self, storage_service, monkeypatch):
+        """Test URL generation for LocalStack with custom bucket."""
+        monkeypatch.setattr(settings, "aws_endpoint_url", "http://localstack:4566")
+
+        url = await storage_service.generate_url(
+            "temp/job-456/pages/page-1.png",
+            bucket="custom-bucket"
+        )
+
+        assert url == "http://localstack:4566/custom-bucket/temp/job-456/pages/page-1.png"
+        assert "custom-bucket" in url
+
+    @pytest.mark.asyncio
+    async def test_generate_url_aws_production(self, storage_service, monkeypatch):
+        """Test URL generation for AWS production environment."""
+        # Mock AWS production environment (no endpoint URL)
+        monkeypatch.setattr(settings, "aws_endpoint_url", None)
+        monkeypatch.setattr(settings, "aws_region", "us-east-1")
+
+        url = await storage_service.generate_url("results/xyz-789.md")
+
+        expected_url = f"https://{settings.s3_results_bucket}.s3.us-east-1.amazonaws.com/results/xyz-789.md"
+        assert url == expected_url
+        assert url.startswith("https://")
+        assert ".s3.us-east-1.amazonaws.com" in url
+        assert "results/xyz-789.md" in url
+
+    @pytest.mark.asyncio
+    async def test_generate_url_aws_with_custom_region(self, storage_service, monkeypatch):
+        """Test URL generation for AWS with custom region."""
+        monkeypatch.setattr(settings, "aws_endpoint_url", None)
+        monkeypatch.setattr(settings, "aws_region", "eu-west-1")
+
+        url = await storage_service.generate_url("results/test.md")
+
+        assert ".s3.eu-west-1.amazonaws.com" in url
+        assert url.startswith("https://")
+
+    @pytest.mark.asyncio
+    async def test_generate_url_aws_fallback_region(self, storage_service, monkeypatch):
+        """Test URL generation falls back to us-east-1 if region not set."""
+        monkeypatch.setattr(settings, "aws_endpoint_url", None)
+        monkeypatch.setattr(settings, "aws_region", None)
+
+        url = await storage_service.generate_url("results/test.md")
+
+        assert ".s3.us-east-1.amazonaws.com" in url
+        assert url.startswith("https://")
+
+    @pytest.mark.asyncio
+    async def test_generate_url_defaults_to_results_bucket(self, storage_service, monkeypatch):
+        """Test URL generation defaults to results_bucket when bucket not specified."""
+        monkeypatch.setattr(settings, "aws_endpoint_url", "http://localstack:4566")
+
+        url = await storage_service.generate_url("some-key.md")
+
+        assert settings.s3_results_bucket in url
+
+    @pytest.mark.asyncio
+    async def test_generate_url_with_temp_bucket(self, storage_service, monkeypatch):
+        """Test URL generation with temp bucket explicitly specified."""
+        monkeypatch.setattr(settings, "aws_endpoint_url", "http://localstack:4566")
+
+        url = await storage_service.generate_url(
+            "job-123/pages/page-1.png",
+            bucket=storage_service.temp_bucket
+        )
+
+        assert storage_service.temp_bucket in url
+        assert "job-123/pages/page-1.png" in url

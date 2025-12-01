@@ -472,15 +472,17 @@ class TestTTLEdgeCases:
         assert mock_redis_client.expire.call_count == 1
 
     @pytest.mark.asyncio
-    async def test_status_update_with_metadata_still_sets_ttl(self, job_service, mock_redis_client):
-        """Verify TTL is set even when status update includes complex metadata."""
+    async def test_status_update_with_complex_fields_still_sets_ttl(self, job_service, mock_redis_client):
+        """Verify TTL is set even when status update includes complex top-level fields."""
         mock_redis_client.hset.return_value = 5
         mock_redis_client.expire.return_value = 1
 
+        # Phase 4: Pass fields individually at top level, not as metadata blob
         await job_service.update_job_status(
             "job123",
             STATUS_COMPLETED,
-            metadata={"pages": 10, "confidence": 0.95},
+            total_pages=10,
+            confidence_score=0.95,
             result_url="https://s3.../result.html"
         )
 

@@ -101,38 +101,40 @@ class TestStorageUrlGenerationProduction:
 
     @pytest.mark.asyncio
     async def test_upload_result_production_url(self, storage_service, mock_s3_client):
-        """Test upload_result returns correct production URL."""
+        """Test upload_result returns S3 key (Phase 3: stores keys not URLs)."""
         mock_s3_client.put_object.return_value = None
 
         with patch('src.services.storage_service.settings') as mock_settings:
             mock_settings.aws_endpoint_url = None  # Production
             mock_settings.aws_region = "us-east-1"
 
-            url = await storage_service.upload_result(
+            key = await storage_service.upload_result(
                 job_id="prod-job",
                 content="<html>Content</html>",
                 format="html"
             )
 
-            assert url == "https://equalify-results.s3.us-east-1.amazonaws.com/prod-job.html"
-            assert "None" not in url
+            # Phase 3: upload_result now returns S3 key instead of URL
+            assert key == "prod-job.html"
+            assert "None" not in key
 
     @pytest.mark.asyncio
     async def test_upload_result_localstack_url(self, storage_service, mock_s3_client):
-        """Test upload_result returns correct LocalStack URL."""
+        """Test upload_result returns S3 key (Phase 3: stores keys not URLs)."""
         mock_s3_client.put_object.return_value = None
 
         with patch('src.services.storage_service.settings') as mock_settings:
             mock_settings.aws_endpoint_url = "http://localstack:4566"
             mock_settings.aws_region = "us-east-1"
 
-            url = await storage_service.upload_result(
+            key = await storage_service.upload_result(
                 job_id="dev-job",
                 content="# MDX Content",
                 format="mdx"
             )
 
-            assert url == "http://localstack:4566/equalify-results/dev-job.mdx"
+            # Phase 3: upload_result now returns S3 key instead of URL
+            assert key == "dev-job.mdx"
 
     def test_url_format_virtual_hosted_style(self, storage_service):
         """Test production URLs use virtual-hosted-style (bucket.s3.region.amazonaws.com)."""

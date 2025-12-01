@@ -3,9 +3,12 @@
 
 import asyncio
 import logging
+from collections.abc import AsyncIterator
 from contextlib import asynccontextmanager
+from typing import Any
 
 from fastapi import FastAPI
+from fastapi.openapi.utils import get_openapi
 
 from .api import approval, corrections, documents, health
 from .config import settings
@@ -34,7 +37,7 @@ logger = logging.getLogger(__name__)
 
 
 @asynccontextmanager
-async def lifespan(app: FastAPI):
+async def lifespan(app: FastAPI) -> AsyncIterator[None]:
     """FastAPI lifespan context manager.
 
     Starts background workers when the application starts
@@ -47,14 +50,14 @@ async def lifespan(app: FastAPI):
     app.state.rate_limiter = RateLimitService(redis=redis_client)
     logger.info("Rate limiter initialized")
 
+    # Track worker tasks for cleanup
+    worker_tasks: list[asyncio.Task[Any]] = []
+    shutdown_event: asyncio.Event | None = None
+
     # Startup: Launch background workers (unless disabled for testing)
     if settings.disable_workers:
         logger.warning("⚠️  Background workers DISABLED (DISABLE_WORKERS=true)")
         logger.warning("   This should only be used for integration testing")
-        shutdown_event = None
-        pii_worker_task = None
-        processing_worker_task = None
-        timeout_worker_task = None
     else:
         logger.info("Starting background workers...")
 
@@ -62,42 +65,33 @@ async def lifespan(app: FastAPI):
         shutdown_event = asyncio.Event()
 
         # Pass shutdown event to workers
-        pii_worker_task = asyncio.create_task(start_pii_worker(shutdown_event))
-        processing_worker_task = asyncio.create_task(start_processing_worker(shutdown_event))
-        timeout_worker_task = asyncio.create_task(start_timeout_worker(shutdown_event))
+        worker_tasks = [
+            asyncio.create_task(start_pii_worker(shutdown_event)),
+            asyncio.create_task(start_processing_worker(shutdown_event)),
+            asyncio.create_task(start_timeout_worker(shutdown_event)),
+        ]
         logger.info("PII, Processing, and Timeout worker tasks created")
 
     yield
 
     # Shutdown: Graceful shutdown with timeout (only if workers were started)
-    if not settings.disable_workers and shutdown_event is not None:
+    if worker_tasks and shutdown_event is not None:
         logger.info("Initiating graceful shutdown of background workers...")
         shutdown_event.set()
 
         # Wait for workers to finish current job (max 30 seconds)
         try:
             await asyncio.wait_for(
-                asyncio.gather(
-                    pii_worker_task,
-                    processing_worker_task,
-                    timeout_worker_task,
-                    return_exceptions=True
-                ),
+                asyncio.gather(*worker_tasks, return_exceptions=True),
                 timeout=30.0
             )
             logger.info("All background workers stopped gracefully")
         except TimeoutError:
             logger.warning("Graceful shutdown timeout, forcing cancellation")
-            pii_worker_task.cancel()
-            processing_worker_task.cancel()
-            timeout_worker_task.cancel()
+            for task in worker_tasks:
+                task.cancel()
             try:
-                await asyncio.gather(
-                    pii_worker_task,
-                    processing_worker_task,
-                    timeout_worker_task,
-                    return_exceptions=True
-                )
+                await asyncio.gather(*worker_tasks, return_exceptions=True)
             except Exception as e:
                 logger.error(f"Error during forced shutdown: {e}")
 
@@ -143,8 +137,42 @@ if settings.environment == "dev":
     logger.info("✅ Dev monitoring endpoints enabled at /api/dev/monitoring/queues")
 
 
+def custom_openapi() -> dict[str, object]:
+    """Generate custom OpenAPI schema with API key security."""
+    if app.openapi_schema:
+        return app.openapi_schema
+
+    openapi_schema = get_openapi(
+        title=app.title,
+        version=app.version,
+        description=app.description,
+        routes=app.routes,
+    )
+
+    # Add API key security scheme
+    openapi_schema["components"] = openapi_schema.get("components", {})
+    openapi_schema["components"]["securitySchemes"] = {
+        "APIKeyHeader": {
+            "type": "apiKey",
+            "in": "header",
+            "name": settings.api_key_header_name,
+            "description": "API key for authentication. Get your key from the system administrator.",
+        }
+    }
+
+    # Apply security globally to all endpoints
+    openapi_schema["security"] = [{"APIKeyHeader": []}]
+
+    app.openapi_schema = openapi_schema
+    return app.openapi_schema
+
+
+# Override the default OpenAPI schema
+app.openapi = custom_openapi  # type: ignore[method-assign]
+
+
 @app.get("/")
-async def root():
+async def root() -> dict[str, str]:
     """Root endpoint."""
     return {
         "service": "Equalify PDF Converter API Gateway",

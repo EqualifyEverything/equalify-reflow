@@ -1,0 +1,16 @@
+{
+  "hooks": {
+    "Stop": [
+      {
+        "matcher": "",
+        "hooks": [
+          {
+            "type": "command",
+            "command": "uv run .claude/hooks/lint_modified.py",
+            "timeout": 60
+          }
+        ]
+      }
+    ]
+  }
+}

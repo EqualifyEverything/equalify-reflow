@@ -8,7 +8,24 @@ system_prompt: |
   1. A visual image of a PDF page showing the actual layout with fonts, formatting, structure
   2. The markdown text extracted by Docling from that same page
 
-  Your task is to identify layout and structure errors where the extracted markdown does NOT match the visual appearance.
+  ## Your Process:
+
+  ### Step 1: Visual Observations
+  First, examine the page image and note what you see. Record your observations using landmark names and explicit text references:
+  - Title and subtitle text with their visual prominence (font size, weight, position)
+  - Headings with their apparent level (H1, H2, H3) based on font size/weight
+  - Lists with their type (bulleted, numbered) and first items
+  - Tables with column headers
+  - Paragraph breaks and spacing patterns
+
+  Example observations:
+  - "Title: 'How to Scale a Code' - largest text, bold, centered at top"
+  - "Section heading: '1 Why Community?' - medium-large bold text, appears H2"
+  - "Numbered list: 1. 'Competitive advantage', 2. 'Support burden', 3. 'Bug exposure'"
+  - "Table with 3 columns: 'Name', 'Date', 'Status' - header row is bold"
+
+  ### Step 2: Compare and Identify Corrections
+  Then compare your observations to the extracted markdown and identify layout/structure errors.
 
   ## Focus Areas:
 
@@ -36,6 +53,13 @@ system_prompt: |
   - Check if single paragraphs are split unnecessarily
   - Line breaks within paragraphs vs. between paragraphs
 
+  ### 5. Spelling/OCR Errors (if flagged)
+  - You may receive a list of flagged potential misspellings
+  - For each flag, check the actual text in the page image
+  - If the image shows the word is spelled correctly but extracted wrong, add a correction
+  - If the image shows the same "misspelling" (it's intentional), ignore it
+  - Common OCR errors: "rn" → "m", "cl" → "d", "1" → "l", "0" → "O"
+
   ## Important Guidelines:
 
   - ONLY report corrections where the markdown structure does NOT match the visual layout
@@ -48,8 +72,9 @@ system_prompt: |
 
   ## Output Format:
   Return structured data with:
+  - visual_observations: List of strings describing what you observe in the page image. Use landmark names (Title, Heading, List, Table, Paragraph) and quote the actual text you see. This helps document what was analyzed.
   - corrections: List of TextCorrection objects with:
-    - correction_type: "heading_level", "list_structure", "table_format", "paragraph_break", or "other"
+    - correction_type: "heading_level", "list_structure", "table_format", "paragraph_break", "spelling", or "other"
     - original_text: The text as Docling extracted it
     - corrected_text: How it should be to match the visual layout
     - location_context: Surrounding text to locate the correction (include before and after)
@@ -62,29 +87,41 @@ system_prompt: |
 user_prompt_template: |
   Compare this visual page image to the extracted markdown and identify layout/structure corrections needed.
 
-  **Extracted Markdown:**
-  {page_markdown}
-
   **Instructions:**
-  1. Look at the page image carefully:
-     - Note heading levels (font size, weight, spacing)
-     - Note list types (bullets, numbers, or plain text)
-     - Note table structures (rows, columns, headers)
-     - Note paragraph breaks (spacing between paragraphs)
 
-  2. Compare to the extracted markdown above
+  1. First, examine the page image and record your visual observations:
+     - Note any titles, headings, and their apparent hierarchy (based on font size/weight)
+     - Note list types (bullets, numbers) and their first items
+     - Note table structures with column headers
+     - Note paragraph breaks and spacing
+
+     Use landmark names and quote the actual text you see. For example:
+     - "Title: 'Introduction to Python' - largest bold text at top"
+     - "Heading H2: 'Chapter 1' - medium bold text"
+     - "Bulleted list with items: 'First point', 'Second point'"
+
+  2. Then compare your observations to the extracted markdown below
 
   3. Identify specific corrections where the markdown structure does NOT match the visual layout
 
-  4. For each correction provide:
-     - correction_type (heading_level, list_structure, table_format, paragraph_break, other)
+  4. If spelling flags are provided above, verify each flagged word against the page image:
+     - If the image shows correct spelling but markdown has an error, add a spelling correction
+     - If the image shows the same text (intentional or name), ignore the flag
+
+  5. For each correction provide:
+     - correction_type (heading_level, list_structure, table_format, paragraph_break, spelling, other)
      - original_text (how Docling extracted it)
      - corrected_text (how it should be to match visual)
      - location_context (surrounding text with enough context to locate it)
      - confidence (0.0-1.0)
      - explanation (why this correction is needed based on visual vs. extracted mismatch)
 
-  **Focus on:** heading levels, list structures, table formatting, paragraph breaks
+  **Focus on:** heading levels, list structures, table formatting, paragraph breaks, flagged spelling
   **Do NOT focus on:** content changes, accessibility improvements, alt text, or style preferences
 
   Return an empty corrections list if the markdown already matches the visual layout perfectly.
+
+  ---
+
+  **Extracted Markdown:**
+  {page_markdown}

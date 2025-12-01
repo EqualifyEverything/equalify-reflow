@@ -10,6 +10,12 @@ from ..agents.text_correction_agent import (
 from ..config import settings
 from ..services.pdf_converter import PageData
 from ..shared.models.processing import PageCorrectionResult, TextCorrection
+from ..utils.markdown_cleanup import (
+    SpellingFlag,
+    _load_technical_dictionary,
+    check_spelling,
+    format_spelling_flags_for_prompt,
+)
 
 logger = logging.getLogger(__name__)
 
@@ -29,22 +35,30 @@ class TextCorrectionService:
     """Service for concurrent AI-powered text correction with retry logic."""
 
     def __init__(
-        self, max_concurrent_pages: int = 5, agent: TextCorrectionAgent | None = None
+        self,
+        max_concurrent_pages: int = 5,
+        agent: TextCorrectionAgent | None = None,
+        enable_spell_check: bool = True,
     ):
         """Initialize text correction service.
 
         Args:
             max_concurrent_pages: Maximum number of pages to process concurrently
             agent: Optional pre-configured TextCorrectionAgent (for testing)
+            enable_spell_check: Whether to run spell checking and flag potential errors
         """
         self.max_concurrent_pages = max_concurrent_pages
         self.semaphore = asyncio.Semaphore(max_concurrent_pages)
         self._agent = agent  # Store provided agent (for testing) or None
         self._agent_initialized = agent is not None
+        self.enable_spell_check = enable_spell_check
+        self._technical_dictionary: set[str] | None = None  # Lazy-loaded
 
         logger.info(
             f"Text correction service initialized "
-            f"(max_concurrent_pages={max_concurrent_pages}, lazy_init={not self._agent_initialized})"
+            f"(max_concurrent_pages={max_concurrent_pages}, "
+            f"lazy_init={not self._agent_initialized}, "
+            f"spell_check={enable_spell_check})"
         )
 
     def _ensure_agent(self) -> TextCorrectionAgent:
@@ -60,6 +74,48 @@ class TextCorrectionService:
             logger.info("TextCorrectionAgent lazy initialization complete")
 
         return self._agent
+
+    def _get_technical_dictionary(self) -> set[str]:
+        """Get technical dictionary (lazy-loaded, cached).
+
+        Returns:
+            Set of technical terms that should not be flagged as misspellings
+        """
+        if self._technical_dictionary is None:
+            self._technical_dictionary = _load_technical_dictionary()
+            logger.info(
+                f"Loaded technical dictionary with {len(self._technical_dictionary)} terms"
+            )
+        return self._technical_dictionary
+
+    def _check_spelling_for_page(
+        self, markdown: str, page_num: int
+    ) -> tuple[list[SpellingFlag], str]:
+        """Run spell check on page markdown and format flags for prompt.
+
+        Args:
+            markdown: Page markdown text
+            page_num: Page number for logging
+
+        Returns:
+            Tuple of (spelling_flags, formatted_flags_for_prompt)
+        """
+        if not self.enable_spell_check:
+            return [], ""
+
+        technical_dict = self._get_technical_dictionary()
+        flags, words_checked, words_flagged = check_spelling(
+            markdown, technical_terms=technical_dict, max_flags=20
+        )
+
+        if flags:
+            logger.debug(
+                f"Page {page_num}: {words_flagged} potential misspellings flagged "
+                f"out of {words_checked} words"
+            )
+
+        formatted_flags = format_spelling_flags_for_prompt(flags)
+        return flags, formatted_flags
 
     async def process_page_with_retry(
         self, page_data: PageData, max_retries: int = 3
@@ -79,6 +135,11 @@ class TextCorrectionService:
         # Ensure agent is initialized (lazy init on first use)
         agent = self._ensure_agent()
 
+        # Run spell check on page markdown (done once, before retries)
+        _, spelling_flags_prompt = self._check_spelling_for_page(
+            page_data.markdown, page_data.page_num
+        )
+
         last_error: Exception | None = None
 
         for attempt in range(1, max_retries + 1):
@@ -88,6 +149,7 @@ class TextCorrectionService:
                     page_markdown=page_data.markdown,
                     page_image_base64=page_data.image_base64,
                     retry_attempt=attempt,
+                    spelling_flags=spelling_flags_prompt,
                 )
                 # Ensure page_number is set correctly
                 result.page_number = page_data.page_num

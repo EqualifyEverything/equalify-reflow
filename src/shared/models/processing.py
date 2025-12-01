@@ -146,6 +146,7 @@ class TextCorrection(BaseModel):
         "list_structure",
         "table_format",
         "paragraph_break",
+        "spelling",
         "other"
     ] = Field(
         ...,
@@ -202,20 +203,70 @@ class TextCorrection(BaseModel):
     )
 
 
+class LLMUsage(BaseModel):
+    """Token usage and cost for a single LLM call.
+
+    Tracks input/output tokens and calculates cost based on model pricing.
+
+    Attributes:
+        input_tokens: Number of input tokens consumed
+        output_tokens: Number of output tokens generated
+        cost_cents: Calculated cost in cents based on model pricing
+
+    Example:
+        >>> usage = LLMUsage(
+        ...     input_tokens=1500,
+        ...     output_tokens=200,
+        ...     cost_cents=0.0625
+        ... )
+    """
+    input_tokens: int = Field(
+        ...,
+        ge=0,
+        description="Number of input tokens consumed"
+    )
+    output_tokens: int = Field(
+        ...,
+        ge=0,
+        description="Number of output tokens generated"
+    )
+    cost_cents: float = Field(
+        ...,
+        ge=0.0,
+        description="Calculated cost in cents"
+    )
+
+    model_config = ConfigDict(
+        json_schema_extra={
+            "example": {
+                "input_tokens": 1500,
+                "output_tokens": 200,
+                "cost_cents": 0.0625
+            }
+        }
+    )
+
+
 class PageCorrectionResult(BaseModel):
     """Text correction results for a single page.
 
-    Contains all identified corrections for one page, along with metadata
+    Contains visual observations, identified corrections, and metadata
     about the correction process.
 
     Attributes:
+        visual_observations: Observations about the visual layout with landmark names
         corrections: List of individual corrections identified for this page
         overall_confidence: Overall confidence in correction quality (0.0-1.0)
         processing_notes: Summary of what was checked and corrected
         page_number: Page number (1-indexed)
+        usage: Token usage and cost for this page's LLM call
 
     Example:
         >>> result = PageCorrectionResult(
+        ...     visual_observations=[
+        ...         "Title: 'Introduction to Python' - large bold text at top",
+        ...         "Heading: 'Chapter 1' - medium bold, appears to be H2 level"
+        ...     ],
         ...     corrections=[
         ...         TextCorrection(
         ...             correction_type="heading_level",
@@ -228,9 +279,20 @@ class PageCorrectionResult(BaseModel):
         ...     ],
         ...     overall_confidence=0.92,
         ...     processing_notes="Checked 1 heading, 0 lists, 0 tables. Found 1 correction.",
-        ...     page_number=1
+        ...     page_number=1,
+        ...     usage=LLMUsage(input_tokens=1500, output_tokens=200, cost_cents=0.0625)
         ... )
     """
+    visual_observations: list[str] = Field(
+        default_factory=list,
+        description=(
+            "Observations about the visual layout, using landmark names and explicit text. "
+            "Examples: 'Title: \"Introduction to Python\" - large bold text at top', "
+            "'Heading: \"Chapter 1\" - medium bold, appears to be H2 level', "
+            "'Bulleted list with 3 items starting with \"First, ...\"', "
+            "'Table with 4 columns: Name, Date, Amount, Status'"
+        )
+    )
     corrections: list[TextCorrection] = Field(
         default_factory=list,
         description="List of corrections for this page"
@@ -252,10 +314,18 @@ class PageCorrectionResult(BaseModel):
         ge=0,
         description="Page number (1-indexed, 0 if not set)"
     )
+    usage: LLMUsage | None = Field(
+        default=None,
+        description="Token usage and cost for this page's LLM call"
+    )
 
     model_config = ConfigDict(
         json_schema_extra={
             "example": {
+                "visual_observations": [
+                    "Title: 'Introduction' - large bold text at top",
+                    "Section heading: 'Schedule' - medium bold, appears H2"
+                ],
                 "corrections": [
                     {
                         "correction_type": "heading_level",
@@ -278,7 +348,12 @@ class PageCorrectionResult(BaseModel):
                 ],
                 "overall_confidence": 0.91,
                 "processing_notes": "Checked 2 headings, 1 list, 0 tables. Found 2 corrections.",
-                "page_number": 1
+                "page_number": 1,
+                "usage": {
+                    "input_tokens": 1500,
+                    "output_tokens": 200,
+                    "cost_cents": 0.0625
+                }
             }
         }
     )

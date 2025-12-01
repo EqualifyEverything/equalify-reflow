@@ -14,7 +14,7 @@ from pydantic_ai import Agent
 from pydantic_ai.messages import BinaryContent
 
 from ..config import settings
-from ..shared.models.processing import PageCorrectionResult
+from ..shared.models.processing import LLMUsage, PageCorrectionResult
 
 logger = logging.getLogger(__name__)
 
@@ -151,12 +151,34 @@ class TextCorrectionAgent:
             ),
         }
 
+    def _calculate_cost(self, input_tokens: int, output_tokens: int) -> float:
+        """Calculate cost in cents using Bedrock Claude Haiku pricing.
+
+        Pricing (Claude 3 Haiku):
+        - Input: $0.25 per 1M tokens = $0.00000025 per token = 0.000025 cents per token
+        - Output: $1.25 per 1M tokens = $0.00000125 per token = 0.000125 cents per token
+
+        Args:
+            input_tokens: Number of input tokens consumed
+            output_tokens: Number of output tokens generated
+
+        Returns:
+            Cost in cents (float)
+        """
+        input_cost_per_token_cents = 0.000025  # $0.25/1M tokens in cents
+        output_cost_per_token_cents = 0.000125  # $1.25/1M tokens in cents
+
+        return (input_tokens * input_cost_per_token_cents) + (
+            output_tokens * output_cost_per_token_cents
+        )
+
     async def process_page(
         self,
         page_num: int,
         page_markdown: str,
         page_image_base64: str,
         retry_attempt: int = 1,
+        spelling_flags: str = "",
     ) -> PageCorrectionResult:
         """Process a single PDF page to identify text corrections.
 
@@ -165,6 +187,7 @@ class TextCorrectionAgent:
             page_markdown: Extracted markdown text from Docling
             page_image_base64: Base64-encoded PNG image of the page
             retry_attempt: Current retry attempt number (for logging)
+            spelling_flags: Formatted spelling flags to include in prompt (optional)
 
         Returns:
             PageCorrectionResult with list of corrections and confidence
@@ -179,6 +202,15 @@ class TextCorrectionAgent:
 
         # Format user prompt with markdown content
         user_message = self.user_prompt_template.format(page_markdown=page_markdown)
+
+        # Add spelling flags if present (before the markdown)
+        if spelling_flags:
+            # Insert spelling flags before the markdown section
+            user_message = user_message.replace(
+                "**Extracted Markdown:**",
+                f"{spelling_flags}\n\n**Extracted Markdown:**"
+            )
+            logger.debug(f"Page {page_num}: Added spelling flags to prompt")
 
         # Decode base64 image to bytes for BinaryContent
         image_bytes = base64.b64decode(page_image_base64)
@@ -196,12 +228,27 @@ class TextCorrectionAgent:
                 },
             )
 
-            logger.info(
-                f"Page {page_num} analyzed: {len(result.output.corrections)} corrections found "
-                f"(confidence: {result.output.overall_confidence:.2f})"
+            # Capture token usage and calculate cost
+            usage = result.usage()
+            input_tokens = usage.input_tokens or 0
+            output_tokens = usage.output_tokens or 0
+            cost_cents = self._calculate_cost(input_tokens, output_tokens)
+
+            # Add usage to the output
+            output = result.output
+            output.usage = LLMUsage(
+                input_tokens=input_tokens,
+                output_tokens=output_tokens,
+                cost_cents=cost_cents,
             )
 
-            return result.output
+            logger.info(
+                f"Page {page_num} analyzed: {len(output.corrections)} corrections found "
+                f"(confidence: {output.overall_confidence:.2f}, "
+                f"tokens: {input_tokens}/{output_tokens}, cost: ${cost_cents/100:.6f})"
+            )
+
+            return output
 
         except Exception as e:
             logger.error(

@@ -1,16 +1,21 @@
 """PDF to Markdown conversion service using Docling with page images."""
 
+from __future__ import annotations
+
 import base64
 import logging
-from io import BytesIO
-from typing import List
 from dataclasses import dataclass
+from io import BytesIO
+from typing import TYPE_CHECKING
 
-from docling.document_converter import DocumentConverter, PdfFormatOption
-from docling.datamodel.base_models import InputFormat, DocumentStream
+if TYPE_CHECKING:
+    from PIL import Image
+
+from docling.datamodel.base_models import DocumentStream, InputFormat
 from docling.datamodel.pipeline_options import PdfPipelineOptions
+from docling.document_converter import DocumentConverter, PdfFormatOption
 
-from ..utils.text_cleanup import cleanup_markdown
+from ..utils.markdown_cleanup import format_markdown
 
 logger = logging.getLogger(__name__)
 
@@ -32,18 +37,18 @@ class ExtractedImage:
     image_type: str  # "picture", "table"
     caption: str  # Extracted caption text
     page_num: int  # Source page number
-    pil_image: "PIL.Image.Image"  # type: ignore
+    pil_image: Image.Image  # type: ignore[name-defined]
 
 
 @dataclass
 class PDFConversionResult:
     """Result of PDF conversion with per-page data."""
 
-    pages: List[PageData]
+    pages: list[PageData]
     total_pages: int
     full_markdown: str
     has_page_images: bool
-    extracted_images: List[ExtractedImage]  # Embedded figures/tables from PDF
+    extracted_images: list[ExtractedImage]  # Embedded figures/tables from PDF
 
 
 class PDFConverter:
@@ -102,12 +107,12 @@ class PDFConverter:
             # Extract full markdown
             raw_markdown = doc.export_to_markdown()
 
-            # Apply rule-based cleanup to fix common OCR/conversion errors
-            full_markdown = cleanup_markdown(raw_markdown, log_warnings=True)
+            # Apply mdformat to fix common markdown formatting issues
+            full_markdown, _ = format_markdown(raw_markdown)
 
             # Extract per-page data with images
             # CRITICAL: Access via doc.pages dict, not result.pages (cache cleared)
-            pages: List[PageData] = []
+            pages: list[PageData] = []
             has_page_images = False
 
             # doc.pages is a dict[int, PageItem] where keys are 1-indexed page numbers
@@ -117,8 +122,8 @@ class PDFConverter:
                 # Extract markdown for this page (0-indexed for internal method)
                 raw_page_markdown = self._extract_page_markdown(doc, page_no - 1)
 
-                # Apply cleanup to per-page markdown as well
-                page_markdown = cleanup_markdown(raw_page_markdown, log_warnings=False)
+                # Apply mdformat to per-page markdown as well
+                page_markdown, _ = format_markdown(raw_page_markdown)
 
                 # Extract page image if available
                 # Access via doc.pages[page_no].image.pil_image (transferred from result.pages)
@@ -132,9 +137,10 @@ class PDFConverter:
                         f"{len(page_image_base64)} chars base64 image"
                     )
                 else:
+                    has_pil = hasattr(page.image, "pil_image") if page.image else False
                     logger.warning(
                         f"Page {page_no}: no image available "
-                        f"(image={page.image}, has pil_image={hasattr(page.image, 'pil_image') if page.image else False})"
+                        f"(image={page.image}, has pil_image={has_pil})"
                     )
 
                 pages.append(
@@ -154,7 +160,7 @@ class PDFConverter:
                 )
 
             # Step 5: Extract embedded images (figures, tables) from document
-            extracted_images: List[ExtractedImage] = []
+            extracted_images: list[ExtractedImage] = []
 
             # Extract pictures (diagrams, photos, illustrations)
             for pic in doc.pictures:
@@ -209,7 +215,7 @@ class PDFConverter:
             logger.error(f"PDF conversion failed: {e}", exc_info=True)
             raise ValueError(f"Failed to convert PDF: {str(e)}") from e
 
-    def _extract_page_markdown(self, doc: "DoclingDocument", page_index: int) -> str:  # type: ignore
+    def _extract_page_markdown(self, doc, page_index: int) -> str:  # type: ignore[no-untyped-def]
         """Extract markdown content for a specific page.
 
         Args:
@@ -219,7 +225,7 @@ class PDFConverter:
         Returns:
             Markdown string for the page
         """
-        from docling_core.types.doc import TextItem, TableItem
+        from docling_core.types.doc import TableItem, TextItem
 
         page_texts = []
 
@@ -255,7 +261,7 @@ class PDFConverter:
 
         return "\n\n".join(page_texts)
 
-    def _image_to_base64(self, image: "PIL.Image.Image") -> str:  # type: ignore
+    def _image_to_base64(self, image: Image.Image) -> str:  # type: ignore[name-defined]
         """Convert PIL Image to base64-encoded PNG string.
 
         Args:

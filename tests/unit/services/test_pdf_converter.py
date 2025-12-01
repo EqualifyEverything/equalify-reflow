@@ -129,10 +129,11 @@ async def test_convert_with_page_images_success(sample_pdf, mock_pil_image):
                 assert isinstance(result, PDFConversionResult)
                 assert result.total_pages == 1
                 assert result.has_page_images is True
-                assert result.full_markdown == "# Test Document\n\nPage content"
+                # mdformat adds trailing newline (MD047)
+                assert result.full_markdown == "# Test Document\n\nPage content\n"
                 assert len(result.pages) == 1
                 assert result.pages[0].page_num == 1
-                assert result.pages[0].markdown == "Page 1 content"
+                assert result.pages[0].markdown == "Page 1 content\n"
                 assert result.pages[0].image_base64 == "base64_image_data"
 
 
@@ -176,10 +177,12 @@ async def test_convert_with_page_images_full_markdown_extraction(sample_pdf, moc
     """Test full markdown is extracted from document."""
     converter = PDFConverter()
 
-    expected_markdown = "# Title\n\n## Section 1\n\nContent here"
+    raw_markdown = "# Title\n\n## Section 1\n\nContent here"
+    # mdformat adds trailing newline (MD047)
+    expected_markdown = raw_markdown + "\n"
 
     mock_doc = MagicMock()
-    mock_doc.export_to_markdown = MagicMock(return_value=expected_markdown)
+    mock_doc.export_to_markdown = MagicMock(return_value=raw_markdown)
     mock_doc.iterate_items = MagicMock(return_value=[])
     mock_doc.pages = {
         1: MagicMock(image=MagicMock(pil_image=mock_pil_image))
@@ -281,7 +284,8 @@ async def test_convert_extracts_single_page_correctly(sample_pdf, mock_pil_image
 
                 # Should extract page 1 (page_no=1 → page_index=0)
                 mock_extract.assert_called_once_with(mock_doc, 0)
-                assert result.pages[0].markdown == "Single page content"
+                # mdformat adds trailing newline (MD047)
+                assert result.pages[0].markdown == "Single page content\n"
 
 
 @pytest.mark.asyncio

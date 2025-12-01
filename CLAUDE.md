@@ -37,12 +37,14 @@ make shell          # Access container bash shell
 ```
 
 ### Never Do These
+
 - ❌ DO NOT run `uv run uvicorn` directly on host
 - ❌ DO NOT install dependencies locally with `uv sync`
 - ❌ DO NOT use `localhost:6379` in code (use `redis:6379`)
 - ❌ DO NOT run `python` or `pytest` directly on host
 
 ### How Development Works
+
 1. `make dev` - Starts all services in Docker
 2. Edit code in `src/` on host machine
 3. Code auto-reloads in container (hot reload enabled)
@@ -76,6 +78,7 @@ src/
 │   ├── job_service.py         # Job state management (Redis hashes)
 │   ├── pii_service.py         # Microsoft Presidio integration
 │   ├── processing_service.py  # AI pipeline orchestration
+│   ├── text_correction_service.py # Text correction with AWS Bedrock
 │   └── rate_limit_service.py  # Rate limiting (Redis)
 │
 ├── middleware/                # FastAPI middleware
@@ -88,7 +91,7 @@ src/
 │   └── metrics.py             # Prometheus metrics
 │
 ├── agents/                    # AI agents (PydanticAI)
-│   └── accessibility_agent.py # Accessibility enhancement agent
+│   └── text_correction_agent.py # Text correction agent (AWS Bedrock)
 │
 ├── shared/                    # Data models and constants
 │   ├── models/                # Pydantic models
@@ -118,6 +121,7 @@ The API implements two independent authentication layers:
 **Implementation:** `src/middleware/api_key_auth.py`
 
 **Configuration (.env):**
+
 ```bash
 # Enable/disable API key auth
 ENABLE_API_KEY_AUTH=true
@@ -130,10 +134,12 @@ API_KEYS=uic-2bd2c716-bc67-4032-ba66-e4f35c441759
 ```
 
 **Public Endpoints (no API key required):**
+
 - `/health`, `/health/ready`, `/metrics` - Always public for monitoring
 - `/api/dev/monitoring/*` - Public in dev environment only
 
 **Approval Endpoints Security**:
+
 - Approval endpoints (`/api/approval/*`) require BOTH API key authentication AND valid approval token
 - Two-layer security model:
   1. API Key (Layer 1) - Ensures only authorized systems (UIC infrastructure) can make requests
@@ -141,6 +147,7 @@ API_KEYS=uic-2bd2c716-bc67-4032-ba66-e4f35c441759
 - Both layers must pass for access - defense in depth
 
 **Usage Example:**
+
 ```bash
 # With valid API key
 curl -H "X-API-Key: uic-2bd2c716-bc67-4032-ba66-e4f35c441759" \
@@ -151,12 +158,14 @@ curl http://localhost:8080/api/documents/submit
 ```
 
 **Security Features:**
+
 - Constant-time comparison (`secrets.compare_digest()`) prevents timing attacks
 - Multiple keys supported (comma-separated in env var)
 - Keys stored as `SecretStr` to prevent accidental logging
 - Whitespace automatically stripped from configured keys
 
 **Generating API Keys:**
+
 ```bash
 # Generate a new UIC-prefixed UUID key
 python3 -c "import uuid; print(f'uic-{uuid.uuid4()}')"
@@ -169,6 +178,7 @@ python3 -c "import uuid; print(f'uic-{uuid.uuid4()}')"
 **Implementation:** `src/middleware/docs_auth.py`
 
 **Configuration (.env):**
+
 ```bash
 # Enable/disable docs auth (false in dev, true in prod)
 ENABLE_DOCS_AUTH=true
@@ -179,11 +189,13 @@ DOCS_PASSWORD=a11y
 ```
 
 **Usage:**
+
 - Browser automatically prompts for username/password
 - Credentials: `dase` / `a11y` (configured in .env)
 - Environment-dependent: disabled in dev for easy testing, enabled in prod
 
 **Security Features:**
+
 - HTTP Basic Authentication (RFC 7617)
 - Constant-time credential comparison
 - `WWW-Authenticate` header triggers browser login prompt
@@ -208,18 +220,22 @@ add_cors_middleware(app)                        # 6th: CORS headers
 ```
 
 **Execution Flow:**
+
 1. CORS → 2. Logging → 3. Rate Limit → 4. Error Handler → 5. Docs Auth → 6. API Key Auth → 7. Endpoint
 
 ### Testing Authentication
 
 **Unit Tests:**
+
 - `tests/unit/middleware/test_api_key_auth.py` - API key middleware (21 tests)
 - `tests/unit/middleware/test_docs_auth.py` - Docs auth middleware (18 tests)
 
 **Integration Tests:**
+
 - `tests/integration/api/test_api_authentication.py` - Full auth flow (10 tests)
 
 **Manual Testing:**
+
 ```bash
 # Start services with auth enabled
 make dev
@@ -269,7 +285,9 @@ ENABLE_DOCS_AUTH=false
 ## Key Architectural Patterns
 
 ### 1. Single Application, Multiple Workers
+
 The application runs as one process with:
+
 - FastAPI server (main thread)
 - PII worker (background thread)
 - Processing worker (background thread)
@@ -280,6 +298,7 @@ All workers start in `src/main.py` via `lifespan` context manager.
 ### 2. Redis Data Structures
 
 **Task Queues (Redis Lists):**
+
 ```python
 # Queue a job for PII scanning
 LPUSH eq-pdf:queue:pii '{"job_id": "uuid", "s3_key": "temp/uuid.pdf"}'
@@ -289,6 +308,7 @@ BLPOP eq-pdf:queue:pii 60
 ```
 
 **Job State (Redis Hash):**
+
 ```python
 # Job metadata stored as hash
 HSET eq-pdf:job:{job_id}
@@ -299,6 +319,7 @@ HSET eq-pdf:job:{job_id}
 ```
 
 **Timeout Tracking (Redis Sorted Set):**
+
 ```python
 # Track approval deadlines (score = Unix timestamp)
 ZADD eq-pdf:timeouts:approval {timestamp} "job_id"
@@ -308,7 +329,9 @@ ZRANGEBYSCORE eq-pdf:timeouts:approval 0 {current_time}
 ```
 
 ### 3. Service Communication
+
 All services communicate via Docker DNS:
+
 - Redis: `redis:6379` (NOT `localhost:6379`)
 - LocalStack S3: `localstack:4566`
 - API: `api-gateway:8080`
@@ -316,13 +339,16 @@ All services communicate via Docker DNS:
 ### 4. Environment Configuration
 
 **Local Development:**
+
 - `.env` contains application config (NO AWS credentials)
 - `docker-compose.dev.yml` sets AWS credentials for containers
 - LocalStack runs inside Docker network
 
 **AWS Operations:**
+
 - Use AWS profiles from `~/.aws/config` (see `.aws-config-example`)
 - Makefile commands handle profiles automatically:
+
   ```bash
   make aws-health   # Check deployment
   make aws-logs     # View CloudWatch logs
@@ -331,17 +357,104 @@ All services communicate via Docker DNS:
 
 **Never:** Source `.env` manually in your shell - it's for Docker Compose only
 
+### 5. AWS Bedrock Configuration (Hybrid AWS Setup)
+
+The application uses a **hybrid AWS configuration**:
+
+- **LocalStack** for S3 and CloudWatch (development/testing)
+- **Real AWS Bedrock** for AI text correction (Claude Haiku via Converse API)
+
+**Why Hybrid?**
+
+- LocalStack doesn't support AWS Bedrock API
+- S3/CloudWatch work perfectly in LocalStack for fast iteration
+- Text correction requires real AWS Bedrock with SSO credentials
+
+**Configuration Files:**
+
+- `docker-compose.yml` - Service-specific endpoints (no global `AWS_ENDPOINT_URL`)
+- `docker-compose.dev.yml` - Development overrides with AWS credentials
+
+**Environment Variables** (`.env`):
+
+```bash
+# AI Provider
+AI_PROVIDER=bedrock  # Use AWS Bedrock for text correction
+
+# AWS Bedrock Model
+BEDROCK_MODEL_ID=anthropic.claude-3-haiku-20240307-v1:0
+BEDROCK_REGION=us-east-1
+
+# Text Correction Settings
+MAX_CONCURRENT_PAGES=5  # Max pages analyzed simultaneously
+PAGE_RETRY_ATTEMPTS=3   # Retry failed pages up to 3 times
+CLAUDE_MAX_TOKENS=4096
+CLAUDE_TEMPERATURE=0.0
+```
+
+**Docker Compose Configuration** (`docker-compose.dev.yml`):
+
+```yaml
+services:
+  api-gateway:
+    environment:
+      # Service-specific endpoints (no global AWS_ENDPOINT_URL)
+      - AWS_ENDPOINT_URL_S3=http://localstack:4566       # S3 → LocalStack
+      - AWS_ENDPOINT_URL_CLOUDWATCH=http://localstack:4566  # CloudWatch → LocalStack
+      # AWS_ENDPOINT_URL_BEDROCK_RUNTIME not set → uses real AWS
+
+      # Real AWS credentials from host (for Bedrock)
+      - AWS_ACCESS_KEY_ID=${AWS_ACCESS_KEY_ID}
+      - AWS_SECRET_ACCESS_KEY=${AWS_SECRET_ACCESS_KEY}
+      - AWS_SESSION_TOKEN=${AWS_SESSION_TOKEN:-}
+      - AWS_DEFAULT_REGION=us-east-1
+
+      # Disable IMDS to prevent boto3 hang in Docker
+      - AWS_EC2_METADATA_DISABLED=true
+```
+
+**Getting AWS Credentials:**
+
+```bash
+# 1. Configure AWS SSO profile (one-time setup)
+#    See .aws-config-example for UIC profile configuration
+
+# 2. Login via AWS SSO
+aws sso login --profile uic
+
+# 3. Start services with credentials
+./restart-and-test.sh  # Loads credentials from SSO and restarts services
+```
+
+**How It Works:**
+
+1. boto3 SDK reads service-specific endpoint variables
+2. S3/CloudWatch requests → `http://localstack:4566`
+3. Bedrock requests → Real AWS (no endpoint override)
+4. Credentials from `AWS_ACCESS_KEY_ID/SECRET/SESSION_TOKEN` environment
+5. Region from `AWS_DEFAULT_REGION=us-east-1`
+6. `AWS_EC2_METADATA_DISABLED=true` skips IMDS entirely (prevents 169.254.169.254 hang)
+
+**Lazy Initialization:**
+
+- TextCorrectionAgent is NOT created during worker startup
+- Agent initializes on first job (lazy init pattern)
+- Prevents BedrockConverseModel from blocking event loop during startup
+- All workers start in <1 second
+
 ## Testing Architecture
 
 ### 3-Tier Testing Strategy
 
 **Unit Tests** (`tests/unit/`):
+
 - Fully mocked dependencies
 - Fast (<100ms per test)
 - No Docker required
 - Tests business logic only
 
 **Integration Tests** (`tests/integration/`):
+
 - **Uses:** Python testcontainers library (redis:7-alpine, localstack)
 - **Execution:** Host machine via `make test-integration` (not inside Docker)
 - **Isolation:** Fresh containers per test session, true test isolation
@@ -350,6 +463,7 @@ All services communicate via Docker DNS:
 - **Benefits:** Catches serialization bugs, race conditions, Redis atomicity
 
 **E2E Tests** (`tests/e2e/`):
+
 - Full workflows with minimal mocking
 - Slow (<30s per test)
 - Validates complete processing pipeline
@@ -418,6 +532,7 @@ Use pytest markers for selective execution:
 ```
 
 Run specific markers:
+
 ```bash
 pytest -m unit                   # Unit tests only
 pytest -m integration            # Integration tests only
@@ -429,6 +544,7 @@ pytest -m "not slow"             # Skip slow tests
 ### Adding an API Endpoint
 
 1. **Define route** in `src/api/documents.py`:
+
 ```python
 @router.post("/documents/submit")
 async def submit_document(
@@ -439,6 +555,7 @@ async def submit_document(
 ```
 
 2. **Add business logic** in `src/services/`:
+
 ```python
 # src/services/document_service.py
 class DocumentService:
@@ -448,6 +565,7 @@ class DocumentService:
 ```
 
 3. **Create Pydantic models** in `src/shared/models/`:
+
 ```python
 # src/shared/models/document.py
 class DocumentSubmitRequest(BaseModel):
@@ -456,6 +574,7 @@ class DocumentSubmitRequest(BaseModel):
 ```
 
 4. **Write tests**:
+
 - Unit: `tests/unit/api/test_documents.py`
 - Integration: `tests/integration/test_document_flow.py`
 
@@ -464,6 +583,7 @@ class DocumentSubmitRequest(BaseModel):
 ### Adding a Background Worker
 
 1. **Create worker** in `src/workers/new_worker.py`:
+
 ```python
 async def start_new_worker(shutdown_event: asyncio.Event):
     """Worker that processes new queue."""
@@ -478,11 +598,13 @@ async def start_new_worker(shutdown_event: asyncio.Event):
 ```
 
 2. **Start worker in** `src/main.py` lifespan:
+
 ```python
 new_worker_task = asyncio.create_task(start_new_worker(shutdown_event))
 ```
 
 3. **Add queue constant** in `src/shared/constants/queues.py`:
+
 ```python
 QUEUE_NEW = "eq-pdf:queue:new"
 ```
@@ -492,6 +614,7 @@ QUEUE_NEW = "eq-pdf:queue:new"
 ### Adding a Service
 
 1. **Create service** in `src/services/new_service.py`:
+
 ```python
 class NewService:
     def __init__(self, redis: Redis, s3_client):
@@ -500,6 +623,7 @@ class NewService:
 ```
 
 2. **Add dependency injection** in `src/dependencies.py`:
+
 ```python
 async def get_new_service(
     redis: Redis = Depends(get_redis_client),
@@ -517,6 +641,7 @@ All S3 operations use exponential backoff retry and circuit breakers to handle t
 ### Retry Behavior
 
 S3 operations automatically retry on transient errors:
+
 - **Retriable errors**: 503 (Service Unavailable), SlowDown, RequestTimeout, InternalError, ThrottlingException
 - **Non-retriable errors**: 403 (Forbidden), 404 (NotFound), NoSuchKey, AccessDenied
 - **Max attempts**: 3 (with exponential backoff: 1s, 2s, 4s)
@@ -525,12 +650,14 @@ S3 operations automatically retry on transient errors:
 ### Circuit Breakers
 
 Circuit breakers prevent cascading failures when S3 is degraded:
+
 - **Failure threshold**: 5 consecutive failures → circuit opens
 - **Timeout**: 60 seconds before testing recovery
 - **Recovery**: 2 successes in half-open → circuit closes
 - **Separate circuits**: Upload, download, and delete operations have independent circuit breakers
 
 **Circuit States:**
+
 - **CLOSED**: Normal operation, requests pass through
 - **OPEN**: Service failing, requests blocked immediately (raises `CircuitBreakerOpen`)
 - **HALF_OPEN**: Testing recovery, limited requests allowed
@@ -551,6 +678,7 @@ curl http://localhost:8080/metrics | grep s3_operation_duration_seconds
 ```
 
 **Available metrics:**
+
 - `s3_operations_total{operation, bucket, result}` - Total operations (result: success/error/circuit_open)
 - `s3_operation_duration_seconds{operation, bucket}` - Operation latency histogram
 - `s3_circuit_breaker_state{circuit_name}` - Circuit state (s3-upload, s3-download, s3-delete)
@@ -566,6 +694,7 @@ When adding new StorageService methods that call S3:
    - `self.delete_circuit` - For delete_object, delete_objects
 
 2. **Check circuit before operation**:
+
    ```python
    self.upload_circuit.check_state()
    if self.upload_circuit.is_open:
@@ -573,6 +702,7 @@ When adding new StorageService methods that call S3:
    ```
 
 3. **Wrap S3 call with retry**:
+
    ```python
    try:
        result = await retry_with_backoff_sync(
@@ -591,6 +721,7 @@ When adding new StorageService methods that call S3:
    ```
 
 4. **Add metrics** (optional but recommended):
+
    ```python
    from ..services.metrics_service import s3_operations_total, s3_operation_duration_seconds
    import time
@@ -611,6 +742,7 @@ When adding new StorageService methods that call S3:
 ### Testing S3 Resilience
 
 **Unit tests**: Mock S3 errors to test retry and circuit breaker logic
+
 ```python
 from src.utils.circuit_breaker import CircuitBreakerOpen
 from botocore.exceptions import ClientError
@@ -654,6 +786,7 @@ docker exec -it equalify-pdf-api-gateway uv add <package>@latest
 ## Debugging
 
 ### View Logs
+
 ```bash
 make logs           # All services
 make logs-api       # API only
@@ -661,12 +794,14 @@ docker logs equalify-pdf-redis -f
 ```
 
 ### Access Container Shell
+
 ```bash
 make shell          # API container bash
 make redis-cli      # Redis CLI
 ```
 
 ### Check Infrastructure Health
+
 ```bash
 make health         # Run health checks
 curl http://localhost:8080/health
@@ -676,16 +811,19 @@ curl http://localhost:8080/metrics
 ### Common Issues
 
 **Tests failing with Redis connection refused:**
+
 - Check Docker is running: `docker ps`
 - Restart services: `make down && make dev`
 - Verify Redis is healthy: `make redis-cli` then `PING`
 
 **Hot reload not working:**
+
 - Check logs: `make logs-api`
 - Verify volume mounts in `docker-compose.dev.yml`
 - Restart: `make down && make dev`
 
 **Container not starting:**
+
 - Check logs: `docker logs equalify-pdf-api-gateway`
 - Verify `.env` file exists
 - Clean and rebuild: `make clean && make build && make dev`
@@ -693,14 +831,18 @@ curl http://localhost:8080/metrics
 ## Important Patterns
 
 ### Error Handling
+
 All errors caught by `ErrorHandlerMiddleware`:
+
 ```python
 # Raise HTTPException in endpoints/services
 raise HTTPException(status_code=404, detail="Job not found")
 ```
 
 ### Async Operations
+
 All services use async/await:
+
 ```python
 async def process_document(job_id: str):
     job = await job_service.get_job(job_id)
@@ -709,7 +851,9 @@ async def process_document(job_id: str):
 ```
 
 ### Dependency Injection
+
 Use FastAPI's Depends() for service injection:
+
 ```python
 @router.get("/documents/{job_id}/status")
 async def get_status(
@@ -720,13 +864,36 @@ async def get_status(
 ```
 
 ### Configuration
+
 All settings via Pydantic Settings (loaded from `.env`):
+
 ```python
 from src.config import settings
 
 redis_url = settings.redis_url  # From REDIS_URL env var
 s3_bucket = settings.s3_temp_bucket
 ```
+
+### API Architecture Notes
+
+**Key Design Principles:**
+
+1. **Top-level fields**: All job data stored as top-level Redis hash fields (not nested metadata blob) for O(1) access
+2. **S3 keys, not URLs**: System stores S3 keys internally; URLs generated on-demand based on environment (LocalStack vs AWS)
+3. **RESTful endpoints**: Resource-oriented URLs (`/api/corrections/{job_id}`) with tokens in query/body for authentication
+4. **Structured responses**: Pydantic models ensure type-safe, status-specific response structures
+5. **Temporary data cleanup**: Page images and intermediate files removed after job completion
+
+**URL Generation:**
+
+- LocalStack: `http://localstack:4566/{bucket}/{key}`
+- AWS Production: `https://{bucket}.s3.{region}.amazonaws.com/{key}`
+
+**Token Security:**
+
+- Approval tokens stored in Redis with 4-hour TTL
+- Token validation includes job_id match verification (PATCH endpoint)
+- Tokens automatically deleted after decision submission
 
 ## Processing Pipeline Flow
 
@@ -747,17 +914,33 @@ s3_bucket = settings.s3_temp_bucket
 3. **Processing Worker** (Background)
    - BLPOP from `eq-pdf:queue:processing`
    - Download PDF from S3
-   - Docling: PDF → Markdown
-   - AI: Enhance accessibility (alt text, headings, structure)
-   - Store Markdown in S3 results bucket
-   - Update job: `{status: "completed", markdown_url}`
+   - **Docling Conversion**: PDF → Markdown + Page Images (PNG)
+   - **Text Correction via AWS Bedrock**:
+     - Lazy-initialize TextCorrectionAgent (Claude Haiku)
+     - Process pages concurrently (max 5 at once)
+     - For each page:
+       - Send page image + extracted markdown to Claude
+       - Claude compares visual layout to markdown structure
+       - Identifies corrections (heading levels, list types, tables, paragraph breaks)
+       - Returns corrections with confidence scores
+     - Apply corrections to markdown
+     - Calculate overall document confidence (avg of page confidences)
+   - Store corrected Markdown in S3 results bucket
+   - Update job: `{status: "awaiting_correction_approval" | "completed"}`
 
-4. **GET /api/documents/{job_id}/result** (API)
-   - Return `{job_id, status, markdown_url, confidence_score}`
+4. **Correction Approval** (Manual Review)
+   - GET `/api/corrections/{job_id}/review?token={token}` - View corrections
+   - PATCH `/api/corrections/{job_id}` - Approve or reject
+   - If approved: Corrected markdown → final location
+   - If rejected: Original markdown → final location
+
+5. **GET /api/documents/{job_id}** (API)
+   - Return status-specific response with URLs generated on-demand
 
 ## Technology Stack
 
 **Backend:**
+
 - Python 3.11+ (using `uv` package manager)
 - FastAPI (async API framework)
 - PydanticAI (multi-agent AI framework)
@@ -766,6 +949,7 @@ s3_bucket = settings.s3_temp_bucket
 - AWS Bedrock (Claude AI via Bedrock)
 
 **Infrastructure:**
+
 - Docker & Docker Compose
 - Redis (task queues, caching, rate limiting)
 - AWS S3 (object storage)
@@ -774,6 +958,7 @@ s3_bucket = settings.s3_temp_bucket
 - Prometheus + Grafana (metrics)
 
 **Testing:**
+
 - pytest (test framework)
 - pytest-asyncio (async test support)
 - pytest-xdist (parallel test execution)
@@ -783,6 +968,7 @@ s3_bucket = settings.s3_temp_bucket
 ## Context7 Library IDs
 
 For MCP integration, use these library IDs:
+
 - **PydanticAI:** `/pydantic/pydantic-ai`
 - **FastAPI:** `/tiangolo/fastapi`
 - **LocalStack:** `/localstack/localstack`
@@ -796,6 +982,7 @@ For MCP integration, use these library IDs:
 ## Documentation
 
 Key docs in `docs/`:
+
 - [Environment Setup](docs/environment-setup.md) - Complete setup guide with local dev and AWS operations
 - [Architecture](docs/architecture.md) - Detailed system design with AWS Bedrock integration
 - [CI/CD](docs/ci-cd.md) - Testing strategy, test tiers, and GitHub Actions workflows
@@ -805,6 +992,7 @@ Key docs in `docs/`:
 ## Project Status
 
 **Current Phase:** Phase 2 - Services & Background Workers (60% complete)
+
 - ✅ Phase 1: Infrastructure foundation complete
 - 🚧 Phase 2: API endpoints and workers in progress
 - 📋 Phase 3: Frontend (Astro + ShadCN) planned

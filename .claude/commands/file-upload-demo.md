@@ -256,25 +256,39 @@ fi
 **Status**: `processing`
 
 **What's happening**:
-1. Docling converts PDF → Markdown
-2. AI agent processes each page:
-   - Generates contextual alt text for images
-   - Fixes heading hierarchy
-   - Converts math to MathML
-   - Enhances table accessibility
-   - Adds semantic structure
-3. Generates final enhanced Markdown
-4. Uploads results to S3
+1. **Docling Conversion**: PDF → Markdown + Page Images (PNG)
+   - Extracts text and structure from PDF
+   - Generates high-resolution page images for visual comparison
+2. **Text Correction via AWS Bedrock** (Claude Haiku):
+   - Lazy-initializes TextCorrectionAgent on first job
+   - Processes pages concurrently (max 5 at once)
+   - For each page:
+     - Sends page image + extracted markdown to Claude Haiku
+     - Claude compares visual layout to markdown structure
+     - Identifies corrections needed:
+       - Heading levels (e.g., H1 vs H2 based on font size/weight)
+       - List types (bullets vs numbers vs nested)
+       - Table structure (column headers, cell alignment)
+       - Paragraph breaks (spacing, indentation)
+     - Returns corrections with confidence scores (0.0-1.0)
+   - Applies corrections to markdown
+   - Calculates overall confidence (average of page confidences)
+3. Uploads corrected Markdown to S3 results bucket
+4. Updates job status with confidence score
 
-**Typical duration**: 2-8 minutes (depends on page count)
+**Typical duration**: 1-3 minutes (depends on page count and AWS Bedrock API latency)
 
-**⚠️ Known Production Issue:**
-As of 2025-10-20, production AI processing is not working correctly:
-- Jobs complete in ~60 seconds (too fast for AI)
-- Confidence score returns 0.0 (should be 0.7-0.9)
-- Processing time returns 0 seconds
-- Output is Docling-only conversion (missing AI enhancements)
-- **Root cause:** Processing worker may be skipping PydanticAI agent step
+**Expected Results:**
+- **Confidence score**: 0.85-0.95 (typical range for well-formatted documents)
+- **Processing time**: 60-180 seconds (varies with page count and API latency)
+- **Corrections found**: 1-5 per page on average (heading levels, list formatting)
+- **Concurrent processing**: Up to 5 pages analyzed simultaneously via AWS Bedrock
+
+**⚠️ If you see unexpected results:**
+- Confidence score = 0.0 → Text correction was skipped (check AWS credentials)
+- Processing time < 30 seconds → AI step may have failed (check logs)
+- No corrections found → Document may already be perfectly formatted
+- Check logs: `docker logs equalify-pdf-api-gateway | grep "text correction"`
 
 ---
 
@@ -335,10 +349,11 @@ open "$OUTPUT_FILE"
 ```
 
 **Verify**:
-- ✅ Proper heading hierarchy
-- ✅ Alt text on images
-- ✅ Semantic structure
-- ✅ Accessible formatting
+- ✅ Corrected heading levels (based on visual font size/weight)
+- ✅ Proper list formatting (bullets vs numbers, nesting preserved)
+- ✅ Table structure improvements (headers, alignment)
+- ✅ Paragraph breaks matching visual spacing
+- ✅ High confidence score (0.85-0.95 typical)
 - ✅ File saved to Downloads folder
 
 ---
@@ -348,9 +363,13 @@ open "$OUTPUT_FILE"
 ```
 1. Submit PDF → API uploads to S3
 2. PII Scan → Presidio detects sensitive data
-3. Approval → Human reviews PII findings
-4. Processing → Docling + AI enhance accessibility
-5. Results → Markdown available via S3 URL
+3. Approval → Human reviews PII findings (if PII found)
+4. Processing:
+   a. Docling converts PDF → Markdown + Page Images (PNG)
+   b. AWS Bedrock (Claude Haiku) compares images to markdown
+   c. Identifies layout/structure corrections
+   d. Applies corrections, calculates confidence
+5. Results → Corrected Markdown available via S3 URL
 6. Download → File saved to user's Downloads folder
 ```
 
@@ -375,12 +394,18 @@ curl -s "$API_URL/api/documents/$JOB_ID/result" | jq .
 ```
 
 **Common failures**:
-- API rate limits (429 errors)
-- Invalid PDF format
-- OCR failures (scanned PDFs)
-- AI processing timeouts
-- S3 upload/download failures
-- AWS Bedrock API errors (production)
+- **AWS Bedrock API errors**:
+  - 403 Forbidden: Invalid/expired AWS credentials (run `aws sso login --profile uic`)
+  - 429 Throttling: Too many concurrent requests to Bedrock
+  - 500 Internal Error: Bedrock service issues (retry helps)
+  - Connection timeout: Network issues or IMDS hang (check AWS_EC2_METADATA_DISABLED=true)
+- **Processing failures**:
+  - Invalid PDF format (corrupted or encrypted PDFs)
+  - OCR failures (scanned PDFs with poor image quality)
+  - Text correction timeouts (large documents with many pages)
+- **Infrastructure failures**:
+  - S3 upload/download failures (LocalStack or AWS connectivity)
+  - Redis connection errors (worker communication)
 
 Check logs (LOCAL only):
 ```bash
@@ -481,22 +506,62 @@ EOF
 curl -d @/tmp/data.json ...
 ```
 
-### Production AI Processing Not Working
+### AWS Bedrock Text Correction Not Working
 
 **Symptoms:**
-- Job completes in ~60 seconds (too fast)
-- `confidence_score: 0.0`
-- `processing_time_seconds: 0`
-- Output is basic Docling conversion only (no AI enhancements)
+- Job completes in <30 seconds (too fast for AI processing)
+- `confidence_score: 0.0` in result
+- No "text correction" messages in logs
 
 **Investigation steps:**
-1. Check CloudWatch logs: `cd terraform && make aws-logs`
-2. Look for "Processing worker" startup messages
-3. Check for AWS Bedrock API errors
-4. Verify environment variables (BEDROCK_MODEL_ID, AWS credentials)
-5. Check ECS task configuration
 
-**Known issue (2025-10-20):** Production processing worker appears to skip PydanticAI agent step entirely.
+1. **Check AWS credentials are valid:**
+   ```bash
+   # Login to AWS SSO
+   aws sso login --profile uic
+
+   # Verify credentials loaded
+   aws sts get-caller-identity --profile uic
+   ```
+
+2. **Check logs for text correction activity:**
+   ```bash
+   docker logs equalify-pdf-api-gateway 2>&1 | grep -E "text correction|Lazy-initializing|BedrockConverseModel|Processing page"
+   ```
+
+   Expected logs:
+   - "Starting AI text correction analysis"
+   - "Lazy-initializing TextCorrectionAgent on first use"
+   - "BedrockConverseModel created successfully"
+   - "Processing page X for text corrections with bedrock"
+   - "Page X analyzed: Y corrections found (confidence: 0.XX)"
+
+3. **Check for AWS Bedrock errors:**
+   ```bash
+   docker logs equalify-pdf-api-gateway 2>&1 | grep -E "403|Forbidden|Throttling|AccessDenied|IMDS"
+   ```
+
+4. **Verify environment variables:**
+   ```bash
+   docker exec equalify-pdf-api-gateway env | grep -E "AWS_|AI_PROVIDER|BEDROCK"
+   ```
+
+   Expected:
+   - `AI_PROVIDER=bedrock`
+   - `AWS_DEFAULT_REGION=us-east-1`
+   - `AWS_EC2_METADATA_DISABLED=true`
+   - `AWS_ENDPOINT_URL_S3=http://localstack:4566`
+   - `AWS_ENDPOINT_URL_BEDROCK_RUNTIME` should be UNSET (not pointing to LocalStack)
+
+5. **Restart with fresh credentials:**
+   ```bash
+   ./restart-and-test.sh
+   ```
+
+**Common fixes:**
+- Expired AWS SSO session → Run `aws sso login --profile uic`
+- IMDS hang → Ensure `AWS_EC2_METADATA_DISABLED=true` in docker-compose
+- Bedrock routing to LocalStack → Check no global `AWS_ENDPOINT_URL` variable
 
 ### File Upload Metadata Issues
 

@@ -9,6 +9,7 @@ Transform PDF documents into accessible, semantic HTML for the University of Ill
 ## What It Does
 
 Converts PDFs into Semantic Markup with:
+
 - Semantic structure with proper heading hierarchy
 - AI-generated contextual alt text for images
 - Accessible mathematical content (MathML)
@@ -18,6 +19,7 @@ Converts PDFs into Semantic Markup with:
 ## Quick Start
 
 ### Prerequisites
+
 - Docker (v20.10+)
 - Docker Compose (v2.0+)
 
@@ -34,7 +36,7 @@ curl http://localhost:8080/health
 open http://localhost:8080/docs
 ```
 
-That's it! The API is running at http://localhost:8080 with hot reload enabled.
+That's it! The API is running at <http://localhost:8080> with hot reload enabled.
 
 ## Authentication
 
@@ -45,7 +47,7 @@ The API includes two authentication layers for security:
 All API endpoints (except `/health` and `/metrics`) require an API key for access:
 
 ```bash
-# Example: Submit document with API key
+# Example: Submit document with example API key
 curl -X POST http://localhost:8080/api/documents/submit \
   -H "X-API-Key: uic-2bd2c716-bc67-4032-ba66-e4f35c441759" \
   -F "file=@document.pdf"
@@ -57,7 +59,7 @@ curl -X POST http://localhost:8080/api/documents/submit \
 
 The API documentation at `/docs` uses HTTP Basic Authentication:
 
-- **URL:** http://localhost:8080/docs
+- **URL:** <http://localhost:8080/docs>
 - **Username:** `dase`
 - **Password:** `a11y`
 
@@ -118,6 +120,7 @@ make aws-status   # Show ECS service status
 **Auto-login:** All AWS commands automatically detect expired SSO tokens and prompt you to login. No need to manually run `aws sso login` first!
 
 **Prerequisites:** Install AWS Session Manager plugin for `make aws-shell`:
+
 ```bash
 brew install --cask session-manager-plugin  # macOS
 ```
@@ -135,6 +138,7 @@ FastAPI REST API → Redis Queues → Background Workers
 ```
 
 **Key Features:**
+
 - Single codebase with FastAPI + background workers
 - Redis task queues for async processing
 - Docker Compose orchestration (LocalStack for local AWS)
@@ -146,6 +150,7 @@ See [Architecture Overview](docs/architecture.md) for detailed system design.
 ## Technology Stack
 
 **Backend:**
+
 - Python 3.11+ (using `uv` for package management)
 - FastAPI (async API framework)
 - PydanticAI (multi-agent AI framework)
@@ -153,6 +158,7 @@ See [Architecture Overview](docs/architecture.md) for detailed system design.
 - Microsoft Presidio (PII detection)
 
 **Infrastructure:**
+
 - Docker & Docker Compose
 - Redis (task queues and caching)
 - AWS S3 (object storage)
@@ -160,6 +166,7 @@ See [Architecture Overview](docs/architecture.md) for detailed system design.
 - LocalStack (local AWS emulation)
 
 **Frontend (Phase 3):**
+
 - Astro (static site generation)
 - ShadCN/Radix (accessible UI components)
 - Tailwind CSS
@@ -167,22 +174,27 @@ See [Architecture Overview](docs/architecture.md) for detailed system design.
 ## Documentation
 
 ### Getting Started
+
 - **[Environment Setup](docs/environment-setup.md)** - Complete setup guide with troubleshooting
 - **[Contributing Guidelines](CONTRIBUTING.md)** - Development workflow and code standards
 
 ### Technical Documentation
+
 - **[Architecture Overview](docs/architecture.md)** - Detailed system design, data flows, and AWS Bedrock integration
 - **[CI/CD Pipeline](docs/ci-cd.md)** - Testing strategy, test tiers, and GitHub Actions workflows
 
 ### AWS Deployment
+
 - **[AWS Guide](docs/aws-guide.md)** - Complete deployment, testing, and operations guide
 
 ### Infrastructure Configuration
+
 - **[Redis Configuration](infrastructure/redis/README.md)** - Redis setup and operations
 - **[LocalStack Configuration](infrastructure/localstack/README.md)** - Local AWS services
 - **[Scripts Documentation](scripts/README.md)** - Utility scripts reference
 
 ### Project Planning
+
 - **[PRD Index](ai-docs/PRDs/README.md)** - All Product Requirement Documents with implementation order
 - **[Project Instructions](CLAUDE.md)** - Development patterns and guidelines
 
@@ -227,6 +239,7 @@ Having issues?
 **Current Phase:** Phase 2 - Services & Background Workers (60% complete)
 
 **Completed:**
+
 - ✅ Phase 1: Infrastructure Foundation
   - ✅ Docker Compose orchestration
   - ✅ Redis and LocalStack integration
@@ -238,13 +251,14 @@ Having issues?
   - ✅ Approval workflow service
 
 **In Progress:**
+
 - 🚧 Multi-agent AI pipeline for accessibility enhancement
-- 🚧 Structure & typography agents 
+- 🚧 Structure & typography agents
 - 🚧 Confidence scoring logic
 - 🚧 Basic web UI for upload and status tracking
 - 🚧 Process and validate first 10 test documents
 
-
 **Planned:**
+
 - 📋 Phase 3: Frontend application (Astro + ShadCN)
 - 📋 Phase 4: AWS ECS deployment

@@ -14,20 +14,18 @@ NOTE: These tests require Docker resources and should be run with limited
 parallelism to avoid testcontainers conflicts. Use: pytest -n 2 tests/integration/workflows/
 """
 
-import pytest
 import asyncio
 import uuid
-import os
-from datetime import datetime, timezone, timedelta
+from datetime import UTC, datetime, timedelta
 
-from src.shared.models.queue import PIIQueuePayload, ProcessingQueuePayload
-from src.shared.constants.queues import PII_QUEUE, PROCESSING_QUEUE
+import pytest
+from src.shared.constants.queues import PROCESSING_QUEUE
 from src.shared.constants.statuses import (
-    STATUS_PII_SCANNING,
     STATUS_AWAITING_APPROVAL,
-    STATUS_PROCESSING,
+    STATUS_COMPLETED,
     STATUS_DENIED,
-    STATUS_COMPLETED
+    STATUS_PII_SCANNING,
+    STATUS_PROCESSING,
 )
 
 
@@ -38,11 +36,7 @@ class TestConcurrentSubmissions:
     """Tests for concurrent PDF submissions using REAL Redis."""
 
     @pytest.mark.asyncio
-    async def test_concurrent_pdf_submissions_unique_job_ids(
-        self,
-        job_service,
-        queue_service
-    ):
+    async def test_concurrent_pdf_submissions_unique_job_ids(self, job_service, queue_service):
         """Test that concurrent submissions create unique job IDs in REAL Redis."""
         # Create 10 jobs concurrently
         job_ids = [str(uuid.uuid4()) for _ in range(10)]
@@ -50,8 +44,7 @@ class TestConcurrentSubmissions:
 
         # Submit all jobs concurrently to REAL Redis
         tasks = [
-            job_service.create_job(job_id, s3_key, STATUS_PII_SCANNING)
-            for job_id, s3_key in zip(job_ids, s3_keys)
+            job_service.create_job(job_id, s3_key, STATUS_PII_SCANNING) for job_id, s3_key in zip(job_ids, s3_keys)
         ]
         await asyncio.gather(*tasks)
 
@@ -67,18 +60,10 @@ class TestConcurrentSubmissions:
     # Queue concurrency is tested at unit level instead.
 
     @pytest.mark.asyncio
-    async def test_concurrent_job_status_reads(
-        self,
-        job_service,
-        sample_job_id
-    ):
+    async def test_concurrent_job_status_reads(self, job_service, sample_job_id):
         """Test that concurrent status reads don't cause issues in REAL Redis."""
         # Create a job in REAL Redis
-        await job_service.create_job(
-            sample_job_id,
-            f"temp/{sample_job_id}/test.pdf",
-            STATUS_PII_SCANNING
-        )
+        await job_service.create_job(sample_job_id, f"temp/{sample_job_id}/test.pdf", STATUS_PII_SCANNING)
 
         # Read status 50 times concurrently from REAL Redis
         tasks = [job_service.get_job(sample_job_id) for _ in range(50)]
@@ -99,27 +84,18 @@ class TestRaceConditionDoubleApproval:
 
     @pytest.mark.asyncio
     async def test_double_approval_attempt_handled_safely(
-        self,
-        approval_service,
-        job_service,
-        queue_service,
-        sample_job_id,
-        sample_s3_key
+        self, approval_service, job_service, queue_service, sample_job_id, sample_s3_key
     ):
         """Test that two concurrent approval attempts don't cause duplicate processing in REAL Redis."""
         # Setup: Job awaiting approval in REAL Redis
         approval_token = "test-approval-token-123"
-        await job_service.create_job(
-            sample_job_id,
-            sample_s3_key,
-            STATUS_AWAITING_APPROVAL
-        )
+        await job_service.create_job(sample_job_id, sample_s3_key, STATUS_AWAITING_APPROVAL)
         # Add approval token and expiration via update
         await job_service.update_job_status(
             sample_job_id,
             STATUS_AWAITING_APPROVAL,
             approval_token=approval_token,
-            approval_expires_at=(datetime.now(timezone.utc) + timedelta(hours=2)).isoformat()
+            approval_expires_at=(datetime.now(UTC) + timedelta(hours=2)).isoformat(),
         )
         # Store token mapping for lookup
         await job_service.store_approval_token_mapping(approval_token, sample_job_id)
@@ -127,16 +103,13 @@ class TestRaceConditionDoubleApproval:
         # Simulate two concurrent approval attempts
         approval_tasks = [
             approval_service.process_approval_decision(
-                sample_job_id,
-                "approved",
-                f"Approval attempt {i}",
-                f"reviewer{i}@uic.edu"
+                sample_job_id, "approved", f"Approval attempt {i}", f"reviewer{i}@uic.edu"
             )
             for i in range(2)
         ]
 
         # Run concurrently and handle potential exceptions
-        results = await asyncio.gather(*approval_tasks, return_exceptions=True)
+        await asyncio.gather(*approval_tasks, return_exceptions=True)
 
         # Verify: Check processing queue depth in REAL Redis
         # Should have at most 1 entry (idempotent approval)
@@ -149,45 +122,29 @@ class TestRaceConditionDoubleApproval:
 
     @pytest.mark.asyncio
     async def test_approval_and_timeout_race_condition(
-        self,
-        approval_service,
-        job_service,
-        queue_service,
-        sample_job_id,
-        sample_s3_key
+        self, approval_service, job_service, queue_service, sample_job_id, sample_s3_key
     ):
         """Test race condition: approval granted while timeout occurs in REAL Redis."""
         # Setup: Job awaiting approval, close to timeout
         approval_token = "timeout-race-token"
-        await job_service.create_job(
-            sample_job_id,
-            sample_s3_key,
-            STATUS_AWAITING_APPROVAL
-        )
+        await job_service.create_job(sample_job_id, sample_s3_key, STATUS_AWAITING_APPROVAL)
         # Add approval token and expiration via update
         await job_service.update_job_status(
             sample_job_id,
             STATUS_AWAITING_APPROVAL,
             approval_token=approval_token,
-            approval_expires_at=(datetime.now(timezone.utc) + timedelta(seconds=1)).isoformat()
+            approval_expires_at=(datetime.now(UTC) + timedelta(seconds=1)).isoformat(),
         )
         # Store token mapping for lookup
         await job_service.store_approval_token_mapping(approval_token, sample_job_id)
 
         # Simulate concurrent approval and timeout
         approval_task = approval_service.process_approval_decision(
-            sample_job_id,
-            "approved",
-            "Last-minute approval",
-            "reviewer@uic.edu"
+            sample_job_id, "approved", "Last-minute approval", "reviewer@uic.edu"
         )
 
         # Simulate timeout worker (would normally set to failed/denied)
-        timeout_task = job_service.update_job_status(
-            sample_job_id,
-            STATUS_DENIED,
-            error_message="Approval timeout"
-        )
+        timeout_task = job_service.update_job_status(sample_job_id, STATUS_DENIED, error_message="Approval timeout")
 
         # Run concurrently
         await asyncio.gather(approval_task, timeout_task, return_exceptions=True)
@@ -209,12 +166,7 @@ class TestConcurrentStatusUpdates:
     """Tests for concurrent job status transitions in REAL Redis."""
 
     @pytest.mark.asyncio
-    async def test_concurrent_status_updates_same_job(
-        self,
-        job_service,
-        sample_job_id,
-        sample_s3_key
-    ):
+    async def test_concurrent_status_updates_same_job(self, job_service, sample_job_id, sample_s3_key):
         """Test concurrent status updates to same job in REAL Redis (last write wins)."""
         # Create job in REAL Redis
         await job_service.create_job(sample_job_id, sample_s3_key, STATUS_PII_SCANNING)
@@ -225,13 +177,10 @@ class TestConcurrentStatusUpdates:
             STATUS_PROCESSING,
             STATUS_AWAITING_APPROVAL,
             STATUS_PROCESSING,
-            STATUS_COMPLETED
+            STATUS_COMPLETED,
         ]
 
-        tasks = [
-            job_service.update_job_status(sample_job_id, status)
-            for status in statuses
-        ]
+        tasks = [job_service.update_job_status(sample_job_id, status) for status in statuses]
 
         await asyncio.gather(*tasks)
 
@@ -240,38 +189,24 @@ class TestConcurrentStatusUpdates:
         assert final_job["status"] in statuses
 
     @pytest.mark.asyncio
-    async def test_concurrent_metadata_updates(
-        self,
-        job_service,
-        sample_job_id,
-        sample_s3_key
-    ):
-        """Test concurrent metadata updates in REAL Redis."""
+    async def test_concurrent_field_updates(self, job_service, sample_job_id, sample_s3_key):
+        """Test concurrent field updates in REAL Redis (last write wins)."""
         # Create job in REAL Redis
         await job_service.create_job(sample_job_id, sample_s3_key, STATUS_PROCESSING)
 
-        # Update with different metadata concurrently
-        metadata_sets = [
-            {"confidence_score": 0.95, "attempt": i}
-            for i in range(10)
-        ]
-
+        # Update with different field values concurrently
         tasks = [
-            job_service.update_job_status(
-                sample_job_id,
-                STATUS_PROCESSING,
-                metadata=metadata
-            )
-            for metadata in metadata_sets
+            job_service.update_job_status(sample_job_id, STATUS_PROCESSING, confidence_score=0.95, attempt_number=i)
+            for i in range(10)
         ]
 
         await asyncio.gather(*tasks)
 
-        # Verify: Final job has one of the metadata sets in REAL Redis
+        # Verify: Final job has one of the values in REAL Redis (last write wins)
         final_job = await job_service.get_job(sample_job_id)
-        assert "metadata" in final_job
-        assert "attempt" in final_job["metadata"]
-        assert 0 <= final_job["metadata"]["attempt"] < 10
+        assert "attempt_number" in final_job
+        assert 0 <= int(final_job["attempt_number"]) < 10
+        assert final_job["confidence_score"] == "0.95"
 
 
 @pytest.mark.integration
@@ -282,36 +217,25 @@ class TestConcurrentTokenValidation:
 
     @pytest.mark.asyncio
     async def test_concurrent_token_validation_requests(
-        self,
-        approval_service,
-        job_service,
-        sample_job_id,
-        sample_s3_key
+        self, approval_service, job_service, sample_job_id, sample_s3_key
     ):
         """Test that concurrent token validations work correctly with REAL Redis."""
         # Setup: Job with approval token in REAL Redis
         approval_token = "concurrent-test-token-789"
 
-        await job_service.create_job(
-            sample_job_id,
-            sample_s3_key,
-            STATUS_AWAITING_APPROVAL
-        )
+        await job_service.create_job(sample_job_id, sample_s3_key, STATUS_AWAITING_APPROVAL)
         # Add approval token and expiration via update
         await job_service.update_job_status(
             sample_job_id,
             STATUS_AWAITING_APPROVAL,
             approval_token=approval_token,
-            approval_expires_at=(datetime.now(timezone.utc) + timedelta(hours=2)).isoformat()
+            approval_expires_at=(datetime.now(UTC) + timedelta(hours=2)).isoformat(),
         )
         # Store token mapping for lookup
         await job_service.store_approval_token_mapping(approval_token, sample_job_id)
 
         # Validate token 100 times concurrently (simulating multiple users)
-        tasks = [
-            approval_service.validate_approval_token(approval_token)
-            for _ in range(100)
-        ]
+        tasks = [approval_service.validate_approval_token(approval_token) for _ in range(100)]
 
         results = await asyncio.gather(*tasks, return_exceptions=True)
 
@@ -322,27 +246,19 @@ class TestConcurrentTokenValidation:
 
     @pytest.mark.asyncio
     async def test_token_validation_during_status_change(
-        self,
-        approval_service,
-        job_service,
-        sample_job_id,
-        sample_s3_key
+        self, approval_service, job_service, sample_job_id, sample_s3_key
     ):
         """Test token validation while job status is changing in REAL Redis."""
         approval_token = "status-change-token"
 
         # Create job in REAL Redis: awaiting approval
-        await job_service.create_job(
-            sample_job_id,
-            sample_s3_key,
-            STATUS_AWAITING_APPROVAL
-        )
+        await job_service.create_job(sample_job_id, sample_s3_key, STATUS_AWAITING_APPROVAL)
         # Add approval token and expiration via update
         await job_service.update_job_status(
             sample_job_id,
             STATUS_AWAITING_APPROVAL,
             approval_token=approval_token,
-            approval_expires_at=(datetime.now(timezone.utc) + timedelta(hours=2)).isoformat()
+            approval_expires_at=(datetime.now(UTC) + timedelta(hours=2)).isoformat(),
         )
         # Store token mapping for lookup
         await job_service.store_approval_token_mapping(approval_token, sample_job_id)
@@ -359,16 +275,11 @@ class TestConcurrentTokenValidation:
         ]
 
         # Run validations and status change concurrently
-        results = await asyncio.gather(
-            *validation_tasks,
-            change_status(),
-            return_exceptions=True
-        )
+        results = await asyncio.gather(*validation_tasks, change_status(), return_exceptions=True)
 
         # Most validations should succeed (some may see transitional state)
         successful_validations = [
-            r for r in results
-            if not isinstance(r, Exception) and r is not None and isinstance(r, dict)
+            r for r in results if not isinstance(r, Exception) and r is not None and isinstance(r, dict)
         ]
         assert len(successful_validations) >= 25  # At least half should succeed
 
@@ -380,22 +291,12 @@ class TestHighConcurrency:
     """Tests for high concurrency scenarios using REAL Redis."""
 
     @pytest.mark.asyncio
-    async def test_high_concurrency_job_creation(
-        self,
-        job_service,
-        queue_service
-    ):
+    async def test_high_concurrency_job_creation(self, job_service, queue_service):
         """Test system handles high concurrency (100 simultaneous operations) in REAL Redis."""
         # Create 100 jobs concurrently
-        job_data = [
-            (str(uuid.uuid4()), f"temp/{uuid.uuid4()}/test{i}.pdf")
-            for i in range(100)
-        ]
+        job_data = [(str(uuid.uuid4()), f"temp/{uuid.uuid4()}/test{i}.pdf") for i in range(100)]
 
-        tasks = [
-            job_service.create_job(job_id, s3_key, STATUS_PII_SCANNING)
-            for job_id, s3_key in job_data
-        ]
+        tasks = [job_service.create_job(job_id, s3_key, STATUS_PII_SCANNING) for job_id, s3_key in job_data]
 
         # Should complete without errors
         results = await asyncio.gather(*tasks, return_exceptions=True)
@@ -412,11 +313,7 @@ class TestHighConcurrency:
 
     @pytest.mark.asyncio
     @pytest.mark.slow
-    async def test_sustained_concurrent_load(
-        self,
-        job_service,
-        queue_service
-    ):
+    async def test_sustained_concurrent_load(self, job_service, queue_service):
         """Test system stability under sustained concurrent load in REAL Redis."""
         # Simulate sustained load: 50 operations over 5 batches
         total_operations = 0
@@ -428,8 +325,7 @@ class TestHighConcurrency:
             all_job_ids.extend(job_ids)
 
             tasks = [
-                job_service.create_job(job_id, s3_key, STATUS_PII_SCANNING)
-                for job_id, s3_key in zip(job_ids, s3_keys)
+                job_service.create_job(job_id, s3_key, STATUS_PII_SCANNING) for job_id, s3_key in zip(job_ids, s3_keys)
             ]
 
             await asyncio.gather(*tasks, return_exceptions=True)

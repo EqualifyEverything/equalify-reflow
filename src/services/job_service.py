@@ -146,7 +146,7 @@ class JobService:
         json_fields = [
             "pii_findings",         # Array of PII findings
             "correction_results",   # Array of correction results per page
-            "page_image_keys"      # Array of S3 keys for page images
+            "page_image_keys"       # Array of S3 keys for page images
         ]
 
         for field in json_fields:

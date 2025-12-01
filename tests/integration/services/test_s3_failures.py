@@ -4,18 +4,17 @@ Tests PII and Processing services to ensure proper retry behavior
 when S3 operations fail with various error conditions.
 """
 
-import pytest
-from datetime import datetime, timezone
-from unittest.mock import AsyncMock, Mock
-from botocore.exceptions import ClientError
+from datetime import UTC, datetime
 from io import BytesIO
-from fastapi import HTTPException
+from unittest.mock import AsyncMock, Mock
 
+import pytest
+from botocore.exceptions import ClientError
+from src.services.job_service import JobService
 from src.services.pii_service import PIIDetectionService
 from src.services.processing_service import ProcessingService
-from src.services.storage_service import StorageService
 from src.services.queue_service import QueueService
-from src.services.job_service import JobService
+from src.services.storage_service import StorageService
 from src.shared.models.queue import PIIQueuePayload, ProcessingQueuePayload
 
 
@@ -99,7 +98,7 @@ class TestPIIServiceS3Failures:
         job = PIIQueuePayload(
             job_id="550e8400-e29b-41d4-a716-446655440001",
             s3_key="temp/test.pdf",
-            created_at=datetime.now(timezone.utc)
+            created_at=datetime.now(UTC)
         )
 
         pdf_content = b"%PDF-1.4\nTest PDF\n%%EOF"
@@ -131,7 +130,7 @@ class TestPIIServiceS3Failures:
         job = PIIQueuePayload(
             job_id="550e8400-e29b-41d4-a716-446655440002",
             s3_key="temp/test.pdf",
-            created_at=datetime.now(timezone.utc)
+            created_at=datetime.now(UTC)
         )
 
         pdf_content = b"%PDF-1.4\nTest PDF\n%%EOF"
@@ -163,7 +162,7 @@ class TestPIIServiceS3Failures:
         job = PIIQueuePayload(
             job_id="550e8400-e29b-41d4-a716-446655440003",
             s3_key="temp/missing.pdf",
-            created_at=datetime.now(timezone.utc)
+            created_at=datetime.now(UTC)
         )
 
         # Mock S3 to return NoSuchKey error
@@ -191,7 +190,7 @@ class TestPIIServiceS3Failures:
         job = PIIQueuePayload(
             job_id="550e8400-e29b-41d4-a716-446655440004",
             s3_key="temp/test.pdf",
-            created_at=datetime.now(timezone.utc)
+            created_at=datetime.now(UTC)
         )
 
         # Mock S3 to always timeout
@@ -258,8 +257,12 @@ class TestProcessingServiceS3Failures:
         # Mock download to succeed
         mock_s3_client.get_object.return_value = {'Body': BytesIO(pdf_content)}
 
-        # Mock upload to fail then succeed
+        # Mock upload: Pipeline calls put_object for:
+        # 1. Original markdown (step 6) - should succeed
+        # 2. Final result (auto-approve) - fail first time (ServiceUnavailable)
+        # 3. Final result retry - succeed
         mock_s3_client.put_object.side_effect = [
+            None,  # Original markdown upload succeeds
             ClientError(
                 {
                     'Error': {'Code': 'ServiceUnavailable'},
@@ -267,11 +270,11 @@ class TestProcessingServiceS3Failures:
                 },
                 'PutObject'
             ),
-            None  # Success
+            None  # Final result upload succeeds on retry
         ]
 
         # Mock PDF converter
-        from src.services.pdf_converter import PDFConversionResult, PageData
+        from src.services.pdf_converter import PageData, PDFConversionResult
         mock_result = PDFConversionResult(
             full_markdown="# Test",
             pages=[
@@ -289,26 +292,27 @@ class TestProcessingServiceS3Failures:
         mock_converter.convert_with_page_images = AsyncMock(return_value=mock_result)
         processing_service.pdf_converter = mock_converter
 
-        # Mock AI enhancement
-        from src.agents.accessibility_agent import PageImprovementResult
-        mock_ai = mocker.Mock()
-        mock_ai.process_pages_concurrently = AsyncMock(
+        # Mock text correction service
+        from src.shared.models.processing import PageCorrectionResult
+        mock_text_correction = mocker.Mock()
+        mock_text_correction.process_pages_concurrently = AsyncMock(
             return_value=[
-                PageImprovementResult(
-                    improved_markdown="# Test Improved",
-                    confidence_score=0.95,
-                    processing_notes="Test notes"
+                PageCorrectionResult(
+                    corrections=[],
+                    overall_confidence=0.95,
+                    processing_notes="Test notes",
+                    page_number=1
                 )
             ]
         )
-        mock_ai.combine_page_markdown = Mock(return_value="# Test Improved")
-        processing_service.ai_enhancement = mock_ai
+        mock_text_correction.apply_all_page_corrections = Mock(return_value="# Test Improved")
+        processing_service.text_correction = mock_text_correction
 
         # Execute
         result = await processing_service.process_document(job)
 
-        # Verify upload was retried
-        assert mock_s3_client.put_object.call_count == 2
+        # Verify upload was retried (1 original + 2 final result uploads = 3 total)
+        assert mock_s3_client.put_object.call_count == 3
         assert result.markdown_url is not None
 
     @pytest.mark.asyncio
@@ -324,15 +328,17 @@ class TestProcessingServiceS3Failures:
         pdf_content = b"%PDF-1.4\nTest PDF\n%%EOF"
         mock_s3_client.get_object.return_value = {'Body': BytesIO(pdf_content)}
 
-        # Mock upload to fail with access denied
-        mock_s3_client.put_object.side_effect = ClientError(
-            {'Error': {'Code': 'AccessDenied'}},
-            'PutObject'
-        )
+        # Mock upload: Pipeline calls put_object for:
+        # 1. Original markdown (step 6) - should succeed
+        # 2. Final result (auto-approve) - fail (AccessDenied, non-retryable)
+        mock_s3_client.put_object.side_effect = [
+            None,  # Original markdown upload succeeds
+            ClientError({'Error': {'Code': 'AccessDenied'}}, 'PutObject')
+        ]
 
-        # Mock converter and AI
-        from src.services.pdf_converter import PDFConversionResult, PageData
-        from src.agents.accessibility_agent import PageImprovementResult
+        # Mock converter and text correction
+        from src.services.pdf_converter import PageData, PDFConversionResult
+        from src.shared.models.processing import PageCorrectionResult
 
         mock_result = PDFConversionResult(
             full_markdown="# Test",
@@ -345,25 +351,26 @@ class TestProcessingServiceS3Failures:
         mock_converter.convert_with_page_images = AsyncMock(return_value=mock_result)
         processing_service.pdf_converter = mock_converter
 
-        mock_ai = mocker.Mock()
-        mock_ai.process_pages_concurrently = AsyncMock(
+        mock_text_correction = mocker.Mock()
+        mock_text_correction.process_pages_concurrently = AsyncMock(
             return_value=[
-                PageImprovementResult(
-                    improved_markdown="# Test",
-                    confidence_score=0.95,
-                    processing_notes="Test notes"
+                PageCorrectionResult(
+                    corrections=[],
+                    overall_confidence=0.95,
+                    processing_notes="Test notes",
+                    page_number=1
                 )
             ]
         )
-        mock_ai.combine_page_markdown = Mock(return_value="# Test")
-        processing_service.ai_enhancement = mock_ai
+        mock_text_correction.apply_all_page_corrections = Mock(return_value="# Test")
+        processing_service.text_correction = mock_text_correction
 
         # Execute - should NOT raise, but catch exception and mark job as failed
         result = await processing_service.process_document(job)
 
         # StorageService retry logic correctly identifies AccessDenied as non-retryable
-        # so it fails immediately without retry (call_count = 1)
-        assert mock_s3_client.put_object.call_count == 1
+        # so it fails immediately without retry (1 original + 1 failed final = 2)
+        assert mock_s3_client.put_object.call_count == 2
 
         # Verify result indicates failure
         assert result is not None
@@ -381,7 +388,7 @@ class TestS3FailureRecovery:
         job = PIIQueuePayload(
             job_id="550e8400-e29b-41d4-a716-446655440008",
             s3_key="temp/test.pdf",
-            created_at=datetime.now(timezone.utc)
+            created_at=datetime.now(UTC)
         )
 
         # Mock permanent S3 failure
@@ -406,7 +413,7 @@ class TestS3FailureRecovery:
         job = PIIQueuePayload(
             job_id="550e8400-e29b-41d4-a716-446655440009",
             s3_key="temp/test.pdf",
-            created_at=datetime.now(timezone.utc)
+            created_at=datetime.now(UTC)
         )
 
         pdf_content = b"%PDF-1.4\nTest PDF\n%%EOF"

@@ -7,27 +7,25 @@ Provides fixtures for:
 - Cleanup helpers
 """
 
+import os
+import uuid
+from collections.abc import AsyncGenerator
+from unittest.mock import AsyncMock, MagicMock, patch
+
+import boto3
 import pytest
 import pytest_asyncio
-import uuid
-import os
-from datetime import datetime, timezone
-from unittest.mock import AsyncMock, MagicMock, patch
-from typing import AsyncGenerator
 import redis.asyncio as aioredis
-import boto3
-from testcontainers.redis import RedisContainer
-from testcontainers.localstack import LocalStackContainer
-
-from src.services.storage_service import StorageService
-from src.services.queue_service import QueueService
-from src.services.job_service import JobService
+from src.config import settings
 from src.services.approval_service import ApprovalService
+from src.services.job_service import JobService
+from src.services.queue_service import QueueService
+from src.services.storage_service import StorageService
+from src.shared.models.pii import PIIFinding
 from src.workers.pii_worker import PIIWorker
 from src.workers.processing_worker import ProcessingWorker
-from src.shared.models.pii import PIIFinding
-from src.config import settings
-
+from testcontainers.localstack import LocalStackContainer
+from testcontainers.redis import RedisContainer
 
 # ============================================================================
 # TEST CONFIGURATION - Disable Background Workers
@@ -184,9 +182,18 @@ async def approval_service(real_redis_client, real_s3_client, job_service, queue
 # ============================================================================
 
 @pytest.fixture(autouse=True)
-def mock_ai_settings():
-    """Auto-mock AI settings for Bedrock (no API keys needed)."""
-    from unittest.mock import patch, MagicMock
+def mock_ai_settings(request):
+    """Auto-mock AI settings for Bedrock (no API keys needed).
+
+    NOTE: This fixture is EXCLUDED for test_bedrock_agent.py tests which
+    are designed to test real Bedrock API integration.
+    """
+    from unittest.mock import AsyncMock, MagicMock, patch
+
+    # Skip mocking for bedrock integration tests (they test real Bedrock)
+    if "test_bedrock_agent" in request.node.nodeid:
+        yield
+        return
 
     # Mock settings to use bedrock provider
     with patch('src.agents.accessibility_agent.settings') as mock_settings:
@@ -198,10 +205,18 @@ def mock_ai_settings():
 
         # Mock BedrockConverseModel and Agent to avoid AWS/API calls
         with patch('pydantic_ai.models.bedrock.BedrockConverseModel'):
-            with patch('src.agents.accessibility_agent.Agent') as MockAgent:
-                # Make Agent() return a mock with a run method
+            with patch('src.agents.accessibility_agent.Agent') as mock_agent_class:
+                # Make Agent() return a mock with an async run method
                 mock_agent = MagicMock()
-                MockAgent.return_value = mock_agent
+                # Agent.run() is async, must return AsyncMock
+                mock_result = MagicMock()
+                mock_result.output = MagicMock(
+                    improved_markdown="# Test",
+                    confidence_score=0.95,
+                    processing_notes="Test notes"
+                )
+                mock_agent.run = AsyncMock(return_value=mock_result)
+                mock_agent_class.return_value = mock_agent
                 yield
 
 
@@ -332,8 +347,9 @@ def sample_pdf_content():
     Creates a simple single-page PDF that Docling can actually process.
     """
     from io import BytesIO
-    from reportlab.pdfgen import canvas
+
     from reportlab.lib.pagesizes import letter
+    from reportlab.pdfgen import canvas
 
     buffer = BytesIO()
     pdf = canvas.Canvas(buffer, pagesize=letter)

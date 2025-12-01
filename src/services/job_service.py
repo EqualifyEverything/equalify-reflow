@@ -2,15 +2,10 @@
 
 import json
 import logging
-from datetime import datetime, timezone
-from typing import Optional, List
+from datetime import UTC, datetime
 
 from ..config import settings
-from ..shared.constants.statuses import (
-    STATUS_COMPLETED,
-    STATUS_FAILED,
-    STATUS_DENIED
-)
+from ..shared.constants.statuses import STATUS_COMPLETED, STATUS_DENIED, STATUS_FAILED
 
 logger = logging.getLogger(__name__)
 
@@ -115,7 +110,7 @@ class JobService:
             >>> await job_service.create_job("job-123", "temp/file.pdf")
             # Creates job with 7-day TTL (active job default)
         """
-        created_at = datetime.now(timezone.utc).isoformat()
+        created_at = datetime.now(UTC).isoformat()
 
         await self.redis.hset(
             f"{self.status_prefix}{job_id}",
@@ -131,7 +126,7 @@ class JobService:
         # Set TTL based on initial status (prevents memory leaks)
         await self._set_job_ttl(job_id, status)
 
-    async def get_job(self, job_id: str) -> Optional[dict]:
+    async def get_job(self, job_id: str) -> dict | None:
         """
         Get job status and metadata.
 
@@ -146,12 +141,20 @@ class JobService:
         if not job_data:
             return None
 
-        # Parse JSON fields if present
-        if "pii_findings" in job_data and job_data["pii_findings"]:
-            job_data["pii_findings"] = json.loads(job_data["pii_findings"])
+        # Parse JSON array/object fields only
+        # These fields are stored as JSON strings and need to be parsed
+        json_fields = [
+            "pii_findings",         # Array of PII findings
+            "correction_results",   # Array of correction results per page
+            "page_image_keys"      # Array of S3 keys for page images
+        ]
 
-        if "metadata" in job_data and job_data["metadata"]:
-            job_data["metadata"] = json.loads(job_data["metadata"])
+        for field in json_fields:
+            if field in job_data and job_data[field]:
+                try:
+                    job_data[field] = json.loads(job_data[field])
+                except json.JSONDecodeError:
+                    logger.warning(f"Failed to parse {field} for job {job_id}")
 
         return job_data
 
@@ -181,7 +184,7 @@ class JobService:
         """
         update_data = {
             "status": status,
-            "updated_at": datetime.now(timezone.utc).isoformat()
+            "updated_at": datetime.now(UTC).isoformat()
         }
 
         # Serialize complex fields as JSON
@@ -202,7 +205,7 @@ class JobService:
     async def add_pii_findings(
         self,
         job_id: str,
-        findings: List[dict]
+        findings: list[dict]
     ) -> None:
         """
         Store PII scan results for a job and maintain TTL.
@@ -223,7 +226,7 @@ class JobService:
             f"{self.status_prefix}{job_id}",
             mapping={
                 "pii_findings": json.dumps(findings),
-                "updated_at": datetime.now(timezone.utc).isoformat()
+                "updated_at": datetime.now(UTC).isoformat()
             }
         )
         # Note: TTL maintained from previous status, will be updated on next status change
@@ -255,8 +258,8 @@ class JobService:
             mapping={
                 "result_url": result_url,
                 "confidence_score": str(confidence),
-                "completed_at": datetime.now(timezone.utc).isoformat(),
-                "updated_at": datetime.now(timezone.utc).isoformat()
+                "completed_at": datetime.now(UTC).isoformat(),
+                "updated_at": datetime.now(UTC).isoformat()
             }
         )
         # Note: TTL maintained from previous status, will be updated on next status change
@@ -305,7 +308,7 @@ class JobService:
         except Exception as e:
             raise Exception(f"Failed to set expiration for job {job_id}: {str(e)}")
 
-    async def list_all_jobs(self) -> List[str]:
+    async def list_all_jobs(self) -> list[str]:
         """List all job IDs in Redis.
 
         This method scans for all job keys matching the status prefix
@@ -348,7 +351,7 @@ class JobService:
             logger.error(f"Error listing jobs: {str(e)}", exc_info=True)
             return []
 
-    async def get_job_status(self, job_id: str) -> Optional[dict]:
+    async def get_job_status(self, job_id: str) -> dict | None:
         """Get job status and metadata (alias for get_job).
 
         This method is an alias for get_job() to match the naming
@@ -460,7 +463,7 @@ class JobService:
             )
             raise Exception(f"Failed to store token mapping: {str(e)}")
 
-    async def get_job_by_approval_token(self, token: str) -> Optional[dict]:
+    async def get_job_by_approval_token(self, token: str) -> dict | None:
         """Get job by approval token using O(1) Redis lookup.
 
         Uses token mapping stored in Redis to directly fetch job ID,

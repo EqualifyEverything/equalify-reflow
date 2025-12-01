@@ -1,10 +1,9 @@
 """Tests for correction approval service (Phase 7 refactoring)."""
 
-import pytest
-from datetime import datetime, timezone
-from unittest.mock import AsyncMock, MagicMock, patch
 from io import BytesIO
+from unittest.mock import AsyncMock, MagicMock
 
+import pytest
 from src.services.correction_approval_service import CorrectionApprovalService
 from src.services.job_service import JobService
 from src.services.storage_service import StorageService

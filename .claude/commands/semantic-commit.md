@@ -12,7 +12,9 @@ Understand the files in the `Read` section, and execute the `Run` commands then 
 
 ## Execute
 
-- Update documentation that has become out of date due to your direct updates. 
+- Run `uv run ruff check` and `uv run mypy` on Python files being committed
+  - Fix any lint issues before proceeding with the commit
+- Update documentation that has become out of date due to your direct updates.
   - Important: Do not speculatively add documentation
 - Outline the work done top to bottom organized by topic of changes
 - git status to see the files changed

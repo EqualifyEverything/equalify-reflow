@@ -50,13 +50,19 @@ services:
       # Mount Docker socket for testcontainers
       - /var/run/docker.sock:/var/run/docker.sock
     environment:
-      # AWS LocalStack configuration (for containers only)
-      # NOTE: AWS_PROFILE is NOT set here - it's only for AWS deployments (.env)
-      # LocalStack uses AWS_ACCESS_KEY_ID/AWS_SECRET_ACCESS_KEY instead
-      - AWS_ENDPOINT_URL=http://localstack:4566
-      - AWS_ACCESS_KEY_ID=test
-      - AWS_SECRET_ACCESS_KEY=test
+      # AWS Hybrid Configuration - LocalStack for S3/CloudWatch, Real AWS for Bedrock
+      # Use service-specific endpoints (no global endpoint to avoid bedrock conflicts)
+      - AWS_ENDPOINT_URL_S3=http://localstack:4566
+      - AWS_ENDPOINT_URL_CLOUDWATCH=http://localstack:4566
+      # AWS_ENDPOINT_URL_BEDROCK_RUNTIME not set → uses real AWS
+      # Real AWS credentials from host environment (for Bedrock API access)
+      # These override the LocalStack test credentials for services that need real AWS
+      - AWS_ACCESS_KEY_ID=${AWS_ACCESS_KEY_ID}
+      - AWS_SECRET_ACCESS_KEY=${AWS_SECRET_ACCESS_KEY}
+      - AWS_SESSION_TOKEN=${AWS_SESSION_TOKEN:-}
       - AWS_DEFAULT_REGION=us-east-1
+      # Disable AWS Instance Metadata Service (IMDS) to prevent boto3 hang in Docker
+      - AWS_EC2_METADATA_DISABLED=true
       # S3 Configuration
       - S3_TEMP_BUCKET=equalify-pdf-temp
       - S3_RESULTS_BUCKET=equalify-pdf-results

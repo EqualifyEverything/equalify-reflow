@@ -42,9 +42,10 @@ FROM dependencies AS development
 # Install development dependencies (for testing)
 RUN uv sync --frozen --all-extras || uv sync --all-extras
 
-# Copy source code
-# Note: In dev, this will be overridden by volume mount in docker-compose.dev.yml
+# Copy source code and configuration
+# Note: In dev, src will be overridden by volume mount in docker-compose.dev.yml
 COPY src/ ./src/
+COPY config/ ./config/
 
 # Expose API port
 EXPOSE 8080
@@ -57,8 +58,9 @@ CMD ["uv", "run", "uvicorn", "src.main:app", "--reload", "--host", "0.0.0.0", "-
 # ==============================================================================
 FROM dependencies AS production
 
-# Copy source code
+# Copy source code and configuration
 COPY src/ ./src/
+COPY config/ ./config/
 
 # Health check for orchestration (ECS, Kubernetes, Docker Compose)
 # Checks /health endpoint every 30 seconds

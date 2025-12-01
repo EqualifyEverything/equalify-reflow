@@ -27,7 +27,9 @@ services:
   # Resource limits account for API + PII worker + Processing worker + Timeout worker
   api-gateway:
     environment:
-      # AWS_ENDPOINT_URL not set - uses real AWS services
+      # No AWS_ENDPOINT_URL_* variables = uses real AWS services
+      # Credentials from ECS task IAM role (not env vars)
+      # Bedrock, S3, and CloudWatch all use real AWS
       - S3_TEMP_BUCKET=equalify-pdf-temp
       - S3_RESULTS_BUCKET=equalify-pdf-results
       - LOG_LEVEL=INFO

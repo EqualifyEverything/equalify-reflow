@@ -24,6 +24,9 @@ dependencies = [
     "opentelemetry-sdk>=1.20.0",
     "opentelemetry-instrumentation-fastapi>=0.41b0",
     "opentelemetry-exporter-prometheus>=0.41b0",
+    "mdformat>=1.0.0",
+    "pyspellchecker>=0.8.4",
+    "mdformat-gfm>=1.0.0",
 ]
 
 [project.optional-dependencies]
@@ -107,7 +110,8 @@ warn_return_any = true
 warn_unused_configs = true
 disallow_untyped_defs = true
 strict = true
-mypy_path = "src"
+packages = ["src"]
+explicit_package_bases = true
 
 [tool.ruff]
 target-version = "py311"

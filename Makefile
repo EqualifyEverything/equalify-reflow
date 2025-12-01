@@ -99,24 +99,24 @@ test-unit: test-fast
 test-integration:
 	@echo "Running integration tests with testcontainers..."
 	@echo "NOTE: Docker Desktop must be running on host machine"
-	uv run pytest tests/integration -m integration -v --tb=short --maxfail=5 --ignore=tests/integration/workflows/test_concurrent_requests.py
+	SKIP_BEDROCK_TESTS=1 uv run pytest tests/integration -m integration -v --tb=short --maxfail=5 --ignore=tests/integration/workflows/test_concurrent_requests.py
 
 # Run concurrent integration tests (requires Docker, single-threaded to avoid resource conflicts)
 test-concurrent:
 	@echo "Running concurrent integration tests (single-threaded)..."
 	@echo "NOTE: These tests use testcontainers and must run without parallelization"
-	uv run pytest tests/integration/workflows/test_concurrent_requests.py -v --tb=short
+	SKIP_BEDROCK_TESTS=1 uv run pytest tests/integration/workflows/test_concurrent_requests.py -v --tb=short
 
 # Run E2E tests (full workflows, <5min, runs in Docker)
 # Excludes large file tests which need single-threaded execution
 test-e2e:
 	@echo "Running E2E tests (full workflows, <5min)..."
-	docker compose -f docker-compose.yml -f docker-compose.dev.yml exec api-gateway uv run pytest tests/e2e -m slow -v --tb=short --maxfail=3 -n 2 --ignore=tests/e2e/edge_cases/test_large_files.py
+	docker compose -f docker-compose.yml -f docker-compose.dev.yml exec -e SKIP_BEDROCK_TESTS=1 api-gateway uv run pytest tests/e2e -m slow -v --tb=short --maxfail=3 -n 2 --ignore=tests/e2e/edge_cases/test_large_files.py
 
 # Run large file edge case tests (single-threaded to avoid OOM)
 test-large-files:
 	@echo "Running large file tests (single-threaded)..."
-	docker compose -f docker-compose.yml -f docker-compose.dev.yml exec api-gateway uv run pytest tests/e2e/edge_cases/test_large_files.py -v --tb=short
+	docker compose -f docker-compose.yml -f docker-compose.dev.yml exec -e SKIP_BEDROCK_TESTS=1 api-gateway uv run pytest tests/e2e/edge_cases/test_large_files.py -v --tb=short
 
 # Alias for test-e2e
 test-slow: test-e2e
@@ -125,7 +125,7 @@ test-slow: test-e2e
 # Excludes concurrent and large file tests which need single-threaded execution
 test-all:
 	@echo "Running all tests in Docker with parallelization..."
-	docker compose -f docker-compose.yml -f docker-compose.dev.yml exec api-gateway sh -c "rm -f .coverage .coverage.* && uv run pytest tests/ -v -n 4 --ignore=tests/integration/workflows/test_concurrent_requests.py --ignore=tests/e2e/edge_cases/test_large_files.py"
+	docker compose -f docker-compose.yml -f docker-compose.dev.yml exec -e SKIP_BEDROCK_TESTS=1 api-gateway sh -c "rm -f .coverage .coverage.* && uv run pytest tests/ -v -n 4 --ignore=tests/integration/workflows/test_concurrent_requests.py --ignore=tests/e2e/edge_cases/test_large_files.py"
 	@echo "\n=== Running concurrent integration tests (single-threaded) ==="
 	@$(MAKE) test-concurrent
 	@echo "\n=== Running large file tests (single-threaded) ==="
@@ -146,7 +146,7 @@ shell:
 
 # Run tests inside Docker container (with parallelization)
 test-docker:
-	docker compose -f docker-compose.yml -f docker-compose.dev.yml exec api-gateway uv run pytest tests/ -v
+	docker compose -f docker-compose.yml -f docker-compose.dev.yml exec -e SKIP_BEDROCK_TESTS=1 api-gateway uv run pytest tests/ -v
 
 # View API logs only
 logs-api:
@@ -174,7 +174,7 @@ metrics-url:
 # Coverage commands (parallelization with coverage)
 coverage:
 	@echo "Running tests with coverage (parallelized)..."
-	docker compose -f docker-compose.yml -f docker-compose.dev.yml exec api-gateway sh -c "rm -f .coverage .coverage.* && uv run pytest tests/ --cov=src --cov-report=term-missing --cov-report=html --cov-report=xml -v -n 4"
+	docker compose -f docker-compose.yml -f docker-compose.dev.yml exec -e SKIP_BEDROCK_TESTS=1 api-gateway sh -c "rm -f .coverage .coverage.* && uv run pytest tests/ --cov=src --cov-report=term-missing --cov-report=html --cov-report=xml -v -n 4"
 
 coverage-html: coverage
 	@echo "Opening HTML coverage report..."

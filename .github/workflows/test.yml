@@ -208,8 +208,13 @@ jobs:
           timeout 60 bash -c 'until docker compose -f docker-compose.yml -f docker-compose.dev.yml exec -T api-gateway echo "ready"; do sleep 2; done'
 
       - name: Run tests in Docker
+        env:
+          # Skip Bedrock tests - requires real AWS credentials (not available in CI)
+          SKIP_BEDROCK_TESTS: "1"
         run: |
-          docker compose -f docker-compose.yml -f docker-compose.dev.yml exec -T api-gateway \
+          docker compose -f docker-compose.yml -f docker-compose.dev.yml exec -T \
+            -e SKIP_BEDROCK_TESTS=1 \
+            api-gateway \
             uv run pytest tests/ \
             --cov=src \
             --cov-report=term \

@@ -2,21 +2,20 @@
 
 import asyncio
 import logging
-from typing import Optional
 
-from ..shared.models.queue import ProcessingQueuePayload
-from ..shared.constants.queues import PROCESSING_QUEUE
-from ..services.processing_service import ProcessingService
-from ..services.storage_service import StorageService
-from ..services.queue_service import QueueService
+from ..config import settings
+from ..dependencies import get_redis_client, get_s3_client
 from ..services.job_service import JobService
 from ..services.metrics_service import (
     worker_active_gauge,
     worker_errors_total,
     worker_jobs_processed_total,
 )
-from ..config import settings
-from ..dependencies import get_redis_client, get_s3_client
+from ..services.processing_service import ProcessingService
+from ..services.queue_service import QueueService
+from ..services.storage_service import StorageService
+from ..shared.constants.queues import PROCESSING_QUEUE
+from ..shared.models.queue import ProcessingQueuePayload
 
 logger = logging.getLogger(__name__)
 
@@ -37,6 +36,7 @@ class ProcessingWorker:
         storage_service: StorageService,
         queue_service: QueueService,
         job_service: JobService,
+        redis_client=None,
     ):
         """Initialize processing worker.
 
@@ -44,11 +44,13 @@ class ProcessingWorker:
             storage_service: S3 storage operations
             queue_service: Redis queue operations
             job_service: Job status management
+            redis_client: Redis client for token storage
         """
         self.processing_service = ProcessingService(
             storage_service=storage_service,
             queue_service=queue_service,
             job_service=job_service,
+            redis_client=redis_client,
         )
         self.queue = queue_service
         self.running = False
@@ -124,7 +126,7 @@ class ProcessingWorker:
 
 
 # Global worker instance
-_worker_instance: Optional[ProcessingWorker] = None
+_worker_instance: ProcessingWorker | None = None
 
 
 async def start_processing_worker(shutdown_event: asyncio.Event = None) -> None:
@@ -159,6 +161,7 @@ async def start_processing_worker(shutdown_event: asyncio.Event = None) -> None:
         storage_service=storage_service,
         queue_service=queue_service,
         job_service=job_service,
+        redis_client=redis_client,
     )
 
     await _worker_instance.start(shutdown_event)

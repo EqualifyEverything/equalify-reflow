@@ -7,7 +7,9 @@ from contextlib import asynccontextmanager
 
 from fastapi import FastAPI
 
+from .api import approval, corrections, documents, health
 from .config import settings
+from .dependencies import get_redis_client
 from .middleware import (
     APIKeyAuthMiddleware,
     DocsAuthMiddleware,
@@ -17,12 +19,10 @@ from .middleware import (
     add_cors_middleware,
 )
 from .middleware.metrics import setup_metrics
-from .api import documents, health, approval
+from .services.rate_limit_service import RateLimitService
 from .workers.pii_worker import start_pii_worker
 from .workers.processing_worker import start_processing_worker
 from .workers.timeout_worker import start_timeout_worker
-from .dependencies import get_redis_client
-from .services.rate_limit_service import RateLimitService
 
 # Configure logging
 logging.basicConfig(
@@ -86,7 +86,7 @@ async def lifespan(app: FastAPI):
                 timeout=30.0
             )
             logger.info("All background workers stopped gracefully")
-        except asyncio.TimeoutError:
+        except TimeoutError:
             logger.warning("Graceful shutdown timeout, forcing cancellation")
             pii_worker_task.cancel()
             processing_worker_task.cancel()
@@ -134,6 +134,7 @@ add_cors_middleware(app)                     # CORS headers
 app.include_router(health.router)
 app.include_router(documents.router)
 app.include_router(approval.router)
+app.include_router(corrections.router)
 
 # Conditionally import dev monitoring endpoints (only in development)
 if settings.environment == "dev":

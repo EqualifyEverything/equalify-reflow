@@ -1,23 +1,24 @@
 """Dependency injection for shared clients and services."""
 
-from typing import AsyncGenerator, Optional
+from collections.abc import AsyncGenerator
 from functools import lru_cache
+
 import boto3
-from botocore.config import Config
 import redis.asyncio as redis
+from botocore.config import Config
 from fastapi import Depends
 
 from .config import settings
-from .services.storage_service import StorageService
-from .services.queue_service import QueueService
+from .services.correction_approval_service import CorrectionApprovalService
 from .services.job_service import JobService
+from .services.queue_service import QueueService
 from .services.rate_limit_service import RateLimitService
-
+from .services.storage_service import StorageService
 
 # Singleton S3 client for connection reuse
 _s3_client = None
 
-@lru_cache()
+@lru_cache
 def _get_s3_client_singleton():
     """Create singleton S3 client for connection reuse across requests.
 
@@ -99,7 +100,7 @@ async def get_redis_client() -> AsyncGenerator[redis.Redis, None]:
 
 
 # Singleton StorageService for circuit breaker persistence
-@lru_cache()
+@lru_cache
 def _get_storage_service_singleton():
     """Create singleton StorageService for circuit breaker persistence."""
     return StorageService(
@@ -193,3 +194,44 @@ async def get_rate_limit_service(
     """
     # RateLimitService expects 'redis' parameter, not 'redis_client'
     yield RateLimitService(redis=redis_client)
+
+
+async def get_correction_approval_service(
+    redis: redis.Redis = Depends(get_redis_client),
+    job_service: JobService = Depends(get_job_service),
+    storage: StorageService = Depends(get_storage_service)
+) -> CorrectionApprovalService:
+    """Get correction approval service instance.
+
+    Handles text correction approval workflow including token validation,
+    decision processing, and markdown finalization.
+
+    Args:
+        redis: Redis client (injected)
+        job_service: Job service (injected)
+        storage: Storage service (injected)
+
+    Returns:
+        CorrectionApprovalService instance
+
+    Note:
+        In FastAPI routes, use:
+            correction_approval: CorrectionApprovalService = Depends(
+                get_correction_approval_service
+            )
+
+        For workers, do NOT use this function. Instead:
+            redis_client = await anext(get_redis_client())
+            job_service = JobService(redis_client=redis_client)
+            storage_service = StorageService(...)
+            correction_approval = CorrectionApprovalService(
+                redis_client=redis_client,
+                job_service=job_service,
+                storage_service=storage_service
+            )
+    """
+    return CorrectionApprovalService(
+        redis_client=redis,
+        job_service=job_service,
+        storage_service=storage
+    )

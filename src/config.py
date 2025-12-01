@@ -93,12 +93,31 @@ class Settings(BaseSettings):
     # PII Detection Configuration
     pii_confidence_threshold: float = Field(ge=0.0, le=1.0, default=0.85)  # Minimum confidence score for PII detection
 
+    # Text correction auto-approval
+    min_confidence_for_auto_approval: float = Field(
+        default=0.95,
+        ge=0.0,
+        le=1.0,
+        description="Minimum confidence score required to auto-approve corrections. "
+                    "Set to 0.0 to require manual approval for all jobs, "
+                    "1.0 to auto-approve all jobs (not recommended)"
+    )
+
+    @property
+    def auto_approval_threshold(self) -> float:
+        """Deprecated: Use min_confidence_for_auto_approval instead."""
+        return self.min_confidence_for_auto_approval
+
     # Redis TTL Configuration (in seconds)
     # TTL ensures job hashes auto-expire to prevent Redis memory exhaustion
-    job_ttl_active: int = Field(ge=3600, le=30*24*3600, default=7*24*3600)       # 7 days for active jobs, min 1 hour, max 30 days
-    job_ttl_completed: int = Field(ge=3600, le=365*24*3600, default=30*24*3600)   # 30 days for completed jobs, min 1 hour, max 1 year
-    job_ttl_failed: int = Field(ge=3600, le=365*24*3600, default=30*24*3600)      # 30 days for failed jobs, min 1 hour, max 1 year
-    job_ttl_denied: int = Field(ge=3600, le=30*24*3600, default=7*24*3600)       # 7 days for denied jobs, min 1 hour, max 30 days
+    # Active jobs: 7 days (min 1 hour, max 30 days)
+    job_ttl_active: int = Field(ge=3600, le=30 * 24 * 3600, default=7 * 24 * 3600)
+    # Completed jobs: 30 days (min 1 hour, max 1 year)
+    job_ttl_completed: int = Field(ge=3600, le=365 * 24 * 3600, default=30 * 24 * 3600)
+    # Failed jobs: 30 days (min 1 hour, max 1 year)
+    job_ttl_failed: int = Field(ge=3600, le=365 * 24 * 3600, default=30 * 24 * 3600)
+    # Denied jobs: 7 days (min 1 hour, max 30 days)
+    job_ttl_denied: int = Field(ge=3600, le=30 * 24 * 3600, default=7 * 24 * 3600)
 
     # Testing Configuration
     disable_workers: bool = False  # Set to True to disable background workers (for testing)

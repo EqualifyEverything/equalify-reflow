@@ -1,17 +1,15 @@
 """Storage service for S3 operations."""
 
-import uuid
 import logging
-from datetime import datetime, timedelta, timezone
-from typing import BinaryIO, Optional
-from io import BytesIO
+import uuid
+from datetime import UTC, datetime, timedelta
 
-from fastapi import HTTPException, UploadFile
 from botocore.exceptions import ClientError
+from fastapi import HTTPException, UploadFile
 
 from ..config import settings
 from ..utils.circuit_breaker import CircuitBreaker, CircuitBreakerOpen
-from ..utils.retry_helpers import retry_with_backoff, retry_with_backoff_sync
+from ..utils.retry_helpers import retry_with_backoff_sync
 
 logger = logging.getLogger(__name__)
 
@@ -82,18 +80,18 @@ class StorageService:
             file.file.seek(0, 2)  # Seek to end
             file_size = file.file.tell()
             file.file.seek(0)  # Reset to beginning
-        except (OSError, IOError, AttributeError) as e:
+        except (OSError, AttributeError) as e:
             raise HTTPException(
                 status_code=400,
                 detail=f"Unable to read file: {str(e)}"
             )
 
         # Check minimum file size (empty or corrupt files)
-        MIN_FILE_SIZE = 100  # 100 bytes minimum
-        if file_size < MIN_FILE_SIZE:
+        min_file_size = 100  # 100 bytes minimum
+        if file_size < min_file_size:
             raise HTTPException(
                 status_code=400,
-                detail=f"File too small. Minimum file size is {MIN_FILE_SIZE} bytes"
+                detail=f"File too small. Minimum file size is {min_file_size} bytes"
             )
 
         # Check maximum file size (files up to max_upload_size are accepted)
@@ -239,7 +237,8 @@ class StorageService:
         self,
         job_id: str,
         content: str,
-        format: str
+        format: str,
+        suffix: str | None = None
     ) -> str:
         """
         Upload processed result to results bucket with retry and circuit breaker.
@@ -248,9 +247,10 @@ class StorageService:
             job_id: Job identifier
             content: Markdown content as string
             format: File format ('md')
+            suffix: Optional suffix for versioning (e.g., 'original', 'corrected')
 
         Returns:
-            Public URL to the result file
+            S3 key (e.g., "abc-123.md" or "abc-123-original.md")
 
         Raises:
             HTTPException: If upload fails
@@ -261,7 +261,11 @@ class StorageService:
         if self.upload_circuit.is_open:
             raise CircuitBreakerOpen("S3 upload circuit breaker is open due to repeated failures")
 
-        s3_key = f"{job_id}.{format}"
+        # Build S3 key with optional suffix
+        if suffix:
+            s3_key = f"{job_id}-{suffix}.{format}"
+        else:
+            s3_key = f"{job_id}.{format}"
 
         # Set correct Content-Type based on format
         content_type_map = {
@@ -289,12 +293,8 @@ class StorageService:
             # Record success
             self.upload_circuit.record_success()
 
-            # Return public URL using same logic as get_result_url
-            if settings.aws_endpoint_url:
-                return f"{settings.aws_endpoint_url}/{self.results_bucket}/{s3_key}"
-            else:
-                region = settings.aws_region or "us-east-1"
-                return f"https://{self.results_bucket}.s3.{region}.amazonaws.com/{s3_key}"
+            # Return S3 key (not URL)
+            return s3_key
 
         except CircuitBreakerOpen:
             raise
@@ -389,6 +389,78 @@ class StorageService:
             raise HTTPException(
                 status_code=500,
                 detail=f"Failed to upload image {image_name}: {str(e)}"
+            )
+
+    async def upload_page_image(
+        self,
+        job_id: str,
+        page_num: int,
+        image_data: bytes
+    ) -> str:
+        """Upload page preview image to temp bucket for correction review.
+
+        Page images are stored temporarily for human review of AI corrections.
+        They are stored in: {job_id}/pages/page-{num}.png
+
+        These images are deleted after correction approval (7-day TTL).
+
+        Args:
+            job_id: Job identifier
+            page_num: Page number (1-indexed)
+            image_data: PNG image bytes
+
+        Returns:
+            S3 key (e.g., "abc-123/pages/page-1.png")
+
+        Raises:
+            HTTPException: If upload fails
+            CircuitBreakerOpen: If S3 upload circuit breaker is open
+        """
+        # Check circuit breaker
+        self.upload_circuit.check_state()
+        if self.upload_circuit.is_open:
+            raise CircuitBreakerOpen("S3 upload circuit breaker is open due to repeated failures")
+
+        s3_key = f"{job_id}/pages/page-{page_num}.png"
+
+        try:
+            await retry_with_backoff_sync(
+                lambda: self.s3_client.put_object(
+                    Bucket=self.temp_bucket,
+                    Key=s3_key,
+                    Body=image_data,
+                    ContentType='image/png',
+                    CacheControl='public, max-age=604800'  # 7 days
+                ),
+                max_attempts=3,
+                base_delay=1.0,
+                operation_name=f"upload page {page_num} image"
+            )
+
+            # Record success
+            self.upload_circuit.record_success()
+
+            # Return S3 key (not URL)
+            return s3_key
+
+        except CircuitBreakerOpen:
+            raise
+        except ClientError as e:
+            # Record failure
+            self.upload_circuit.record_failure()
+
+            error_code = e.response.get('Error', {}).get('Code', 'Unknown')
+            raise HTTPException(
+                status_code=500,
+                detail=f"Failed to upload page {page_num} image: {error_code}"
+            ) from e
+        except Exception as e:
+            # Record failure
+            self.upload_circuit.record_failure()
+
+            raise HTTPException(
+                status_code=500,
+                detail=f"Failed to upload page {page_num} image: {str(e)}"
             )
 
     async def delete_temp_file(self, s3_key: str) -> bool:
@@ -585,7 +657,7 @@ class StorageService:
             ...     print(f"{file['key']} is {file['age_hours']:.1f} hours old")
         """
         try:
-            cutoff_time = datetime.now(timezone.utc) - timedelta(hours=older_than_hours)
+            cutoff_time = datetime.now(UTC) - timedelta(hours=older_than_hours)
             old_files = []
 
             # Paginate through temp bucket
@@ -603,11 +675,11 @@ class StorageService:
                     # Ensure LastModified is timezone-aware
                     last_modified = obj['LastModified']
                     if last_modified.tzinfo is None:
-                        last_modified = last_modified.replace(tzinfo=timezone.utc)
+                        last_modified = last_modified.replace(tzinfo=UTC)
 
                     # Check if file is older than cutoff
                     if last_modified < cutoff_time:
-                        age_hours = (datetime.now(timezone.utc) - last_modified).total_seconds() / 3600
+                        age_hours = (datetime.now(UTC) - last_modified).total_seconds() / 3600
                         old_files.append({
                             'key': obj['Key'],
                             'size': obj['Size'],
@@ -682,3 +754,38 @@ class StorageService:
                 exc_info=True
             )
             return False
+
+    async def generate_url(
+        self,
+        s3_key: str,
+        bucket: str = None,
+        expiration: int = 3600
+    ) -> str:
+        """Generate URL from S3 key.
+
+        For LocalStack: Returns path-style URL (http://localstack:4566/bucket/key)
+        For AWS: Returns virtual-hosted style URL (https://bucket.s3.region.amazonaws.com/key)
+
+        Args:
+            s3_key: S3 object key (e.g., "results/abc-123.md")
+            bucket: Bucket name (defaults to results_bucket)
+            expiration: Presigned URL expiration in seconds (default: 1 hour)
+
+        Returns:
+            Full URL to S3 object
+
+        Example:
+            >>> storage = StorageService(s3_client, "temp-bucket", "results-bucket")
+            >>> url = await storage.generate_url("results/abc-123.md")
+            >>> # LocalStack: http://localstack:4566/results-bucket/results/abc-123.md
+            >>> # AWS: https://results-bucket.s3.us-east-1.amazonaws.com/results/abc-123.md
+        """
+        bucket = bucket or self.results_bucket
+
+        if settings.aws_endpoint_url:
+            # LocalStack: path-style URL
+            return f"{settings.aws_endpoint_url}/{bucket}/{s3_key}"
+        else:
+            # AWS Production: virtual-hosted style
+            region = settings.aws_region or "us-east-1"
+            return f"https://{bucket}.s3.{region}.amazonaws.com/{s3_key}"

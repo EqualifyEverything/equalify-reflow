@@ -2,7 +2,7 @@
 
 [![Test Suite](https://github.com/EqualifyEverything/equalify-pdf-converter/actions/workflows/test.yml/badge.svg)](https://github.com/EqualifyEverything/equalify-pdf-converter/actions/workflows/test.yml)
 
-> ⚠️ **ACTIVE DEVELOPMENT** - This project is currently in Phase 2 development. Core infrastructure is complete, but the AI document remediation features are still being implemented. See Project Status section below for current progress.
+> ⚠️ **ACTIVE DEVELOPMENT** - Core infrastructure is complete. AI document remediation features are being implemented.
 
 Transform PDF documents into accessible, semantic HTML for the University of Illinois Chicago (UIC).
 
@@ -91,6 +91,21 @@ make test           # Run fast unit tests
 
 See `make help` for all available commands.
 
+## Demo UI
+
+A developer testing interface is available at <http://localhost:5173> when running `make dev`.
+
+**Features:**
+
+- Document upload with drag-and-drop
+- Real-time job status tracking with workflow visualization
+- PII review modal for approval workflow testing
+- AI correction review with side-by-side diff view
+- Queue monitoring and system health dashboard
+- Raw API response viewer for debugging
+
+**API Key:** Enter the API key from `.env` (`uic-2bd2c716-bc67-4032-ba66-e4f35c441759`) in the settings panel.
+
 ## Running Tests
 
 The test suite is organized into three tiers for optimal feedback:
@@ -165,11 +180,12 @@ See [Architecture Overview](docs/architecture.md) for detailed system design.
 - AWS ECS (production deployment)
 - LocalStack (local AWS emulation)
 
-**Frontend (Phase 3):**
+**Frontend (Demo UI):**
 
-- Astro (static site generation)
+- React 18 + TypeScript + Vite
 - ShadCN/Radix (accessible UI components)
 - Tailwind CSS
+- React Query (async state management)
 
 ## Documentation
 
@@ -236,29 +252,6 @@ Having issues?
 
 ## Project Status
 
-**Current Phase:** Phase 2 - Services & Background Workers (60% complete)
+This project is under active development. Core infrastructure (API, workers, queues, storage) is complete. AI document remediation features are being implemented.
 
-**Completed:**
-
-- ✅ Phase 1: Infrastructure Foundation
-  - ✅ Docker Compose orchestration
-  - ✅ Redis and LocalStack integration
-  - ✅ Tiered test suite with 82% coverage
-  - ✅ CI/CD pipeline with GitHub Actions
-  - ✅ FastAPI REST endpoints
-  - ✅ Background PII worker (Microsoft Presidio)
-  - ✅ Background processing worker (AI pipeline)
-  - ✅ Approval workflow service
-
-**In Progress:**
-
-- 🚧 Multi-agent AI pipeline for accessibility enhancement
-- 🚧 Structure & typography agents
-- 🚧 Confidence scoring logic
-- 🚧 Basic web UI for upload and status tracking
-- 🚧 Process and validate first 10 test documents
-
-**Planned:**
-
-- 📋 Phase 3: Frontend application (Astro + ShadCN)
-- 📋 Phase 4: AWS ECS deployment
+See [PRD Index](ai-docs/PRDs/README.md) for detailed project roadmap.

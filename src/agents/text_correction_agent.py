@@ -10,7 +10,8 @@ import logging
 from pathlib import Path
 
 import yaml
-from pydantic_ai import Agent
+from pydantic import ValidationError
+from pydantic_ai import Agent, ModelRetry, RunContext
 from pydantic_ai.messages import BinaryContent
 
 from ..config import settings
@@ -36,15 +37,39 @@ class TextCorrectionAgent:
         model = self._create_model()
         logger.info(f"Bedrock model created: {type(model).__name__}")
 
-        # Initialize PydanticAI agent
+        # Initialize PydanticAI agent with retries for output validation
         logger.info("Creating PydanticAI Agent with BedrockConverseModel...")
         try:
             self.agent: Agent[None, PageCorrectionResult] = Agent(
                 model,
                 output_type=PageCorrectionResult,
                 system_prompt=prompts["system_prompt"],
+                retries=2,  # Allow 2 retries for output validation failures
             )
-            logger.info("PydanticAI Agent created successfully")
+
+            # Register output validator to provide helpful retry messages
+            @self.agent.output_validator
+            async def validate_corrections(
+                ctx: RunContext[None], output: PageCorrectionResult
+            ) -> PageCorrectionResult:
+                """Validate corrections and provide helpful retry messages."""
+                errors = []
+                for i, correction in enumerate(output.corrections):
+                    if not correction.original_text or not correction.original_text.strip():
+                        errors.append(f"Correction {i+1}: original_text cannot be empty")
+                    if not correction.corrected_text or not correction.corrected_text.strip():
+                        errors.append(f"Correction {i+1}: corrected_text cannot be empty")
+                    if not correction.explanation or not correction.explanation.strip():
+                        errors.append(f"Correction {i+1}: explanation cannot be empty")
+
+                if errors:
+                    raise ModelRetry(
+                        f"Invalid corrections - please fix: {'; '.join(errors)}. "
+                        "Each correction must have non-empty original_text, corrected_text, and explanation."
+                    )
+                return output
+
+            logger.info("PydanticAI Agent created successfully with output validator")
         except Exception as e:
             logger.error(f"Failed to create PydanticAI Agent: {e}", exc_info=True)
             raise

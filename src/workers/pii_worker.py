@@ -19,10 +19,6 @@ from ..config import settings
 
 logger = logging.getLogger(__name__)
 
-# Worker configuration
-QUEUE_TIMEOUT_SECONDS = 30
-WORKER_SLEEP_SECONDS = 5
-
 
 class PIIWorker:
     """Background worker for PII detection queue.
@@ -71,7 +67,7 @@ class PIIWorker:
             while self.running and (shutdown_event is None or not shutdown_event.is_set()):
                 try:
                     # Blocking pop from PII queue with timeout
-                    job_data = await self.queue.dequeue(PII_QUEUE, timeout=QUEUE_TIMEOUT_SECONDS)
+                    job_data = await self.queue.dequeue(PII_QUEUE, timeout=settings.pii_worker_queue_timeout_seconds)
 
                     if job_data:
                         # Check shutdown before processing
@@ -107,7 +103,7 @@ class PIIWorker:
                         worker_name="pii", result="error"
                     ).inc()
                     # Brief pause before retry to avoid tight error loop
-                    await asyncio.sleep(WORKER_SLEEP_SECONDS)
+                    await asyncio.sleep(settings.worker_error_sleep_seconds)
 
         finally:
             # Mark worker as inactive when shutting down

@@ -9,9 +9,10 @@ class Settings(BaseSettings):
 
     model_config = SettingsConfigDict(env_file=".env", extra="ignore")
 
-    # AWS Configuration
-    aws_endpoint_url: str | None = None  # Set to "http://localstack:4566" for local dev, None for production
+    # AWS Configuration (boto3 reads AWS_ENDPOINT_URL_S3 from environment automatically)
     aws_region: str = "us-east-1"
+    # Public S3 URL for client-facing links (localhost:4566 in dev, real S3 URL in prod)
+    s3_public_url: str | None = None  # e.g., "http://localhost:4566" for dev
     aws_access_key_id: str | None = None  # Uses IAM role in production, "test" for local dev
     aws_secret_access_key: str | None = None  # Uses IAM role in production, "test" for local dev
 
@@ -118,6 +119,28 @@ class Settings(BaseSettings):
     job_ttl_failed: int = Field(ge=3600, le=365 * 24 * 3600, default=30 * 24 * 3600)
     # Denied jobs: 7 days (min 1 hour, max 30 days)
     job_ttl_denied: int = Field(ge=3600, le=30 * 24 * 3600, default=7 * 24 * 3600)
+
+    # Worker Queue Configuration
+    pii_worker_queue_timeout_seconds: int = Field(
+        ge=1, le=300, default=30,
+        description="PII worker queue blocking timeout in seconds"
+    )
+    processing_worker_queue_timeout_seconds: int = Field(
+        ge=1, le=300, default=60,
+        description="Processing worker queue blocking timeout in seconds"
+    )
+    worker_error_sleep_seconds: int = Field(
+        ge=1, le=300, default=5,
+        description="Sleep duration after worker error to avoid tight error loops"
+    )
+    timeout_worker_check_interval_seconds: int = Field(
+        ge=1, le=300, default=10,
+        description="Timeout worker loop check interval in seconds"
+    )
+    timeout_worker_error_sleep_seconds: int = Field(
+        ge=1, le=300, default=60,
+        description="Timeout worker sleep duration on error"
+    )
 
     # Testing Configuration
     disable_workers: bool = False  # Set to True to disable background workers (for testing)

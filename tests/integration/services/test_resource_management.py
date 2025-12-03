@@ -359,8 +359,8 @@ class TestResourceCleanupOnExceptions:
         """Test that resources are cleaned up when worker raises exception."""
         from src.workers.pii_worker import PIIWorker
 
-        # Mock WORKER_SLEEP_SECONDS to avoid long waits
-        mocker.patch("src.workers.pii_worker.WORKER_SLEEP_SECONDS", 0.1)
+        # Mock settings.worker_error_sleep_seconds to avoid long waits
+        mocker.patch("src.config.settings.worker_error_sleep_seconds", 0.1)
 
         mock_redis = AsyncMock()
         mock_s3 = MagicMock()

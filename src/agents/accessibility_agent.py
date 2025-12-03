@@ -99,7 +99,7 @@ class AccessibilityAgent:
         Returns:
             Dictionary with system_prompt and user_prompt_template
         """
-        prompts_file = Path("config/accessibility_prompts.yaml")
+        prompts_file = Path(settings.agent_prompts_dir) / "accessibility.yaml"
 
         try:
             with open(prompts_file, "r") as f:

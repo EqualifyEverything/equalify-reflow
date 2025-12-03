@@ -78,6 +78,20 @@ class Settings(BaseSettings):
     confidence_threshold_high: float = Field(ge=0.0, le=1.0, default=0.85)
     confidence_threshold_medium: float = Field(ge=0.0, le=1.0, default=0.60)
 
+    # Multi-Agent Configuration (PRD-011)
+    agent_prompts_dir: str = Field(
+        default="config/agents",
+        description="Directory containing agent YAML prompt files"
+    )
+    agent_max_retries: int = Field(
+        ge=0, le=10, default=2,
+        description="Maximum retries for agent output validation failures"
+    )
+    agent_default_temperature: float = Field(
+        ge=0.0, le=2.0, default=0.2,
+        description="Default temperature for agent LLM calls"
+    )
+
     # Timeout Worker Configuration
     approval_timeout_hours: int = Field(ge=1, le=168, default=4)  # Approval deadline (hours), max 1 week
     approval_check_interval_seconds: int = Field(ge=10, le=3600, default=30)  # Check for expired approvals every 30s

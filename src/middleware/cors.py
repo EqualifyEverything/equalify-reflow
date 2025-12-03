@@ -16,5 +16,14 @@ def add_cors_middleware(app: FastAPI) -> None:
         allow_origins=["*"],  # Configure appropriately for production
         allow_credentials=True,
         allow_methods=["*"],
-        allow_headers=["*"],
+        # Explicit headers required when allow_credentials=True (wildcards don't work)
+        allow_headers=[
+            "Content-Type",
+            "Authorization",
+            "X-API-Key",
+            "X-Request-ID",
+            "Accept",
+            "Origin",
+            "Cache-Control",
+        ],
     )

@@ -1,7 +1,7 @@
 """Tests for Redis integration and key generation."""
 
 import pytest
-from datetime import datetime
+from datetime import datetime, UTC
 
 from shared.models import (
     job_status_key,
@@ -103,7 +103,7 @@ class TestModelRedisCompatibility:
         submission = JobSubmission(
             job_id="550e8400-e29b-41d4-a716-446655440000",
             s3_key="temp/550e8400-e29b-41d4-a716-446655440000/test.pdf",
-            created_at=datetime.utcnow(),
+            created_at=datetime.now(UTC),
             file_size_bytes=1024000,
             original_filename="test.pdf"
         )
@@ -119,7 +119,7 @@ class TestModelRedisCompatibility:
 
     def test_job_status_redis_serialization(self):
         """Test JobStatus model serializes for Redis."""
-        now = datetime.utcnow()
+        now = datetime.now(UTC)
         status = JobStatus(
             job_id="550e8400-e29b-41d4-a716-446655440000",
             status="processing",
@@ -157,7 +157,7 @@ class TestModelRedisCompatibility:
 
     def test_optional_fields_serialization(self):
         """Test optional fields serialize correctly as None."""
-        now = datetime.utcnow()
+        now = datetime.now(UTC)
         status = JobStatus(
             job_id="550e8400-e29b-41d4-a716-446655440000",
             status="pii_scanning",
@@ -177,7 +177,7 @@ class TestModelRedisCompatibility:
         """Test nested models serialize correctly."""
         from shared.models import PIIFinding
 
-        now = datetime.utcnow()
+        now = datetime.now(UTC)
         findings = [
             PIIFinding(
                 entity_type="PERSON",

@@ -1,7 +1,7 @@
 """Tests for queue payload models."""
 
 import pytest
-from datetime import datetime, timedelta
+from datetime import datetime, timedelta, UTC
 from pydantic import ValidationError
 
 from shared.models import (
@@ -22,7 +22,7 @@ class TestPIIQueuePayload:
         payload = PIIQueuePayload(
             job_id="550e8400-e29b-41d4-a716-446655440000",
             s3_key="temp/550e8400-e29b-41d4-a716-446655440000/input.pdf",
-            created_at=datetime.utcnow()
+            created_at=datetime.now(UTC)
         )
         assert payload.job_id == "550e8400-e29b-41d4-a716-446655440000"
         assert payload.s3_key.startswith("temp/")
@@ -33,7 +33,7 @@ class TestPIIQueuePayload:
             PIIQueuePayload(
                 job_id="invalid-uuid",
                 s3_key="temp/test.pdf",
-                created_at=datetime.utcnow()
+                created_at=datetime.now(UTC)
             )
         assert "job_id" in str(exc_info.value)
 
@@ -68,7 +68,7 @@ class TestApprovalQueuePayload:
             )
         ]
 
-        expires = datetime.utcnow() + timedelta(days=1)
+        expires = datetime.now(UTC) + timedelta(days=1)
         payload = ApprovalQueuePayload(
             job_id="550e8400-e29b-41d4-a716-446655440000",
             s3_key="temp/550e8400-e29b-41d4-a716-446655440000/input.pdf",
@@ -89,7 +89,7 @@ class TestApprovalQueuePayload:
                 s3_key="temp/test.pdf",
                 pii_findings=[],  # Empty list should fail
                 approval_token="abc123def456ghi789jkl012mno345pqr",
-                expires_at=datetime.utcnow() + timedelta(days=1)
+                expires_at=datetime.now(UTC) + timedelta(days=1)
             )
         assert "pii_findings" in str(exc_info.value)
 
@@ -112,7 +112,7 @@ class TestApprovalQueuePayload:
                 s3_key="temp/test.pdf",
                 pii_findings=findings,
                 approval_token="short",  # Less than 32 chars
-                expires_at=datetime.utcnow() + timedelta(days=1)
+                expires_at=datetime.now(UTC) + timedelta(days=1)
             )
 
         # Token too long
@@ -122,7 +122,7 @@ class TestApprovalQueuePayload:
                 s3_key="temp/test.pdf",
                 pii_findings=findings,
                 approval_token="a" * 65,  # More than 64 chars
-                expires_at=datetime.utcnow() + timedelta(days=1)
+                expires_at=datetime.now(UTC) + timedelta(days=1)
             )
 
     def test_multiple_pii_findings(self):
@@ -156,7 +156,7 @@ class TestApprovalQueuePayload:
             s3_key="temp/550e8400-e29b-41d4-a716-446655440000/input.pdf",
             pii_findings=findings,
             approval_token="a1b2c3d4e5f6g7h8i9j0k1l2m3n4o5p6",
-            expires_at=datetime.utcnow() + timedelta(days=1)
+            expires_at=datetime.now(UTC) + timedelta(days=1)
         )
 
         assert len(payload.pii_findings) == 3
@@ -181,7 +181,7 @@ class TestApprovalQueuePayload:
             s3_key="temp/test.pdf",
             pii_findings=findings,
             approval_token="a1b2c3d4e5f6g7h8i9j0k1l2m3n4o5p6",
-            expires_at=datetime.utcnow() + timedelta(days=1)
+            expires_at=datetime.now(UTC) + timedelta(days=1)
         )
 
         json_data = payload.model_dump_json()
@@ -206,7 +206,7 @@ class TestProcessingQueuePayload:
 
     def test_processing_with_approval_timestamp(self):
         """Test payload for approved document."""
-        approved_time = datetime.utcnow()
+        approved_time = datetime.now(UTC)
         payload = ProcessingQueuePayload(
             job_id="550e8400-e29b-41d4-a716-446655440000",
             s3_key="temp/550e8400-e29b-41d4-a716-446655440000/input.pdf",
@@ -250,7 +250,7 @@ class TestQueuePayloadInterop:
         pii_payload = PIIQueuePayload(
             job_id=job_id,
             s3_key=s3_key,
-            created_at=datetime.utcnow()
+            created_at=datetime.now(UTC)
         )
 
         # Step 2: No PII found, go directly to processing
@@ -272,7 +272,7 @@ class TestQueuePayloadInterop:
         pii_payload = PIIQueuePayload(
             job_id=job_id,
             s3_key=s3_key,
-            created_at=datetime.utcnow()
+            created_at=datetime.now(UTC)
         )
 
         # Step 2: PII detected, create approval payload
@@ -291,11 +291,11 @@ class TestQueuePayloadInterop:
             s3_key=s3_key,
             pii_findings=findings,
             approval_token="a1b2c3d4e5f6g7h8i9j0k1l2m3n4o5p6",
-            expires_at=datetime.utcnow() + timedelta(days=1)
+            expires_at=datetime.now(UTC) + timedelta(days=1)
         )
 
         # Step 3: After approval, create processing payload
-        approval_time = datetime.utcnow()
+        approval_time = datetime.now(UTC)
         processing_payload = ProcessingQueuePayload(
             job_id=job_id,
             s3_key=s3_key,

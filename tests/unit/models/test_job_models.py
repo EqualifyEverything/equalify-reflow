@@ -1,7 +1,7 @@
 """Tests for job-related data models."""
 
 import pytest
-from datetime import datetime, timedelta
+from datetime import datetime, timedelta, UTC
 from pydantic import ValidationError
 
 from shared.models import (
@@ -23,7 +23,7 @@ class TestJobSubmission:
         submission = JobSubmission(
             job_id="550e8400-e29b-41d4-a716-446655440000",
             s3_key="temp/550e8400-e29b-41d4-a716-446655440000/test.pdf",
-            created_at=datetime.utcnow(),
+            created_at=datetime.now(UTC),
             file_size_bytes=1024000,
             original_filename="test_document.pdf"
         )
@@ -37,7 +37,7 @@ class TestJobSubmission:
             JobSubmission(
                 job_id="not-a-uuid",
                 s3_key="temp/test.pdf",
-                created_at=datetime.utcnow(),
+                created_at=datetime.now(UTC),
                 file_size_bytes=1024,
                 original_filename="test.pdf"
             )
@@ -49,7 +49,7 @@ class TestJobSubmission:
             JobSubmission(
                 job_id="550e8400-e29b-41d4-a716-446655440000",
                 s3_key="permanent/test.pdf",
-                created_at=datetime.utcnow(),
+                created_at=datetime.now(UTC),
                 file_size_bytes=1024,
                 original_filename="test.pdf"
             )
@@ -62,7 +62,7 @@ class TestJobSubmission:
             JobSubmission(
                 job_id="550e8400-e29b-41d4-a716-446655440000",
                 s3_key="temp/test.pdf",
-                created_at=datetime.utcnow(),
+                created_at=datetime.now(UTC),
                 file_size_bytes=0,
                 original_filename="test.pdf"
             )
@@ -72,7 +72,7 @@ class TestJobSubmission:
             JobSubmission(
                 job_id="550e8400-e29b-41d4-a716-446655440000",
                 s3_key="temp/test.pdf",
-                created_at=datetime.utcnow(),
+                created_at=datetime.now(UTC),
                 file_size_bytes=101_000_000,
                 original_filename="test.pdf"
             )
@@ -102,7 +102,7 @@ class TestJobStatus:
 
     def test_valid_job_status(self):
         """Test creation with valid data."""
-        now = datetime.utcnow()
+        now = datetime.now(UTC)
         status = JobStatus(
             job_id="550e8400-e29b-41d4-a716-446655440000",
             status="pii_scanning",
@@ -115,7 +115,7 @@ class TestJobStatus:
 
     def test_status_with_pii_findings(self):
         """Test status with PII findings populated."""
-        now = datetime.utcnow()
+        now = datetime.now(UTC)
         findings = [
             PIIFinding(
                 entity_type="PERSON",
@@ -139,7 +139,7 @@ class TestJobStatus:
 
     def test_completed_status_with_results(self):
         """Test completed status with processing results."""
-        now = datetime.utcnow()
+        now = datetime.now(UTC)
         status = JobStatus(
             job_id="550e8400-e29b-41d4-a716-446655440000",
             status="completed",
@@ -154,7 +154,7 @@ class TestJobStatus:
 
     def test_failed_status_with_error(self):
         """Test failed status with error message."""
-        now = datetime.utcnow()
+        now = datetime.now(UTC)
         status = JobStatus(
             job_id="550e8400-e29b-41d4-a716-446655440000",
             status="failed",
@@ -167,7 +167,7 @@ class TestJobStatus:
 
     def test_state_machine_valid_transitions(self):
         """Test valid state transitions."""
-        now = datetime.utcnow()
+        now = datetime.now(UTC)
         status = JobStatus(
             job_id="550e8400-e29b-41d4-a716-446655440000",
             status="pii_scanning",
@@ -186,7 +186,7 @@ class TestJobStatus:
 
     def test_state_machine_terminal_states(self):
         """Test terminal states have no valid transitions."""
-        now = datetime.utcnow()
+        now = datetime.now(UTC)
 
         # Test completed terminal state
         completed_status = JobStatus(
@@ -209,7 +209,7 @@ class TestJobStatus:
 
     def test_confidence_score_bounds(self):
         """Test confidence score validation."""
-        now = datetime.utcnow()
+        now = datetime.now(UTC)
 
         # Valid score
         status = JobStatus(
@@ -243,7 +243,7 @@ class TestJobStatus:
 
     def test_json_serialization_with_nested_models(self):
         """Test serialization with nested PII findings and approval."""
-        now = datetime.utcnow()
+        now = datetime.now(UTC)
 
         findings = [
             PIIFinding(

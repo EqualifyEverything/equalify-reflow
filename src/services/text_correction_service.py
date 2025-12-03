@@ -9,6 +9,7 @@ from ..agents.text_correction_agent import (
 )
 from ..config import settings
 from ..services.pdf_converter import PageData
+from ..shared.models.agent_models import AgentInput
 from ..shared.models.processing import PageCorrectionResult, TextCorrection
 from ..utils.markdown_cleanup import (
     SpellingFlag,
@@ -144,15 +145,14 @@ class TextCorrectionService:
 
         for attempt in range(1, max_retries + 1):
             try:
-                result = await agent.process_page(
-                    page_num=page_data.page_num,
+                # Construct AgentInput for the new API
+                input_data = AgentInput(
+                    page_number=page_data.page_num,
                     page_markdown=page_data.markdown,
                     page_image_base64=page_data.image_base64,
-                    retry_attempt=attempt,
-                    spelling_flags=spelling_flags_prompt,
+                    document_context={"spelling_flags": spelling_flags_prompt} if spelling_flags_prompt else None
                 )
-                # Ensure page_number is set correctly
-                result.page_number = page_data.page_num
+                result = await agent.process(input_data)
                 return result
 
             except Exception as e:

@@ -5,14 +5,14 @@ Tests for bugs that would only appear in production AWS environment:
 - Bug #6: CleanupService exception handling with botocore.exceptions.ClientError
 """
 
-import pytest
-from unittest.mock import MagicMock, AsyncMock, patch
-from botocore.exceptions import ClientError
+from unittest.mock import AsyncMock, MagicMock, patch
 
-from src.services.storage_service import StorageService
-from src.services.s3_url_service import S3URLService
-from src.services.cleanup_service import CleanupService
+import pytest
+from botocore.exceptions import ClientError
 from src.config import settings
+from src.services.cleanup_service import CleanupService
+from src.services.s3_url_service import S3URLService
+from src.services.storage_service import StorageService
 
 
 class TestStorageUrlGenerationProduction:

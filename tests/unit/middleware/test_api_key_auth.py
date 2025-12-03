@@ -1,10 +1,10 @@
 """Unit tests for API key authentication middleware."""
 
+from unittest.mock import AsyncMock, MagicMock, patch
+
 import pytest
-from unittest.mock import MagicMock, patch, AsyncMock
 from fastapi import Request, Response
 from fastapi.responses import JSONResponse
-
 from src.middleware.api_key_auth import APIKeyAuthMiddleware
 
 

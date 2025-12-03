@@ -4,16 +4,13 @@ Tests the main processing orchestrator with all dependencies mocked.
 Validates the processing pipeline including error handling and retries.
 """
 
-import pytest
-from unittest.mock import AsyncMock, MagicMock, call
-from datetime import datetime
+from unittest.mock import AsyncMock, MagicMock
 
+import pytest
+from src.services.pdf_converter import PageData, PDFConversionResult
 from src.services.processing_service import ProcessingService
 from src.services.text_correction_service import PageProcessingError
-from src.services.pdf_converter import PDFConversionResult, PageData
 from src.shared.models.processing import PageCorrectionResult, TextCorrection
-from src.shared.models.queue import ProcessingQueuePayload
-
 
 pytestmark = pytest.mark.unit
 
@@ -385,7 +382,7 @@ async def test_process_document_updates_job_status_on_failure(
         text_correction=mock_text_correction_service,
     )
 
-    result = await service.process_document(sample_job_payload)
+    await service.process_document(sample_job_payload)
 
     # Verify status updated to failed
     mock_job_service.update_job_status.assert_any_call(
@@ -639,7 +636,7 @@ async def test_process_document_validates_page_images_exist(
         text_correction=mock_text_correction_service,
     )
 
-    result = await service.process_document(sample_job_payload)
+    await service.process_document(sample_job_payload)
 
     # Should complete (process_pages_concurrently receives empty list)
     mock_text_correction_service.process_pages_concurrently.assert_called_once_with([])

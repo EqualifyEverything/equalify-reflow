@@ -4,16 +4,15 @@ Provides endpoints for reviewing PII-flagged documents and
 submitting approval/denial decisions.
 """
 
-from datetime import datetime
 from typing import Literal
-from fastapi import APIRouter, HTTPException, Depends
+
+from fastapi import APIRouter, Depends, HTTPException
 from pydantic import BaseModel, Field
 
 from ..dependencies import get_redis_client, get_s3_client
 from ..services.approval_service import ApprovalService
 from ..services.job_service import JobService
 from ..services.queue_service import QueueService
-
 
 router = APIRouter(prefix="/api/approval", tags=["Approval"])
 

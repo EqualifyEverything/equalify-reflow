@@ -6,7 +6,7 @@ controlled access to agent instances.
 """
 
 import logging
-from typing import Any, TYPE_CHECKING
+from typing import TYPE_CHECKING, Any
 
 if TYPE_CHECKING:
     from .base_agent import BaseDocumentAgent

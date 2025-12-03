@@ -2,8 +2,6 @@
 
 import asyncio
 import logging
-from typing import BinaryIO
-from io import BytesIO
 
 from docling.document_converter import DocumentConverter
 
@@ -57,8 +55,8 @@ async def extract_pdf_text(pdf_content: bytes) -> str:
         >>> len(text) > 0
         True
     """
-    import tempfile
     import os
+    import tempfile
 
     try:
         # Docling requires a file path, so write to temporary file

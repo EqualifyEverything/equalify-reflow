@@ -2,8 +2,8 @@
 
 from fastapi import APIRouter, Depends, HTTPException, status
 
-from ..services import JobService, QueueService, StorageService
 from ..dependencies import get_queue_service, get_storage_service
+from ..services import QueueService, StorageService
 
 router = APIRouter(prefix="/health", tags=["Health"])
 

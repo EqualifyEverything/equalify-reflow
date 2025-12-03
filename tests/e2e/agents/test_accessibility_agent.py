@@ -4,17 +4,15 @@ Tests PydanticAI agent initialization, prompt loading, and page processing.
 All Claude API calls are mocked for fast, deterministic unit tests.
 """
 
-import pytest
-from unittest.mock import MagicMock, patch, mock_open, AsyncMock
-from pathlib import Path
 import base64
+from unittest.mock import AsyncMock, MagicMock, mock_open, patch
 
+import pytest
 from src.agents.accessibility_agent import (
     AccessibilityAgent,
     PageImprovementResult,
     get_accessibility_agent,
 )
-
 
 pytestmark = pytest.mark.unit
 
@@ -26,8 +24,8 @@ pytestmark = pytest.mark.unit
 
 def test_accessibility_agent_initialization():
     """Test AccessibilityAgent initializes with Bedrock model."""
-    with patch("src.agents.accessibility_agent.Agent") as MockAgent:
-        with patch("pydantic_ai.models.bedrock.BedrockConverseModel") as MockBedrock:
+    with patch("src.agents.accessibility_agent.Agent") as mock_agent:
+        with patch("pydantic_ai.models.bedrock.BedrockConverseModel") as mock_bedrock:
             with patch.object(AccessibilityAgent, "_load_prompts", return_value={
                 "system_prompt": "System prompt",
                 "user_prompt_template": "User prompt {page_markdown}"
@@ -36,16 +34,16 @@ def test_accessibility_agent_initialization():
                     mock_settings.ai_provider = "bedrock"
                     mock_settings.bedrock_model_id = "anthropic.claude-3-haiku-20240307-v1:0"
 
-                    agent = AccessibilityAgent()
+                    AccessibilityAgent()
 
                     # Should create Bedrock model with correct model_id
-                    MockBedrock.assert_called_once_with(
+                    mock_bedrock.assert_called_once_with(
                         model_name="anthropic.claude-3-haiku-20240307-v1:0"
                     )
 
                     # Should create PydanticAI agent with Bedrock model
-                    MockAgent.assert_called_once()
-                    call_args = MockAgent.call_args
+                    mock_agent.assert_called_once()
+                    call_args = mock_agent.call_args
                     assert call_args.kwargs["output_type"] == PageImprovementResult
                     assert call_args.kwargs["system_prompt"] == "System prompt"
 
@@ -89,7 +87,7 @@ def test_accessibility_agent_system_prompt_configured():
     """Test system prompt is passed to PydanticAI agent."""
     test_system_prompt = "Custom system prompt for testing"
 
-    with patch("src.agents.accessibility_agent.Agent") as MockAgent:
+    with patch("src.agents.accessibility_agent.Agent") as mock_agent:
         with patch("pydantic_ai.models.bedrock.BedrockConverseModel"):
             with patch.object(AccessibilityAgent, "_load_prompts", return_value={
                 "system_prompt": test_system_prompt,
@@ -99,16 +97,16 @@ def test_accessibility_agent_system_prompt_configured():
                     mock_settings.ai_provider = "bedrock"
                     mock_settings.bedrock_model_id = "anthropic.claude-3-haiku-20240307-v1:0"
 
-                    agent = AccessibilityAgent()
+                    AccessibilityAgent()
 
                     # Should pass system prompt to Agent
-                    assert MockAgent.call_args.kwargs["system_prompt"] == test_system_prompt
+                    assert mock_agent.call_args.kwargs["system_prompt"] == test_system_prompt
 
 
 def test_accessibility_agent_model_settings_from_config():
     """Test agent uses Bedrock model_id from config."""
     with patch("src.agents.accessibility_agent.Agent"):
-        with patch("pydantic_ai.models.bedrock.BedrockConverseModel") as MockBedrock:
+        with patch("pydantic_ai.models.bedrock.BedrockConverseModel") as mock_bedrock:
             with patch.object(AccessibilityAgent, "_load_prompts", return_value={
                 "system_prompt": "System",
                 "user_prompt_template": "User: {page_markdown}"
@@ -117,10 +115,10 @@ def test_accessibility_agent_model_settings_from_config():
                     mock_settings.ai_provider = "bedrock"
                     mock_settings.bedrock_model_id = "anthropic.claude-3-5-sonnet-20241022-v2:0"
 
-                    agent = AccessibilityAgent()
+                    AccessibilityAgent()
 
                     # Should use bedrock_model_id from settings
-                    MockBedrock.assert_called_once_with(
+                    mock_bedrock.assert_called_once_with(
                         model_name="anthropic.claude-3-5-sonnet-20241022-v2:0"
                     )
 
@@ -295,7 +293,7 @@ user_prompt_template: "YAML user: {page_markdown}"
                     mock_settings.ai_provider = "bedrock"
                     mock_settings.bedrock_model_id = "anthropic.claude-3-haiku-20240307-v1:0"
 
-                    agent = AccessibilityAgent()
+                    AccessibilityAgent()
 
                     # Should have opened prompts file
                     mock_file.assert_called()

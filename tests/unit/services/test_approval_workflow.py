@@ -6,18 +6,18 @@ Tests cover:
 - Bug #14: Validation on approval expiration parse
 """
 
-import pytest
-from datetime import datetime, timezone, timedelta
-from unittest.mock import AsyncMock, MagicMock, patch
+from datetime import UTC, datetime, timedelta
+from unittest.mock import AsyncMock, MagicMock
 
-from src.services.pii_service import PIIDetectionService
+import pytest
 from src.services.approval_service import ApprovalService
 from src.services.job_service import JobService
+from src.services.pii_service import PIIDetectionService
 from src.services.queue_service import QueueService
 from src.services.storage_service import StorageService
-from src.shared.models.queue import PIIQueuePayload
-from src.shared.models.pii import PIIFinding
 from src.shared.constants.statuses import STATUS_AWAITING_APPROVAL
+from src.shared.models.pii import PIIFinding
+from src.shared.models.queue import PIIQueuePayload
 
 
 @pytest.fixture
@@ -88,7 +88,7 @@ async def test_queue_for_approval_adds_timeout_tracking(pii_service, mock_queue_
     job_payload = PIIQueuePayload(
         job_id="550e8400-e29b-41d4-a716-446655440000",
         s3_key="temp/test.pdf",
-        created_at=datetime.now(timezone.utc)
+        created_at=datetime.now(UTC)
     )
     pii_findings = [
         PIIFinding(
@@ -121,7 +121,7 @@ async def test_queue_for_approval_timeout_tracking_with_correct_expiration(
     job_payload = PIIQueuePayload(
         job_id="550e8400-e29b-41d4-a716-446655440001",
         s3_key="temp/test2.pdf",
-        created_at=datetime.now(timezone.utc)
+        created_at=datetime.now(UTC)
     )
     pii_findings = [
         PIIFinding(
@@ -133,12 +133,12 @@ async def test_queue_for_approval_timeout_tracking_with_correct_expiration(
         )
     ]
 
-    before_time = datetime.now(timezone.utc)
+    before_time = datetime.now(UTC)
 
     # Act
     await pii_service._queue_for_approval(job_payload, pii_findings)
 
-    after_time = datetime.now(timezone.utc)
+    after_time = datetime.now(UTC)
 
     # Assert
     call_args = mock_queue_service.add_to_timeout_tracking.call_args
@@ -160,7 +160,7 @@ async def test_queue_for_approval_stores_token_mapping(pii_service, mock_job_ser
     job_payload = PIIQueuePayload(
         job_id="550e8400-e29b-41d4-a716-446655440002",
         s3_key="temp/test3.pdf",
-        created_at=datetime.now(timezone.utc)
+        created_at=datetime.now(UTC)
     )
     pii_findings = [
         PIIFinding(
@@ -196,7 +196,7 @@ async def test_validate_approval_token_uses_o1_lookup(approval_service, mock_job
     """Test that token validation uses O(1) Redis lookup, not O(N) scan."""
     # Arrange
     token = "test-token-abc123"
-    expires_at = (datetime.now(timezone.utc) + timedelta(hours=2)).isoformat()
+    expires_at = (datetime.now(UTC) + timedelta(hours=2)).isoformat()
 
     mock_job_service.get_job_by_approval_token.return_value = {
         "job_id": "test-job-999",
@@ -368,7 +368,7 @@ async def test_validate_approval_token_handles_z_suffix_timestamp(
     # Arrange
     token = "z-suffix-token"
     # Use Z suffix (common in some ISO formats)
-    expires_at = (datetime.now(timezone.utc) + timedelta(hours=2)).isoformat().replace("+00:00", "Z")
+    expires_at = (datetime.now(UTC) + timedelta(hours=2)).isoformat().replace("+00:00", "Z")
 
     mock_job_service.get_job_by_approval_token.return_value = {
         "job_id": "test-job-z",
@@ -424,7 +424,7 @@ async def test_full_approval_workflow_with_all_fixes(
     job_payload = PIIQueuePayload(
         job_id="550e8400-e29b-41d4-a716-446655440003",
         s3_key="temp/integration-test.pdf",
-        created_at=datetime.now(timezone.utc)
+        created_at=datetime.now(UTC)
     )
     pii_findings = [
         PIIFinding(
@@ -470,7 +470,7 @@ async def test_multiple_approvals_work_correctly(pii_service, mock_queue_service
         PIIQueuePayload(
             job_id=job_id,
             s3_key=f"temp/file-{i}.pdf",
-            created_at=datetime.now(timezone.utc)
+            created_at=datetime.now(UTC)
         )
         for i, job_id in enumerate(job_ids)
     ]
@@ -511,7 +511,7 @@ async def test_token_expiration_matches_timeout_tracking(pii_service, mock_queue
     job_payload = PIIQueuePayload(
         job_id="550e8400-e29b-41d4-a716-446655440007",
         s3_key="temp/ttl-test.pdf",
-        created_at=datetime.now(timezone.utc)
+        created_at=datetime.now(UTC)
     )
     findings = [
         PIIFinding(entity_type="PERSON", text="Test", score=0.9, start=0, end=4)
@@ -528,6 +528,6 @@ async def test_token_expiration_matches_timeout_tracking(pii_service, mock_queue
     assert token_ttl_hours == 4
 
     # Timeout expiration should be approximately 4 hours from now
-    expected_timeout = datetime.now(timezone.utc) + timedelta(hours=4)
+    expected_timeout = datetime.now(UTC) + timedelta(hours=4)
     time_diff = abs((timeout_expires - expected_timeout).total_seconds())
     assert time_diff < 5  # Within 5 seconds tolerance

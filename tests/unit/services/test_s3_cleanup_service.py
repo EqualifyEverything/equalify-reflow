@@ -1,10 +1,11 @@
 """Unit tests for S3CleanupService."""
 
+from datetime import UTC
+
 import pytest
 from botocore.exceptions import ClientError
-
-from src.services.s3_cleanup_service import S3CleanupService
 from src.config import settings
+from src.services.s3_cleanup_service import S3CleanupService
 
 
 @pytest.fixture
@@ -156,9 +157,9 @@ class TestListTempFiles:
     @pytest.mark.asyncio
     async def test_list_old_files(self, cleanup_service, mock_s3_client, mocker):
         """Test listing files older than threshold."""
-        from datetime import datetime, timedelta, timezone
+        from datetime import datetime, timedelta
 
-        now = datetime.now(timezone.utc)
+        now = datetime.now(UTC)
         old_time = now - timedelta(hours=48)  # 48 hours ago
         recent_time = now - timedelta(hours=12)  # 12 hours ago
 
@@ -185,9 +186,9 @@ class TestListTempFiles:
     @pytest.mark.asyncio
     async def test_list_no_old_files(self, cleanup_service, mock_s3_client, mocker):
         """Test when no files exceed age threshold."""
-        from datetime import datetime, timedelta, timezone
+        from datetime import datetime, timedelta
 
-        now = datetime.now(timezone.utc)
+        now = datetime.now(UTC)
         recent_time = now - timedelta(hours=6)
 
         mock_paginator = mocker.MagicMock()
@@ -218,7 +219,7 @@ class TestListTempFiles:
     @pytest.mark.asyncio
     async def test_list_handles_timezone_naive(self, cleanup_service, mock_s3_client, mocker):
         """Test handling of timezone-naive datetimes."""
-        from datetime import datetime, timedelta, UTC
+        from datetime import UTC, datetime, timedelta
 
         # Create timezone-naive datetime (simulates some S3 responses)
         naive_time = datetime.now(UTC) - timedelta(hours=48)

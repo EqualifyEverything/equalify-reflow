@@ -3,7 +3,6 @@
 import logging
 import time
 import uuid
-from typing import Optional
 
 from redis.asyncio import Redis
 
@@ -39,7 +38,7 @@ class RateLimitService:
         self.GLOBAL_SUBMIT_LIMIT = 1000  # 1000 submissions per day (cost control)
         self.GLOBAL_SUBMIT_WINDOW = 86400  # 24 hours in seconds
 
-    async def check_submit_rate_limit(self, client_ip: str) -> tuple[bool, Optional[int]]:
+    async def check_submit_rate_limit(self, client_ip: str) -> tuple[bool, int | None]:
         """
         Check if client can submit a document.
 
@@ -85,7 +84,7 @@ class RateLimitService:
 
         return True, None
 
-    async def check_status_rate_limit(self, client_ip: str) -> tuple[bool, Optional[int]]:
+    async def check_status_rate_limit(self, client_ip: str) -> tuple[bool, int | None]:
         """
         Check if client can check job status.
 
@@ -116,7 +115,7 @@ class RateLimitService:
         key: str,
         limit: int,
         window: int
-    ) -> tuple[bool, Optional[int]]:
+    ) -> tuple[bool, int | None]:
         """
         Sliding window rate limit check using Redis.
 

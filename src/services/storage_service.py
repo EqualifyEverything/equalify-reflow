@@ -7,7 +7,7 @@ from botocore.exceptions import ClientError
 from fastapi import HTTPException, UploadFile
 
 from ..config import settings
-from ..utils.circuit_breaker import CircuitBreaker, CircuitBreakerOpen
+from ..utils.circuit_breaker import CircuitBreaker, CircuitBreakerOpenError
 from ..utils.retry_helpers import retry_with_backoff_for_sync_func
 
 logger = logging.getLogger(__name__)
@@ -54,12 +54,12 @@ class StorageService:
 
         Raises:
             HTTPException: If file validation fails or upload fails
-            CircuitBreakerOpen: If S3 upload circuit breaker is open
+            CircuitBreakerOpenError: If S3 upload circuit breaker is open
         """
         # Check circuit breaker first
         self.upload_circuit.check_state()
         if self.upload_circuit.is_open:
-            raise CircuitBreakerOpen("S3 upload circuit breaker is open due to repeated failures")
+            raise CircuitBreakerOpenError("S3 upload circuit breaker is open due to repeated failures")
 
         # Validate PDF format
         if file.content_type != "application/pdf":
@@ -114,7 +114,7 @@ class StorageService:
             # Record success in circuit breaker
             self.upload_circuit.record_success()
 
-        except CircuitBreakerOpen:
+        except CircuitBreakerOpenError:
             # Circuit breaker already logged the issue
             raise
         except Exception as e:
@@ -154,12 +154,12 @@ class StorageService:
 
         Raises:
             HTTPException: If download fails
-            CircuitBreakerOpen: If S3 download circuit breaker is open
+            CircuitBreakerOpenError: If S3 download circuit breaker is open
         """
         # Check circuit breaker
         self.download_circuit.check_state()
         if self.download_circuit.is_open:
-            raise CircuitBreakerOpen("S3 download circuit breaker is open due to repeated failures")
+            raise CircuitBreakerOpenError("S3 download circuit breaker is open due to repeated failures")
 
         try:
             # Download with retry logic
@@ -178,7 +178,7 @@ class StorageService:
 
             return response['Body'].read()
 
-        except CircuitBreakerOpen:
+        except CircuitBreakerOpenError:
             raise
         except ClientError as e:
             # Record failure
@@ -223,12 +223,12 @@ class StorageService:
 
         Raises:
             HTTPException: If upload fails
-            CircuitBreakerOpen: If S3 upload circuit breaker is open
+            CircuitBreakerOpenError: If S3 upload circuit breaker is open
         """
         # Check circuit breaker
         self.upload_circuit.check_state()
         if self.upload_circuit.is_open:
-            raise CircuitBreakerOpen("S3 upload circuit breaker is open due to repeated failures")
+            raise CircuitBreakerOpenError("S3 upload circuit breaker is open due to repeated failures")
 
         # Build S3 key with optional suffix
         if suffix:
@@ -265,7 +265,7 @@ class StorageService:
             # Return S3 key (not URL)
             return s3_key
 
-        except CircuitBreakerOpen:
+        except CircuitBreakerOpenError:
             raise
         except ClientError as e:
             # Record failure
@@ -307,12 +307,12 @@ class StorageService:
 
         Raises:
             HTTPException: If upload fails
-            CircuitBreakerOpen: If S3 upload circuit breaker is open
+            CircuitBreakerOpenError: If S3 upload circuit breaker is open
         """
         # Check circuit breaker
         self.upload_circuit.check_state()
         if self.upload_circuit.is_open:
-            raise CircuitBreakerOpen("S3 upload circuit breaker is open due to repeated failures")
+            raise CircuitBreakerOpenError("S3 upload circuit breaker is open due to repeated failures")
 
         s3_key = f"{job_id}/images/{image_name}"
 
@@ -336,7 +336,7 @@ class StorageService:
             # Return S3 key (URL generation delegated to S3URLService)
             return s3_key
 
-        except CircuitBreakerOpen:
+        except CircuitBreakerOpenError:
             raise
         except ClientError as e:
             # Record failure
@@ -379,12 +379,12 @@ class StorageService:
 
         Raises:
             HTTPException: If upload fails
-            CircuitBreakerOpen: If S3 upload circuit breaker is open
+            CircuitBreakerOpenError: If S3 upload circuit breaker is open
         """
         # Check circuit breaker
         self.upload_circuit.check_state()
         if self.upload_circuit.is_open:
-            raise CircuitBreakerOpen("S3 upload circuit breaker is open due to repeated failures")
+            raise CircuitBreakerOpenError("S3 upload circuit breaker is open due to repeated failures")
 
         s3_key = f"{job_id}/pages/page-{page_num}.png"
 
@@ -408,7 +408,7 @@ class StorageService:
             # Return S3 key (not URL)
             return s3_key
 
-        except CircuitBreakerOpen:
+        except CircuitBreakerOpenError:
             raise
         except ClientError as e:
             # Record failure

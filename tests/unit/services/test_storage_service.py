@@ -1,12 +1,13 @@
 """Unit tests for StorageService (core upload/download operations)."""
 
-import pytest
 from io import BytesIO
-from fastapi import HTTPException, UploadFile
-from botocore.exceptions import ClientError
 
-from src.services.storage_service import StorageService
+import pytest
+from botocore.exceptions import ClientError
+from fastapi import HTTPException, UploadFile
 from src.config import settings
+from src.services.storage_service import StorageService
+
 from tests.conftest_fixtures.data_factories import create_test_upload_file
 
 

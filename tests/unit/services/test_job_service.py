@@ -1,11 +1,10 @@
 """Integration tests for Job Service."""
 
-import pytest
 import json
-from datetime import datetime
 
-from src.services.job_service import JobService
+import pytest
 from src.config import settings
+from src.services.job_service import JobService
 
 
 @pytest.fixture

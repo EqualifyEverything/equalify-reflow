@@ -2,15 +2,14 @@
 
 import asyncio
 import logging
-from typing import List
 
 from ..agents.accessibility_agent import (
     AccessibilityAgent,
     PageImprovementResult,
     get_accessibility_agent,
 )
-from ..services.pdf_converter import PageData
 from ..config import settings
+from ..services.pdf_converter import PageData
 
 logger = logging.getLogger(__name__)
 
@@ -100,8 +99,8 @@ class AIEnhancementService:
         )
 
     async def process_pages_concurrently(
-        self, pages: List[PageData]
-    ) -> List[PageImprovementResult]:
+        self, pages: list[PageData]
+    ) -> list[PageImprovementResult]:
         """Process multiple pages concurrently with semaphore-based rate limiting.
 
         Args:
@@ -143,7 +142,7 @@ class AIEnhancementService:
         return results
 
     def combine_page_markdown(
-        self, results: List[PageImprovementResult], original_pages: List[PageData]
+        self, results: list[PageImprovementResult], original_pages: list[PageData]
     ) -> str:
         """Combine improved markdown from all pages into single document.
 
@@ -156,7 +155,7 @@ class AIEnhancementService:
         """
         logger.info(f"Combining {len(results)} pages into final markdown")
 
-        markdown_parts: List[str] = []
+        markdown_parts: list[str] = []
 
         for idx, (result, page_data) in enumerate(zip(results, original_pages)):
             # Add page separator comment (except for first page)

@@ -5,15 +5,15 @@ SECURITY: Only available when ENVIRONMENT=dev
 """
 
 from datetime import datetime
-from typing import Dict, Any
+from typing import Any
 
-from fastapi import APIRouter, HTTPException, Depends
+from fastapi import APIRouter, Depends, HTTPException
+from redis.asyncio import Redis
 
 from ..config import settings
 from ..dependencies import get_queue_service, get_redis_client
 from ..services.queue_service import QueueService
-from ..shared.constants.queues import PII_QUEUE, PROCESSING_QUEUE, APPROVAL_TIMEOUT_KEY
-from redis.asyncio import Redis
+from ..shared.constants.queues import APPROVAL_TIMEOUT_KEY, PII_QUEUE, PROCESSING_QUEUE
 
 router = APIRouter(prefix="/api/dev", tags=["Development"])
 
@@ -28,7 +28,7 @@ def require_dev_mode() -> None:
 async def get_queue_metrics(
     queue: QueueService = Depends(get_queue_service),
     redis: Redis = Depends(get_redis_client),
-) -> Dict[str, Any]:
+) -> dict[str, Any]:
     """
     Get queue depths for development dashboard.
 

@@ -8,13 +8,13 @@ Tests all datetime operations to ensure:
 5. Edge cases are handled (DST boundaries, UTC midnight, etc.)
 """
 
-import pytest
-from datetime import datetime, timezone, timedelta
-from unittest.mock import AsyncMock, MagicMock, patch
+from datetime import UTC, datetime, timedelta
+from unittest.mock import AsyncMock, patch
 
+import pytest
+from src.services.approval_service import ApprovalService
 from src.services.job_service import JobService
 from src.services.queue_service import QueueService
-from src.services.approval_service import ApprovalService
 
 
 class TestDatetimeCreation:
@@ -41,7 +41,7 @@ class TestDatetimeCreation:
 
         # Should be timezone-aware
         assert created_at.tzinfo is not None
-        assert created_at.tzinfo == timezone.utc or created_at.tzinfo.utcoffset(None) == timedelta(0)
+        assert created_at.tzinfo == UTC or created_at.tzinfo.utcoffset(None) == timedelta(0)
 
         # Should be ISO format with timezone info
         assert "+" in created_at_str or created_at_str.endswith("Z")
@@ -65,7 +65,7 @@ class TestDatetimeCreation:
         updated_at = datetime.fromisoformat(updated_at_str.replace("Z", "+00:00"))
 
         assert updated_at.tzinfo is not None
-        assert updated_at.tzinfo == timezone.utc or updated_at.tzinfo.utcoffset(None) == timedelta(0)
+        assert updated_at.tzinfo == UTC or updated_at.tzinfo.utcoffset(None) == timedelta(0)
 
     @pytest.mark.asyncio
     async def test_queue_service_creates_timezone_aware_datetimes(self, mock_redis):
@@ -87,7 +87,7 @@ class TestDatetimeCreation:
         created_at = datetime.fromisoformat(created_at_str.replace("Z", "+00:00"))
 
         assert created_at.tzinfo is not None
-        assert created_at.tzinfo == timezone.utc or created_at.tzinfo.utcoffset(None) == timedelta(0)
+        assert created_at.tzinfo == UTC or created_at.tzinfo.utcoffset(None) == timedelta(0)
 
 
 class TestDatetimeParsing:
@@ -106,7 +106,7 @@ class TestDatetimeParsing:
         )
 
         # Mock job data with ISO format timestamp
-        future_time = datetime.now(timezone.utc) + timedelta(hours=2)
+        future_time = datetime.now(UTC) + timedelta(hours=2)
         mock_job_data = {
             "job_id": "test-job-123",
             "approval_token": "test-token-123",
@@ -139,7 +139,7 @@ class TestDatetimeParsing:
         )
 
         # Mock job data with Z suffix timestamp
-        future_time = datetime.now(timezone.utc) + timedelta(hours=2)
+        future_time = datetime.now(UTC) + timedelta(hours=2)
         mock_job_data = {
             "job_id": "test-job-123",
             "approval_token": "test-token-123",
@@ -169,7 +169,7 @@ class TestDatetimeParsing:
         )
 
         # Mock job data with expired timestamp
-        past_time = datetime.now(timezone.utc) - timedelta(hours=1)
+        past_time = datetime.now(UTC) - timedelta(hours=1)
         mock_job_data = {
             "job_id": "test-job-123",
             "approval_token": "test-token-123",
@@ -203,7 +203,7 @@ class TestDatetimeComparisons:
         )
 
         # Create datetimes using the same method as the code
-        now = datetime.now(timezone.utc)
+        now = datetime.now(UTC)
         future = now + timedelta(hours=1)
 
         # Mock job with future expiration
@@ -229,7 +229,7 @@ class TestDatetimeComparisons:
         queue_service = QueueService(mock_redis)
 
         # Add job to timeout tracking with future expiration
-        future_time = datetime.now(timezone.utc) + timedelta(hours=2)
+        future_time = datetime.now(UTC) + timedelta(hours=2)
         await queue_service.add_to_timeout_tracking(
             job_id="test-job-123",
             expires_at=future_time,
@@ -255,7 +255,7 @@ class TestTimezoneEdgeCases:
 
         # Create job at UTC midnight
         with patch('src.services.job_service.datetime') as mock_datetime:
-            midnight = datetime(2024, 1, 1, 0, 0, 0, tzinfo=timezone.utc)
+            midnight = datetime(2024, 1, 1, 0, 0, 0, tzinfo=UTC)
             mock_datetime.now.return_value = midnight
             mock_datetime.fromisoformat = datetime.fromisoformat
 
@@ -280,7 +280,7 @@ class TestTimezoneEdgeCases:
         job_service = JobService(mock_redis)
 
         # DST transition date (March 2024) - UTC is always consistent
-        dst_date = datetime(2024, 3, 10, 2, 0, 0, tzinfo=timezone.utc)
+        dst_date = datetime(2024, 3, 10, 2, 0, 0, tzinfo=UTC)
 
         with patch('src.services.job_service.datetime') as mock_datetime:
             mock_datetime.now.return_value = dst_date
@@ -306,7 +306,7 @@ class TestTimezoneEdgeCases:
         job_service = JobService(mock_redis)
 
         # New Year's Eve at 23:59:59 UTC
-        year_end = datetime(2024, 12, 31, 23, 59, 59, tzinfo=timezone.utc)
+        year_end = datetime(2024, 12, 31, 23, 59, 59, tzinfo=UTC)
 
         with patch('src.services.job_service.datetime') as mock_datetime:
             mock_datetime.now.return_value = year_end
@@ -397,7 +397,7 @@ class TestJobLifecycleTimezoneConsistency:
         )
 
         # Create approval with 4-hour expiration
-        now = datetime.now(timezone.utc)
+        now = datetime.now(UTC)
         expires_at = now + timedelta(hours=4)
 
         mock_job_data = {

@@ -1,8 +1,8 @@
 """Confidence scoring utilities for AI processing quality assessment."""
 
-from typing import List, Literal
-from ..config import settings
+from typing import Literal
 
+from ..config import settings
 
 ConfidenceLevel = Literal["high", "medium", "low"]
 
@@ -32,7 +32,7 @@ def classify_confidence_level(score: float) -> ConfidenceLevel:
         return "low"
 
 
-def aggregate_page_confidences(page_scores: List[float]) -> float:
+def aggregate_page_confidences(page_scores: list[float]) -> float:
     """Calculate aggregate confidence score from multiple page scores.
 
     Uses simple arithmetic mean of all page confidence scores.
@@ -56,7 +56,7 @@ def aggregate_page_confidences(page_scores: List[float]) -> float:
 
 
 def calculate_document_confidence(
-    page_scores: List[float]
+    page_scores: list[float]
 ) -> tuple[float, ConfidenceLevel]:
     """Calculate overall document confidence score and classification.
 

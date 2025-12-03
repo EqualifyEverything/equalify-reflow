@@ -1,15 +1,9 @@
 """Unit tests for circuit breaker implementation."""
 
-import pytest
 import time
-from unittest.mock import patch
 
-from src.utils.circuit_breaker import (
-    CircuitBreaker,
-    CircuitState,
-    CircuitBreakerOpen,
-    CircuitBreakerConfig
-)
+import pytest
+from src.utils.circuit_breaker import CircuitBreaker, CircuitBreakerConfig, CircuitBreakerOpenError, CircuitState
 
 
 @pytest.mark.unit
@@ -129,13 +123,13 @@ class TestCircuitBreakerBlocking:
         breaker.check_state()  # Should not raise
 
     def test_check_state_raises_when_open(self):
-        """check_state() should raise CircuitBreakerOpen when open."""
+        """check_state() should raise CircuitBreakerOpenError when open."""
         breaker = CircuitBreaker("test", failure_threshold=1)
 
         breaker.record_failure()
         assert breaker.is_open
 
-        with pytest.raises(CircuitBreakerOpen) as exc_info:
+        with pytest.raises(CircuitBreakerOpenError) as exc_info:
             breaker.check_state()
 
         assert "test" in str(exc_info.value)
@@ -165,7 +159,7 @@ class TestCircuitBreakerBlocking:
         breaker.check_state()
 
         # Third call blocked (max is 2)
-        with pytest.raises(CircuitBreakerOpen) as exc_info:
+        with pytest.raises(CircuitBreakerOpenError) as exc_info:
             breaker.check_state()
 
         assert "half-open" in str(exc_info.value).lower()

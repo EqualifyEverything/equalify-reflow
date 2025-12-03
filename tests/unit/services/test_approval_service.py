@@ -1,14 +1,14 @@
 """Tests for approval service."""
 
-import pytest
-from datetime import datetime, timezone, timedelta
-from unittest.mock import AsyncMock, MagicMock, patch
+from datetime import UTC, datetime, timedelta
+from unittest.mock import AsyncMock, MagicMock
 
+import pytest
 from src.services.approval_service import ApprovalService
 from src.services.job_service import JobService
 from src.services.queue_service import QueueService
 from src.shared.constants.queues import APPROVAL_TIMEOUT_KEY, PROCESSING_QUEUE
-from src.shared.constants.statuses import STATUS_PROCESSING, STATUS_DENIED
+from src.shared.constants.statuses import STATUS_DENIED, STATUS_PROCESSING
 
 
 @pytest.fixture
@@ -57,7 +57,7 @@ async def test_validate_approval_token_valid(approval_service, mock_redis_client
     # Arrange
     token = "valid-token-abc123"
     job_id = "test-job-123"
-    expires_at = (datetime.now(timezone.utc) + timedelta(hours=2)).isoformat()
+    expires_at = (datetime.now(UTC) + timedelta(hours=2)).isoformat()
 
     # Mock O(1) token lookup
     mock_job_service.get_job_by_approval_token.return_value = {
@@ -81,7 +81,7 @@ async def test_validate_approval_token_expired(approval_service, mock_redis_clie
     """Test expired token validation."""
     # Arrange
     token = "expired-token-xyz"
-    expires_at = (datetime.now(timezone.utc) - timedelta(hours=1)).isoformat()  # Past
+    expires_at = (datetime.now(UTC) - timedelta(hours=1)).isoformat()  # Past
 
     # Mock O(1) token lookup
     mock_job_service.get_job_by_approval_token.return_value = {
@@ -138,7 +138,7 @@ async def test_validate_approval_token_handles_string_keys(approval_service, moc
     """Test token validation uses O(1) lookup (no longer needs to handle key formats)."""
     # Arrange
     token = "valid-token"
-    expires_at = (datetime.now(timezone.utc) + timedelta(hours=2)).isoformat()
+    expires_at = (datetime.now(UTC) + timedelta(hours=2)).isoformat()
 
     # Mock O(1) token lookup
     mock_job_service.get_job_by_approval_token.return_value = {

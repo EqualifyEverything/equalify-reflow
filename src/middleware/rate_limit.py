@@ -1,13 +1,11 @@
 """Rate limiting middleware for FastAPI."""
 
 import logging
-from typing import Callable
+from collections.abc import Callable
 
 from fastapi import Request, Response, status
 from fastapi.responses import JSONResponse
 from starlette.middleware.base import BaseHTTPMiddleware
-
-from ..dependencies import get_rate_limit_service
 
 logger = logging.getLogger(__name__)
 

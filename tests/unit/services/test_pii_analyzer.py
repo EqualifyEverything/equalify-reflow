@@ -4,12 +4,11 @@ Tests our business logic (threshold filtering, entity type configuration)
 without relying on Presidio's internal scoring behavior.
 """
 
+from unittest.mock import Mock, patch
+
 import pytest
-from unittest.mock import Mock, patch, MagicMock
-
-from src.services.pii_analyzer import PIIAnalyzer, ENTITY_TYPES, get_pii_analyzer
+from src.services.pii_analyzer import ENTITY_TYPES, PIIAnalyzer, get_pii_analyzer
 from src.shared.models.pii import PIIFinding
-
 
 pytestmark = pytest.mark.unit
 
@@ -65,9 +64,9 @@ class TestThresholdFiltering:
     @pytest.fixture
     def mock_analyzer_engine(self):
         """Mock Presidio AnalyzerEngine."""
-        with patch("src.services.pii_analyzer.AnalyzerEngine") as MockEngine:
+        with patch("src.services.pii_analyzer.AnalyzerEngine") as mock_engine:
             with patch("src.services.pii_analyzer.NlpEngineProvider"):
-                mock_engine = MockEngine.return_value
+                mock_engine = mock_engine.return_value
                 yield mock_engine
 
     def test_filters_below_threshold(self, mock_analyzer_engine):
@@ -148,9 +147,9 @@ class TestAnalyzeText:
     @pytest.fixture
     def mock_analyzer_engine(self):
         """Mock Presidio AnalyzerEngine."""
-        with patch("src.services.pii_analyzer.AnalyzerEngine") as MockEngine:
+        with patch("src.services.pii_analyzer.AnalyzerEngine") as mock_engine:
             with patch("src.services.pii_analyzer.NlpEngineProvider"):
-                mock_engine = MockEngine.return_value
+                mock_engine = mock_engine.return_value
                 yield mock_engine
 
     def test_returns_pii_finding_objects(self, mock_analyzer_engine):

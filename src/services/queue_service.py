@@ -2,8 +2,8 @@
 
 import json
 import logging
-from datetime import datetime, timezone
-from typing import Optional, List, Any
+from datetime import UTC, datetime
+
 from pydantic import BaseModel
 
 from ..config import settings
@@ -35,7 +35,7 @@ class QueueService:
         payload = {
             "job_id": job_id,
             "s3_key": s3_key,
-            "created_at": datetime.now(timezone.utc).isoformat()
+            "created_at": datetime.now(UTC).isoformat()
         }
 
         # Push to queue
@@ -90,8 +90,8 @@ class QueueService:
         self,
         queue_name: str,
         timeout: int = 5,
-        model_class: Optional[type[BaseModel]] = None
-    ) -> Optional[dict]:
+        model_class: type[BaseModel] | None = None
+    ) -> dict | None:
         """
         Pop job from queue with blocking timeout.
 
@@ -149,7 +149,7 @@ class QueueService:
         self,
         queue_name: str,
         count: int = 10
-    ) -> List[dict]:
+    ) -> list[dict]:
         """
         View queued jobs without removing them.
 
@@ -277,7 +277,7 @@ class QueueService:
 
         try:
             # Get current timestamp
-            current_time = datetime.now(timezone.utc).timestamp()
+            current_time = datetime.now(UTC).timestamp()
 
             # Get Redis key for this timeout type
             key = timeout_key(timeout_type)

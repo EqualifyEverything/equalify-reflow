@@ -1,11 +1,11 @@
 """Unit tests for documentation HTTP Basic authentication middleware."""
 
-import pytest
 import base64
-from unittest.mock import MagicMock, patch, AsyncMock
+from unittest.mock import AsyncMock, MagicMock, patch
+
+import pytest
 from fastapi import Request, Response
 from fastapi.responses import JSONResponse
-
 from src.middleware.docs_auth import DocsAuthMiddleware
 
 

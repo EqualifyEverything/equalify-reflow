@@ -4,14 +4,13 @@ Tests concurrent page processing with retry logic and exponential backoff.
 Validates semaphore-based rate limiting and error handling.
 """
 
-import pytest
 import asyncio
 from unittest.mock import AsyncMock, MagicMock, patch
 
+import pytest
+from src.agents.accessibility_agent import PageImprovementResult
 from src.services.ai_enhancement_service import AIEnhancementService, PageProcessingError
 from src.services.pdf_converter import PageData
-from src.agents.accessibility_agent import PageImprovementResult
-
 
 pytestmark = pytest.mark.unit
 
@@ -195,7 +194,7 @@ async def test_process_page_with_retry_tracks_attempt_number(
     service = AIEnhancementService(agent=mock_accessibility_agent)
 
     with patch("asyncio.sleep", new_callable=AsyncMock):
-        result = await service.process_page_with_retry(sample_page_data, max_retries=3)
+        await service.process_page_with_retry(sample_page_data, max_retries=3)
 
         # Verify attempt numbers passed correctly
         calls = mock_accessibility_agent.process_page.call_args_list
@@ -442,7 +441,7 @@ async def test_combine_page_markdown_preserves_order():
     combined = service.combine_page_markdown(results, pages)
 
     # Should preserve input order (5, 1, 3)
-    lines = combined.split("\n")
+    combined.split("\n")
     assert "Content from Page 5" in combined
     assert "<!-- Page 1 -->" in combined
     assert "Content from Page 1" in combined

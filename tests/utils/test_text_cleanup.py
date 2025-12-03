@@ -1,13 +1,12 @@
 """Tests for text cleanup utilities."""
 
-import pytest
 from src.utils.text_cleanup import (
-    normalize_unicode,
-    fix_excessive_whitespace,
-    normalize_quotes,
-    validate_urls,
-    fix_url_formatting,
     cleanup_markdown,
+    fix_excessive_whitespace,
+    fix_url_formatting,
+    normalize_quotes,
+    normalize_unicode,
+    validate_urls,
 )
 
 

@@ -6,15 +6,15 @@ Tests for:
 - Bug #13: Rate limit key collision prevention
 """
 
-import pytest
-from unittest.mock import Mock, AsyncMock, MagicMock, patch
 from io import BytesIO
-from fastapi import UploadFile, HTTPException
+from unittest.mock import AsyncMock, MagicMock, Mock
 
-from src.services.storage_service import StorageService
-from src.services.s3_cleanup_service import S3CleanupService
-from src.services.rate_limit_service import RateLimitService
+import pytest
+from fastapi import HTTPException, UploadFile
 from src.config import settings
+from src.services.rate_limit_service import RateLimitService
+from src.services.s3_cleanup_service import S3CleanupService
+from src.services.storage_service import StorageService
 
 
 class TestFileSeekErrorHandling:

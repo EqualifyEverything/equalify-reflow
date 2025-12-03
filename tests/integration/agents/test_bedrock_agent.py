@@ -16,18 +16,16 @@ real AWS credentials and are intended for manual testing or CI/CD environments
 with proper AWS access configured.
 """
 
-import os
-import pytest
 import base64
-from pathlib import Path
+import os
 
+import pytest
 from src.agents.accessibility_agent import (
     AccessibilityAgent,
     PageImprovementResult,
     get_accessibility_agent,
 )
 from src.config import settings
-
 
 pytestmark = pytest.mark.integration
 
@@ -246,7 +244,7 @@ def test_bedrock_region_configuration():
     """Test Bedrock region is configured (via AWS SDK)."""
     # Note: Bedrock region is configured via AWS SDK/boto3 (environment variables,
     # credentials file, or IAM role), not directly in PydanticAI
-    agent = AccessibilityAgent()
+    AccessibilityAgent()
 
     # Configuration should have region setting (for boto3)
     assert settings.bedrock_region is not None
@@ -256,7 +254,7 @@ def test_bedrock_region_configuration():
 @skip_bedrock
 def test_bedrock_model_id_configuration():
     """Test Bedrock uses configured model ID."""
-    agent = AccessibilityAgent()
+    AccessibilityAgent()
 
     # Should be using configured model ID
     assert settings.bedrock_model_id is not None

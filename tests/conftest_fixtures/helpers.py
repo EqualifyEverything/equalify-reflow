@@ -8,16 +8,17 @@ Provides standardized assertions for:
 - Error scenario setup
 """
 
-from typing import Any, Optional, Dict
+from typing import Any
 from unittest.mock import AsyncMock, MagicMock
+
 from botocore.exceptions import ClientError
 
 
 def assert_job_state(
-    job_data: Dict[str, Any],
+    job_data: dict[str, Any],
     expected_status: str,
-    expected_confidence: Optional[float] = None,
-    expected_error: Optional[str] = None,
+    expected_confidence: float | None = None,
+    expected_error: str | None = None,
 ) -> None:
     """Assert job data has expected state.
 
@@ -50,7 +51,7 @@ def assert_job_state(
 def assert_s3_upload(
     mock_s3: MagicMock,
     expected_bucket: str,
-    expected_key_prefix: Optional[str] = None,
+    expected_key_prefix: str | None = None,
     call_count: int = 1,
 ) -> None:
     """Assert S3 upload was called correctly.

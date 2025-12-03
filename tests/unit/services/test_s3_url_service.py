@@ -1,9 +1,8 @@
 """Unit tests for S3URLService."""
 
 import pytest
-
-from src.services.s3_url_service import S3URLService
 from src.config import settings
+from src.services.s3_url_service import S3URLService
 
 
 @pytest.fixture

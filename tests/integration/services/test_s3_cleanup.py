@@ -1,9 +1,8 @@
 """Tests for S3CleanupService - S3 temporary file cleanup operations."""
 
-import pytest
-from datetime import datetime, timezone, timedelta
-from unittest.mock import AsyncMock
+from datetime import UTC, datetime, timedelta
 
+import pytest
 from src.services.s3_cleanup_service import S3CleanupService
 
 
@@ -33,17 +32,17 @@ def old_temp_files():
         {
             "Key": "temp/job-1/input.pdf",
             "Size": 1024000,
-            "LastModified": datetime.now(timezone.utc) - timedelta(hours=48)
+            "LastModified": datetime.now(UTC) - timedelta(hours=48)
         },
         {
             "Key": "temp/job-2/input.pdf",
             "Size": 2048000,
-            "LastModified": datetime.now(timezone.utc) - timedelta(hours=36)
+            "LastModified": datetime.now(UTC) - timedelta(hours=36)
         },
         {
             "Key": "temp/job-3/input.pdf",
             "Size": 512000,
-            "LastModified": datetime.now(timezone.utc) - timedelta(hours=25)
+            "LastModified": datetime.now(UTC) - timedelta(hours=25)
         }
     ]
 

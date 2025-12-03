@@ -1,12 +1,11 @@
 """Edge case tests for PII detection accuracy and validation."""
 
-import pytest
 from unittest.mock import Mock, patch
 
-from src.services.pii_analyzer import PIIAnalyzer, ENTITY_TYPES
+import pytest
+from src.services.pii_analyzer import PIIAnalyzer
+
 from tests.e2e.edge_cases.helpers import (
-    generate_pii_text,
-    generate_false_positive_text,
     generate_valid_academic_content,
 )
 

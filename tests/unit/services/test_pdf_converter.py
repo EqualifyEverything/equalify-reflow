@@ -4,13 +4,11 @@ Tests Docling PDF-to-markdown conversion with page image generation.
 All Docling dependencies are mocked for fast, isolated unit tests.
 """
 
-import pytest
-from unittest.mock import MagicMock, patch, AsyncMock
-from io import BytesIO
 import base64
+from unittest.mock import MagicMock, patch
 
-from src.services.pdf_converter import PDFConverter, PDFConversionResult, PageData
-
+import pytest
+from src.services.pdf_converter import PDFConversionResult, PDFConverter
 
 pytestmark = pytest.mark.unit
 
@@ -71,12 +69,12 @@ def mock_docling_converter(mock_docling_document, mock_page_with_image):
 
 def test_pdf_converter_initialization():
     """Test PDFConverter initializes with correct Docling configuration."""
-    with patch("src.services.pdf_converter.DocumentConverter") as MockConverter:
-        converter = PDFConverter()
+    with patch("src.services.pdf_converter.DocumentConverter") as mock_converter:
+        PDFConverter()
 
         # Should have created Docling converter with pipeline options
-        MockConverter.assert_called_once()
-        call_kwargs = MockConverter.call_args.kwargs
+        mock_converter.assert_called_once()
+        call_kwargs = mock_converter.call_args.kwargs
 
         # Verify format options configured for PDF
         assert "format_options" in call_kwargs
@@ -308,7 +306,7 @@ async def test_convert_extracts_multi_page_correctly(sample_pdf, mock_pil_image)
     with patch.object(converter.converter, "convert", return_value=mock_result):
         with patch.object(converter, "_extract_page_markdown", side_effect=["P1", "P2", "P3"]) as mock_extract:
             with patch.object(converter, "_image_to_base64", return_value="img"):
-                result = await converter.convert_with_page_images(sample_pdf)
+                await converter.convert_with_page_images(sample_pdf)
 
                 # Should extract pages 1, 2, 3 (1-indexed → 0-indexed)
                 assert mock_extract.call_count == 3

@@ -1,16 +1,11 @@
 """Tests for job-related data models."""
 
+from datetime import UTC, datetime, timedelta
+
 import pytest
-from datetime import datetime, timedelta, UTC
 from pydantic import ValidationError
 
-from shared.models import (
-    JobSubmission,
-    JobStatus,
-    PIIFinding,
-    ApprovalRequest,
-    VALID_TRANSITIONS
-)
+from shared.models import VALID_TRANSITIONS, ApprovalRequest, JobStatus, JobSubmission, PIIFinding
 
 
 @pytest.mark.unit

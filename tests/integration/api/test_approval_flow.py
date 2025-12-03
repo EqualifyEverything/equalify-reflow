@@ -1,10 +1,10 @@
 """Integration tests for approval workflow API endpoints."""
 
-import pytest
-from datetime import datetime, timezone, timedelta
-from httpx import AsyncClient, ASGITransport
+from datetime import UTC, datetime, timedelta
 from unittest.mock import AsyncMock, patch
 
+import pytest
+from httpx import ASGITransport, AsyncClient
 from src.main import app
 
 
@@ -16,8 +16,8 @@ def valid_job_data():
         "s3_key": "temp/test-doc.pdf",
         "status": "awaiting_approval",
         "approval_token": "valid-token-abc123",
-        "approval_expires_at": (datetime.now(timezone.utc) + timedelta(hours=2)).isoformat(),
-        "created_at": datetime.now(timezone.utc).isoformat(),
+        "approval_expires_at": (datetime.now(UTC) + timedelta(hours=2)).isoformat(),
+        "created_at": datetime.now(UTC).isoformat(),
         "pii_findings": [
             {
                 "entity_type": "EMAIL_ADDRESS",
@@ -36,8 +36,8 @@ def expired_job_data():
         "s3_key": "temp/expired-doc.pdf",
         "status": "awaiting_approval",
         "approval_token": "expired-token-xyz",
-        "approval_expires_at": (datetime.now(timezone.utc) - timedelta(hours=1)).isoformat(),
-        "created_at": datetime.now(timezone.utc).isoformat(),
+        "approval_expires_at": (datetime.now(UTC) - timedelta(hours=1)).isoformat(),
+        "created_at": datetime.now(UTC).isoformat(),
         "pii_findings": []
     }
 
@@ -146,6 +146,7 @@ async def test_get_review_details_expired_token(expired_job_data, api_key_header
 async def test_submit_approval_approved_decision(valid_job_data, api_key_headers):
     """Test POST /api/approval/{token}/decision with approved decision."""
     import json
+
     from src.dependencies import get_redis_client, get_s3_client
 
     # Add updated_at field required by Job model

@@ -1,6 +1,6 @@
 """PII detection models for Presidio integration."""
 
-from typing import List
+
 from pydantic import BaseModel, ConfigDict, Field
 
 
@@ -83,7 +83,7 @@ class PIIResult(BaseModel):
         pattern=r'^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$',
         description="UUID format job identifier"
     )
-    findings: List[PIIFinding] = Field(
+    findings: list[PIIFinding] = Field(
         default_factory=list,
         description="List of PII entities detected"
     )

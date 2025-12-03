@@ -1,15 +1,11 @@
 """Tests for queue payload models."""
 
+from datetime import UTC, datetime, timedelta
+
 import pytest
-from datetime import datetime, timedelta, UTC
 from pydantic import ValidationError
 
-from shared.models import (
-    PIIQueuePayload,
-    ApprovalQueuePayload,
-    ProcessingQueuePayload,
-    PIIFinding
-)
+from shared.models import ApprovalQueuePayload, PIIFinding, PIIQueuePayload, ProcessingQueuePayload
 
 
 @pytest.mark.unit

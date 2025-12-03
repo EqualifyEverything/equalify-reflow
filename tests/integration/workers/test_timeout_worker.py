@@ -1,10 +1,10 @@
 """Integration tests for TimeoutWorker - Background maintenance worker."""
 
-import pytest
 import asyncio
-from datetime import datetime, timezone
-from unittest.mock import AsyncMock, MagicMock, patch
+from datetime import UTC, datetime
+from unittest.mock import AsyncMock, patch
 
+import pytest
 from src.workers.timeout_worker import TimeoutWorker
 
 
@@ -85,14 +85,14 @@ class TestShouldRunTask:
         """Test that task should run after interval elapsed."""
         # Use a timestamp in the past to avoid sleep
         from datetime import timedelta
-        last_run = datetime.now(timezone.utc) - timedelta(seconds=1)
+        last_run = datetime.now(UTC) - timedelta(seconds=1)
 
         result = timeout_worker._should_run_task(last_run, 0)
         assert result is True
 
     def test_should_not_run_before_interval(self, timeout_worker):
         """Test that task should not run before interval."""
-        last_run = datetime.now(timezone.utc)
+        last_run = datetime.now(UTC)
 
         result = timeout_worker._should_run_task(last_run, 3600)
         assert result is False
@@ -203,7 +203,7 @@ class TestWorkerLifecycle:
         # Wait for worker to finish
         try:
             await asyncio.wait_for(worker_task, timeout=1.0)
-        except asyncio.TimeoutError:
+        except TimeoutError:
             worker_task.cancel()
 
         assert timeout_worker.running is False
@@ -251,7 +251,7 @@ class TestWorkerLifecycle:
         # Wait for worker to finish
         try:
             await asyncio.wait_for(worker_task, timeout=2.0)
-        except asyncio.TimeoutError:
+        except TimeoutError:
             worker_task.cancel()
 
         # Worker should have stopped gracefully
@@ -287,7 +287,7 @@ class TestTaskScheduling:
     @pytest.mark.asyncio
     async def test_tasks_respect_different_intervals(self, timeout_worker):
         """Test that different tasks have different intervals."""
-        now = datetime.now(timezone.utc)
+        now = datetime.now(UTC)
 
         # Set all tasks to have just run
         timeout_worker.last_approval_check = now

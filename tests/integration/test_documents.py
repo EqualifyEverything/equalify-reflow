@@ -5,9 +5,8 @@ from unittest.mock import AsyncMock, MagicMock
 
 import pytest
 from fastapi import HTTPException, status
-
+from src.dependencies import get_job_service, get_queue_service, get_s3_url_service, get_storage_service
 from src.main import app
-from src.dependencies import get_storage_service, get_queue_service, get_job_service, get_s3_url_service
 
 
 @pytest.mark.asyncio
@@ -47,7 +46,11 @@ def test_submit_document_invalid_type(client, api_key_headers):
     """Test document submission with invalid file type."""
     # Create mock storage that raises validation error
     mock_storage = MagicMock()
-    mock_storage.store_document = AsyncMock(side_effect=HTTPException(status_code=400, detail="Only PDF files are accepted"))
+    mock_storage.store_document = AsyncMock(
+        side_effect=HTTPException(
+            status_code=400, detail="Only PDF files are accepted"
+        )
+    )
 
     # Override dependencies
     app.dependency_overrides[get_storage_service] = lambda: mock_storage

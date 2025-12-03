@@ -1,21 +1,22 @@
 """Tests for Redis integration and key generation."""
 
+from datetime import UTC, datetime
+
 import pytest
-from datetime import datetime, UTC
 
 from shared.models import (
-    job_status_key,
-    queue_key,
-    timeout_key,
-    metrics_key,
-    PII_QUEUE,
     APPROVAL_QUEUE,
-    PROCESSING_QUEUE,
     APPROVAL_TIMEOUTS,
     DAILY_METRICS,
     JOB_STATUS_PREFIX,
+    PII_QUEUE,
+    PROCESSING_QUEUE,
     JobStatus,
-    JobSubmission
+    JobSubmission,
+    job_status_key,
+    metrics_key,
+    queue_key,
+    timeout_key,
 )
 
 
@@ -232,7 +233,6 @@ class TestRedisKeyNamespacing:
     def test_key_patterns_for_scanning(self):
         """Test key patterns work for Redis SCAN operations."""
         # Pattern to find all job status keys
-        pattern = f"{JOB_STATUS_PREFIX}*"
 
         # Generate some example keys
         job_ids = [

@@ -1,25 +1,19 @@
 """PII detection service orchestration."""
 
 import logging
-from datetime import datetime, timedelta, timezone
-from typing import List
+from datetime import UTC, datetime, timedelta
 
-from ..shared.models.queue import PIIQueuePayload, ApprovalQueuePayload, ProcessingQueuePayload
-from ..shared.models.pii import PIIFinding
-from ..shared.constants.statuses import (
-    STATUS_PII_SCANNING,
-    STATUS_AWAITING_APPROVAL,
-    STATUS_PROCESSING,
-    STATUS_FAILED
-)
 from ..shared.constants.queues import APPROVAL_QUEUE, PROCESSING_QUEUE
-from ..utils.token_generator import generate_secure_token
+from ..shared.constants.statuses import STATUS_AWAITING_APPROVAL, STATUS_FAILED, STATUS_PII_SCANNING, STATUS_PROCESSING
+from ..shared.models.pii import PIIFinding
+from ..shared.models.queue import ApprovalQueuePayload, PIIQueuePayload, ProcessingQueuePayload
 from ..utils.retry_helpers import retry_with_backoff
-from .storage_service import StorageService
-from .queue_service import QueueService
+from ..utils.token_generator import generate_secure_token
 from .job_service import JobService
-from .pdf_extractor import extract_pdf_text, PDFExtractionError
+from .pdf_extractor import PDFExtractionError, extract_pdf_text
 from .pii_analyzer import get_pii_analyzer
+from .queue_service import QueueService
+from .storage_service import StorageService
 
 logger = logging.getLogger(__name__)
 
@@ -107,11 +101,12 @@ class PIIDetectionService:
         except PDFExtractionError as e:
             # PDF extraction failed after retries - permanent failure
             logger.error(f"PDF extraction failed for job {job.job_id} after retries: {e}")
+            error_msg = f"PDF extraction failed: {str(e)}"
             await retry_with_backoff(
                 lambda: self.jobs.update_job_status(
                     job.job_id,
                     STATUS_FAILED,
-                    error=f"PDF extraction failed: {str(e)}"
+                    error=error_msg
                 ),
                 max_attempts=3,
                 operation_name=f"Update job {job.job_id} to FAILED"
@@ -120,17 +115,18 @@ class PIIDetectionService:
         except Exception as e:
             # Unexpected error (after any retries)
             logger.error(f"PII processing failed for job {job.job_id}: {e}", exc_info=True)
+            error_msg = f"PII scan error: {str(e)}"
             await retry_with_backoff(
                 lambda: self.jobs.update_job_status(
                     job.job_id,
                     STATUS_FAILED,
-                    error=f"PII scan error: {str(e)}"
+                    error=error_msg
                 ),
                 max_attempts=3,
                 operation_name=f"Update job {job.job_id} to FAILED"
             )
 
-    async def _queue_for_approval(self, job: PIIQueuePayload, findings: List[PIIFinding]) -> None:
+    async def _queue_for_approval(self, job: PIIQueuePayload, findings: list[PIIFinding]) -> None:
         """Queue job for manual approval with PII details.
 
         NOTE: This method does not include retry logic internally.
@@ -144,7 +140,7 @@ class PIIDetectionService:
 
         # Generate secure approval token
         approval_token = generate_secure_token()
-        expires_at = datetime.now(timezone.utc) + timedelta(hours=APPROVAL_TIMEOUT_HOURS)
+        expires_at = datetime.now(UTC) + timedelta(hours=APPROVAL_TIMEOUT_HOURS)
 
         # Create approval queue payload
         approval_payload = ApprovalQueuePayload(
@@ -179,7 +175,7 @@ class PIIDetectionService:
 
         logger.info(f"Job {job.job_id} queued for approval, token: {approval_token[:8]}...")
 
-    async def _queue_for_approval_with_retry(self, job: PIIQueuePayload, findings: List[PIIFinding]) -> None:
+    async def _queue_for_approval_with_retry(self, job: PIIQueuePayload, findings: list[PIIFinding]) -> None:
         """Queue job for approval with retry logic for transient failures.
 
         Wraps _queue_for_approval with exponential backoff retry for:

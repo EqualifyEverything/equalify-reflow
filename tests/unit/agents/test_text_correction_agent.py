@@ -61,7 +61,7 @@ class TestTextCorrectionAgent:
     async def test_process_method(self, mock_agent_class, mock_bedrock, mock_load_prompts):
         """Test the process method."""
         mock_bedrock.return_value = MagicMock()
-        
+
         # Mock prompts
         mock_load_prompts.return_value = {
             "system_prompt": "Test system prompt",

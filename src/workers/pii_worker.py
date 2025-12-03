@@ -2,20 +2,19 @@
 
 import asyncio
 import logging
-from typing import Optional
 
-from ..shared.models.queue import PIIQueuePayload
-from ..shared.constants.queues import PII_QUEUE
-from ..services.pii_service import PIIDetectionService
-from ..services.storage_service import StorageService
-from ..services.queue_service import QueueService
+from ..config import settings
 from ..services.job_service import JobService
 from ..services.metrics_service import (
     worker_active_gauge,
     worker_errors_total,
     worker_jobs_processed_total,
 )
-from ..config import settings
+from ..services.pii_service import PIIDetectionService
+from ..services.queue_service import QueueService
+from ..services.storage_service import StorageService
+from ..shared.constants.queues import PII_QUEUE
+from ..shared.models.queue import PIIQueuePayload
 
 logger = logging.getLogger(__name__)
 
@@ -117,7 +116,7 @@ class PIIWorker:
 
 
 # Global worker instance
-_worker_instance: Optional[PIIWorker] = None
+_worker_instance: PIIWorker | None = None
 
 
 async def start_pii_worker(shutdown_event: asyncio.Event = None) -> None:
@@ -134,8 +133,8 @@ async def start_pii_worker(shutdown_event: asyncio.Event = None) -> None:
     logger.info("Initializing PII worker...")
 
     # Import dependencies dynamically to avoid circular imports
-    from ..dependencies import get_redis_client, get_s3_client
     from ..config import settings
+    from ..dependencies import get_redis_client, get_s3_client
 
     # Get Redis and S3 clients using proper async generator pattern
     redis_client = await anext(get_redis_client())
@@ -164,7 +163,7 @@ async def start_pii_worker(shutdown_event: asyncio.Event = None) -> None:
     await _worker_instance.start(shutdown_event)
 
 
-def get_pii_worker() -> Optional[PIIWorker]:
+def get_pii_worker() -> PIIWorker | None:
     """Get the global PII worker instance.
 
     Returns:

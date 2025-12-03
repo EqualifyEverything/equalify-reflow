@@ -27,6 +27,7 @@ dependencies = [
     "mdformat>=1.0.0",
     "pyspellchecker>=0.8.4",
     "mdformat-gfm>=1.0.0",
+    "pymarkdownlnt>=0.9.0",
 ]
 
 [project.optional-dependencies]
@@ -60,6 +61,7 @@ markers = [
     "requires_redis: Needs Redis service",
     "requires_s3: Needs S3/LocalStack service",
     "requires_ai: Needs Anthropic API (usually mocked)",
+    "verapdf: Requires VeraPDF Docker container for PDF/UA validation",
     "performance: Load and stress tests (weekly runs)",
     "resilience: Failure recovery and error handling scenarios",
     "edge_case: Boundary conditions and unusual inputs",

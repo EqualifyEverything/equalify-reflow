@@ -165,10 +165,9 @@ class TextCorrection(BaseModel):
         description="Corrected text matching visual layout"
     )
     location_context: str = Field(
-        ...,
-        min_length=1,
+        default="",
         max_length=10000,
-        description="Surrounding text for locating the error"
+        description="Surrounding text for locating the error (optional)"
     )
     line_number: int | None = Field(
         default=None,

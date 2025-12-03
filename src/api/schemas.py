@@ -1,13 +1,15 @@
 """API response schemas for structured responses.
 
-This module defines Pydantic models for API responses, ensuring consistent
-response shapes and type safety across the API.
+This module defines Pydantic models for API responses. Each job status has
+its own response model with only the relevant fields - no nulls, no clutter.
 """
 
+from typing import Literal
 
 from pydantic import BaseModel, Field
 
 
+# Shared components
 class PIIFinding(BaseModel):
     """PII detection result."""
 
@@ -28,128 +30,121 @@ class PageLLMUsage(BaseModel):
 
 
 class LLMCostInfo(BaseModel):
-    """Aggregate LLM cost information for a job.
+    """Aggregate LLM cost information for a job."""
 
-    Includes total cost and per-page breakdown for transparency.
-    """
-
-    total_cost_cents: float = Field(
-        ..., description="Total LLM cost in cents for all pages"
-    )
-    total_cost_dollars: float = Field(
-        ..., description="Total LLM cost in dollars for convenience"
-    )
+    total_cost_cents: float = Field(..., description="Total LLM cost in cents")
+    total_cost_dollars: float = Field(..., description="Total LLM cost in dollars")
     page_costs: list[PageLLMUsage] = Field(
-        default_factory=list, description="Per-page token usage and costs"
+        default_factory=list, description="Per-page breakdown"
     )
 
 
-class CorrectionApprovalInfo(BaseModel):
-    """Correction approval metadata for frontend.
-
-    Provided when job status is awaiting_correction_approval.
-    """
-
-    token: str = Field(..., description="Correction approval token for API calls")
-    expires_at: str = Field(
-        ..., description="ISO timestamp when approval token expires"
-    )
-    total_corrections: int = Field(..., description="Total number of corrections made")
-    confidence_score: float = Field(
-        ..., description="Overall confidence score (0.0 to 1.0)"
-    )
-    corrections_by_type: dict[str, int] = Field(
-        ..., description="Count of corrections by type"
-    )
-    review_url: str = Field(
-        ..., description="API endpoint to review corrections in detail"
-    )
-
-
-class CorrectionDecisionInfo(BaseModel):
-    """Correction decision metadata after approval/rejection.
-
-    Provided when job status is completed and corrections were reviewed.
-    """
-
-    decision: str = Field(..., description="Decision: 'approved' or 'rejected'")
-    reviewed_by: str = Field(..., description="Email of person who reviewed")
-    reviewed_at: str = Field(..., description="ISO timestamp of review")
-    justification: str = Field(..., description="Reason for decision")
-
-
-class DocumentURLs(BaseModel):
-    """Generated URLs for document assets.
-
-    URLs are generated on-demand from S3 keys stored in Redis.
-    URL format varies by environment (LocalStack vs AWS).
-    """
-
-    original_markdown: str | None = Field(
-        None, description="URL to original markdown (before corrections)"
-    )
-    corrected_markdown: str | None = Field(
-        None, description="URL to corrected markdown (awaiting approval)"
-    )
-    markdown: str | None = Field(
-        None, description="URL to final markdown (after completion)"
-    )
-    page_images: list[str] | None = Field(
-        None, description="URLs to page images (for visual comparison)"
-    )
-
-
-class DocumentStatusResponse(BaseModel):
-    """Response for GET /api/documents/{job_id}.
-
-    Response shape varies by job status:
-    - pii_scanning/processing: Basic status + estimated time
-    - awaiting_approval: PII findings + approval token
-    - awaiting_correction_approval: Correction approval info + URLs
-    - completed: Final markdown URL + correction decision
-    """
+# Status-specific response models
+class JobStatusBase(BaseModel):
+    """Common fields for all job status responses."""
 
     job_id: str = Field(..., description="Unique job identifier")
     status: str = Field(..., description="Current job status")
     created_at: str = Field(..., description="ISO timestamp when job was created")
     updated_at: str = Field(..., description="ISO timestamp of last update")
 
-    # PII approval (when status = awaiting_approval)
-    pii_findings: list[PIIFinding] | None = Field(
-        None, description="PII entities detected in document"
-    )
-    approval_token: str | None = Field(
-        None, description="Token to approve/reject PII findings"
-    )
-    approval_expires_at: str | None = Field(
-        None, description="ISO timestamp when approval token expires"
+
+class PIIScanningResponse(JobStatusBase):
+    """Response when job is scanning for PII."""
+
+    status: Literal["pii_scanning"] = "pii_scanning"
+    estimated_completion_minutes: int = Field(
+        ..., description="Estimated minutes until completion"
     )
 
-    # Correction approval (when status = awaiting_correction_approval)
-    correction_approval: CorrectionApprovalInfo | None = Field(
-        None,
-        description="Correction approval metadata (only when awaiting correction approval)",
+
+class ProcessingResponse(JobStatusBase):
+    """Response when job is processing (AI text correction)."""
+
+    status: Literal["processing"] = "processing"
+    estimated_completion_minutes: int = Field(
+        ..., description="Estimated minutes until completion"
     )
 
-    # Correction decision (when status = completed)
-    correction_decision: CorrectionDecisionInfo | None = Field(
-        None, description="Correction decision metadata (only when completed)"
-    )
-    confidence_score: float | None = Field(
-        None, description="Overall confidence score (0.0 to 1.0)"
+
+class AwaitingPIIApprovalResponse(JobStatusBase):
+    """Response when job needs PII approval."""
+
+    status: Literal["awaiting_approval"] = "awaiting_approval"
+    pii_findings: list[PIIFinding] = Field(..., description="Detected PII entities")
+    approval_token: str = Field(..., description="Token for approval/rejection")
+    approval_expires_at: str = Field(..., description="When approval token expires")
+    approval_url: str = Field(..., description="URL to submit approval decision")
+
+
+class CorrectionSummary(BaseModel):
+    """Summary of AI corrections made."""
+
+    total_corrections: int = Field(..., description="Total corrections made")
+    confidence_score: float = Field(..., description="Overall confidence (0.0-1.0)")
+    corrections_by_type: dict[str, int] = Field(
+        ..., description="Count by correction type"
     )
 
-    # Generated URLs (varies by status)
-    urls: DocumentURLs | None = Field(
-        None, description="Generated URLs to document assets"
-    )
 
-    # Estimates (when status = pii_scanning or processing)
-    estimated_completion_minutes: int | None = Field(
-        None, description="Estimated minutes until completion"
-    )
+class AwaitingCorrectionApprovalResponse(JobStatusBase):
+    """Response when job needs correction approval."""
 
-    # LLM cost tracking (when text correction has run)
-    llm_cost: LLMCostInfo | None = Field(
-        None, description="LLM token usage and cost breakdown"
+    status: Literal["awaiting_correction_approval"] = "awaiting_correction_approval"
+    correction_summary: CorrectionSummary = Field(
+        ..., description="Summary of corrections"
     )
+    approval_token: str = Field(..., description="Token for approval/rejection")
+    approval_expires_at: str = Field(..., description="When approval token expires")
+    review_url: str = Field(..., description="URL to review corrections in detail")
+    original_markdown_url: str = Field(..., description="URL to original markdown")
+    corrected_markdown_url: str = Field(..., description="URL to corrected markdown")
+    page_image_urls: list[str] = Field(..., description="URLs to page preview images")
+    llm_cost: LLMCostInfo = Field(..., description="LLM usage and cost")
+
+
+class CorrectionDecision(BaseModel):
+    """Record of correction approval/rejection."""
+
+    decision: Literal["approved", "rejected"] = Field(..., description="The decision")
+    reviewed_by: str = Field(..., description="Email of reviewer")
+    reviewed_at: str = Field(..., description="When the decision was made")
+    justification: str = Field(..., description="Reason for decision")
+
+
+class CompletedResponse(JobStatusBase):
+    """Response when job is completed."""
+
+    status: Literal["completed"] = "completed"
+    markdown_url: str = Field(..., description="URL to final markdown")
+    confidence_score: float = Field(..., description="Overall confidence score")
+    correction_decision: CorrectionDecision = Field(
+        ..., description="How corrections were handled"
+    )
+    llm_cost: LLMCostInfo = Field(..., description="LLM usage and cost")
+
+
+class FailedResponse(JobStatusBase):
+    """Response when job has failed."""
+
+    status: Literal["failed"] = "failed"
+    error: str = Field(..., description="Error message")
+
+
+class DeniedResponse(JobStatusBase):
+    """Response when job was denied (PII not approved)."""
+
+    status: Literal["denied"] = "denied"
+    reason: str = Field(..., description="Reason for denial")
+
+
+# Union type for OpenAPI documentation
+DocumentStatusResponse = (
+    PIIScanningResponse
+    | ProcessingResponse
+    | AwaitingPIIApprovalResponse
+    | AwaitingCorrectionApprovalResponse
+    | CompletedResponse
+    | FailedResponse
+    | DeniedResponse
+)

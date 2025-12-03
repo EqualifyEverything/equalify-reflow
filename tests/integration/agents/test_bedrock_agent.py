@@ -37,7 +37,7 @@ pytestmark = pytest.mark.integration
 skip_bedrock = pytest.mark.skipif(
     os.getenv("SKIP_BEDROCK_TESTS") == "1"
     or settings.ai_provider != "bedrock"
-    or settings.aws_endpoint_url is not None,  # Skip if using LocalStack
+    or os.getenv("AWS_ENDPOINT_URL_S3") is not None,  # Skip if using LocalStack
     reason="Bedrock integration tests skipped (SKIP_BEDROCK_TESTS=1, AI_PROVIDER!=bedrock, or using LocalStack)"
 )
 

@@ -117,6 +117,20 @@ class Settings(BaseSettings):
         description="Comma-separated list of PyMarkdown rules to enable"
     )
 
+    # Document Context Extraction Configuration (PRD-013)
+    context_extraction_enabled: bool = Field(
+        default=True,
+        description="Enable document context extraction for agent grounding"
+    )
+    context_max_headings: int = Field(
+        ge=10, le=500, default=100,
+        description="Maximum headings to track per document"
+    )
+    context_recurring_threshold: float = Field(
+        ge=0.1, le=1.0, default=0.5,
+        description="Minimum page occurrence rate to consider element recurring (0.5 = 50%)"
+    )
+
     # Timeout Worker Configuration
     approval_timeout_hours: int = Field(ge=1, le=168, default=4)  # Approval deadline (hours), max 1 week
     approval_check_interval_seconds: int = Field(ge=10, le=3600, default=30)  # Check for expired approvals every 30s

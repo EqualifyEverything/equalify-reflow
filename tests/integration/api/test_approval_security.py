@@ -47,7 +47,7 @@ async def test_approval_token_expiration_enforced(api_key_headers):
         mock_s3 = AsyncMock()
         mock_s3_dep.return_value = mock_s3
 
-        # Attempt to get review details
+        # Attempt to get review details with API key headers
         async with AsyncClient(
             transport=ASGITransport(app=app),
             base_url="http://test"
@@ -100,7 +100,7 @@ async def test_approval_no_pii_data_in_url(api_key_headers):
         mock_job_service.get_job_by_approval_token.return_value = valid_job  # New O(1) lookup method
         mock_job_service_class.return_value = mock_job_service
 
-        # Make request
+        # Make request with API key headers
         async with AsyncClient(
             transport=ASGITransport(app=app),
             base_url="http://test"
@@ -163,7 +163,7 @@ async def test_approval_decision_sanitization(api_key_headers):
     app.dependency_overrides[get_s3_client] = lambda: mock_s3
 
     try:
-        # Make request
+        # Make request with API key headers
         async with AsyncClient(
             transport=ASGITransport(app=app),
             base_url="http://test"
@@ -209,6 +209,7 @@ async def test_approval_input_validation_boundaries(api_key_headers):
         mock_s3 = AsyncMock()
         mock_s3_dep.return_value = mock_s3
 
+        # Make request with API key headers
         async with AsyncClient(
             transport=ASGITransport(app=app),
             base_url="http://test"
@@ -277,7 +278,7 @@ async def test_approval_token_not_leaked_in_error_messages(api_key_headers):
         mock_s3 = AsyncMock()
         mock_s3_dep.return_value = mock_s3
 
-        # Make request with sensitive token
+        # Make request with sensitive token and API key headers
         async with AsyncClient(
             transport=ASGITransport(app=app),
             base_url="http://test"
@@ -333,6 +334,7 @@ async def test_approval_decision_idempotency(api_key_headers):
     app.dependency_overrides[get_s3_client] = lambda: mock_s3
 
     try:
+        # Make request with API key headers
         async with AsyncClient(
             transport=ASGITransport(app=app),
             base_url="http://test"

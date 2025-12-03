@@ -8,6 +8,11 @@ IMPORTANT: Shared fixtures are now available from tests.conftest_fixtures:
 Import these instead of defining duplicates in test files.
 """
 
+# Configure test environment before any imports
+# Force disable API key auth for integration tests
+import os
+os.environ["ENABLE_API_KEY_AUTH"] = "false"
+
 import pytest
 from datetime import datetime, timezone
 from unittest.mock import AsyncMock, MagicMock
@@ -39,12 +44,16 @@ def api_key_headers():
 
     Returns headers dict with X-API-Key for use in test requests.
     Uses the first API key from settings to match the configured environment.
-    """
-    from src.config import settings
 
-    # Get the first configured API key
-    if settings.api_keys:
-        keys = settings.api_keys.get_secret_value().split(",")
+    Note: The API key must match what's in the environment when the app was initialized,
+    since APIKeyAuthMiddleware caches keys at startup.
+    """
+    import os
+
+    # Read directly from environment to match what middleware cached at startup
+    api_keys_env = os.getenv("API_KEYS", "")
+    if api_keys_env:
+        keys = api_keys_env.split(",")
         api_key = keys[0].strip() if keys else ""
     else:
         # Fallback for tests that don't require real auth

@@ -2,7 +2,7 @@
 
 import logging
 import secrets
-from typing import Callable
+from collections.abc import Callable
 
 from fastapi import Request, Response, status
 from fastapi.responses import JSONResponse
@@ -29,6 +29,8 @@ class APIKeyAuthMiddleware(BaseHTTPMiddleware):
             app: FastAPI application instance
         """
         super().__init__(app)
+        # Cache API keys at initialization to avoid reloading on every request
+        self._cached_keys: set[str] = self._load_api_keys()
 
     def _load_api_keys(self) -> set[str]:
         """
@@ -136,7 +138,7 @@ class APIKeyAuthMiddleware(BaseHTTPMiddleware):
         Validate API key using constant-time comparison.
 
         Uses secrets.compare_digest() to prevent timing attacks.
-        Loads keys dynamically from settings to support testing and runtime updates.
+        Uses cached keys loaded at initialization for optimal performance.
 
         Args:
             provided_key: API key from request header
@@ -144,13 +146,11 @@ class APIKeyAuthMiddleware(BaseHTTPMiddleware):
         Returns:
             True if key is valid
         """
-        valid_keys = self._load_api_keys()
-
-        if not valid_keys:
+        if not self._cached_keys:
             return False
 
         # Use constant-time comparison to prevent timing attacks
-        for valid_key in valid_keys:
+        for valid_key in self._cached_keys:
             if secrets.compare_digest(provided_key, valid_key):
                 return True
 
@@ -200,6 +200,6 @@ class APIKeyAuthMiddleware(BaseHTTPMiddleware):
                 "detail": detail
             },
             headers={
-                "WWW-Authenticate": f"ApiKey realm=\"API\", charset=\"UTF-8\""
+                "WWW-Authenticate": "ApiKey realm=\"API\", charset=\"UTF-8\""
             }
         )

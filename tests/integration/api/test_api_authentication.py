@@ -1,5 +1,6 @@
 """Integration tests for API authentication."""
 
+import os
 import pytest
 import base64
 from httpx import AsyncClient, ASGITransport
@@ -40,6 +41,10 @@ def create_basic_auth_header(username: str, password: str) -> str:
 
 @pytest.mark.integration
 @pytest.mark.asyncio
+@pytest.mark.skipif(
+    os.getenv("ENABLE_API_KEY_AUTH", "").lower() == "false",
+    reason="Auth tests require auth enabled"
+)
 async def test_api_key_required_for_protected_endpoint(enable_api_key_auth):
     """Test that API key is required for protected endpoints."""
     # Mock dependencies to avoid real service calls

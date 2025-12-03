@@ -92,6 +92,31 @@ class Settings(BaseSettings):
         description="Default temperature for agent LLM calls"
     )
 
+    # Deterministic Pre-Analysis Configuration (PRD-012)
+    # VeraPDF settings for PDF/UA-1 accessibility validation
+    verapdf_url: str = Field(
+        default="http://verapdf:8080",
+        description="VeraPDF REST API URL"
+    )
+    verapdf_timeout: int = Field(
+        ge=30, le=600, default=120,
+        description="VeraPDF request timeout in seconds"
+    )
+    verapdf_enabled: bool = Field(
+        default=True,
+        description="Enable VeraPDF PDF/UA-1 validation"
+    )
+
+    # PyMarkdown settings for markdown structure validation
+    pymarkdown_enabled: bool = Field(
+        default=True,
+        description="Enable PyMarkdown structure linting"
+    )
+    pymarkdown_rules: str = Field(
+        default="MD001,MD025,MD036,MD045",
+        description="Comma-separated list of PyMarkdown rules to enable"
+    )
+
     # Timeout Worker Configuration
     approval_timeout_hours: int = Field(ge=1, le=168, default=4)  # Approval deadline (hours), max 1 week
     approval_check_interval_seconds: int = Field(ge=10, le=3600, default=30)  # Check for expired approvals every 30s

@@ -55,15 +55,21 @@ help:
 
 # Development environment
 dev:
-	@if ! aws sts get-caller-identity --profile $${AWS_PROFILE:-uic} > /dev/null 2>&1; then \
-		echo "⚠️  AWS credentials not found - Bedrock AI unavailable"; \
+	@AWS_PROFILE=$${AWS_PROFILE:-uic}; \
+	if aws sts get-caller-identity --profile $$AWS_PROFILE > /dev/null 2>&1; then \
+		echo "✅ AWS credentials valid for profile $$AWS_PROFILE, exporting for Docker..."; \
+		eval "$$(aws configure export-credentials --profile $$AWS_PROFILE --format env)" && \
+		export AWS_ACCESS_KEY_ID AWS_SECRET_ACCESS_KEY AWS_SESSION_TOKEN && \
+		docker compose -f docker-compose.yml -f docker-compose.dev.yml up -d; \
+	else \
+		echo "⚠️  AWS credentials not found for profile $$AWS_PROFILE - Bedrock AI unavailable"; \
 		echo "   To enable, run:"; \
-		echo "     aws sso login --profile uic"; \
-		echo "     eval \"\$$(aws configure export-credentials --profile uic --format env)\""; \
+		echo "     aws sso login --profile $$AWS_PROFILE"; \
 		echo "     make down && make dev"; \
 		echo ""; \
+		echo "Starting without Bedrock (LocalStack S3 only)..."; \
+		docker compose -f docker-compose.yml -f docker-compose.dev.yml up -d; \
 	fi
-	docker compose -f docker-compose.yml -f docker-compose.dev.yml up -d
 
 # Production environment
 prod:

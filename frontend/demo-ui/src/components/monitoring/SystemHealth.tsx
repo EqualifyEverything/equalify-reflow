@@ -24,8 +24,8 @@ export function SystemHealth() {
 
   const services = [
     { name: 'API', status: health.status === 'healthy', key: 'api' },
-    { name: 'Redis', status: health.redis, key: 'redis' },
-    { name: 'S3', status: health.s3, key: 's3' },
+    { name: 'Redis', status: health.checks.redis, key: 'redis' },
+    { name: 'S3', status: health.checks.s3, key: 's3' },
   ]
 
   return (

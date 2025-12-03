@@ -1,4 +1,5 @@
 import { Badge } from '@/components/ui/badge'
+import { ApiKeyInput } from '@/components/dev/ApiKeyInput'
 
 export function Header() {
   return (
@@ -16,8 +17,11 @@ export function Header() {
           DEMO ONLY
         </Badge>
       </div>
-      <div className="text-sm opacity-75">
-        Developer Testing Interface
+      <div className="flex items-center gap-6">
+        <ApiKeyInput />
+        <div className="text-sm opacity-75">
+          Developer Testing Interface
+        </div>
       </div>
     </header>
   )

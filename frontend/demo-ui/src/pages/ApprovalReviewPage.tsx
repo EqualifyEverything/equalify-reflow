@@ -10,7 +10,7 @@ import { Alert, AlertDescription } from '@/components/ui/alert'
 import { Badge } from '@/components/ui/badge'
 import { api } from '@/lib/api'
 import { formatDate } from '@/lib/utils'
-import { CheckCircle2, XCircle } from 'lucide-react'
+import { CheckCircle2 } from 'lucide-react'
 
 export function ApprovalReviewPage() {
   const { token } = useParams<{ token: string }>()
@@ -95,11 +95,11 @@ export function ApprovalReviewPage() {
         <CardContent className="space-y-2">
           <div>
             <p className="text-sm font-medium text-muted-foreground">Filename</p>
-            <p className="font-mono text-sm">{reviewData.document_filename}</p>
+            <p className="font-mono text-sm">{reviewData.document_filename || 'Unknown'}</p>
           </div>
           <div>
             <p className="text-sm font-medium text-muted-foreground">Detected</p>
-            <p className="text-sm">{formatDate(reviewData.detected_at)}</p>
+            <p className="text-sm">{reviewData.detected_at ? formatDate(reviewData.detected_at) : formatDate(reviewData.created_at)}</p>
           </div>
         </CardContent>
       </Card>

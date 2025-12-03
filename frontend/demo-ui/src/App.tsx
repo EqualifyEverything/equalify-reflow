@@ -4,6 +4,7 @@ import { DashboardLayout } from '@/components/layout/DashboardLayout'
 import { Dashboard } from '@/pages/Dashboard'
 import { JobDetailPage } from '@/pages/JobDetailPage'
 import { ApprovalReviewPage } from '@/pages/ApprovalReviewPage'
+import { CorrectionReviewPage } from '@/pages/CorrectionReviewPage'
 import { MonitoringPage } from '@/pages/MonitoringPage'
 import { queryClient } from '@/lib/queryClient'
 
@@ -38,7 +39,7 @@ function App() {
             }
           />
 
-          {/* Approval review - standalone page (no sidebar) */}
+          {/* PII Approval review - standalone page (no sidebar) */}
           <Route
             path="/review/:token"
             element={
@@ -57,6 +58,16 @@ function App() {
                   <ApprovalReviewPage />
                 </div>
               </div>
+            }
+          />
+
+          {/* Correction review - with dashboard layout */}
+          <Route
+            path="/corrections/:jobId/review"
+            element={
+              <DashboardLayout>
+                <CorrectionReviewPage />
+              </DashboardLayout>
             }
           />
         </Routes>

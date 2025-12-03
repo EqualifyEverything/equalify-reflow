@@ -81,7 +81,9 @@ async def submit_document(
 ):
     """Submit a PDF document for processing."""
     job_id, s3_key = await storage.store_document(file)
-    await job_service.create_job(job_id, s3_key, status="pii_scanning")
+    await job_service.create_job(
+        job_id, s3_key, status="pii_scanning", original_filename=file.filename
+    )
     await queue.queue_pii_job(job_id, s3_key)
 
     return JobSubmissionResponse(
@@ -112,6 +114,7 @@ async def get_job(
     base = {
         "job_id": job["job_id"],
         "status": job["status"],
+        "filename": job.get("original_filename"),
         "created_at": job["created_at"],
         "updated_at": job["updated_at"],
     }

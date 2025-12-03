@@ -45,6 +45,7 @@ class JobStatusBase(BaseModel):
 
     job_id: str = Field(..., description="Unique job identifier")
     status: str = Field(..., description="Current job status")
+    filename: str | None = Field(None, description="Original filename")
     created_at: str = Field(..., description="ISO timestamp when job was created")
     updated_at: str = Field(..., description="ISO timestamp of last update")
 

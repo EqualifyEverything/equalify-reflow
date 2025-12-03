@@ -93,7 +93,8 @@ class JobService:
         self,
         job_id: str,
         s3_key: str,
-        status: str = "pii_scanning"
+        status: str = "pii_scanning",
+        original_filename: str | None = None
     ) -> None:
         """
         Create a new job in Redis with automatic TTL.
@@ -105,22 +106,27 @@ class JobService:
             job_id: Unique job identifier
             s3_key: S3 key where document is stored
             status: Initial job status (default: "pii_scanning")
+            original_filename: Original filename from upload
 
         Example:
-            >>> await job_service.create_job("job-123", "temp/file.pdf")
+            >>> await job_service.create_job("job-123", "temp/file.pdf", original_filename="doc.pdf")
             # Creates job with 7-day TTL (active job default)
         """
         created_at = datetime.now(UTC).isoformat()
 
+        mapping: dict[str, str] = {
+            "job_id": job_id,
+            "s3_key": s3_key,
+            "status": status,
+            "created_at": created_at,
+            "updated_at": created_at
+        }
+        if original_filename:
+            mapping["original_filename"] = original_filename
+
         await self.redis.hset(
             f"{self.status_prefix}{job_id}",
-            mapping={
-                "job_id": job_id,
-                "s3_key": s3_key,
-                "status": status,
-                "created_at": created_at,
-                "updated_at": created_at
-            }
+            mapping=mapping
         )
 
         # Set TTL based on initial status (prevents memory leaks)

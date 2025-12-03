@@ -14,6 +14,8 @@ from .services.job_service import JobService
 from .services.queue_service import QueueService
 from .services.rate_limit_service import RateLimitService
 from .services.storage_service import StorageService
+from .services.s3_url_service import S3URLService
+from .services.s3_cleanup_service import S3CleanupService
 
 # Singleton S3 client for connection reuse
 _s3_client = None
@@ -35,28 +37,19 @@ def _get_s3_client_singleton():
         max_pool_connections=50,
     )
 
-    # Build kwargs - only include credentials if explicitly set (for LocalStack)
-    kwargs = {
-        "service_name": "s3",
-        "region_name": settings.aws_region,
-        "config": retry_config,
-    }
+    # boto3 automatically reads AWS_ENDPOINT_URL_S3 from environment for LocalStack
+    # In production, it uses IAM role credentials automatically
 
-    # Only set endpoint_url if configured (LocalStack)
-    if settings.aws_endpoint_url:
-        kwargs["endpoint_url"] = settings.aws_endpoint_url
+    # Clear empty AWS_PROFILE to prevent boto3 profile lookup error
+    import os
+    if os.environ.get("AWS_PROFILE") == "":
+        del os.environ["AWS_PROFILE"]
 
-    # Only set credentials if explicitly configured (LocalStack)
-    # In production, boto3 uses IAM role automatically
-    if settings.aws_access_key_id and settings.aws_secret_access_key:
-        kwargs["aws_access_key_id"] = settings.aws_access_key_id
-        kwargs["aws_secret_access_key"] = settings.aws_secret_access_key
-        # When using access keys (LocalStack), ignore AWS_PROFILE from environment
-        # This prevents boto3 from trying to load a profile when we have explicit credentials
-        import os
-        os.environ.pop("AWS_PROFILE", None)
-
-    return boto3.client(**kwargs)
+    return boto3.client(
+        service_name="s3",
+        region_name=settings.aws_region,
+        config=retry_config,
+    )
 
 
 # Client dependencies with proper resource cleanup
@@ -110,6 +103,27 @@ def _get_storage_service_singleton():
     )
 
 
+# Singleton S3URLService
+@lru_cache
+def _get_s3_url_service_singleton():
+    """Create singleton S3URLService for URL generation."""
+    return S3URLService(
+        s3_client=_get_s3_client_singleton(),
+        temp_bucket=settings.s3_temp_bucket,
+        results_bucket=settings.s3_results_bucket,
+    )
+
+
+# Singleton S3CleanupService
+@lru_cache
+def _get_s3_cleanup_service_singleton():
+    """Create singleton S3CleanupService for cleanup operations."""
+    return S3CleanupService(
+        s3_client=_get_s3_client_singleton(),
+        temp_bucket=settings.s3_temp_bucket,
+    )
+
+
 # Service dependencies
 async def get_storage_service() -> StorageService:
     """Get storage service instance.
@@ -130,6 +144,38 @@ async def get_storage_service() -> StorageService:
         storage_service = StorageService(s3_client=s3_client, ...)
     """
     return _get_storage_service_singleton()
+
+
+async def get_s3_url_service() -> S3URLService:
+    """Get S3 URL service instance.
+
+    Returns:
+        Singleton S3URLService instance for URL generation
+
+    Note:
+        In FastAPI routes, use: url_service: S3URLService = Depends(get_s3_url_service)
+
+        For workers, do NOT use this function. Instead:
+        s3_client = await anext(get_s3_client())
+        url_service = S3URLService(s3_client=s3_client, ...)
+    """
+    return _get_s3_url_service_singleton()
+
+
+async def get_s3_cleanup_service() -> S3CleanupService:
+    """Get S3 cleanup service instance.
+
+    Returns:
+        Singleton S3CleanupService instance for cleanup operations
+
+    Note:
+        In FastAPI routes, use: cleanup: S3CleanupService = Depends(get_s3_cleanup_service)
+
+        For workers, do NOT use this function. Instead:
+        s3_client = await anext(get_s3_client())
+        cleanup = S3CleanupService(s3_client=s3_client, ...)
+    """
+    return _get_s3_cleanup_service_singleton()
 
 
 async def get_queue_service(

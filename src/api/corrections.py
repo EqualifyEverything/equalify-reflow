@@ -10,10 +10,14 @@ from typing import Literal
 from fastapi import APIRouter, Depends, HTTPException, Query
 from pydantic import BaseModel, Field
 
-from ..dependencies import get_correction_approval_service, get_job_service, get_storage_service
+from ..dependencies import (
+    get_correction_approval_service,
+    get_job_service,
+    get_s3_url_service,
+)
 from ..services.correction_approval_service import CorrectionApprovalService
 from ..services.job_service import JobService
-from ..services.storage_service import StorageService
+from ..services.s3_url_service import S3URLService
 
 logger = logging.getLogger(__name__)
 
@@ -176,7 +180,7 @@ async def get_correction_review(
     token: str = Query(..., description="Correction approval token"),
     correction_approval: CorrectionApprovalService = Depends(get_correction_approval_service),
     job_service: JobService = Depends(get_job_service),
-    storage: StorageService = Depends(get_storage_service)
+    url_service: S3URLService = Depends(get_s3_url_service)
 ) -> CorrectionReviewResponse:
     """Get correction results and job details for review.
 
@@ -297,16 +301,16 @@ async def get_correction_review(
 
         # Generate URLs on-demand from keys
         urls = CorrectionURLs(
-            original_markdown=await storage.generate_url(
+            original_markdown=await url_service.generate_url(
                 original_key,
-                bucket=storage.results_bucket
+                bucket=url_service.results_bucket
             ),
-            corrected_markdown=await storage.generate_url(
+            corrected_markdown=await url_service.generate_url(
                 corrected_key,
-                bucket=storage.results_bucket
+                bucket=url_service.results_bucket
             ),
             page_images=[
-                await storage.generate_url(key, bucket=storage.temp_bucket)
+                await url_service.generate_url(key, bucket=url_service.temp_bucket)
                 for key in page_image_keys
             ]
         )

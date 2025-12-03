@@ -7,7 +7,7 @@ import pytest
 from fastapi import HTTPException, status
 
 from src.main import app
-from src.dependencies import get_storage_service, get_queue_service, get_job_service
+from src.dependencies import get_storage_service, get_queue_service, get_job_service, get_s3_url_service
 
 
 @pytest.mark.asyncio
@@ -120,21 +120,26 @@ async def test_get_job_result_completed(client, api_key_headers):
         "created_at": "2025-01-01T12:00:00Z",
         "updated_at": "2025-01-01T12:05:00Z",
         "confidence_score": "0.87",
-        "processing_time_seconds": "300"
+        "processing_time_seconds": "300",
+        "correction_decision": "approved",
+        "correction_reviewed_by": "",
+        "correction_reviewed_at": "",
+        "correction_justification": ""
     })
 
-    mock_storage = MagicMock()
-    mock_storage.get_result_url = MagicMock(
-        side_effect=lambda job_id, file_type: f"http://localhost:4566/equalify-pdf-results/{job_id}.{file_type}"
+    mock_s3_url_service = MagicMock()
+    mock_s3_url_service.generate_url = AsyncMock(
+        side_effect=lambda s3_key, bucket=None: f"http://localhost:4566/{bucket}/{s3_key}"
     )
+    mock_s3_url_service.results_bucket = "equalify-pdf-results"
 
     # Override dependencies
     app.dependency_overrides[get_job_service] = lambda: mock_job
-    app.dependency_overrides[get_storage_service] = lambda: mock_storage
+    app.dependency_overrides[get_s3_url_service] = lambda: mock_s3_url_service
 
     try:
         # Get result
-        response = client.get("/api/documents/test-job-id/result", headers=api_key_headers)
+        response = client.get("/api/documents/test-job-id", headers=api_key_headers)
 
         # Assertions
         assert response.status_code == status.HTTP_200_OK
@@ -162,13 +167,13 @@ async def test_get_job_result_processing(client, api_key_headers):
     app.dependency_overrides[get_job_service] = lambda: mock_job
 
     try:
-        # Get result
-        response = client.get("/api/documents/test-job-id/result", headers=api_key_headers)
+        # Get status
+        response = client.get("/api/documents/test-job-id", headers=api_key_headers)
 
         # Assertions
         assert response.status_code == status.HTTP_200_OK
         data = response.json()
         assert data["status"] == "processing"
-        assert "estimated_completion_at" in data
+        assert "estimated_completion_minutes" in data
     finally:
         app.dependency_overrides.clear()

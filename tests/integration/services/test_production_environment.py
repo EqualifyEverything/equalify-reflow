@@ -10,6 +10,7 @@ from unittest.mock import MagicMock, AsyncMock, patch
 from botocore.exceptions import ClientError
 
 from src.services.storage_service import StorageService
+from src.services.s3_url_service import S3URLService
 from src.services.cleanup_service import CleanupService
 from src.config import settings
 
@@ -23,6 +24,15 @@ class TestStorageUrlGenerationProduction:
         return MagicMock()
 
     @pytest.fixture
+    def s3_url_service(self, mock_s3_client):
+        """Create S3 URL service with mock client."""
+        return S3URLService(
+            s3_client=mock_s3_client,
+            temp_bucket="equalify-temp",
+            results_bucket="equalify-results"
+        )
+
+    @pytest.fixture
     def storage_service(self, mock_s3_client):
         """Create storage service with mock client."""
         return StorageService(
@@ -31,53 +41,53 @@ class TestStorageUrlGenerationProduction:
             results_bucket="equalify-results"
         )
 
-    def test_get_result_url_production_us_east_1(self, storage_service):
+    def test_get_result_url_production_us_east_1(self, s3_url_service):
         """Test result URL generation for production in us-east-1."""
-        with patch('src.services.storage_service.settings') as mock_settings:
-            mock_settings.aws_endpoint_url = None  # Production
+        with patch('src.services.s3_url_service.settings') as mock_settings:
+            mock_settings.s3_public_url = None  # Production
             mock_settings.aws_region = "us-east-1"
 
-            url = storage_service.get_result_url("job123", "html")
+            url = s3_url_service.get_result_url("job123", "html")
 
             assert url == "https://equalify-results.s3.us-east-1.amazonaws.com/job123.html"
             assert "None" not in url  # Bug would produce: None/equalify-results/job123.html
             assert url.startswith("https://")
 
-    def test_get_result_url_production_eu_west_1(self, storage_service):
+    def test_get_result_url_production_eu_west_1(self, s3_url_service):
         """Test result URL generation for production in eu-west-1."""
-        with patch('src.services.storage_service.settings') as mock_settings:
-            mock_settings.aws_endpoint_url = None  # Production
+        with patch('src.services.s3_url_service.settings') as mock_settings:
+            mock_settings.s3_public_url = None  # Production
             mock_settings.aws_region = "eu-west-1"
 
-            url = storage_service.get_result_url("job456", "mdx")
+            url = s3_url_service.get_result_url("job456", "mdx")
 
             assert url == "https://equalify-results.s3.eu-west-1.amazonaws.com/job456.mdx"
             assert "eu-west-1" in url
 
-    def test_get_result_url_production_default_region(self, storage_service):
+    def test_get_result_url_production_default_region(self, s3_url_service):
         """Test result URL falls back to us-east-1 when region not set."""
-        with patch('src.services.storage_service.settings') as mock_settings:
-            mock_settings.aws_endpoint_url = None  # Production
+        with patch('src.services.s3_url_service.settings') as mock_settings:
+            mock_settings.s3_public_url = None  # Production
             mock_settings.aws_region = None  # No region specified
 
-            url = storage_service.get_result_url("job789", "html")
+            url = s3_url_service.get_result_url("job789", "html")
 
             assert url == "https://equalify-results.s3.us-east-1.amazonaws.com/job789.html"
             assert "us-east-1" in url  # Should default to us-east-1
 
-    def test_get_result_url_localstack_development(self, storage_service):
+    def test_get_result_url_localstack_development(self, s3_url_service):
         """Test result URL generation for LocalStack (development)."""
-        with patch('src.services.storage_service.settings') as mock_settings:
-            mock_settings.aws_endpoint_url = "http://localstack:4566"  # LocalStack
+        with patch('src.services.s3_url_service.settings') as mock_settings:
+            mock_settings.s3_public_url = "http://localstack:4566"  # LocalStack
             mock_settings.aws_region = "us-east-1"
 
-            url = storage_service.get_result_url("job-dev", "html")
+            url = s3_url_service.get_result_url("job-dev", "html")
 
             assert url == "http://localstack:4566/equalify-results/job-dev.html"
             assert "localstack" in url
             assert not url.startswith("https://")
 
-    def test_get_result_url_various_regions(self, storage_service):
+    def test_get_result_url_various_regions(self, s3_url_service):
         """Test URL generation across different AWS regions."""
         regions = [
             "us-east-1",
@@ -88,12 +98,12 @@ class TestStorageUrlGenerationProduction:
             "ap-northeast-1",
         ]
 
-        with patch('src.services.storage_service.settings') as mock_settings:
-            mock_settings.aws_endpoint_url = None  # Production
+        with patch('src.services.s3_url_service.settings') as mock_settings:
+            mock_settings.s3_public_url = None  # Production
 
             for region in regions:
                 mock_settings.aws_region = region
-                url = storage_service.get_result_url("test-job", "html")
+                url = s3_url_service.get_result_url("test-job", "html")
 
                 expected_url = f"https://equalify-results.s3.{region}.amazonaws.com/test-job.html"
                 assert url == expected_url
@@ -136,13 +146,13 @@ class TestStorageUrlGenerationProduction:
             # Phase 3: upload_result now returns S3 key instead of URL
             assert key == "dev-job.mdx"
 
-    def test_url_format_virtual_hosted_style(self, storage_service):
+    def test_url_format_virtual_hosted_style(self, s3_url_service):
         """Test production URLs use virtual-hosted-style (bucket.s3.region.amazonaws.com)."""
-        with patch('src.services.storage_service.settings') as mock_settings:
-            mock_settings.aws_endpoint_url = None  # Production
+        with patch('src.services.s3_url_service.settings') as mock_settings:
+            mock_settings.s3_public_url = None  # Production
             mock_settings.aws_region = "us-east-1"
 
-            url = storage_service.get_result_url("test", "html")
+            url = s3_url_service.get_result_url("test", "html")
 
             # Virtual-hosted-style: https://bucket.s3.region.amazonaws.com/key
             # NOT path-style: https://s3.region.amazonaws.com/bucket/key
@@ -283,23 +293,23 @@ class TestProductionConfigurationScenarios:
 
     @pytest.mark.asyncio
     async def test_storage_service_works_in_both_environments(self):
-        """Test storage service URL generation works in dev and prod."""
+        """Test S3 URL service URL generation works in dev and prod."""
         mock_s3 = MagicMock()
-        storage = StorageService(mock_s3, "temp-bucket", "results-bucket")
+        s3_url_service = S3URLService(mock_s3, "temp-bucket", "results-bucket")
 
         # Test production
-        with patch('src.services.storage_service.settings') as mock_settings:
-            mock_settings.aws_endpoint_url = None
+        with patch('src.services.s3_url_service.settings') as mock_settings:
+            mock_settings.s3_public_url = None
             mock_settings.aws_region = "us-east-1"
-            prod_url = storage.get_result_url("test", "html")
+            prod_url = s3_url_service.get_result_url("test", "html")
             assert prod_url.startswith("https://")
             assert "s3.us-east-1.amazonaws.com" in prod_url
 
         # Test development
-        with patch('src.services.storage_service.settings') as mock_settings:
-            mock_settings.aws_endpoint_url = "http://localstack:4566"
+        with patch('src.services.s3_url_service.settings') as mock_settings:
+            mock_settings.s3_public_url = "http://localstack:4566"
             mock_settings.aws_region = "us-east-1"
-            dev_url = storage.get_result_url("test", "html")
+            dev_url = s3_url_service.get_result_url("test", "html")
             assert dev_url.startswith("http://localstack")
 
 
@@ -307,43 +317,43 @@ class TestS3UrlFormats:
     """Tests for different S3 URL format styles."""
 
     @pytest.fixture
-    def storage_service(self):
-        """Create storage service."""
-        return StorageService(
+    def s3_url_service(self):
+        """Create S3 URL service."""
+        return S3URLService(
             s3_client=MagicMock(),
             temp_bucket="test-temp",
             results_bucket="test-results"
         )
 
-    def test_virtual_hosted_style_url_format(self, storage_service):
+    def test_virtual_hosted_style_url_format(self, s3_url_service):
         """Test virtual-hosted-style URL format (recommended by AWS)."""
-        with patch('src.services.storage_service.settings') as mock_settings:
-            mock_settings.aws_endpoint_url = None
+        with patch('src.services.s3_url_service.settings') as mock_settings:
+            mock_settings.s3_public_url = None
             mock_settings.aws_region = "us-west-2"
 
-            url = storage_service.get_result_url("doc123", "html")
+            url = s3_url_service.get_result_url("doc123", "html")
 
             # Virtual-hosted-style: https://<bucket>.s3.<region>.amazonaws.com/<key>
             assert url == "https://test-results.s3.us-west-2.amazonaws.com/doc123.html"
             assert url.count('/') == 3  # https://bucket.s3.region.amazonaws.com/key
 
-    def test_path_style_url_for_localstack(self, storage_service):
+    def test_path_style_url_for_localstack(self, s3_url_service):
         """Test path-style URL format for LocalStack."""
-        with patch('src.services.storage_service.settings') as mock_settings:
-            mock_settings.aws_endpoint_url = "http://localstack:4566"
+        with patch('src.services.s3_url_service.settings') as mock_settings:
+            mock_settings.s3_public_url = "http://localstack:4566"
 
-            url = storage_service.get_result_url("doc456", "mdx")
+            url = s3_url_service.get_result_url("doc456", "mdx")
 
             # Path-style: http://<endpoint>/<bucket>/<key>
             assert url == "http://localstack:4566/test-results/doc456.mdx"
 
-    def test_url_accessibility(self, storage_service):
+    def test_url_accessibility(self, s3_url_service):
         """Test that generated URLs are well-formed and accessible."""
-        with patch('src.services.storage_service.settings') as mock_settings:
-            mock_settings.aws_endpoint_url = None
+        with patch('src.services.s3_url_service.settings') as mock_settings:
+            mock_settings.s3_public_url = None
             mock_settings.aws_region = "us-east-1"
 
-            url = storage_service.get_result_url("accessibility-test", "html")
+            url = s3_url_service.get_result_url("accessibility-test", "html")
 
             # URL should be valid HTTP(S) URL
             assert url.startswith("https://")

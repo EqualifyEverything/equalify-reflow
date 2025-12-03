@@ -32,13 +32,15 @@ def timeout_worker(mocker):
     queue_service = mocker.AsyncMock()
     job_service = mocker.AsyncMock()
     metrics_service = mocker.AsyncMock()
+    s3_cleanup_service = mocker.AsyncMock()
 
     # Create worker
     worker = TimeoutWorker(
         storage_service=storage_service,
         queue_service=queue_service,
         job_service=job_service,
-        metrics_service=metrics_service
+        metrics_service=metrics_service,
+        s3_cleanup_service=s3_cleanup_service,
     )
 
     yield worker

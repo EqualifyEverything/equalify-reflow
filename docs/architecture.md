@@ -471,8 +471,8 @@ LOCK_PREFIX = "eq-pdf:lock:"
 - Separate circuits for S3 upload/download/delete
 
 **`utils/retry_helpers.py`** - Exponential backoff retry
-- `retry_with_backoff_sync()` - Synchronous retry with exponential backoff
-- `retry_with_backoff_async()` - Async version
+- `retry_with_backoff_for_sync_func()` - Async wrapper for synchronous functions with exponential backoff
+- `retry_with_backoff()` - Async version for async functions
 - Categorize errors as retriable vs non-retriable
 - Max attempts: 3, base delay: 1s, max delay: 8s
 

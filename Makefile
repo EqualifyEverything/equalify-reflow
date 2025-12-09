@@ -1,4 +1,4 @@
-.PHONY: help dev prod up down logs health test test-fast test-unit test-integration test-concurrent test-e2e test-large-files test-slow test-all clean build build-demo-ui shell test-docker logs-api grafana-url prometheus-url metrics-url coverage coverage-html coverage-report aws-health aws-logs aws-status aws-deploy aws-shell localstack-debug
+.PHONY: help dev prod up down logs health test test-fast test-unit test-integration test-concurrent test-e2e test-large-files test-slow test-all clean build build-demo-ui build-demo-ui-silent shell test-docker logs-api grafana-url prometheus-url metrics-url coverage coverage-html coverage-report aws-health aws-logs aws-status aws-deploy aws-shell localstack-debug
 
 # Default target
 help:
@@ -55,7 +55,7 @@ help:
 	@echo ""
 
 # Development environment
-dev:
+dev: build-demo-ui-silent
 	@AWS_PROFILE=$${AWS_PROFILE:-uic}; \
 	if aws sts get-caller-identity --profile $$AWS_PROFILE > /dev/null 2>&1; then \
 		echo "✅ AWS credentials valid for profile $$AWS_PROFILE, exporting for Docker..."; \
@@ -71,6 +71,10 @@ dev:
 		echo "Starting without Bedrock (LocalStack S3 only)..."; \
 		docker compose -f docker-compose.yml -f docker-compose.dev.yml up -d; \
 	fi
+
+# Build demo UI silently (used by dev target)
+build-demo-ui-silent:
+	@cd frontend/demo-ui && pnpm install --silent && pnpm run build --silent 2>/dev/null || pnpm run build
 
 # Production environment
 prod:

@@ -101,7 +101,6 @@ def sample_page_data():
     """Sample PageData for testing AI processing."""
     return PageData(
         page_num=1,
-        markdown="# Test Document\n\nSample content",
         image_base64="iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJAAAADUlEQVR42mNk+M9QDwADhgGAWjR9awAAAABJRU5ErkJggg==",
     )
 
@@ -112,7 +111,6 @@ def sample_pdf_conversion_result(sample_page_data):
     return PDFConversionResult(
         pages=[sample_page_data],
         total_pages=1,
-        full_markdown="# Test Document\n\nSample content",
         has_page_images=True,
         extracted_images=[],
     )

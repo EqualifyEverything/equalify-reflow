@@ -1,6 +1,6 @@
 """Unit tests for PDFConverter.
 
-Tests Docling PDF-to-markdown conversion with page image generation.
+Tests Docling PDF-to-image conversion for direct AI extraction.
 All Docling dependencies are mocked for fast, isolated unit tests.
 """
 
@@ -39,7 +39,6 @@ def mock_page_with_image(mock_pil_image):
 def mock_docling_document():
     """Mock Docling document with pages."""
     doc = MagicMock()
-    doc.export_to_markdown = MagicMock(return_value="# Full Document\n\nContent")
     doc.pages = {}
     doc.iterate_items = MagicMock(return_value=[])
     return doc
@@ -105,7 +104,6 @@ async def test_convert_with_page_images_success(sample_pdf, mock_pil_image):
 
     # Mock Docling converter
     mock_doc = MagicMock()
-    mock_doc.export_to_markdown = MagicMock(return_value="# Test Document\n\nPage content")
     mock_doc.pages = {}
     mock_doc.iterate_items = MagicMock(return_value=[])
 
@@ -119,20 +117,16 @@ async def test_convert_with_page_images_success(sample_pdf, mock_pil_image):
     mock_result.document = mock_doc
 
     with patch.object(converter.converter, "convert", return_value=mock_result):
-        with patch.object(converter, "_extract_page_markdown", return_value="Page 1 content"):
-            with patch.object(converter, "_image_to_base64", return_value="base64_image_data"):
-                result = await converter.convert_with_page_images(sample_pdf)
+        with patch.object(converter, "_image_to_base64", return_value="base64_image_data"):
+            result = await converter.convert_with_page_images(sample_pdf)
 
-                # Verify result structure
-                assert isinstance(result, PDFConversionResult)
-                assert result.total_pages == 1
-                assert result.has_page_images is True
-                # mdformat adds trailing newline (MD047)
-                assert result.full_markdown == "# Test Document\n\nPage content\n"
-                assert len(result.pages) == 1
-                assert result.pages[0].page_num == 1
-                assert result.pages[0].markdown == "Page 1 content\n"
-                assert result.pages[0].image_base64 == "base64_image_data"
+            # Verify result structure
+            assert isinstance(result, PDFConversionResult)
+            assert result.total_pages == 1
+            assert result.has_page_images is True
+            assert len(result.pages) == 1
+            assert result.pages[0].page_num == 1
+            assert result.pages[0].image_base64 == "base64_image_data"
 
 
 @pytest.mark.asyncio
@@ -142,7 +136,6 @@ async def test_convert_with_page_images_multiple_pages(sample_pdf, mock_pil_imag
 
     # Mock document with 3 pages
     mock_doc = MagicMock()
-    mock_doc.export_to_markdown = MagicMock(return_value="# Full Document")
     mock_doc.iterate_items = MagicMock(return_value=[])
 
     # Create 3 pages with images
@@ -157,30 +150,24 @@ async def test_convert_with_page_images_multiple_pages(sample_pdf, mock_pil_imag
     mock_result.document = mock_doc
 
     with patch.object(converter.converter, "convert", return_value=mock_result):
-        with patch.object(converter, "_extract_page_markdown", side_effect=["Page 1", "Page 2", "Page 3"]):
-            with patch.object(converter, "_image_to_base64", return_value="img"):
-                result = await converter.convert_with_page_images(sample_pdf)
+        with patch.object(converter, "_image_to_base64", return_value="img"):
+            result = await converter.convert_with_page_images(sample_pdf)
 
-                # Should have 3 pages
-                assert result.total_pages == 3
-                assert len(result.pages) == 3
-                assert result.pages[0].page_num == 1
-                assert result.pages[1].page_num == 2
-                assert result.pages[2].page_num == 3
-                assert result.has_page_images is True
+            # Should have 3 pages
+            assert result.total_pages == 3
+            assert len(result.pages) == 3
+            assert result.pages[0].page_num == 1
+            assert result.pages[1].page_num == 2
+            assert result.pages[2].page_num == 3
+            assert result.has_page_images is True
 
 
 @pytest.mark.asyncio
-async def test_convert_with_page_images_full_markdown_extraction(sample_pdf, mock_pil_image):
-    """Test full markdown is extracted from document."""
+async def test_convert_with_page_images_no_markdown_extraction(sample_pdf, mock_pil_image):
+    """Test that PDF converter only extracts images, not markdown."""
     converter = PDFConverter()
 
-    raw_markdown = "# Title\n\n## Section 1\n\nContent here"
-    # mdformat adds trailing newline (MD047)
-    expected_markdown = raw_markdown + "\n"
-
     mock_doc = MagicMock()
-    mock_doc.export_to_markdown = MagicMock(return_value=raw_markdown)
     mock_doc.iterate_items = MagicMock(return_value=[])
     mock_doc.pages = {
         1: MagicMock(image=MagicMock(pil_image=mock_pil_image))
@@ -190,12 +177,13 @@ async def test_convert_with_page_images_full_markdown_extraction(sample_pdf, moc
     mock_result.document = mock_doc
 
     with patch.object(converter.converter, "convert", return_value=mock_result):
-        with patch.object(converter, "_extract_page_markdown", return_value="Page content"):
-            with patch.object(converter, "_image_to_base64", return_value="img"):
-                result = await converter.convert_with_page_images(sample_pdf)
+        with patch.object(converter, "_image_to_base64", return_value="img"):
+            result = await converter.convert_with_page_images(sample_pdf)
 
-                # Full markdown should match
-                assert result.full_markdown == expected_markdown
+            # PageData should not have markdown attribute
+            assert not hasattr(result.pages[0], 'markdown')
+            # PDFConversionResult should not have full_markdown
+            assert not hasattr(result, 'full_markdown')
 
 
 @pytest.mark.asyncio
@@ -204,7 +192,6 @@ async def test_convert_with_page_images_has_page_images_flag(sample_pdf, mock_pi
     converter = PDFConverter()
 
     mock_doc = MagicMock()
-    mock_doc.export_to_markdown = MagicMock(return_value="# Doc")
     mock_doc.iterate_items = MagicMock(return_value=[])
     mock_doc.pages = {
         1: MagicMock(image=MagicMock(pil_image=mock_pil_image))
@@ -214,12 +201,11 @@ async def test_convert_with_page_images_has_page_images_flag(sample_pdf, mock_pi
     mock_result.document = mock_doc
 
     with patch.object(converter.converter, "convert", return_value=mock_result):
-        with patch.object(converter, "_extract_page_markdown", return_value="Page"):
-            with patch.object(converter, "_image_to_base64", return_value="img"):
-                result = await converter.convert_with_page_images(sample_pdf)
+        with patch.object(converter, "_image_to_base64", return_value="img"):
+            result = await converter.convert_with_page_images(sample_pdf)
 
-                # Flag should be True when images present
-                assert result.has_page_images is True
+            # Flag should be True when images present
+            assert result.has_page_images is True
 
 
 @pytest.mark.asyncio
@@ -237,7 +223,6 @@ async def test_convert_with_page_images_base64_encoding_format(sample_pdf):
     mock_pil_image.save = mock_save
 
     mock_doc = MagicMock()
-    mock_doc.export_to_markdown = MagicMock(return_value="# Doc")
     mock_doc.iterate_items = MagicMock(return_value=[])
     mock_doc.pages = {
         1: MagicMock(image=MagicMock(pil_image=mock_pil_image))
@@ -247,18 +232,17 @@ async def test_convert_with_page_images_base64_encoding_format(sample_pdf):
     mock_result.document = mock_doc
 
     with patch.object(converter.converter, "convert", return_value=mock_result):
-        with patch.object(converter, "_extract_page_markdown", return_value="Page"):
-            result = await converter.convert_with_page_images(sample_pdf)
+        result = await converter.convert_with_page_images(sample_pdf)
 
-            # Base64 encoding should be valid
-            assert result.pages[0].image_base64 != ""
-            # Should be decodable
-            decoded = base64.b64decode(result.pages[0].image_base64)
-            assert decoded == b"fake_png_data"
+        # Base64 encoding should be valid
+        assert result.pages[0].image_base64 != ""
+        # Should be decodable
+        decoded = base64.b64decode(result.pages[0].image_base64)
+        assert decoded == b"fake_png_data"
 
 
 # ============================================================================
-# Page Extraction Tests (3 tests)
+# Page Extraction Tests (2 tests)
 # ============================================================================
 
 
@@ -268,7 +252,6 @@ async def test_convert_extracts_single_page_correctly(sample_pdf, mock_pil_image
     converter = PDFConverter()
 
     mock_doc = MagicMock()
-    mock_doc.export_to_markdown = MagicMock(return_value="# Full")
     mock_doc.iterate_items = MagicMock(return_value=[])
     mock_doc.pages = {1: MagicMock(image=MagicMock(pil_image=mock_pil_image))}
 
@@ -276,43 +259,13 @@ async def test_convert_extracts_single_page_correctly(sample_pdf, mock_pil_image
     mock_result.document = mock_doc
 
     with patch.object(converter.converter, "convert", return_value=mock_result):
-        with patch.object(converter, "_extract_page_markdown", return_value="Single page content") as mock_extract:
-            with patch.object(converter, "_image_to_base64", return_value="img"):
-                result = await converter.convert_with_page_images(sample_pdf)
+        with patch.object(converter, "_image_to_base64", return_value="img"):
+            result = await converter.convert_with_page_images(sample_pdf)
 
-                # Should extract page 1 (page_no=1 → page_index=0)
-                mock_extract.assert_called_once_with(mock_doc, 0)
-                # mdformat adds trailing newline (MD047)
-                assert result.pages[0].markdown == "Single page content\n"
-
-
-@pytest.mark.asyncio
-async def test_convert_extracts_multi_page_correctly(sample_pdf, mock_pil_image):
-    """Test multi-page extraction."""
-    converter = PDFConverter()
-
-    mock_doc = MagicMock()
-    mock_doc.export_to_markdown = MagicMock(return_value="# Full")
-    mock_doc.iterate_items = MagicMock(return_value=[])
-    mock_doc.pages = {
-        1: MagicMock(image=MagicMock(pil_image=mock_pil_image)),
-        2: MagicMock(image=MagicMock(pil_image=mock_pil_image)),
-        3: MagicMock(image=MagicMock(pil_image=mock_pil_image)),
-    }
-
-    mock_result = MagicMock()
-    mock_result.document = mock_doc
-
-    with patch.object(converter.converter, "convert", return_value=mock_result):
-        with patch.object(converter, "_extract_page_markdown", side_effect=["P1", "P2", "P3"]) as mock_extract:
-            with patch.object(converter, "_image_to_base64", return_value="img"):
-                await converter.convert_with_page_images(sample_pdf)
-
-                # Should extract pages 1, 2, 3 (1-indexed → 0-indexed)
-                assert mock_extract.call_count == 3
-                assert mock_extract.call_args_list[0][0] == (mock_doc, 0)  # page 1 → index 0
-                assert mock_extract.call_args_list[1][0] == (mock_doc, 1)  # page 2 → index 1
-                assert mock_extract.call_args_list[2][0] == (mock_doc, 2)  # page 3 → index 2
+            # Should have one page with correct data
+            assert len(result.pages) == 1
+            assert result.pages[0].page_num == 1
+            assert result.pages[0].image_base64 == "img"
 
 
 @pytest.mark.asyncio
@@ -321,7 +274,6 @@ async def test_convert_page_numbering_one_indexed(sample_pdf, mock_pil_image):
     converter = PDFConverter()
 
     mock_doc = MagicMock()
-    mock_doc.export_to_markdown = MagicMock(return_value="# Full")
     mock_doc.iterate_items = MagicMock(return_value=[])
     mock_doc.pages = {
         1: MagicMock(image=MagicMock(pil_image=mock_pil_image)),
@@ -332,13 +284,12 @@ async def test_convert_page_numbering_one_indexed(sample_pdf, mock_pil_image):
     mock_result.document = mock_doc
 
     with patch.object(converter.converter, "convert", return_value=mock_result):
-        with patch.object(converter, "_extract_page_markdown", return_value="Content"):
-            with patch.object(converter, "_image_to_base64", return_value="img"):
-                result = await converter.convert_with_page_images(sample_pdf)
+        with patch.object(converter, "_image_to_base64", return_value="img"):
+            result = await converter.convert_with_page_images(sample_pdf)
 
-                # Page numbers should be 1-indexed (not 0-indexed)
-                assert result.pages[0].page_num == 1
-                assert result.pages[1].page_num == 2
+            # Page numbers should be 1-indexed (not 0-indexed)
+            assert result.pages[0].page_num == 1
+            assert result.pages[1].page_num == 2
 
 
 # ============================================================================
@@ -376,7 +327,6 @@ async def test_convert_no_page_images_raises_runtime_error(sample_pdf):
 
     # Mock document with page but NO image
     mock_doc = MagicMock()
-    mock_doc.export_to_markdown = MagicMock(return_value="# Doc")
     mock_doc.iterate_items = MagicMock(return_value=[])
 
     # Page without image
@@ -388,10 +338,9 @@ async def test_convert_no_page_images_raises_runtime_error(sample_pdf):
     mock_result.document = mock_doc
 
     with patch.object(converter.converter, "convert", return_value=mock_result):
-        with patch.object(converter, "_extract_page_markdown", return_value="Page"):
-            # RuntimeError is caught and wrapped in ValueError
-            with pytest.raises(ValueError, match="failed to generate page images"):
-                await converter.convert_with_page_images(sample_pdf)
+        # RuntimeError is caught and wrapped in ValueError
+        with pytest.raises(ValueError, match="failed to generate page images"):
+            await converter.convert_with_page_images(sample_pdf)
 
 
 @pytest.mark.asyncio
@@ -420,7 +369,6 @@ async def test_convert_handles_missing_pil_image_attribute(sample_pdf):
 
     # Mock document with page.image but NO pil_image attribute
     mock_doc = MagicMock()
-    mock_doc.export_to_markdown = MagicMock(return_value="# Doc")
     mock_doc.iterate_items = MagicMock(return_value=[])
 
     # Page with image object but no pil_image attribute
@@ -435,7 +383,6 @@ async def test_convert_handles_missing_pil_image_attribute(sample_pdf):
     mock_result.document = mock_doc
 
     with patch.object(converter.converter, "convert", return_value=mock_result):
-        with patch.object(converter, "_extract_page_markdown", return_value="Page"):
-            # RuntimeError is caught and wrapped in ValueError
-            with pytest.raises(ValueError, match="failed to generate page images"):
-                await converter.convert_with_page_images(sample_pdf)
+        # RuntimeError is caught and wrapped in ValueError
+        with pytest.raises(ValueError, match="failed to generate page images"):
+            await converter.convert_with_page_images(sample_pdf)

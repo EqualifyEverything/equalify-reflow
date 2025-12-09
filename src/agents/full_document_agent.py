@@ -25,9 +25,6 @@ from src.shared.models.processing import LLMUsage
 
 logger = logging.getLogger(__name__)
 
-# Maximum pages before requiring chunked processing
-MAX_PAGES_FULL_CONTEXT = 15
-
 
 # =============================================================================
 # Output Models
@@ -228,14 +225,15 @@ class FullDocumentAgent:
             Tuple of (markdown_content, heading_tree, total_usage)
 
         Raises:
-            ValueError: If document exceeds MAX_PAGES_FULL_CONTEXT
+            ValueError: If document exceeds max_pages_full_context setting
         """
         total_pages = len(pages)
+        max_pages = settings.max_pages_full_context
 
-        if total_pages > MAX_PAGES_FULL_CONTEXT:
+        if total_pages > max_pages:
             raise ValueError(
                 f"Document has {total_pages} pages, exceeding the maximum of "
-                f"{MAX_PAGES_FULL_CONTEXT} pages. Chunked processing not yet implemented."
+                f"{max_pages} pages. Chunked processing not yet implemented."
             )
 
         if total_pages == 0:

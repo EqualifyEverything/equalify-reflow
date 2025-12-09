@@ -66,15 +66,17 @@ class Settings(BaseSettings):
 
     # Bedrock Configuration
     bedrock_region: str = "us-east-1"
-    bedrock_model_id: str = "anthropic.claude-3-haiku-20240307-v1:0"
+    bedrock_model_id: str = "us.anthropic.claude-haiku-4-5-20251001-v1:0"
 
     # Claude Model Settings
     claude_max_tokens: int = Field(ge=1, le=100000, default=4096)
     claude_temperature: float = Field(ge=0.0, le=2.0, default=0.2)
 
     # AI Processing Configuration
-    max_concurrent_pages: int = Field(ge=1, le=50, default=5)  # Process up to 5 pages concurrently
-    page_retry_attempts: int = Field(ge=0, le=10, default=3)  # Retry failed pages up to 3 times
+    max_pages_full_context: int = Field(
+        ge=1, le=50, default=15,
+        description="Maximum pages for full-document extraction before chunking is needed"
+    )
     confidence_threshold_high: float = Field(ge=0.0, le=1.0, default=0.85)
     confidence_threshold_medium: float = Field(ge=0.0, le=1.0, default=0.60)
 

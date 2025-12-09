@@ -4,10 +4,11 @@ This module provides the multi-agent framework (PRD-011) including:
 - BaseDocumentAgent: Abstract base class for all specialist agents
 - AgentConfig: Configuration dataclass for agent initialization
 - Agent registry functions for dynamic agent discovery
-- Existing TextCorrectionAgent for backward compatibility
+- FullDocumentAgent: Two-phase document extraction agent
 """
 
 from .base_agent import AgentConfig, BaseDocumentAgent
+from .full_document_agent import FullDocumentAgent
 from .registry import (
     clear_registry,
     get_agent,
@@ -19,7 +20,6 @@ from .registry import (
     register_instance,
     unregister_agent,
 )
-from .text_correction_agent import TextCorrectionAgent, get_text_correction_agent
 
 __all__ = [
     # Base agent framework (PRD-011)
@@ -35,7 +35,6 @@ __all__ = [
     "get_registered_agent_names",
     "is_agent_registered",
     "clear_registry",
-    # Existing agents (backward compatibility)
-    "TextCorrectionAgent",
-    "get_text_correction_agent",
+    # Full document extraction agent
+    "FullDocumentAgent",
 ]

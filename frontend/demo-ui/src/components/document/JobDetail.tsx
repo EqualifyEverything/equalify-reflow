@@ -116,9 +116,9 @@ export function JobDetail({ jobId }: JobDetailProps) {
             <div className="bg-slate-50 rounded-lg p-3">
               <p className="text-sm font-medium text-slate-700 mb-1">Est. LLM Cost</p>
               <p className="text-lg font-bold text-uic-navy">
-                ${job.llm_cost.total_estimated_cost_dollars.toFixed(4)}
+                ${(job.llm_cost.estimated_cost_dollars ?? 0).toFixed(4)}
                 <span className="text-sm font-normal text-muted-foreground ml-2">
-                  ({job.llm_cost.total_estimated_cost_cents.toFixed(2)}¢)
+                  ({(job.llm_cost.estimated_cost_cents ?? 0).toFixed(2)}¢)
                 </span>
               </p>
             </div>

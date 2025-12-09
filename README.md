@@ -1,6 +1,6 @@
 # Equalify PDF Converter
 
-[![Test Suite](https://github.com/EqualifyEverything/equalify-pdf-converter/actions/workflows/test.yml/badge.svg)](https://github.com/EqualifyEverything/equalify-pdf-converter/actions/workflows/test.yml)
+[![CI](https://github.com/EqualifyEverything/equalify-pdf-converter/actions/workflows/ci.yml/badge.svg)](https://github.com/EqualifyEverything/equalify-pdf-converter/actions/workflows/ci.yml)
 
 > ⚠️ **ACTIVE DEVELOPMENT** - Core infrastructure is complete. AI document remediation features are being implemented.
 
@@ -115,7 +115,7 @@ make test-integration  # Integration tests (<2min with parallelization) - Run be
 make test-e2e          # E2E tests (<5min with parallelization) - Run before merge
 ```
 
-**Current Coverage:** 83.70% (536/536 tests passing ✅)
+**Current Coverage:** 83.70% (984 tests passing ✅)
 
 **Performance:** Full test suite runs in **~30 seconds** with parallelization (`pytest-xdist`)
 

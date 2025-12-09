@@ -156,3 +156,4 @@ site/
 # Local Files
 project-docs/local/
 project-docs/UIC Documents/
+.mypy_cache/

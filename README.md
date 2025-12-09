@@ -93,7 +93,7 @@ See `make help` for all available commands.
 
 ## Demo UI
 
-A developer testing interface is available at <http://localhost:5173> when running `make dev`.
+A developer testing interface is available at <http://localhost:8080/demo> when running `make dev`.
 
 **Features:**
 
@@ -104,7 +104,7 @@ A developer testing interface is available at <http://localhost:5173> when runni
 - Queue monitoring and system health dashboard
 - Raw API response viewer for debugging
 
-**API Key:** Enter the API key from `.env` (`uic-2bd2c716-bc67-4032-ba66-e4f35c441759`) in the settings panel.
+**Rebuilding:** After frontend changes, run `make build-demo-ui` then `make down && make dev`.
 
 ## Running Tests
 

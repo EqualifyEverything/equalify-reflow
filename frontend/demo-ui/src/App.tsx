@@ -8,10 +8,13 @@ import { CorrectionReviewPage } from '@/pages/CorrectionReviewPage'
 import { MonitoringPage } from '@/pages/MonitoringPage'
 import { queryClient } from '@/lib/queryClient'
 
+// Base path for routing - must match Vite's base config
+const basename = import.meta.env.BASE_URL.replace(/\/$/, '') || '/'
+
 function App() {
   return (
     <QueryClientProvider client={queryClient}>
-      <BrowserRouter>
+      <BrowserRouter basename={basename}>
         <Routes>
           {/* Routes with dashboard layout */}
           <Route

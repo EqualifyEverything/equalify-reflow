@@ -1,5 +1,6 @@
 """API Key authentication middleware for FastAPI."""
 
+import base64
 import logging
 import secrets
 from collections.abc import Callable
@@ -107,7 +108,9 @@ class APIKeyAuthMiddleware(BaseHTTPMiddleware):
         Public endpoints:
         - /health, /metrics (monitoring)
         - /docs, /openapi.json, /redoc (documentation - has separate HTTP Basic auth)
+        - /demo/* (demo UI - has separate HTTP Basic auth)
         - /api/dev/monitoring/* (development monitoring, only in dev mode)
+        - Any request with valid HTTP Basic auth (from demo UI)
 
         Args:
             request: Incoming request
@@ -118,7 +121,7 @@ class APIKeyAuthMiddleware(BaseHTTPMiddleware):
         path = request.url.path
 
         # Health and metrics endpoints (always public)
-        public_paths = ["/health", "/health/ready", "/metrics"]
+        public_paths = ["/health", "/health/ready", "/metrics", "/"]
         if path in public_paths:
             return True
 
@@ -127,11 +130,60 @@ class APIKeyAuthMiddleware(BaseHTTPMiddleware):
         if path in docs_paths:
             return True
 
+        # Demo UI static files (have separate HTTP Basic auth)
+        if path == "/demo" or path.startswith("/demo/"):
+            return True
+
         # Development monitoring endpoints (public only in dev environment)
         if settings.environment == "dev" and path.startswith("/api/dev/monitoring"):
             return True
 
+        # Allow API requests with valid HTTP Basic auth (from demo UI)
+        if self._has_valid_basic_auth(request):
+            return True
+
         return False
+
+    def _has_valid_basic_auth(self, request: Request) -> bool:
+        """
+        Check if request has valid HTTP Basic auth credentials.
+
+        This allows the demo UI (which uses Basic auth) to make API
+        requests without needing a separate API key.
+
+        Args:
+            request: Incoming request
+
+        Returns:
+            True if request has valid Basic auth
+        """
+        auth_header = request.headers.get("Authorization")
+        if not auth_header or not auth_header.startswith("Basic "):
+            return False
+
+        try:
+            encoded_credentials = auth_header[6:]
+            decoded_bytes = base64.b64decode(encoded_credentials)
+            decoded_str = decoded_bytes.decode("utf-8")
+
+            if ":" not in decoded_str:
+                return False
+
+            username, password = decoded_str.split(":", 1)
+
+            # Check against docs credentials
+            if not settings.docs_password:
+                return False
+
+            expected_username = settings.docs_username
+            expected_password = settings.docs_password.get_secret_value()
+
+            username_valid = secrets.compare_digest(username, expected_username)
+            password_valid = secrets.compare_digest(password, expected_password)
+
+            return username_valid and password_valid
+        except Exception:
+            return False
 
     def _is_valid_key(self, provided_key: str) -> bool:
         """

@@ -63,24 +63,24 @@ services:
 
   # VeraPDF - PDF/UA-1 accessibility validation (PRD-012)
   # Provides deterministic pre-analysis for PDF accessibility issues
-  verapdf:
-    image: verapdf/rest:latest
-    container_name: equalify-pdf-verapdf
-    restart: unless-stopped
-    ports:
-      - "8081:8080"
-    healthcheck:
-      test: ["CMD", "curl", "-f", "http://localhost:8080/api/info"]
-      interval: 30s
-      timeout: 10s
-      retries: 3
-      start_period: 60s
-    deploy:
-      resources:
-        limits:
-          memory: 2G
-    networks:
-      - equalify-network
+  # verapdf:
+  #   image: verapdf/rest:latest
+  #   container_name: equalify-pdf-verapdf
+  #   restart: unless-stopped
+  #   ports:
+  #     - "8081:8080"
+  #   healthcheck:
+  #     test: ["CMD", "curl", "-f", "http://localhost:8080/api/info"]
+  #     interval: 30s
+  #     timeout: 10s
+  #     retries: 3
+  #     start_period: 60s
+  #   deploy:
+  #     resources:
+  #       limits:
+  #         memory: 2G
+  #   networks:
+  #     - equalify-network
 
 networks:
   equalify-network:

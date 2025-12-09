@@ -4,22 +4,44 @@ These tests require a running VeraPDF Docker container.
 Run with: pytest -m verapdf tests/integration/analyzers/
 
 To start VeraPDF: docker-compose up -d verapdf
+
+These tests are skipped if:
+- SKIP_VERAPDF_TESTS=1 environment variable is set
+- VeraPDF service is not running (checked via health endpoint)
 """
 
 import os
 import tempfile
 from pathlib import Path
 
+import httpx
 import pytest
 
 from src.analyzers.pdf_accessibility_analyzer import PDFAccessibilityAnalyzer
 from src.shared.models.hints_models import HintSource
+
+
+def _verapdf_available() -> bool:
+    """Check if VeraPDF service is available."""
+    if os.getenv("SKIP_VERAPDF_TESTS") == "1":
+        return False
+    url = os.getenv("VERAPDF_URL", "http://localhost:8081")
+    try:
+        response = httpx.get(f"{url}/api/info/version", timeout=2.0)
+        return response.status_code == 200
+    except Exception:
+        return False
+
 
 # Skip all tests in this module if VeraPDF is not available
 pytestmark = [
     pytest.mark.integration,
     pytest.mark.verapdf,
     pytest.mark.timeout(120),  # PDF analysis can take time
+    pytest.mark.skipif(
+        not _verapdf_available(),
+        reason="VeraPDF not available (set SKIP_VERAPDF_TESTS=1 or start VeraPDF service)"
+    ),
 ]
 
 

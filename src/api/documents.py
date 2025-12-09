@@ -50,13 +50,14 @@ def _build_llm_cost(job: dict) -> LLMCostInfo | None:
                 page=page_cost.get("page", 0),
                 input_tokens=page_cost.get("input_tokens", 0),
                 output_tokens=page_cost.get("output_tokens", 0),
-                cost_cents=page_cost.get("cost_cents", 0.0),
+                total_tokens=page_cost.get("total_tokens", 0),
+                estimated_cost_cents=page_cost.get("estimated_cost_cents", 0.0),
             )
         )
 
     return LLMCostInfo(
-        total_cost_cents=total_cents,
-        total_cost_dollars=total_cents / 100.0,
+        total_estimated_cost_cents=total_cents,
+        total_estimated_cost_dollars=total_cents / 100.0,
         page_costs=page_costs,
     )
 
@@ -180,7 +181,7 @@ async def get_job(
                     for k in page_keys
                 ],
                 llm_cost=_build_llm_cost(job) or LLMCostInfo(
-                    total_cost_cents=0, total_cost_dollars=0, page_costs=[]
+                    total_estimated_cost_cents=0, total_estimated_cost_dollars=0, page_costs=[]
                 ),
             )
 
@@ -198,7 +199,7 @@ async def get_job(
                     justification=job.get("correction_justification", ""),
                 ),
                 llm_cost=_build_llm_cost(job) or LLMCostInfo(
-                    total_cost_cents=0, total_cost_dollars=0, page_costs=[]
+                    total_estimated_cost_cents=0, total_estimated_cost_dollars=0, page_costs=[]
                 ),
             )
 

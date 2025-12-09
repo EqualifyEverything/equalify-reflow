@@ -8,7 +8,9 @@ from datetime import UTC, datetime, timedelta
 from io import BytesIO
 from typing import Any
 
+from ..agents.full_document_agent import FullDocumentAgent
 from ..config import settings
+from ..services.document_context_service import DocumentContextService
 from ..services.job_service import JobService
 from ..services.pdf_converter import PDFConverter
 from ..services.queue_service import QueueService
@@ -35,6 +37,7 @@ class ProcessingService:
         redis_client=None,
         pdf_converter: PDFConverter | None = None,
         text_correction: TextCorrectionService | None = None,
+        document_context_service: DocumentContextService | None = None,
     ):
         """Initialize processing service with dependencies.
 
@@ -45,6 +48,7 @@ class ProcessingService:
             redis_client: Redis client for token storage
             pdf_converter: Optional PDF converter (created if not provided)
             text_correction: Optional text correction service (created if not provided)
+            document_context_service: Optional context service for direct extraction
         """
         self.storage = storage_service
         self.queue = queue_service
@@ -54,6 +58,7 @@ class ProcessingService:
         self.text_correction = text_correction or TextCorrectionService(
             max_concurrent_pages=settings.max_concurrent_pages
         )
+        self.context_service = document_context_service or DocumentContextService()
 
         logger.info("Processing service initialized")
 
@@ -263,14 +268,15 @@ class ProcessingService:
 
             # Step 8b: Calculate aggregate LLM cost from all pages
             total_llm_cost_cents = sum(
-                r.usage.cost_cents for r in correction_results if r.usage
+                r.usage.estimated_cost_cents for r in correction_results if r.usage
             )
             llm_page_costs = [
                 {
                     "page": r.page_number,
                     "input_tokens": r.usage.input_tokens,
                     "output_tokens": r.usage.output_tokens,
-                    "cost_cents": r.usage.cost_cents,
+                    "total_tokens": r.usage.total_tokens,
+                    "estimated_cost_cents": r.usage.estimated_cost_cents,
                 }
                 for r in correction_results
                 if r.usage
@@ -278,7 +284,7 @@ class ProcessingService:
 
             logger.info(
                 f"LLM usage summary: {len(llm_page_costs)} pages, "
-                f"total cost: ${total_llm_cost_cents/100:.6f}"
+                f"est. total cost: ${total_llm_cost_cents/100:.6f}"
             )
 
             # Step 9: Check if corrections should be auto-approved
@@ -578,3 +584,174 @@ class ProcessingService:
             )
 
         return markdown
+
+    async def process_with_direct_extraction(
+        self,
+        job: ProcessingQueuePayload,
+    ) -> ProcessingResult:
+        """Process PDF using two-phase full-document extraction.
+
+        This approach loads ALL page images into context and processes in two phases:
+        1. Phase 1: Analyze structure to build heading tree
+        2. Phase 2: Transcribe document guided by heading tree
+
+        This avoids the duplicate content issues that occur with per-page processing
+        and sliding context windows on multi-column documents.
+
+        Args:
+            job: Processing queue payload with job_id and s3_key
+
+        Returns:
+            ProcessingResult with markdown URL and confidence metrics
+        """
+        start_time = time.time()
+        logger.info(f"Starting TWO-PHASE EXTRACTION for job {job.job_id}")
+
+        try:
+            # Step 1: Update job status to processing
+            await retry_with_backoff(
+                lambda: self.job.update_job_status(job.job_id, "processing"),
+                max_attempts=3,
+                operation_name=f"Update job {job.job_id} status to processing",
+            )
+
+            # Step 2: Download PDF from S3
+            logger.info(
+                f"Downloading PDF from s3://{settings.s3_temp_bucket}/{job.s3_key}"
+            )
+            pdf_content = await self.storage.download_temp_file(s3_key=job.s3_key)
+            logger.info(f"Downloaded {len(pdf_content)} bytes")
+
+            # Step 3: Convert PDF with Docling (we need page images)
+            logger.info("Converting PDF with Docling for page images...")
+            conversion_result = await self.pdf_converter.convert_with_page_images(
+                pdf_content
+            )
+
+            if not conversion_result.has_page_images:
+                raise RuntimeError(
+                    "Docling failed to generate page images. "
+                    "Cannot proceed without visual content."
+                )
+
+            logger.info(
+                f"PDF converted: {conversion_result.total_pages} pages with images"
+            )
+
+            # Step 4: Process with FullDocumentAgent (two-phase approach)
+            full_doc_agent = FullDocumentAgent()
+            pages = conversion_result.pages
+
+            logger.info(
+                f"Processing {len(pages)}-page document with two-phase extraction..."
+            )
+
+            # This will:
+            # - Phase 1: Analyze structure → HeadingTree
+            # - Phase 2: Transcribe with heading guidance → Markdown
+            full_markdown, heading_tree, total_usage = await full_doc_agent.process(
+                pages
+            )
+
+            logger.info(
+                f"Two-phase extraction complete: "
+                f"{len(full_markdown)} chars, "
+                f"{len(heading_tree.sections)} sections, "
+                f"layout={heading_tree.layout_type}, "
+                f"est. cost=${total_usage.estimated_cost_cents/100:.4f}"
+            )
+
+            # Step 5: Calculate confidence level from heading tree
+            avg_confidence = heading_tree.confidence
+
+            if avg_confidence >= 0.9:
+                confidence_level = "high"
+            elif avg_confidence >= 0.7:
+                confidence_level = "medium"
+            else:
+                confidence_level = "low"
+
+            # Step 6: Upload result to S3
+            logger.info("Uploading extracted markdown to S3")
+            result_url = await self.storage.upload_result(
+                job_id=job.job_id,
+                content=full_markdown.encode("utf-8"),
+                format="md",
+            )
+
+            # Step 7: Update job status to completed
+            processing_time = int(time.time() - start_time)
+
+            update_fields = {
+                "markdown_url": result_url,
+                "confidence_score": avg_confidence,
+                "confidence_level": confidence_level,
+                "processing_time_seconds": processing_time,
+                "total_pages": conversion_result.total_pages,
+                "llm_cost_cents": total_usage.estimated_cost_cents,
+                "extraction_method": "two_phase",  # Mark as two-phase extraction
+                "layout_type": heading_tree.layout_type,
+                "section_count": len(heading_tree.sections),
+            }
+
+            await retry_with_backoff(
+                lambda: self.job.update_job_status(
+                    job.job_id, "completed", **update_fields
+                ),
+                max_attempts=3,
+                operation_name=f"Update job {job.job_id} status to completed",
+            )
+
+            logger.info(
+                f"Job {job.job_id} completed with TWO-PHASE EXTRACTION in {processing_time}s "
+                f"(confidence: {avg_confidence:.2f}, est. cost: ${total_usage.estimated_cost_cents/100:.4f})"
+            )
+
+            return ProcessingResult(
+                job_id=job.job_id,
+                markdown_url=result_url,
+                confidence_score=avg_confidence,
+                processing_time_seconds=processing_time,
+                error_message=None,
+            )
+
+        except ValueError as e:
+            # Handle document too large error from FullDocumentAgent
+            error_msg = f"Two-phase extraction failed: {str(e)}"
+            logger.error(f"Job {job.job_id} failed: {error_msg}")
+
+            await retry_with_backoff(
+                lambda: self.job.update_job_status(
+                    job.job_id, "failed", error=error_msg
+                ),
+                max_attempts=3,
+                operation_name=f"Update job {job.job_id} to failed",
+            )
+
+            return ProcessingResult(
+                job_id=job.job_id,
+                markdown_url=None,
+                confidence_score=None,
+                processing_time_seconds=int(time.time() - start_time),
+                error_message=error_msg,
+            )
+
+        except Exception as e:
+            error_msg = f"Two-phase extraction failed: {str(e)}"
+            logger.error(f"Job {job.job_id} failed: {error_msg}", exc_info=True)
+
+            await retry_with_backoff(
+                lambda: self.job.update_job_status(
+                    job.job_id, "failed", error=error_msg
+                ),
+                max_attempts=3,
+                operation_name=f"Update job {job.job_id} to failed",
+            )
+
+            return ProcessingResult(
+                job_id=job.job_id,
+                markdown_url=None,
+                confidence_score=None,
+                processing_time_seconds=int(time.time() - start_time),
+                error_message=error_msg,
+            )

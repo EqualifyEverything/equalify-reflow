@@ -205,7 +205,7 @@ class AgentOutput(BaseModel):
         ...     corrections=[...],
         ...     overall_confidence=0.92,
         ...     processing_notes="Analyzed 3 headings, 2 lists. Found 1 correction.",
-        ...     usage=LLMUsage(input_tokens=1500, output_tokens=200, cost_cents=0.0625)
+        ...     usage=LLMUsage(input_tokens=1500, output_tokens=200, total_tokens=1700, estimated_cost_cents=0.25)
         ... )
     """
 
@@ -263,7 +263,8 @@ class AgentOutput(BaseModel):
                 "usage": {
                     "input_tokens": 1500,
                     "output_tokens": 200,
-                    "cost_cents": 0.0625
+                    "total_tokens": 1700,
+                    "estimated_cost_cents": 0.25
                 }
             }
         }

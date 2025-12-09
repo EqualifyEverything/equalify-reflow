@@ -205,18 +205,20 @@ class TextCorrection(BaseModel):
 class LLMUsage(BaseModel):
     """Token usage and cost for a single LLM call.
 
-    Tracks input/output tokens and calculates cost based on model pricing.
+    Tracks input/output/total tokens and calculates estimated cost based on model pricing.
 
     Attributes:
         input_tokens: Number of input tokens consumed
         output_tokens: Number of output tokens generated
-        cost_cents: Calculated cost in cents based on model pricing
+        total_tokens: Total tokens (input + output)
+        estimated_cost_cents: Estimated cost in cents based on model pricing
 
     Example:
         >>> usage = LLMUsage(
         ...     input_tokens=1500,
         ...     output_tokens=200,
-        ...     cost_cents=0.0625
+        ...     total_tokens=1700,
+        ...     estimated_cost_cents=0.25
         ... )
     """
     input_tokens: int = Field(
@@ -229,10 +231,15 @@ class LLMUsage(BaseModel):
         ge=0,
         description="Number of output tokens generated"
     )
-    cost_cents: float = Field(
+    total_tokens: int = Field(
+        ...,
+        ge=0,
+        description="Total tokens (input + output)"
+    )
+    estimated_cost_cents: float = Field(
         ...,
         ge=0.0,
-        description="Calculated cost in cents"
+        description="Estimated cost in cents based on model pricing"
     )
 
     model_config = ConfigDict(
@@ -240,7 +247,8 @@ class LLMUsage(BaseModel):
             "example": {
                 "input_tokens": 1500,
                 "output_tokens": 200,
-                "cost_cents": 0.0625
+                "total_tokens": 1700,
+                "estimated_cost_cents": 0.25
             }
         }
     )
@@ -279,7 +287,7 @@ class PageCorrectionResult(BaseModel):
         ...     overall_confidence=0.92,
         ...     processing_notes="Checked 1 heading, 0 lists, 0 tables. Found 1 correction.",
         ...     page_number=1,
-        ...     usage=LLMUsage(input_tokens=1500, output_tokens=200, cost_cents=0.0625)
+        ...     usage=LLMUsage(input_tokens=1500, output_tokens=200, total_tokens=1700, estimated_cost_cents=0.25)
         ... )
     """
     visual_observations: list[str] = Field(
@@ -351,7 +359,8 @@ class PageCorrectionResult(BaseModel):
                 "usage": {
                     "input_tokens": 1500,
                     "output_tokens": 200,
-                    "cost_cents": 0.0625
+                    "total_tokens": 1700,
+                    "estimated_cost_cents": 0.25
                 }
             }
         }

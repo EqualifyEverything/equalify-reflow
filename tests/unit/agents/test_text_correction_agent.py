@@ -84,7 +84,7 @@ class TestTextCorrectionAgent:
             overall_confidence=0.9,
             processing_notes="Test notes",
             page_number=1,
-            usage=LLMUsage(input_tokens=100, output_tokens=50, cost_cents=0.1)
+            usage=LLMUsage(input_tokens=100, output_tokens=50, total_tokens=150, estimated_cost_cents=0.1)
         )
         mock_result.usage.return_value = MagicMock(input_tokens=100, output_tokens=50)
 

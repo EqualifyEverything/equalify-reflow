@@ -26,14 +26,15 @@ class PageLLMUsage(BaseModel):
     page: int = Field(..., description="Page number (1-indexed)")
     input_tokens: int = Field(..., description="Number of input tokens consumed")
     output_tokens: int = Field(..., description="Number of output tokens generated")
-    cost_cents: float = Field(..., description="Cost in cents for this page")
+    total_tokens: int = Field(..., description="Total tokens (input + output)")
+    estimated_cost_cents: float = Field(..., description="Estimated cost in cents for this page")
 
 
 class LLMCostInfo(BaseModel):
     """Aggregate LLM cost information for a job."""
 
-    total_cost_cents: float = Field(..., description="Total LLM cost in cents")
-    total_cost_dollars: float = Field(..., description="Total LLM cost in dollars")
+    total_estimated_cost_cents: float = Field(..., description="Total estimated LLM cost in cents")
+    total_estimated_cost_dollars: float = Field(..., description="Total estimated LLM cost in dollars")
     page_costs: list[PageLLMUsage] = Field(
         default_factory=list, description="Per-page breakdown"
     )

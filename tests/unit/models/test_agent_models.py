@@ -15,21 +15,25 @@ class TestLLMUsage:
         usage = LLMUsage(
             input_tokens=1500,
             output_tokens=200,
-            cost_cents=0.0625
+            total_tokens=1700,
+            estimated_cost_cents=0.25
         )
         assert usage.input_tokens == 1500
         assert usage.output_tokens == 200
-        assert usage.cost_cents == 0.0625
+        assert usage.total_tokens == 1700
+        assert usage.estimated_cost_cents == 0.25
 
     def test_zero_tokens_valid(self):
         """Test that zero tokens is valid."""
         usage = LLMUsage(
             input_tokens=0,
             output_tokens=0,
-            cost_cents=0.0
+            total_tokens=0,
+            estimated_cost_cents=0.0
         )
         assert usage.input_tokens == 0
         assert usage.output_tokens == 0
+        assert usage.total_tokens == 0
 
     def test_negative_tokens_rejected(self):
         """Test rejection of negative token counts."""
@@ -37,7 +41,8 @@ class TestLLMUsage:
             LLMUsage(
                 input_tokens=-1,
                 output_tokens=100,
-                cost_cents=0.01
+                total_tokens=99,
+                estimated_cost_cents=0.01
             )
 
     def test_negative_cost_rejected(self):
@@ -46,7 +51,8 @@ class TestLLMUsage:
             LLMUsage(
                 input_tokens=100,
                 output_tokens=100,
-                cost_cents=-0.01
+                total_tokens=200,
+                estimated_cost_cents=-0.01
             )
 
     def test_json_serialization(self):
@@ -54,23 +60,28 @@ class TestLLMUsage:
         usage = LLMUsage(
             input_tokens=1500,
             output_tokens=200,
-            cost_cents=0.0625
+            total_tokens=1700,
+            estimated_cost_cents=0.25
         )
         json_data = usage.model_dump_json()
         restored = LLMUsage.model_validate_json(json_data)
         assert restored.input_tokens == usage.input_tokens
         assert restored.output_tokens == usage.output_tokens
-        assert restored.cost_cents == usage.cost_cents
+        assert restored.total_tokens == usage.total_tokens
+        assert restored.estimated_cost_cents == usage.estimated_cost_cents
 
     def test_llm_usage_compatibility_with_processing(self):
         """Test that LLMUsage from agent_models is same as processing module."""
         # Both should be importable and work the same way
-        agent_usage = LLMUsage(input_tokens=100, output_tokens=50, cost_cents=0.01)
-        processing_usage = ProcessingLLMUsage(input_tokens=100, output_tokens=50, cost_cents=0.01)
+        agent_usage = LLMUsage(input_tokens=100, output_tokens=50, total_tokens=150, estimated_cost_cents=0.01)
+        processing_usage = ProcessingLLMUsage(
+            input_tokens=100, output_tokens=50, total_tokens=150, estimated_cost_cents=0.01
+        )
 
         assert agent_usage.input_tokens == processing_usage.input_tokens
         assert agent_usage.output_tokens == processing_usage.output_tokens
-        assert agent_usage.cost_cents == processing_usage.cost_cents
+        assert agent_usage.total_tokens == processing_usage.total_tokens
+        assert agent_usage.estimated_cost_cents == processing_usage.estimated_cost_cents
 
 
 @pytest.mark.unit
@@ -365,7 +376,8 @@ class TestAgentOutput:
         usage = LLMUsage(
             input_tokens=1500,
             output_tokens=200,
-            cost_cents=0.0625
+            total_tokens=1700,
+            estimated_cost_cents=0.25
         )
         output = AgentOutput(
             agent_name="structure_agent",
@@ -442,7 +454,7 @@ class TestAgentOutput:
             corrections=corrections,
             overall_confidence=0.85,
             processing_notes="Processed 1 image.",
-            usage=LLMUsage(input_tokens=2000, output_tokens=150, cost_cents=0.07)
+            usage=LLMUsage(input_tokens=2000, output_tokens=150, total_tokens=2150, estimated_cost_cents=0.275)
         )
 
         json_data = output.model_dump_json()

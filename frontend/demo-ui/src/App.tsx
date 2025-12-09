@@ -5,7 +5,6 @@ import { Dashboard } from '@/pages/Dashboard'
 import { JobDetailPage } from '@/pages/JobDetailPage'
 import { ApprovalReviewPage } from '@/pages/ApprovalReviewPage'
 import { CorrectionReviewPage } from '@/pages/CorrectionReviewPage'
-import { MonitoringPage } from '@/pages/MonitoringPage'
 import { queryClient } from '@/lib/queryClient'
 
 // Base path for routing - must match Vite's base config
@@ -33,15 +32,6 @@ function App() {
               </DashboardLayout>
             }
           />
-          <Route
-            path="/monitoring"
-            element={
-              <DashboardLayout>
-                <MonitoringPage />
-              </DashboardLayout>
-            }
-          />
-
           {/* PII Approval review - standalone page (no sidebar) */}
           <Route
             path="/review/:token"

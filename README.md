@@ -101,7 +101,6 @@ A developer testing interface is available at <http://localhost:8080/demo> when 
 - Real-time job status tracking with workflow visualization
 - PII review modal for approval workflow testing
 - AI correction review with side-by-side diff view
-- Queue monitoring and system health dashboard
 - Raw API response viewer for debugging
 
 **Rebuilding:** After frontend changes, run `make build-demo-ui` then `make down && make dev`.

@@ -224,7 +224,7 @@ curl -X POST "$API_URL/api/approval/$APPROVAL_TOKEN/decision" \
 
 ## Step 5: Monitor AI Processing
 
-Poll for processing completion (AI processing takes 2-8 minutes):
+Poll for processing completion (AI processing takes 1-5 minutes depending on page count):
 
 ```bash
 # Poll for completion
@@ -236,11 +236,8 @@ for i in {1..40}; do
 
   STATUS=$(echo "$RESPONSE" | jq -r '.status')
 
-  if [ "$STATUS" == "awaiting_correction_approval" ]; then
-    echo "AI processing complete! Ready for correction review."
-    break
-  elif [ "$STATUS" == "completed" ]; then
-    echo "Job completed (corrections may have been auto-applied)."
+  if [ "$STATUS" == "completed" ]; then
+    echo "Job completed!"
     break
   elif [ "$STATUS" == "failed" ]; then
     echo "Job failed!"
@@ -252,168 +249,50 @@ done
 ```
 
 **What's happening during processing:**
-1. **Docling Conversion**: PDF to Markdown + Page Images (PNG)
-   - Extracts text and structure from PDF
-   - Generates high-resolution page images for visual comparison
-2. **Text Correction via AWS Bedrock** (Claude Haiku):
-   - Processes pages concurrently (max 5 at once)
-   - For each page:
-     - Sends page image + extracted markdown to Claude
-     - Claude compares visual layout to markdown structure
-     - Identifies corrections: heading levels, list types, tables, paragraph breaks
-     - Returns corrections with confidence scores (0.0-1.0)
-   - Applies corrections to markdown
-   - Calculates overall document confidence
 
-**Status when corrections are ready:** `awaiting_correction_approval`
+The FullDocumentAgent uses a **two-phase extraction approach**:
+
+1. **Docling Conversion**: PDF to Page Images (PNG)
+   - Generates high-resolution page images for AI processing
+   - No OCR or markdown extraction (AI handles this directly)
+
+2. **Phase 1 - Structure Analysis** (AWS Bedrock / Claude):
+   - Receives all page images
+   - Analyzes document structure
+   - Builds a HeadingTree with document outline
+   - Detects layout type (single_column, two_column, mixed)
+
+3. **Phase 2 - Guided Transcription** (AWS Bedrock / Claude):
+   - Receives all page images + HeadingTree from Phase 1
+   - Transcribes document content guided by the heading structure
+   - Produces complete markdown with proper hierarchy
+
+**Status when complete:** `completed`
 ```json
 {
   "job_id": "...",
-  "status": "awaiting_correction_approval",
+  "status": "completed",
   "created_at": "2025-01-06T10:00:00Z",
   "updated_at": "2025-01-06T10:15:00Z",
-  "correction_approval": {
-    "token": "secure-token-abc...",
-    "expires_at": "2025-01-06T14:15:00Z",
-    "total_corrections": 5,
-    "confidence_score": 0.89,
-    "corrections_by_type": {
-      "heading_level": 2,
-      "list_structure": 3
-    },
-    "review_url": "/api/corrections/{job_id}/review?token={token}"
+  "result": {
+    "markdown_url": "https://s3.../results/550e8400.../output.md",
+    "confidence_score": 0.92,
+    "processing_time_seconds": 145
   },
-  "urls": {
-    "original_markdown": "https://s3.../original.md",
-    "corrected_markdown": "https://s3.../corrected.md",
-    "page_images": ["https://s3.../page-1.png", "..."]
-  },
-  "llm_cost": {
-    "total_cost_cents": 0.15,
-    "total_cost_dollars": 0.0015,
-    "page_costs": [...]
+  "llm_usage": {
+    "input_tokens": 15000,
+    "output_tokens": 3000,
+    "total_tokens": 18000,
+    "estimated_cost_cents": 1.5
   }
 }
 ```
 
----
-
-## Step 6: Review Text Corrections
-
-When status is `awaiting_correction_approval`, review the AI-suggested corrections:
-
-```bash
-# Extract correction token from status response
-CORRECTION_TOKEN=$(cat /tmp/processing_status.json | jq -r '.correction_approval.token')
-echo "Correction Token: $CORRECTION_TOKEN"
-
-# Get correction details for review
-curl -s -H "X-API-Key: $API_KEY" \
-  "$API_URL/api/corrections/$JOB_ID/review?token=$CORRECTION_TOKEN" | jq . | tee /tmp/corrections.json
-```
-
-**Expected Response:**
-```json
-{
-  "job_id": "abc-123",
-  "total_corrections": 5,
-  "overall_confidence": 0.89,
-  "by_type": {
-    "heading_level": 2,
-    "list_structure": 3
-  },
-  "by_page": {
-    "1": 3,
-    "2": 2
-  },
-  "corrections": [
-    {
-      "page": 1,
-      "type": "heading_level",
-      "original_snippet": "Course Schedule",
-      "corrected_snippet": "## Course Schedule",
-      "confidence": 0.95,
-      "explanation": "Visual layout shows level 2 heading with larger font"
-    },
-    {
-      "page": 1,
-      "type": "list_structure",
-      "original_snippet": "- Item 1\n- Item 2",
-      "corrected_snippet": "1. Item 1\n2. Item 2",
-      "confidence": 0.87,
-      "explanation": "Numbered list detected in visual layout"
-    }
-  ],
-  "urls": {
-    "original_markdown": "https://s3.../original.md",
-    "corrected_markdown": "https://s3.../corrected.md",
-    "page_images": [
-      "https://s3.../page-1.png",
-      "https://s3.../page-2.png"
-    ]
-  },
-  "expires_at": "2025-01-06T14:00:00Z"
-}
-```
-
-**Review the corrections:**
-- Check total_corrections and overall_confidence
-- Review individual corrections with before/after snippets
-- Compare page images with markdown if needed
-- Decide whether to approve (use corrected) or reject (use original)
+**Page Limit:** Documents are limited to 15 pages for full-context processing. Larger documents will fail with an error message.
 
 ---
 
-## Step 7: Approve Corrections
-
-Submit your decision on the AI corrections:
-
-```bash
-# Create correction decision JSON
-cat > /tmp/correction_decision.json << EOF
-{
-  "token": "$CORRECTION_TOKEN",
-  "decision": "approved",
-  "reviewed_by": "demo@equalify.uic.edu",
-  "justification": "AI corrections improve document structure and heading hierarchy"
-}
-EOF
-
-# Submit correction decision
-curl -X PATCH -H "X-API-Key: $API_KEY" -H "Content-Type: application/json" \
-  -d @/tmp/correction_decision.json \
-  "$API_URL/api/corrections/$JOB_ID" | jq . | tee /tmp/correction_response.json
-```
-
-**Expected Response (Approved):**
-```json
-{
-  "job_id": "abc-123",
-  "status": "completed",
-  "decision": "approved",
-  "message": "Corrections approved successfully - corrected markdown is now final"
-}
-```
-
-**Expected Response (Rejected):**
-```json
-{
-  "job_id": "abc-123",
-  "status": "completed",
-  "decision": "rejected",
-  "message": "Corrections rejected successfully - original markdown is now final"
-}
-```
-
-**What happened:**
-- Decision recorded in job metadata
-- If approved: corrected markdown becomes final output
-- If rejected: original markdown becomes final output
-- Job status updated to `completed`
-
----
-
-## Step 8: Retrieve and Download Results
+## Step 6: Retrieve and Download Results
 
 Get the final result and download the markdown:
 
@@ -428,24 +307,13 @@ curl -s -H "X-API-Key: $API_KEY" "$API_URL/api/documents/$JOB_ID/result" | jq . 
   "job_id": "...",
   "status": "completed",
   "markdown_url": "https://s3.../results/550e8400.../output.md",
-  "confidence_score": 0.89,
+  "confidence_score": 0.92,
   "processing_time_seconds": 145,
-  "correction_decision": {
-    "decision": "approved",
-    "reviewed_by": "demo@equalify.uic.edu",
-    "reviewed_at": "2025-01-06T10:20:00Z"
-  },
-  "llm_cost": {
-    "total_cost_cents": 0.15,
-    "total_cost_dollars": 0.0015,
-    "page_costs": [
-      {
-        "page": 1,
-        "input_tokens": 2048,
-        "output_tokens": 256,
-        "cost_cents": 0.08
-      }
-    ]
+  "llm_usage": {
+    "input_tokens": 15000,
+    "output_tokens": 3000,
+    "total_tokens": 18000,
+    "estimated_cost_cents": 1.5
   }
 }
 ```
@@ -476,9 +344,9 @@ open "$OUTPUT_FILE"
 ```
 
 **Verify the output:**
-- Corrected heading levels (based on visual font size/weight)
-- Proper list formatting (bullets vs numbers, nesting preserved)
-- Table structure improvements (headers, alignment)
+- Proper heading hierarchy based on visual analysis
+- Correct list formatting (bullets vs numbers)
+- Table structure preserved
 - Paragraph breaks matching visual spacing
 - File saved to Downloads folder
 
@@ -490,21 +358,19 @@ open "$OUTPUT_FILE"
 1. Submit PDF → API uploads to S3
 2. PII Scan → Presidio detects sensitive data
 3. PII Approval → Human reviews findings (if PII found)
-4. Processing → Docling + AWS Bedrock text correction
-5. Correction Review → Human reviews AI corrections
-6. Correction Approval → Accept or reject corrections
-7. Results → Final markdown available via S3 URL
-8. Download → File saved to user's Downloads folder
+4. Processing → Docling page images + FullDocumentAgent two-phase extraction
+5. Results → Final markdown available via S3 URL
+6. Download → File saved to user's Downloads folder
 ```
 
 **Queue Progression:**
 ```
-pii_scan → approval_pending → processing → awaiting_correction_approval → completed
+pii_scan → approval_pending → processing → completed
 ```
 
 **Status Progression:**
 ```
-pii_scanning → awaiting_approval → processing → awaiting_correction_approval → completed
+pii_scanning → awaiting_approval → processing → completed
 ```
 
 ---
@@ -524,8 +390,8 @@ curl -s -H "X-API-Key: $API_KEY" "$API_URL/api/documents/$JOB_ID/result" | jq .
   - 500 Internal Error: Bedrock service issues (retry helps)
 - **Processing failures**:
   - Invalid PDF format (corrupted or encrypted PDFs)
-  - OCR failures (scanned PDFs with poor image quality)
-  - Text correction timeouts (large documents with many pages)
+  - Document exceeds 15 pages (max_pages_full_context limit)
+  - Docling page image generation failures
 - **Infrastructure failures**:
   - S3 upload/download failures
   - Redis connection errors
@@ -549,9 +415,9 @@ curl -s $API_URL/api/dev/monitoring/queues | jq .
 docker logs equalify-pdf-api-gateway --tail 100
 ```
 
-### Check Text Correction Activity (LOCAL only)
+### Check Processing Activity (LOCAL only)
 ```bash
-docker logs equalify-pdf-api-gateway 2>&1 | grep -E "text correction|BedrockConverseModel|Processing page"
+docker logs equalify-pdf-api-gateway 2>&1 | grep -E "FullDocumentAgent|Phase 1|Phase 2|BedrockConverseModel"
 ```
 
 ### Curl Escaping Issues
@@ -595,13 +461,10 @@ aws sso login --profile uic
 5. Extract job_id and save for subsequent calls
 6. Poll status until not `pii_scanning`
 7. If `awaiting_approval`, submit PII approval decision
-8. Poll status until not `processing` (expect 2-8 minutes)
-9. If `awaiting_correction_approval`, display correction summary
-10. Pause to let user review corrections before approving
-11. Submit correction approval decision
-12. Retrieve final results
-13. Download markdown to ~/Downloads with timestamp
-14. Report complete workflow with cost summary
+8. Poll status until `completed` or `failed` (expect 1-5 minutes)
+9. Retrieve final results
+10. Download markdown to ~/Downloads with timestamp
+11. Report complete workflow with cost summary
 
 **Report format:**
 ```
@@ -609,17 +472,14 @@ Step 1: Health check passed (services healthy)
 Step 2: PDF submitted (job_id: xxx)
 Step 3: PII scan complete (found X entities)
 Step 4: PII approval submitted
-Step 5: AI processing (2-8 minutes)...
-Step 6: Corrections ready for review:
-        - Total: 5 corrections
-        - By type: heading_level (2), list_structure (3)
-        - Confidence: 89%
-Step 7: Corrections approved
-Step 8: Results downloaded to ~/Downloads/equalify_result_xxx.md
+Step 5: AI processing (1-5 minutes)...
+        - Phase 1: Structure analysis
+        - Phase 2: Guided transcription
+Step 6: Results downloaded to ~/Downloads/equalify_result_xxx.md
 
 Total time: X minutes
-LLM Cost: $0.00XX (0.XX cents)
-Confidence: 89%
+LLM Cost: $0.0XXX (X.X cents)
+Confidence: 92%
 
 Your processed document is ready!
 ```

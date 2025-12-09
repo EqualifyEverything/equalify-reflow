@@ -16,6 +16,7 @@ from pydantic_ai import Agent
 from pydantic_ai.messages import BinaryContent
 
 from src.config import settings
+from src.shared.llm_cost import calculate_estimated_cost
 from src.shared.models.agent_models import AgentInput, LLMUsage
 
 logger = logging.getLogger(__name__)
@@ -168,26 +169,20 @@ class BaseDocumentAgent(ABC, Generic[TOutput]):
         logger.debug(f"Agent {self.name}: PydanticAI Agent created successfully")
         return agent
 
-    def _calculate_cost(self, input_tokens: int, output_tokens: int) -> float:
-        """Calculate cost in cents using Bedrock Claude Haiku pricing.
+    def _calculate_estimated_cost(self, input_tokens: int, output_tokens: int) -> float:
+        """Calculate estimated cost in cents using centralized pricing.
 
-        Pricing (Claude 3 Haiku via Bedrock):
-        - Input: $0.25 per 1M tokens = $0.00000025 per token = 0.000025 cents/token
-        - Output: $1.25 per 1M tokens = $0.00000125 per token = 0.000125 cents/token
+        Uses the centralized calculate_estimated_cost function with default
+        Claude Haiku 4.5 pricing from src.shared.llm_cost.
 
         Args:
             input_tokens: Number of input tokens consumed
             output_tokens: Number of output tokens generated
 
         Returns:
-            Cost in cents (float)
+            Estimated cost in cents (float)
         """
-        input_cost_per_token_cents = 0.000025  # $0.25/1M tokens in cents
-        output_cost_per_token_cents = 0.000125  # $1.25/1M tokens in cents
-
-        return (input_tokens * input_cost_per_token_cents) + (
-            output_tokens * output_cost_per_token_cents
-        )
+        return calculate_estimated_cost(input_tokens, output_tokens)
 
     @abstractmethod
     async def process(self, input_data: AgentInput) -> TOutput:
@@ -247,17 +242,19 @@ class BaseDocumentAgent(ABC, Generic[TOutput]):
         usage = result.usage()
         input_tokens = usage.input_tokens or 0
         output_tokens = usage.output_tokens or 0
-        cost_cents = self._calculate_cost(input_tokens, output_tokens)
+        total_tokens = input_tokens + output_tokens
+        estimated_cost_cents = self._calculate_estimated_cost(input_tokens, output_tokens)
 
         llm_usage = LLMUsage(
             input_tokens=input_tokens,
             output_tokens=output_tokens,
-            cost_cents=cost_cents,
+            total_tokens=total_tokens,
+            estimated_cost_cents=estimated_cost_cents,
         )
 
         logger.debug(
             f"Agent {self.name}: Completed "
-            f"(tokens: {input_tokens}/{output_tokens}, cost: ${cost_cents/100:.6f})"
+            f"(tokens: {input_tokens}/{output_tokens}, est. cost: ${estimated_cost_cents/100:.6f})"
         )
 
         return result.output, llm_usage

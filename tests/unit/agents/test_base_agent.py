@@ -6,6 +6,7 @@ from unittest.mock import AsyncMock, MagicMock, patch
 import pytest
 from pydantic import BaseModel, Field
 from src.agents.base_agent import AgentConfig, BaseDocumentAgent
+from src.shared.llm_cost import DEFAULT_PRICING
 from src.shared.models.agent_models import AgentInput, LLMUsage
 
 
@@ -198,8 +199,8 @@ class TestCostCalculation:
 
     @patch("pydantic_ai.models.bedrock.BedrockConverseModel")
     @patch("src.agents.base_agent.Agent")
-    def test_calculate_cost_basic(self, mock_agent_class, mock_bedrock):
-        """Test basic cost calculation with Claude Haiku pricing."""
+    def test_calculate_estimated_cost_basic(self, mock_agent_class, mock_bedrock):
+        """Test basic cost calculation with Claude Haiku 4.5 pricing."""
         mock_bedrock.return_value = MagicMock()
         mock_agent_class.return_value = MagicMock()
 
@@ -211,19 +212,19 @@ class TestCostCalculation:
         )
         agent = ConcreteTestAgent(config)
 
-        # Haiku pricing: input $0.25/1M, output $1.25/1M
-        # In cents: input 0.000025/token, output 0.000125/token
-        cost = agent._calculate_cost(input_tokens=1000, output_tokens=100)
+        # Haiku 4.5 pricing from DEFAULT_PRICING: input $1.00/1M, output $5.00/1M
+        # In cents: input 0.0001/token, output 0.0005/token
+        cost = agent._calculate_estimated_cost(input_tokens=1000, output_tokens=100)
 
-        expected_input_cost = 1000 * 0.000025  # 0.025 cents
-        expected_output_cost = 100 * 0.000125  # 0.0125 cents
-        expected_total = expected_input_cost + expected_output_cost  # 0.0375 cents
+        expected_input_cost = 1000 * DEFAULT_PRICING.input_cost_per_token_cents  # 0.1 cents
+        expected_output_cost = 100 * DEFAULT_PRICING.output_cost_per_token_cents  # 0.05 cents
+        expected_total = expected_input_cost + expected_output_cost  # 0.15 cents
 
         assert cost == pytest.approx(expected_total)
 
     @patch("pydantic_ai.models.bedrock.BedrockConverseModel")
     @patch("src.agents.base_agent.Agent")
-    def test_calculate_cost_zero_tokens(self, mock_agent_class, mock_bedrock):
+    def test_calculate_estimated_cost_zero_tokens(self, mock_agent_class, mock_bedrock):
         """Test cost calculation with zero tokens."""
         mock_bedrock.return_value = MagicMock()
         mock_agent_class.return_value = MagicMock()
@@ -236,12 +237,12 @@ class TestCostCalculation:
         )
         agent = ConcreteTestAgent(config)
 
-        cost = agent._calculate_cost(input_tokens=0, output_tokens=0)
+        cost = agent._calculate_estimated_cost(input_tokens=0, output_tokens=0)
         assert cost == 0.0
 
     @patch("pydantic_ai.models.bedrock.BedrockConverseModel")
     @patch("src.agents.base_agent.Agent")
-    def test_calculate_cost_large_tokens(self, mock_agent_class, mock_bedrock):
+    def test_calculate_estimated_cost_large_tokens(self, mock_agent_class, mock_bedrock):
         """Test cost calculation with large token counts."""
         mock_bedrock.return_value = MagicMock()
         mock_agent_class.return_value = MagicMock()
@@ -255,10 +256,10 @@ class TestCostCalculation:
         agent = ConcreteTestAgent(config)
 
         # 1 million tokens each
-        cost = agent._calculate_cost(input_tokens=1_000_000, output_tokens=1_000_000)
+        cost = agent._calculate_estimated_cost(input_tokens=1_000_000, output_tokens=1_000_000)
 
-        # Expected: $0.25 (input) + $1.25 (output) = $1.50 = 150 cents
-        assert cost == pytest.approx(150.0)
+        # Expected: $1.00 (input) + $5.00 (output) = $6.00 = 600 cents
+        assert cost == pytest.approx(600.0)
 
 
 @pytest.mark.unit

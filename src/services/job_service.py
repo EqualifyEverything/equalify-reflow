@@ -153,7 +153,6 @@ class JobService:
             "pii_findings",         # Array of PII findings
             "correction_results",   # Array of correction results per page
             "page_image_keys",      # Array of S3 keys for page images
-            "llm_page_costs"        # Array of per-page LLM token usage and costs
         ]
 
         for field in json_fields:

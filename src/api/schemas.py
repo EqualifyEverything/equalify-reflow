@@ -20,24 +20,17 @@ class PIIFinding(BaseModel):
     score: float = Field(..., description="Confidence score (0.0 to 1.0)")
 
 
-class PageLLMUsage(BaseModel):
-    """LLM token usage and cost for a single page."""
-
-    page: int = Field(..., description="Page number (1-indexed)")
-    input_tokens: int = Field(..., description="Number of input tokens consumed")
-    output_tokens: int = Field(..., description="Number of output tokens generated")
-    total_tokens: int = Field(..., description="Total tokens (input + output)")
-    estimated_cost_cents: float = Field(..., description="Estimated cost in cents for this page")
-
-
 class LLMCostInfo(BaseModel):
-    """Aggregate LLM cost information for a job."""
+    """Aggregate LLM cost information for a job.
 
-    total_estimated_cost_cents: float = Field(..., description="Total estimated LLM cost in cents")
-    total_estimated_cost_dollars: float = Field(..., description="Total estimated LLM cost in dollars")
-    page_costs: list[PageLLMUsage] = Field(
-        default_factory=list, description="Per-page breakdown"
-    )
+    Costs accumulate across all processing phases (structure analysis + transcription).
+    """
+
+    input_tokens: int = Field(0, description="Total input tokens consumed")
+    output_tokens: int = Field(0, description="Total output tokens generated")
+    total_tokens: int = Field(0, description="Total tokens (input + output)")
+    estimated_cost_cents: float = Field(..., description="Total estimated LLM cost in cents")
+    estimated_cost_dollars: float = Field(..., description="Total estimated LLM cost in dollars")
 
 
 # Status-specific response models
@@ -106,12 +99,20 @@ class AwaitingCorrectionApprovalResponse(JobStatusBase):
 
 
 class CorrectionDecision(BaseModel):
-    """Record of correction approval/rejection."""
+    """Record of correction approval/rejection.
 
-    decision: Literal["approved", "rejected"] = Field(..., description="The decision")
-    reviewed_by: str = Field(..., description="Email of reviewer")
-    reviewed_at: str = Field(..., description="When the decision was made")
-    justification: str = Field(..., description="Reason for decision")
+    Decision types:
+    - approved: Human reviewed and approved corrections
+    - rejected: Human reviewed and rejected corrections (original used)
+    - auto_completed: No correction review was needed (direct processing)
+    """
+
+    decision: Literal["approved", "rejected", "auto_completed"] = Field(
+        ..., description="The decision: approved/rejected (human review) or auto_completed (no review needed)"
+    )
+    reviewed_by: str = Field("", description="Email of reviewer (empty for auto_completed)")
+    reviewed_at: str = Field("", description="When the decision was made (empty for auto_completed)")
+    justification: str = Field("", description="Reason for decision (empty for auto_completed)")
 
 
 class CompletedResponse(JobStatusBase):

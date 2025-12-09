@@ -23,7 +23,6 @@ from .schemas import (
     DocumentStatusResponse,
     FailedResponse,
     LLMCostInfo,
-    PageLLMUsage,
     PIIFinding,
     PIIScanningResponse,
     ProcessingResponse,
@@ -33,7 +32,10 @@ router = APIRouter(prefix="/api/documents", tags=["Documents"])
 
 
 def _build_llm_cost(job: dict) -> LLMCostInfo | None:
-    """Build LLM cost info from job data."""
+    """Build LLM cost info from job data.
+
+    Costs accumulate across all processing phases (structure analysis + transcription).
+    """
     llm_cost_cents = job.get("llm_cost_cents")
     if llm_cost_cents is None:
         return None
@@ -43,22 +45,17 @@ def _build_llm_cost(job: dict) -> LLMCostInfo | None:
     except (TypeError, ValueError):
         return None
 
-    page_costs = []
-    for page_cost in job.get("llm_page_costs", []):
-        page_costs.append(
-            PageLLMUsage(
-                page=page_cost.get("page", 0),
-                input_tokens=page_cost.get("input_tokens", 0),
-                output_tokens=page_cost.get("output_tokens", 0),
-                total_tokens=page_cost.get("total_tokens", 0),
-                estimated_cost_cents=page_cost.get("estimated_cost_cents", 0.0),
-            )
-        )
+    # Get aggregate token counts (accumulated across all phases)
+    input_tokens = int(job.get("llm_input_tokens", 0) or 0)
+    output_tokens = int(job.get("llm_output_tokens", 0) or 0)
+    total_tokens = int(job.get("llm_total_tokens", 0) or 0)
 
     return LLMCostInfo(
-        total_estimated_cost_cents=total_cents,
-        total_estimated_cost_dollars=total_cents / 100.0,
-        page_costs=page_costs,
+        input_tokens=input_tokens,
+        output_tokens=output_tokens,
+        total_tokens=total_tokens,
+        estimated_cost_cents=total_cents,
+        estimated_cost_dollars=total_cents / 100.0,
     )
 
 
@@ -181,7 +178,7 @@ async def get_job(
                     for k in page_keys
                 ],
                 llm_cost=_build_llm_cost(job) or LLMCostInfo(
-                    total_estimated_cost_cents=0, total_estimated_cost_dollars=0, page_costs=[]
+                    estimated_cost_cents=0, estimated_cost_dollars=0
                 ),
             )
 
@@ -193,13 +190,14 @@ async def get_job(
                 ),
                 confidence_score=float(job.get("confidence_score", 0.0)),
                 correction_decision=CorrectionDecision(
-                    decision=job.get("correction_decision", "approved"),
+                    # Default to "auto_completed" when no manual review was performed
+                    decision=job.get("correction_decision", "auto_completed"),
                     reviewed_by=job.get("correction_reviewed_by", ""),
                     reviewed_at=job.get("correction_reviewed_at", ""),
                     justification=job.get("correction_justification", ""),
                 ),
                 llm_cost=_build_llm_cost(job) or LLMCostInfo(
-                    total_estimated_cost_cents=0, total_estimated_cost_dollars=0, page_costs=[]
+                    estimated_cost_cents=0, estimated_cost_dollars=0
                 ),
             )
 

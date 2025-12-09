@@ -17,8 +17,9 @@ export type {
   CorrectionReviewData,
   CorrectionDecision,
   CorrectionResponse,
-  JobResult,
   LLMCost,
+  CorrectionSummary,
+  CorrectionDecisionRecord,
 } from '@/lib/api';
 
 // Status type for convenience

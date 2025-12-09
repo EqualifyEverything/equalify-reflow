@@ -1,4 +1,4 @@
-.PHONY: help dev prod up down logs health test test-fast test-unit test-integration test-concurrent test-e2e test-large-files test-slow test-all clean build shell test-docker logs-api grafana-url prometheus-url metrics-url coverage coverage-html coverage-report aws-health aws-logs aws-status aws-deploy aws-shell localstack-debug
+.PHONY: help dev prod up down logs health test test-fast test-unit test-integration test-concurrent test-e2e test-large-files test-slow test-all clean build build-demo-ui shell test-docker logs-api grafana-url prometheus-url metrics-url coverage coverage-html coverage-report aws-health aws-logs aws-status aws-deploy aws-shell localstack-debug
 
 # Default target
 help:
@@ -28,6 +28,7 @@ help:
 	@echo ""
 	@echo "Docker:"
 	@echo "  make build        - Build Docker images"
+	@echo "  make build-demo-ui - Build demo UI (for dev, then restart)"
 	@echo "  make shell        - Access API container shell"
 	@echo "  make test-docker  - Run tests inside container"
 	@echo ""
@@ -145,6 +146,16 @@ redis-cli:
 # Build Docker images
 build:
 	docker compose -f docker-compose.yml -f docker-compose.dev.yml build
+
+# Build demo UI static files (for development)
+# After building, restart the API container to pick up changes
+build-demo-ui:
+	@echo "Building demo UI..."
+	cd frontend/demo-ui && pnpm install && pnpm run build
+	@echo ""
+	@echo "✅ Demo UI built to frontend/demo-ui/dist/"
+	@echo "   Restart with: make down && make dev"
+	@echo "   Then access: http://localhost:8080/demo"
 
 # Access API container shell for debugging
 shell:

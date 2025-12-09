@@ -5,10 +5,12 @@ import asyncio
 import logging
 from collections.abc import AsyncIterator
 from contextlib import asynccontextmanager
+from pathlib import Path
 from typing import Any
 
 from fastapi import FastAPI
 from fastapi.openapi.utils import get_openapi
+from fastapi.staticfiles import StaticFiles
 
 from .api import approval, corrections, documents, health
 from .config import settings
@@ -179,3 +181,11 @@ async def root() -> dict[str, str]:
         "version": "0.1.0",
         "docs": "/docs"
     }
+
+
+# Mount demo UI static files (if present in production build)
+# The static files are built and copied during Docker image creation
+_demo_ui_path = Path(__file__).parent.parent / "static" / "demo-ui"
+if _demo_ui_path.exists():
+    app.mount("/demo", StaticFiles(directory=_demo_ui_path, html=True), name="demo-ui")
+    logger.info("✅ Demo UI mounted at /demo")

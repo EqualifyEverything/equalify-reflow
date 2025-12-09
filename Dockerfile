@@ -1,7 +1,25 @@
 # Equalify PDF Converter
 
 # ==============================================================================
-# Stage 1: Base - Common foundation for all stages
+# Stage 1: Frontend - Build React demo UI
+# ==============================================================================
+FROM node:20-alpine AS frontend-builder
+
+# Enable pnpm
+RUN corepack enable && corepack prepare pnpm@latest --activate
+
+WORKDIR /app
+
+# Install dependencies first (better caching)
+COPY frontend/demo-ui/package.json frontend/demo-ui/pnpm-lock.yaml* frontend/demo-ui/.npmrc ./
+RUN pnpm install --frozen-lockfile
+
+# Copy source and build
+COPY frontend/demo-ui/ ./
+RUN pnpm run build
+
+# ==============================================================================
+# Stage 2: Base - Common foundation for Python stages
 # ==============================================================================
 FROM python:3.11-slim AS base
 
@@ -12,7 +30,7 @@ RUN pip install --no-cache-dir uv
 WORKDIR /app
 
 # ==============================================================================
-# Stage 2: Dependencies - Install Python dependencies
+# Stage 3: Dependencies - Install Python dependencies
 # ==============================================================================
 FROM base AS dependencies
 
@@ -35,7 +53,7 @@ RUN uv pip install --system torch torchvision --index-url https://download.pytor
 RUN uv sync --frozen || uv sync
 
 # ==============================================================================
-# Stage 3: Development - Hot-reload for fast iteration
+# Stage 4: Development - Hot-reload for fast iteration
 # ==============================================================================
 FROM dependencies AS development
 
@@ -54,13 +72,16 @@ EXPOSE 8080
 CMD ["uv", "run", "uvicorn", "src.main:app", "--reload", "--host", "0.0.0.0", "--port", "8080"]
 
 # ==============================================================================
-# Stage 4: Production - Optimized for deployment
+# Stage 5: Production - Optimized for deployment
 # ==============================================================================
 FROM dependencies AS production
 
 # Copy source code and configuration
 COPY src/ ./src/
 COPY config/ ./config/
+
+# Copy built frontend from frontend-builder stage
+COPY --from=frontend-builder /app/dist ./static/demo-ui
 
 # Health check for orchestration (ECS, Kubernetes, Docker Compose)
 # Checks /health endpoint every 30 seconds

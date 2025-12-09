@@ -1,6 +1,5 @@
 """Test helpers for edge case testing."""
 
-from io import BytesIO
 from typing import Literal
 
 

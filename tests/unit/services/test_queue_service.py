@@ -1,12 +1,13 @@
 """Integration tests for Queue Service."""
 
-import pytest
 import json
-from datetime import datetime
-from pydantic import BaseModel
+from datetime import UTC, datetime
 
+import pytest
+from pydantic import BaseModel
 from src.services.queue_service import QueueService
-from src.shared.models.queue import PIIQueuePayload, ProcessingQueuePayload
+from src.shared.models.queue import ProcessingQueuePayload
+
 from tests.conftest_fixtures.data_factories import create_pii_queue_payload
 
 
@@ -312,9 +313,9 @@ class TestTimeoutTracking:
     @pytest.mark.asyncio
     async def test_add_to_timeout_tracking(self, queue_service, mock_redis_client):
         """Test adding job to timeout tracking."""
-        from datetime import datetime, timedelta, timezone
+        from datetime import datetime, timedelta
 
-        expires_at = datetime.now(timezone.utc) + timedelta(hours=4)
+        expires_at = datetime.now(UTC) + timedelta(hours=4)
 
         await queue_service.add_to_timeout_tracking("job123", expires_at)
 
@@ -327,9 +328,9 @@ class TestTimeoutTracking:
     @pytest.mark.asyncio
     async def test_add_to_timeout_tracking_custom_type(self, queue_service, mock_redis_client):
         """Test adding with custom timeout type."""
-        from datetime import datetime, timezone
+        from datetime import datetime
 
-        expires_at = datetime.now(timezone.utc)
+        expires_at = datetime.now(UTC)
 
         await queue_service.add_to_timeout_tracking(
             "job456",
@@ -343,10 +344,10 @@ class TestTimeoutTracking:
     @pytest.mark.asyncio
     async def test_add_to_timeout_tracking_error(self, queue_service, mock_redis_client):
         """Test error handling when adding to timeout tracking."""
-        from datetime import datetime, timezone
+        from datetime import datetime
 
         mock_redis_client.zadd.side_effect = Exception("Redis error")
-        expires_at = datetime.now(timezone.utc)
+        expires_at = datetime.now(UTC)
 
         with pytest.raises(Exception) as exc:
             await queue_service.add_to_timeout_tracking("job789", expires_at)

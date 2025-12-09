@@ -1,7 +1,6 @@
 """Presidio PII detection analyzer wrapper."""
 
 import logging
-from typing import List
 
 from presidio_analyzer import AnalyzerEngine
 from presidio_analyzer.nlp_engine import NlpEngineProvider
@@ -47,7 +46,11 @@ class PIIAnalyzer:
         Args:
             confidence_threshold: Minimum confidence score (0.0-1.0), defaults to settings value
         """
-        self.confidence_threshold = confidence_threshold if confidence_threshold is not None else settings.pii_confidence_threshold
+        self.confidence_threshold = (
+            confidence_threshold
+            if confidence_threshold is not None
+            else settings.pii_confidence_threshold
+        )
 
         # Configure spaCy NLP engine with entity filtering
         # Ignore non-PII entities that cause warnings: MONEY, CARDINAL, PRODUCT, EVENT
@@ -70,7 +73,7 @@ class PIIAnalyzer:
 
         logger.info(f"Initialized PIIAnalyzer with threshold {self.confidence_threshold}")
 
-    def analyze_text(self, text: str) -> List[PIIFinding]:
+    def analyze_text(self, text: str) -> list[PIIFinding]:
         """Analyze text for PII using Presidio.
 
         Args:

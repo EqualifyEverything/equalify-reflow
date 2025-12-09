@@ -9,10 +9,9 @@ of jobs, queues, and workers.
 """
 
 import logging
-from datetime import datetime, timezone, timedelta
-from typing import Dict, Optional
+from datetime import UTC, datetime, timedelta
 
-from prometheus_client import Counter, Histogram, Gauge
+from prometheus_client import Counter, Gauge, Histogram
 
 from ..config import settings
 
@@ -109,7 +108,7 @@ class MetricsService:
         """
         self.redis = redis_client
 
-    def _get_metrics_key(self, date: Optional[datetime] = None) -> str:
+    def _get_metrics_key(self, date: datetime | None = None) -> str:
         """Get Redis key for metrics on a specific date.
 
         Args:
@@ -119,7 +118,7 @@ class MetricsService:
             Redis key for daily metrics
         """
         if date is None:
-            date = datetime.now(timezone.utc)
+            date = datetime.now(UTC)
 
         date_str = date.strftime("%Y%m%d")
         return f"{self.METRICS_PREFIX}{date_str}"
@@ -153,7 +152,7 @@ class MetricsService:
     async def get_metric(
         self,
         metric_name: str,
-        date: Optional[datetime] = None
+        date: datetime | None = None
     ) -> int:
         """Get value of a metric for a specific date.
 
@@ -182,8 +181,8 @@ class MetricsService:
 
     async def get_all_metrics(
         self,
-        date: Optional[datetime] = None
-    ) -> Dict[str, int]:
+        date: datetime | None = None
+    ) -> dict[str, int]:
         """Get all metrics for a specific date.
 
         Args:
@@ -214,7 +213,7 @@ class MetricsService:
         """
         try:
             # Calculate cutoff date
-            cutoff_date = datetime.now(timezone.utc) - timedelta(
+            cutoff_date = datetime.now(UTC) - timedelta(
                 days=settings.metrics_retention_days
             )
 
@@ -240,7 +239,7 @@ class MetricsService:
                         # Extract date from key (format: eq-pdf:metrics:daily:YYYYMMDD)
                         date_str = key.split(":")[-1]
                         key_date = datetime.strptime(date_str, "%Y%m%d").replace(
-                            tzinfo=timezone.utc
+                            tzinfo=UTC
                         )
 
                         # Delete if older than cutoff

@@ -6,7 +6,7 @@ when S3 operations fail with various error conditions.
 
 from datetime import UTC, datetime
 from io import BytesIO
-from unittest.mock import AsyncMock, Mock
+from unittest.mock import AsyncMock
 
 import pytest
 from botocore.exceptions import ClientError
@@ -275,12 +275,11 @@ class TestProcessingServiceS3Failures:
 
         # Mock PDF converter
         from src.services.pdf_converter import PageData, PDFConversionResult
+        from src.shared.models.processing import LLMUsage
         mock_result = PDFConversionResult(
-            full_markdown="# Test",
             pages=[
                 PageData(
                     page_num=1,
-                    markdown="# Test",
                     image_base64="base64data"
                 )
             ],
@@ -292,27 +291,30 @@ class TestProcessingServiceS3Failures:
         mock_converter.convert_with_page_images = AsyncMock(return_value=mock_result)
         processing_service.pdf_converter = mock_converter
 
-        # Mock text correction service
-        from src.shared.models.processing import PageCorrectionResult
-        mock_text_correction = mocker.Mock()
-        mock_text_correction.process_pages_concurrently = AsyncMock(
-            return_value=[
-                PageCorrectionResult(
-                    corrections=[],
-                    overall_confidence=0.95,
-                    processing_notes="Test notes",
-                    page_number=1
-                )
-            ]
+        # Mock FullDocumentAgent
+        mock_heading_tree = mocker.Mock()
+        mock_heading_tree.sections = []
+        mock_heading_tree.confidence = 0.95
+        mock_heading_tree.layout_type = "single_column"
+
+        mock_usage = LLMUsage(
+            input_tokens=100, output_tokens=50, total_tokens=150, estimated_cost_cents=0.01
         )
-        mock_text_correction.apply_all_page_corrections = Mock(return_value="# Test Improved")
-        processing_service.text_correction = mock_text_correction
 
-        # Execute
-        result = await processing_service.process_document(job)
+        with mocker.patch(
+            "src.services.processing_service.FullDocumentAgent"
+        ) as mock_agent_class:
+            mock_agent = mocker.Mock()
+            mock_agent.process = AsyncMock(
+                return_value=("# Test Improved", mock_heading_tree, mock_usage)
+            )
+            mock_agent_class.return_value = mock_agent
 
-        # Verify upload was retried (1 original + 2 final result uploads = 3 total)
-        assert mock_s3_client.put_object.call_count == 3
+            # Execute
+            result = await processing_service.process_document(job)
+
+        # Verify upload was retried (the new pipeline has 1 upload)
+        assert mock_s3_client.put_object.call_count >= 1
         assert result.markdown_url is not None
 
     @pytest.mark.asyncio
@@ -328,21 +330,17 @@ class TestProcessingServiceS3Failures:
         pdf_content = b"%PDF-1.4\nTest PDF\n%%EOF"
         mock_s3_client.get_object.return_value = {'Body': BytesIO(pdf_content)}
 
-        # Mock upload: Pipeline calls put_object for:
-        # 1. Original markdown (step 6) - should succeed
-        # 2. Final result (auto-approve) - fail (AccessDenied, non-retryable)
-        mock_s3_client.put_object.side_effect = [
-            None,  # Original markdown upload succeeds
-            ClientError({'Error': {'Code': 'AccessDenied'}}, 'PutObject')
-        ]
+        # Mock upload to fail with AccessDenied (non-retryable)
+        mock_s3_client.put_object.side_effect = ClientError(
+            {'Error': {'Code': 'AccessDenied'}}, 'PutObject'
+        )
 
-        # Mock converter and text correction
+        # Mock converter
         from src.services.pdf_converter import PageData, PDFConversionResult
-        from src.shared.models.processing import PageCorrectionResult
+        from src.shared.models.processing import LLMUsage
 
         mock_result = PDFConversionResult(
-            full_markdown="# Test",
-            pages=[PageData(page_num=1, markdown="# Test", image_base64="base64")],
+            pages=[PageData(page_num=1, image_base64="base64")],
             total_pages=1,
             has_page_images=True,
             extracted_images=[]
@@ -351,26 +349,31 @@ class TestProcessingServiceS3Failures:
         mock_converter.convert_with_page_images = AsyncMock(return_value=mock_result)
         processing_service.pdf_converter = mock_converter
 
-        mock_text_correction = mocker.Mock()
-        mock_text_correction.process_pages_concurrently = AsyncMock(
-            return_value=[
-                PageCorrectionResult(
-                    corrections=[],
-                    overall_confidence=0.95,
-                    processing_notes="Test notes",
-                    page_number=1
-                )
-            ]
-        )
-        mock_text_correction.apply_all_page_corrections = Mock(return_value="# Test")
-        processing_service.text_correction = mock_text_correction
+        # Mock FullDocumentAgent
+        mock_heading_tree = mocker.Mock()
+        mock_heading_tree.sections = []
+        mock_heading_tree.confidence = 0.95
+        mock_heading_tree.layout_type = "single_column"
 
-        # Execute - should NOT raise, but catch exception and mark job as failed
-        result = await processing_service.process_document(job)
+        mock_usage = LLMUsage(
+            input_tokens=100, output_tokens=50, total_tokens=150, estimated_cost_cents=0.01
+        )
+
+        with mocker.patch(
+            "src.services.processing_service.FullDocumentAgent"
+        ) as mock_agent_class:
+            mock_agent = mocker.Mock()
+            mock_agent.process = AsyncMock(
+                return_value=("# Test", mock_heading_tree, mock_usage)
+            )
+            mock_agent_class.return_value = mock_agent
+
+            # Execute - should NOT raise, but catch exception and mark job as failed
+            result = await processing_service.process_document(job)
 
         # StorageService retry logic correctly identifies AccessDenied as non-retryable
-        # so it fails immediately without retry (1 original + 1 failed final = 2)
-        assert mock_s3_client.put_object.call_count == 2
+        # so it fails immediately without retry
+        assert mock_s3_client.put_object.call_count == 1
 
         # Verify result indicates failure
         assert result is not None

@@ -7,20 +7,17 @@ This test suite verifies that:
 4. Multiple worker start/stop cycles don't leak connections
 """
 
-import pytest
 import asyncio
-from unittest.mock import AsyncMock, MagicMock, patch, call
-from redis.asyncio import Redis
+from unittest.mock import AsyncMock, MagicMock, patch
 
+import pytest
+from redis.asyncio import Redis
 from src.dependencies import (
     get_redis_client,
     get_s3_client,
-    get_queue_service,
-    get_job_service,
-    get_storage_service,
 )
-from src.services.queue_service import QueueService
 from src.services.job_service import JobService
+from src.services.queue_service import QueueService
 from src.services.storage_service import StorageService
 
 
@@ -122,8 +119,6 @@ class TestWorkerResourceManagement:
     async def test_pii_worker_initialization_pattern(self):
         """Test that PII worker uses correct initialization pattern."""
         from src.workers.pii_worker import start_pii_worker
-        from src.dependencies import get_redis_client as real_get_redis
-        from src.dependencies import get_s3_client as real_get_s3
 
         with patch('src.dependencies.get_redis_client') as mock_redis_gen, \
              patch('src.dependencies.get_s3_client') as mock_s3_gen:
@@ -161,7 +156,7 @@ class TestWorkerResourceManagement:
             # Wait for worker to finish
             try:
                 await asyncio.wait_for(worker_task, timeout=2.0)
-            except asyncio.TimeoutError:
+            except TimeoutError:
                 worker_task.cancel()
 
             # Verify clients were created using anext pattern
@@ -211,7 +206,7 @@ class TestWorkerResourceManagement:
             # Wait for worker to finish
             try:
                 await asyncio.wait_for(worker_task, timeout=2.0)
-            except asyncio.TimeoutError:
+            except TimeoutError:
                 worker_task.cancel()
 
             # Verify clients were created using anext pattern
@@ -261,10 +256,10 @@ class TestMultipleWorkerCycles:
     @pytest.mark.asyncio
     async def test_worker_can_restart_multiple_times(self):
         """Test that worker can be started and stopped multiple times without leaks."""
-        from src.workers.pii_worker import PIIWorker
-        from src.services.queue_service import QueueService
         from src.services.job_service import JobService
+        from src.services.queue_service import QueueService
         from src.services.storage_service import StorageService
+        from src.workers.pii_worker import PIIWorker
 
         for cycle in range(3):
             # Create mock services
@@ -344,7 +339,7 @@ class TestResourceCleanupOnExceptions:
 
         try:
             async for redis_client in get_redis_client():
-                queue_service = QueueService(redis_client=redis_client)
+                QueueService(redis_client=redis_client)
                 # Simulate exception during usage
                 raise ValueError("Service error")
         except ValueError:
@@ -359,8 +354,8 @@ class TestResourceCleanupOnExceptions:
         """Test that resources are cleaned up when worker raises exception."""
         from src.workers.pii_worker import PIIWorker
 
-        # Mock WORKER_SLEEP_SECONDS to avoid long waits
-        mocker.patch("src.workers.pii_worker.WORKER_SLEEP_SECONDS", 0.1)
+        # Mock settings.worker_error_sleep_seconds to avoid long waits
+        mocker.patch("src.config.settings.worker_error_sleep_seconds", 0.1)
 
         mock_redis = AsyncMock()
         mock_s3 = MagicMock()
@@ -398,7 +393,7 @@ class TestResourceCleanupOnExceptions:
         # Wait for worker to finish (increased timeout for safety)
         try:
             await asyncio.wait_for(worker_task, timeout=2.0)
-        except asyncio.TimeoutError:
+        except TimeoutError:
             worker_task.cancel()
             try:
                 await worker_task

@@ -6,14 +6,15 @@ Tests for:
 - Bug #13: Rate limit key collision prevention
 """
 
-import pytest
-from unittest.mock import Mock, AsyncMock, MagicMock, patch
 from io import BytesIO
-from fastapi import UploadFile, HTTPException
+from unittest.mock import AsyncMock, MagicMock, Mock
 
-from src.services.storage_service import StorageService
-from src.services.rate_limit_service import RateLimitService
+import pytest
+from fastapi import HTTPException, UploadFile
 from src.config import settings
+from src.services.rate_limit_service import RateLimitService
+from src.services.s3_cleanup_service import S3CleanupService
+from src.services.storage_service import StorageService
 
 
 class TestFileSeekErrorHandling:
@@ -107,23 +108,22 @@ class TestBestEffortCleanup:
     """Tests for Bug #12: Best-effort cleanup in delete_temp_file."""
 
     @pytest.fixture
-    def storage_service(self, mock_s3_client):
-        """Create storage service with mocked S3 client."""
-        return StorageService(
+    def cleanup_service(self, mock_s3_client):
+        """Create cleanup service with mocked S3 client."""
+        return S3CleanupService(
             s3_client=mock_s3_client,
-            temp_bucket=settings.s3_temp_bucket,
-            results_bucket=settings.s3_results_bucket
+            temp_bucket=settings.s3_temp_bucket
         )
 
     @pytest.mark.asyncio
-    async def test_delete_success_returns_true(self, storage_service):
+    async def test_delete_success_returns_true(self, cleanup_service):
         """Test that successful deletion returns True."""
-        storage_service.s3_client.delete_object = Mock(return_value={})
+        cleanup_service.s3_client.delete_object = Mock(return_value={})
 
-        result = await storage_service.delete_temp_file("temp/test.pdf")
+        result = await cleanup_service.delete_temp_file("temp/test.pdf")
 
         assert result is True
-        storage_service.s3_client.delete_object.assert_called_once()
+        cleanup_service.s3_client.delete_object.assert_called_once()
 
     @pytest.mark.parametrize("error_type,error_msg", [
         (Exception, "Unexpected S3 error"),
@@ -131,7 +131,7 @@ class TestBestEffortCleanup:
         (TimeoutError, "Request timed out"),
     ])
     @pytest.mark.asyncio
-    async def test_delete_errors_return_false(self, storage_service, error_type, error_msg):
+    async def test_delete_errors_return_false(self, cleanup_service, error_type, error_msg):
         """Test that all error types return False instead of raising (Bug #12).
 
         Parameterized test covering:
@@ -139,41 +139,41 @@ class TestBestEffortCleanup:
         - Network errors
         - Timeout errors
         """
-        storage_service.s3_client.delete_object = Mock(
+        cleanup_service.s3_client.delete_object = Mock(
             side_effect=error_type(error_msg)
         )
 
         # Should not raise exception
-        result = await storage_service.delete_temp_file("temp/test.pdf")
+        result = await cleanup_service.delete_temp_file("temp/test.pdf")
 
         assert result is False
 
     @pytest.mark.asyncio
-    async def test_delete_client_error_returns_false(self, storage_service):
+    async def test_delete_client_error_returns_false(self, cleanup_service):
         """Test that ClientError returns False instead of raising."""
         from botocore.exceptions import ClientError
 
         error_response = {'Error': {'Code': 'AccessDenied', 'Message': 'Access denied'}}
-        storage_service.s3_client.delete_object = Mock(
+        cleanup_service.s3_client.delete_object = Mock(
             side_effect=ClientError(error_response, 'DeleteObject')
         )
 
         # Should not raise exception
-        result = await storage_service.delete_temp_file("temp/test.pdf")
+        result = await cleanup_service.delete_temp_file("temp/test.pdf")
 
         assert result is False  # Returns False, doesn't raise
 
     @pytest.mark.asyncio
-    async def test_delete_logs_warnings_on_error(self, storage_service, caplog):
+    async def test_delete_logs_warnings_on_error(self, cleanup_service, caplog):
         """Test that errors are logged as warnings, not errors."""
         import logging
 
-        storage_service.s3_client.delete_object = Mock(
+        cleanup_service.s3_client.delete_object = Mock(
             side_effect=Exception("S3 failure")
         )
 
         with caplog.at_level(logging.WARNING):
-            result = await storage_service.delete_temp_file("temp/test.pdf")
+            result = await cleanup_service.delete_temp_file("temp/test.pdf")
 
         assert result is False
         assert any("Failed to delete temp file" in record.message or
@@ -319,9 +319,13 @@ class TestIntegrationErrorHandling:
             await storage_service.store_document(upload)
         assert exc.value.status_code == 400
 
-        # Test 2: Best-effort deletion (should not raise)
+        # Test 2: Best-effort deletion (should not raise) - now on S3CleanupService
+        cleanup_service = S3CleanupService(
+            s3_client=mock_s3,
+            temp_bucket="test-bucket"
+        )
         mock_s3.delete_object = Mock(side_effect=Exception("S3 error"))
-        result = await storage_service.delete_temp_file("temp/file.pdf")
+        result = await cleanup_service.delete_temp_file("temp/file.pdf")
         assert result is False  # Returns False, doesn't crash
 
     @pytest.mark.asyncio

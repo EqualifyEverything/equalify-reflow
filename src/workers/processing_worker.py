@@ -19,10 +19,6 @@ from ..shared.models.queue import ProcessingQueuePayload
 
 logger = logging.getLogger(__name__)
 
-# Worker configuration
-QUEUE_TIMEOUT_SECONDS = 60  # Longer timeout for processing queue
-WORKER_SLEEP_SECONDS = 5
-
 
 class ProcessingWorker:
     """Background worker for AI processing queue.
@@ -75,7 +71,7 @@ class ProcessingWorker:
                 try:
                     # Blocking pop from processing queue with timeout
                     job_data = await self.queue.dequeue(
-                        PROCESSING_QUEUE, timeout=QUEUE_TIMEOUT_SECONDS
+                        PROCESSING_QUEUE, timeout=settings.processing_worker_queue_timeout_seconds
                     )
 
                     if job_data:
@@ -112,7 +108,7 @@ class ProcessingWorker:
                         worker_name="processing", result="error"
                     ).inc()
                     # Brief pause before retry to avoid tight error loop
-                    await asyncio.sleep(WORKER_SLEEP_SECONDS)
+                    await asyncio.sleep(settings.worker_error_sleep_seconds)
 
         finally:
             # Mark worker as inactive when shutting down

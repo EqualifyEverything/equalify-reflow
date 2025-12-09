@@ -5,16 +5,15 @@ and routing to processing queue or cleanup.
 """
 
 import logging
-from datetime import datetime, timezone
-from typing import Optional, Literal, Any
+from datetime import UTC, datetime
+from typing import Any, Literal
 
-from ..config import settings
 from ..shared.constants.queues import APPROVAL_TIMEOUT_KEY, PROCESSING_QUEUE
-from ..shared.constants.statuses import STATUS_PROCESSING, STATUS_DENIED
+from ..shared.constants.statuses import STATUS_DENIED, STATUS_PROCESSING
 from ..shared.models.queue import ProcessingQueuePayload
+from .cleanup_service import CleanupService
 from .job_service import JobService
 from .queue_service import QueueService
-from .cleanup_service import CleanupService
 
 logger = logging.getLogger(__name__)
 
@@ -42,7 +41,7 @@ class ApprovalService:
         self.queue_service = queue_service
         self.cleanup_service = CleanupService(s3_client)
 
-    async def validate_approval_token(self, token: str) -> Optional[dict]:
+    async def validate_approval_token(self, token: str) -> dict | None:
         """Find job by approval token and validate expiration.
 
         Uses O(1) Redis lookup via token mapping to find job directly.
@@ -90,14 +89,14 @@ class ApprovalService:
                     )
                     return None
 
-            except (ValueError, AttributeError) as e:
+            except (ValueError, AttributeError):
                 logger.error(
                     f"Invalid expiration timestamp for job {job_id}: {expires_at_str}",
                     exc_info=True
                 )
                 return None
 
-            now = datetime.now(timezone.utc)
+            now = datetime.now(UTC)
 
             if now < expires_at:
                 logger.info(f"Valid approval token for job {job_id}")
@@ -158,7 +157,7 @@ class ApprovalService:
             # Continue processing - not critical
 
         # Store decision metadata
-        reviewed_at = datetime.now(timezone.utc).isoformat()
+        reviewed_at = datetime.now(UTC).isoformat()
         decision_metadata = {
             "decision": decision,
             "justification": justification,
@@ -232,7 +231,7 @@ class ApprovalService:
                 queue_payload = ProcessingQueuePayload(
                     job_id=job_id,
                     s3_key=s3_key,
-                    approved_at=datetime.now(timezone.utc)
+                    approved_at=datetime.now(UTC)
                 )
                 await self.queue_service.enqueue(PROCESSING_QUEUE, queue_payload)
                 logger.info(f"Job {job_id} approved - queued for processing")

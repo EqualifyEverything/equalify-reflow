@@ -9,7 +9,7 @@ This worker runs scheduled maintenance tasks:
 
 import asyncio
 import logging
-from datetime import datetime, timezone, timedelta
+from datetime import UTC, datetime
 
 from ..config import settings
 from ..services.cleanup_service import CleanupService
@@ -18,9 +18,9 @@ from ..services.metrics_service import (
     worker_active_gauge,
     worker_errors_total,
 )
-from ..services.timeout_service import TimeoutService
-from ..services.s3_cleanup_service import S3CleanupService
 from ..services.orphan_service import OrphanService
+from ..services.s3_cleanup_service import S3CleanupService
+from ..services.timeout_service import TimeoutService
 
 logger = logging.getLogger(__name__)
 
@@ -33,7 +33,8 @@ class TimeoutWorker:
         storage_service,
         queue_service,
         job_service,
-        metrics_service
+        metrics_service,
+        s3_cleanup_service,
     ):
         """Initialize timeout worker with service dependencies.
 
@@ -42,12 +43,14 @@ class TimeoutWorker:
             queue_service: Redis queue operations
             job_service: Job status management
             metrics_service: Metrics tracking
+            s3_cleanup_service: S3 cleanup operations (best-effort)
         """
         # Core services
         self.storage_service = storage_service
         self.queue_service = queue_service
         self.job_service = job_service
         self.metrics_service = metrics_service
+        self.s3_cleanup_service = s3_cleanup_service
 
         # Derived services
         self.cleanup_service = CleanupService(storage_service)
@@ -56,11 +59,6 @@ class TimeoutWorker:
             queue_service,
             job_service,
             self.cleanup_service,
-            metrics_service
-        )
-
-        self.s3_cleanup_service = S3CleanupService(
-            storage_service,
             metrics_service
         )
 
@@ -94,7 +92,7 @@ class TimeoutWorker:
         try:
             while self.running and (shutdown_event is None or not shutdown_event.is_set()):
                 try:
-                    current_time = datetime.now(timezone.utc)
+                    current_time = datetime.now(UTC)
 
                     # Task 1: Approval timeout monitoring (every 30 seconds)
                     if self._should_run_task(
@@ -128,8 +126,8 @@ class TimeoutWorker:
                         await self._run_metrics_cleanup()
                         self.last_metrics_cleanup = current_time
 
-                    # Sleep before next iteration (check every 10 seconds)
-                    await asyncio.sleep(10)
+                    # Sleep before next iteration
+                    await asyncio.sleep(settings.timeout_worker_check_interval_seconds)
 
                 except Exception as e:
                     logger.error(f"Error in timeout worker loop: {e}", exc_info=True)
@@ -138,7 +136,7 @@ class TimeoutWorker:
                         worker_name="timeout", error_type=type(e).__name__
                     ).inc()
                     # Sleep longer on error to avoid rapid error loops
-                    await asyncio.sleep(60)
+                    await asyncio.sleep(settings.timeout_worker_error_sleep_seconds)
 
         except asyncio.CancelledError:
             logger.info("Timeout worker received cancellation signal")
@@ -166,7 +164,7 @@ class TimeoutWorker:
         if last_run is None:
             return True
 
-        current_time = datetime.now(timezone.utc)
+        current_time = datetime.now(UTC)
         elapsed = (current_time - last_run).total_seconds()
 
         return elapsed >= interval_seconds
@@ -263,9 +261,9 @@ async def start_timeout_worker(shutdown_event: asyncio.Event = None):
 
     # Import dependencies dynamically to avoid circular imports
     from ..dependencies import get_redis_client, get_s3_client
-    from ..services.storage_service import StorageService
-    from ..services.queue_service import QueueService
     from ..services.job_service import JobService
+    from ..services.queue_service import QueueService
+    from ..services.storage_service import StorageService
 
     # Get Redis and S3 clients using proper async generator pattern
     redis_client = await anext(get_redis_client())
@@ -282,15 +280,21 @@ async def start_timeout_worker(shutdown_event: asyncio.Event = None):
     job_service = JobService(redis_client=redis_client)
 
     # Metrics service uses the same Redis client
-    from ..services.metrics_service import MetricsService
     metrics_service = MetricsService(redis_client)
+
+    # Create S3 cleanup service (best-effort, no circuit breakers)
+    s3_cleanup_service = S3CleanupService(
+        s3_client=s3_client,
+        temp_bucket=settings.s3_temp_bucket,
+    )
 
     # Create worker
     _worker_instance = TimeoutWorker(
         storage_service=storage_service,
         queue_service=queue_service,
         job_service=job_service,
-        metrics_service=metrics_service
+        metrics_service=metrics_service,
+        s3_cleanup_service=s3_cleanup_service,
     )
 
     logger.info("Timeout worker services initialized, starting worker loop...")

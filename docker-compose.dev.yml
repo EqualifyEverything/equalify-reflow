@@ -9,8 +9,8 @@ services:
     container_name: equalify-pdf-localstack
     restart: unless-stopped
     ports:
-      - "4566:4566"  # LocalStack edge port
-      - "4510-4559:4510-4559"  # External service port range
+      - "4566:4566" # LocalStack edge port
+      - "4510-4559:4510-4559" # External service port range
     environment:
       - SERVICES=s3,cloudwatch
       - DEBUG=${DEBUG:-0}
@@ -26,7 +26,7 @@ services:
       - localstack-data:/tmp/localstack
       - /var/run/docker.sock:/var/run/docker.sock
     healthcheck:
-      test: ["CMD", "curl", "-f", "http://localhost:4566/_localstack/health"]
+      test: [ "CMD", "curl", "-f", "http://localhost:4566/_localstack/health" ]
       interval: 10s
       timeout: 5s
       retries: 5
@@ -36,12 +36,14 @@ services:
   # Development overrides for API Gateway
   api-gateway:
     build:
-      target: development  # Use development stage for hot-reload
+      target: development # Use development stage for hot-reload
     ports:
-      - "8080:8080"  # API endpoints (includes /metrics)
+      - "8080:8080" # API endpoints (includes /metrics)
     volumes:
       # Mount source code for hot-reload (read-only to prevent accidental writes)
       - ./src:/app/src:ro
+      # Mount agent prompt configurations
+      - ./config:/app/config:ro
       # Mount tests for containerized test runs
       - ./tests:/app/tests:ro
       # Mount pytest configuration
@@ -49,6 +51,8 @@ services:
       - ./pyproject.toml:/app/pyproject.toml:ro
       # Mount Docker socket for testcontainers
       - /var/run/docker.sock:/var/run/docker.sock
+      # Mount built demo UI (run `make build-demo-ui` to update)
+      - ./frontend/demo-ui/dist:/app/static/demo-ui:ro
     environment:
       # AWS Hybrid Configuration - LocalStack for S3/CloudWatch, Real AWS for Bedrock
       # Use service-specific endpoints (no global endpoint to avoid bedrock conflicts)
@@ -69,42 +73,21 @@ services:
       # S3 Configuration
       - S3_TEMP_BUCKET=equalify-pdf-temp
       - S3_RESULTS_BUCKET=equalify-pdf-results
+      - S3_PUBLIC_URL=http://localhost:4566
       # Application
       - LOG_LEVEL=DEBUG
       - ENVIRONMENT=dev
       - ENABLE_METRICS=true
-    command: ["uv", "run", "uvicorn", "src.main:app", "--reload", "--host", "0.0.0.0", "--port", "8080"]
+    command: [ "uv", "run", "uvicorn", "src.main:app", "--reload", "--host", "0.0.0.0", "--port", "8080" ]
     depends_on:
       redis:
         condition: service_healthy
       localstack:
         condition: service_healthy
 
-  # Demo Frontend - React UI for API testing
-  demo-ui:
-    build:
-      context: ./frontend/demo-ui
-      dockerfile: Dockerfile.dev
-    container_name: equalify-pdf-demo-ui
-    restart: unless-stopped
-    ports:
-      - "5173:5173"  # Vite dev server
-    environment:
-      - VITE_API_URL=http://localhost:8080  # Browser makes requests to localhost
-      - VITE_GRAFANA_URL=http://localhost:3000
-    volumes:
-      # Hot reload - mount source code
-      - ./frontend/demo-ui/src:/app/src:ro
-      - ./frontend/demo-ui/public:/app/public:ro
-      - ./frontend/demo-ui/index.html:/app/index.html:ro
-      - ./frontend/demo-ui/vite.config.ts:/app/vite.config.ts:ro
-      - ./frontend/demo-ui/tailwind.config.js:/app/tailwind.config.js:ro
-      - ./frontend/demo-ui/postcss.config.js:/app/postcss.config.js:ro
-    networks:
-      - equalify-network
-    depends_on:
-      api-gateway:
-        condition: service_healthy
+  # NOTE: Demo UI is now bundled into the API container
+  # In development, run `make build-demo-ui` to rebuild the frontend
+  # Then access it at http://localhost:8080/demo
 
   # Redis Exporter - Exposes Redis metrics to Prometheus
   redis-exporter:
@@ -146,40 +129,40 @@ services:
     networks:
       - equalify-network
     healthcheck:
-      test: ["CMD", "wget", "--spider", "-q", "http://localhost:9090/-/healthy"]
+      test: [ "CMD", "wget", "--spider", "-q", "http://localhost:9090/-/healthy" ]
       interval: 10s
       timeout: 5s
       retries: 3
 
   # Grafana - Metrics visualization and dashboards
-  grafana:
-    image: grafana/grafana:latest
-    container_name: equalify-pdf-grafana
-    restart: unless-stopped
-    ports:
-      - "3000:3000"
-    environment:
-      - GF_SECURITY_ADMIN_USER=admin
-      - GF_SECURITY_ADMIN_PASSWORD=admin
-      - GF_USERS_ALLOW_SIGN_UP=false
-      - GF_USERS_ALLOW_ORG_CREATE=false
-      - GF_AUTH_ANONYMOUS_ENABLED=false
-      - GF_SERVER_ROOT_URL=http://localhost:3000
-      - GF_LOG_LEVEL=info
-    volumes:
-      - ./infrastructure/grafana/dashboards:/etc/grafana/provisioning/dashboards:ro
-      - ./infrastructure/grafana/datasources:/etc/grafana/provisioning/datasources:ro
-      - grafana-data:/var/lib/grafana
-    depends_on:
-      prometheus:
-        condition: service_healthy
-    networks:
-      - equalify-network
-    healthcheck:
-      test: ["CMD", "wget", "--spider", "-q", "http://localhost:3000/api/health"]
-      interval: 10s
-      timeout: 5s
-      retries: 3
+  # grafana:
+  #   image: grafana/grafana:latest
+  #   container_name: equalify-pdf-grafana
+  #   restart: unless-stopped
+  #   ports:
+  #     - "3000:3000"
+  #   environment:
+  #     - GF_SECURITY_ADMIN_USER=admin
+  #     - GF_SECURITY_ADMIN_PASSWORD=admin
+  #     - GF_USERS_ALLOW_SIGN_UP=false
+  #     - GF_USERS_ALLOW_ORG_CREATE=false
+  #     - GF_AUTH_ANONYMOUS_ENABLED=false
+  #     - GF_SERVER_ROOT_URL=http://localhost:3000
+  #     - GF_LOG_LEVEL=info
+  #   volumes:
+  #     - ./infrastructure/grafana/dashboards:/etc/grafana/provisioning/dashboards:ro
+  #     - ./infrastructure/grafana/datasources:/etc/grafana/provisioning/datasources:ro
+  #     - grafana-data:/var/lib/grafana
+  #   depends_on:
+  #     prometheus:
+  #       condition: service_healthy
+  #   networks:
+  #     - equalify-network
+  #   healthcheck:
+  #     test: [ "CMD", "wget", "--spider", "-q", "http://localhost:3000/api/health" ]
+  #     interval: 10s
+  #     timeout: 5s
+  #     retries: 3
 
 networks:
   equalify-network:

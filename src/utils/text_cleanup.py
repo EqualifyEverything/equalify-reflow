@@ -3,10 +3,9 @@
 Rule-based cleanup functions to fix common OCR and conversion errors without LLM.
 """
 
+import logging
 import re
 import unicodedata
-import logging
-from typing import List
 from urllib.parse import urlparse
 
 logger = logging.getLogger(__name__)
@@ -91,7 +90,7 @@ def normalize_quotes(text: str) -> str:
     return text
 
 
-def validate_urls(text: str) -> List[str]:
+def validate_urls(text: str) -> list[str]:
     """Find and validate URLs in text, returning list of broken URLs.
 
     Does NOT modify text, only returns list of potentially broken URLs for logging.

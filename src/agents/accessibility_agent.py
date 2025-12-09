@@ -7,7 +7,6 @@ for Claude model access in both development and production environments.
 import base64
 import logging
 from pathlib import Path
-from typing import Optional
 
 import yaml
 from pydantic import BaseModel, Field
@@ -99,10 +98,10 @@ class AccessibilityAgent:
         Returns:
             Dictionary with system_prompt and user_prompt_template
         """
-        prompts_file = Path("config/accessibility_prompts.yaml")
+        prompts_file = Path(settings.agent_prompts_dir) / "accessibility.yaml"
 
         try:
-            with open(prompts_file, "r") as f:
+            with open(prompts_file) as f:
                 prompts = yaml.safe_load(f)
                 return prompts
         except FileNotFoundError:
@@ -194,7 +193,7 @@ Fix heading hierarchy, add alt text, ensure semantic markup.""",
 
 
 # Global agent instance (singleton pattern)
-_agent_instance: Optional[AccessibilityAgent] = None
+_agent_instance: AccessibilityAgent | None = None
 
 
 def get_accessibility_agent() -> AccessibilityAgent:

@@ -6,10 +6,13 @@ intelligent error categorization to distinguish transient vs permanent failures.
 
 import asyncio
 import logging
-from typing import Callable, TypeVar, Any, Optional
-from botocore.exceptions import ClientError, BotoCoreError
-from redis.exceptions import RedisError, ConnectionError as RedisConnectionError
+from collections.abc import Callable
+from typing import Any, TypeVar
+
+from botocore.exceptions import BotoCoreError, ClientError
 from fastapi import HTTPException
+from redis.exceptions import ConnectionError as RedisConnectionError
+from redis.exceptions import RedisError
 
 logger = logging.getLogger(__name__)
 
@@ -204,7 +207,7 @@ async def retry_with_backoff(
     raise RuntimeError(f"{operation_name}: unexpected retry loop exit")
 
 
-async def retry_with_backoff_sync(
+async def retry_with_backoff_for_sync_func(
     func: Callable[[], Any],
     max_attempts: int = 3,
     base_delay: float = 1.0,
@@ -212,10 +215,10 @@ async def retry_with_backoff_sync(
     backoff_factor: float = 2.0,
     operation_name: str = "operation"
 ) -> T:
-    """Execute synchronous function with exponential backoff retry logic.
+    """Async wrapper for retrying synchronous (blocking) functions with exponential backoff.
 
-    Same as retry_with_backoff but for synchronous functions.
-    Uses asyncio.sleep for delays to work in async context.
+    This is an async function that wraps synchronous (blocking) functions and provides
+    retry logic with exponential backoff. Uses asyncio.sleep for delays to work in async context.
 
     Args:
         func: Synchronous function to execute

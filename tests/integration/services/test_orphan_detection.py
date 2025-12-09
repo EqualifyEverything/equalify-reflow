@@ -1,9 +1,9 @@
 """Tests for OrphanService - Orphaned job detection and cleanup."""
 
-import pytest
-from datetime import datetime, timezone, timedelta
+from datetime import UTC, datetime, timedelta
 from unittest.mock import AsyncMock
 
+import pytest
 from src.services.orphan_service import OrphanService
 
 
@@ -55,7 +55,7 @@ def old_completed_job():
         "job_id": "old-job-123",
         "status": "completed",
         "s3_key": "temp/old-job-123.pdf",
-        "created_at": (datetime.now(timezone.utc) - timedelta(days=35)).isoformat(),
+        "created_at": (datetime.now(UTC) - timedelta(days=35)).isoformat(),
         "result_url": "https://s3.example.com/results/old-job-123/output.md"
     }
 
@@ -67,7 +67,7 @@ def old_failed_job():
         "job_id": "failed-job-456",
         "status": "failed",
         "s3_key": "temp/failed-job-456.pdf",
-        "created_at": (datetime.now(timezone.utc) - timedelta(days=40)).isoformat(),
+        "created_at": (datetime.now(UTC) - timedelta(days=40)).isoformat(),
         "error_message": "Processing failed"
     }
 
@@ -79,7 +79,7 @@ def recent_completed_job():
         "job_id": "recent-job-789",
         "status": "completed",
         "s3_key": "temp/recent-job-789.pdf",
-        "created_at": (datetime.now(timezone.utc) - timedelta(days=5)).isoformat(),
+        "created_at": (datetime.now(UTC) - timedelta(days=5)).isoformat(),
         "result_url": "https://s3.example.com/results/recent-job-789/output.md"
     }
 
@@ -91,7 +91,7 @@ def stuck_processing_job():
         "job_id": "stuck-job-111",
         "status": "processing",
         "s3_key": "temp/stuck-job-111.pdf",
-        "created_at": (datetime.now(timezone.utc) - timedelta(hours=3)).isoformat()
+        "created_at": (datetime.now(UTC) - timedelta(hours=3)).isoformat()
     }
 
 
@@ -102,7 +102,7 @@ def normal_processing_job():
         "job_id": "normal-job-222",
         "status": "processing",
         "s3_key": "temp/normal-job-222.pdf",
-        "created_at": (datetime.now(timezone.utc) - timedelta(minutes=30)).isoformat()
+        "created_at": (datetime.now(UTC) - timedelta(minutes=30)).isoformat()
     }
 
 
@@ -199,7 +199,7 @@ class TestCleanupOldCompletedJobs:
         mock_job_service.get_job_status.return_value = {
             "job_id": "active-job",
             "status": "processing",
-            "created_at": (datetime.now(timezone.utc) - timedelta(days=40)).isoformat()
+            "created_at": (datetime.now(UTC) - timedelta(days=40)).isoformat()
         }
 
         result = await orphan_service.cleanup_old_completed_jobs()
@@ -299,7 +299,7 @@ class TestCleanupStuckProcessingJobs:
         stuck_pii_job = {
             "job_id": "stuck-pii-333",
             "status": "pii_scanning",
-            "created_at": (datetime.now(timezone.utc) - timedelta(hours=3)).isoformat()
+            "created_at": (datetime.now(UTC) - timedelta(hours=3)).isoformat()
         }
 
         mock_job_service.list_all_jobs.return_value = ["stuck-pii-333"]
@@ -376,7 +376,7 @@ class TestShouldCleanupJob:
     ):
         """Test that old completed jobs should be cleaned."""
         mock_job_service.get_job_status.return_value = old_completed_job
-        cutoff = datetime.now(timezone.utc) - timedelta(days=30)
+        cutoff = datetime.now(UTC) - timedelta(days=30)
 
         result = await orphan_service._should_cleanup_job("old-job-123", cutoff)
 
@@ -391,7 +391,7 @@ class TestShouldCleanupJob:
     ):
         """Test that recent jobs should not be cleaned."""
         mock_job_service.get_job_status.return_value = recent_completed_job
-        cutoff = datetime.now(timezone.utc) - timedelta(days=30)
+        cutoff = datetime.now(UTC) - timedelta(days=30)
 
         result = await orphan_service._should_cleanup_job("recent-job-789", cutoff)
 
@@ -405,7 +405,7 @@ class TestShouldCleanupJob:
     ):
         """Test that missing jobs should be cleaned (removed from tracking)."""
         mock_job_service.get_job_status.return_value = None
-        cutoff = datetime.now(timezone.utc) - timedelta(days=30)
+        cutoff = datetime.now(UTC) - timedelta(days=30)
 
         result = await orphan_service._should_cleanup_job("missing-job", cutoff)
 

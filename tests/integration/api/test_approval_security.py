@@ -1,10 +1,10 @@
 """Security tests for approval workflow API."""
 
-import pytest
-from datetime import datetime, timezone, timedelta
-from httpx import AsyncClient, ASGITransport
+from datetime import UTC, datetime, timedelta
 from unittest.mock import AsyncMock, patch
 
+import pytest
+from httpx import ASGITransport, AsyncClient
 from src.main import app
 from src.utils.token_generator import generate_secure_token
 
@@ -31,8 +31,8 @@ async def test_approval_token_expiration_enforced(api_key_headers):
         "s3_key": "temp/test.pdf",
         "status": "awaiting_approval",
         "approval_token": "expired-token-123",
-        "approval_expires_at": (datetime.now(timezone.utc) - timedelta(minutes=1)).isoformat(),
-        "created_at": datetime.now(timezone.utc).isoformat(),
+        "approval_expires_at": (datetime.now(UTC) - timedelta(minutes=1)).isoformat(),
+        "created_at": datetime.now(UTC).isoformat(),
         "pii_findings": []
     }
 
@@ -47,7 +47,7 @@ async def test_approval_token_expiration_enforced(api_key_headers):
         mock_s3 = AsyncMock()
         mock_s3_dep.return_value = mock_s3
 
-        # Attempt to get review details
+        # Attempt to get review details with API key headers
         async with AsyncClient(
             transport=ASGITransport(app=app),
             base_url="http://test"
@@ -67,8 +67,8 @@ async def test_approval_no_pii_data_in_url(api_key_headers):
         "s3_key": "temp/test.pdf",
         "status": "awaiting_approval",
         "approval_token": "secure-token-456",
-        "approval_expires_at": (datetime.now(timezone.utc) + timedelta(hours=2)).isoformat(),
-        "created_at": datetime.now(timezone.utc).isoformat(),
+        "approval_expires_at": (datetime.now(UTC) + timedelta(hours=2)).isoformat(),
+        "created_at": datetime.now(UTC).isoformat(),
         "pii_findings": [
             {
                 "entity_type": "EMAIL_ADDRESS",
@@ -100,7 +100,7 @@ async def test_approval_no_pii_data_in_url(api_key_headers):
         mock_job_service.get_job_by_approval_token.return_value = valid_job  # New O(1) lookup method
         mock_job_service_class.return_value = mock_job_service
 
-        # Make request
+        # Make request with API key headers
         async with AsyncClient(
             transport=ASGITransport(app=app),
             base_url="http://test"
@@ -130,9 +130,9 @@ async def test_approval_decision_sanitization(api_key_headers):
         "s3_key": "temp/test.pdf",
         "status": "awaiting_approval",
         "approval_token": "test-token-789",
-        "approval_expires_at": (datetime.now(timezone.utc) + timedelta(hours=2)).isoformat(),
-        "created_at": datetime.now(timezone.utc).isoformat(),
-        "updated_at": datetime.now(timezone.utc).isoformat(),
+        "approval_expires_at": (datetime.now(UTC) + timedelta(hours=2)).isoformat(),
+        "created_at": datetime.now(UTC).isoformat(),
+        "updated_at": datetime.now(UTC).isoformat(),
         "pii_findings": []
     }
 
@@ -163,7 +163,7 @@ async def test_approval_decision_sanitization(api_key_headers):
     app.dependency_overrides[get_s3_client] = lambda: mock_s3
 
     try:
-        # Make request
+        # Make request with API key headers
         async with AsyncClient(
             transport=ASGITransport(app=app),
             base_url="http://test"
@@ -178,7 +178,6 @@ async def test_approval_decision_sanitization(api_key_headers):
         assert response.status_code == 200
 
         # Verify justification stored as-is (string, not SQL)
-        update_call = mock_redis.hset.call_args
         # Redis stores it as a string in JSON - no SQL execution
     finally:
         # Clean up overrides
@@ -193,8 +192,8 @@ async def test_approval_input_validation_boundaries(api_key_headers):
         "s3_key": "temp/test.pdf",
         "status": "awaiting_approval",
         "approval_token": "validation-token-999",
-        "approval_expires_at": (datetime.now(timezone.utc) + timedelta(hours=2)).isoformat(),
-        "created_at": datetime.now(timezone.utc).isoformat(),
+        "approval_expires_at": (datetime.now(UTC) + timedelta(hours=2)).isoformat(),
+        "created_at": datetime.now(UTC).isoformat(),
         "pii_findings": []
     }
 
@@ -209,6 +208,7 @@ async def test_approval_input_validation_boundaries(api_key_headers):
         mock_s3 = AsyncMock()
         mock_s3_dep.return_value = mock_s3
 
+        # Make request with API key headers
         async with AsyncClient(
             transport=ASGITransport(app=app),
             base_url="http://test"
@@ -277,7 +277,7 @@ async def test_approval_token_not_leaked_in_error_messages(api_key_headers):
         mock_s3 = AsyncMock()
         mock_s3_dep.return_value = mock_s3
 
-        # Make request with sensitive token
+        # Make request with sensitive token and API key headers
         async with AsyncClient(
             transport=ASGITransport(app=app),
             base_url="http://test"
@@ -301,9 +301,9 @@ async def test_approval_decision_idempotency(api_key_headers):
         "s3_key": "temp/test.pdf",
         "status": "awaiting_approval",
         "approval_token": "idempotent-token",
-        "approval_expires_at": (datetime.now(timezone.utc) + timedelta(hours=2)).isoformat(),
-        "created_at": datetime.now(timezone.utc).isoformat(),
-        "updated_at": datetime.now(timezone.utc).isoformat(),
+        "approval_expires_at": (datetime.now(UTC) + timedelta(hours=2)).isoformat(),
+        "created_at": datetime.now(UTC).isoformat(),
+        "updated_at": datetime.now(UTC).isoformat(),
         "pii_findings": []
     }
 
@@ -333,6 +333,7 @@ async def test_approval_decision_idempotency(api_key_headers):
     app.dependency_overrides[get_s3_client] = lambda: mock_s3
 
     try:
+        # Make request with API key headers
         async with AsyncClient(
             transport=ASGITransport(app=app),
             base_url="http://test"

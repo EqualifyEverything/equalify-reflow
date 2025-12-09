@@ -1,9 +1,9 @@
 """Tests for cleanup service."""
 
-import pytest
-from unittest.mock import AsyncMock, MagicMock
-from botocore.exceptions import ClientError
+from unittest.mock import AsyncMock
 
+import pytest
+from botocore.exceptions import ClientError
 from src.services.cleanup_service import CleanupService
 
 

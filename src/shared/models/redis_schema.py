@@ -6,7 +6,6 @@ across microservices. Ensures proper namespacing with eq-pdf prefix.
 
 from typing import Literal
 
-
 # Redis key prefixes
 REDIS_PREFIX = "eq-pdf"
 

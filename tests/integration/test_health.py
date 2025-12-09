@@ -4,9 +4,8 @@ from unittest.mock import AsyncMock, MagicMock
 
 import pytest
 from fastapi import status
-
+from src.dependencies import get_queue_service, get_storage_service
 from src.main import app
-from src.dependencies import get_storage_service, get_queue_service
 
 
 @pytest.mark.asyncio

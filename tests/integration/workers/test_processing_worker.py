@@ -4,14 +4,13 @@ Tests worker initialization and individual methods without running the infinite 
 This avoids async timeout issues while still validating core functionality.
 """
 
-import pytest
 import asyncio
-from unittest.mock import AsyncMock, MagicMock, patch
+from unittest.mock import AsyncMock, patch
 
-from src.workers.processing_worker import ProcessingWorker
-from src.shared.models.queue import ProcessingQueuePayload
+import pytest
 from src.shared.constants.queues import PROCESSING_QUEUE
-
+from src.shared.models.queue import ProcessingQueuePayload
+from src.workers.processing_worker import ProcessingWorker
 
 pytestmark = pytest.mark.unit
 

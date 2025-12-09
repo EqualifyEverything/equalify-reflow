@@ -1,17 +1,18 @@
 """Edge case tests for invalid and malformed PDF handling."""
 
-import pytest
 from io import BytesIO
-from fastapi import HTTPException, UploadFile
 
-from src.services.storage_service import StorageService
+import pytest
+from fastapi import HTTPException, UploadFile
 from src.config import settings
+from src.services.storage_service import StorageService
+
 from tests.e2e.edge_cases.helpers import (
     create_corrupted_pdf,
-    create_encrypted_pdf,
     create_empty_pdf,
-    create_truncated_pdf,
+    create_encrypted_pdf,
     create_non_pdf_file,
+    create_truncated_pdf,
 )
 
 

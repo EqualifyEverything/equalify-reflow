@@ -8,7 +8,7 @@ detection, approval workflows, and processing results.
 from .approval import ApprovalDecision, ApprovalRequest
 from .job import VALID_TRANSITIONS, JobStatus, JobSubmission
 from .pii import PIIFinding, PIIResult
-from .processing import PageCorrectionResult, ProcessingJob, ProcessingResult, TextCorrection
+from .processing import LLMUsage, ProcessingJob, ProcessingResult
 from .queue import ApprovalQueuePayload, PIIQueuePayload, ProcessingQueuePayload
 from .redis_schema import (
     APPROVAL_QUEUE,
@@ -40,8 +40,7 @@ __all__ = [
     # Processing models
     "ProcessingResult",
     "ProcessingJob",
-    "TextCorrection",
-    "PageCorrectionResult",
+    "LLMUsage",
 
     # Queue models
     "PIIQueuePayload",

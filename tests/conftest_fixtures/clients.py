@@ -9,8 +9,9 @@ Provides standardized mocks for:
 All fixtures use function scope (default) unless specified.
 """
 
-import pytest
 from unittest.mock import AsyncMock, MagicMock
+
+import pytest
 
 
 @pytest.fixture

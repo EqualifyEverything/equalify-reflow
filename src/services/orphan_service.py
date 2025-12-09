@@ -5,13 +5,13 @@ or are old completed/failed jobs that should be cleaned up.
 """
 
 import logging
-from datetime import datetime, timezone, timedelta
-from typing import List, Dict, Any
+from datetime import UTC, datetime, timedelta
+from typing import Any
 
-from .job_service import JobService
-from .s3_cleanup_service import S3CleanupService
-from .metrics_service import MetricsService
 from ..config import settings
+from .job_service import JobService
+from .metrics_service import MetricsService
+from .s3_cleanup_service import S3CleanupService
 
 logger = logging.getLogger(__name__)
 
@@ -36,7 +36,7 @@ class OrphanService:
         self.s3_cleanup_service = s3_cleanup_service
         self.metrics_service = metrics_service
 
-    async def cleanup_old_completed_jobs(self) -> Dict[str, Any]:
+    async def cleanup_old_completed_jobs(self) -> dict[str, Any]:
         """Clean up old completed/failed/denied jobs beyond retention period.
 
         Returns:
@@ -44,7 +44,7 @@ class OrphanService:
         """
         try:
             # Calculate cutoff time based on retention policy
-            cutoff_time = datetime.now(timezone.utc) - timedelta(
+            cutoff_time = datetime.now(UTC) - timedelta(
                 days=settings.job_retention_days
             )
 
@@ -106,7 +106,7 @@ class OrphanService:
             await self.metrics_service.increment_metric("orphan_cleanup_errors", 1)
             raise
 
-    async def cleanup_stuck_processing_jobs(self) -> Dict[str, Any]:
+    async def cleanup_stuck_processing_jobs(self) -> dict[str, Any]:
         """Detect and fail jobs stuck in processing state.
 
         Jobs stuck in 'processing' or 'pii_scanning' status for longer than
@@ -117,7 +117,7 @@ class OrphanService:
         """
         try:
             # Calculate cutoff time for stuck jobs
-            cutoff_time = datetime.now(timezone.utc) - timedelta(
+            cutoff_time = datetime.now(UTC) - timedelta(
                 hours=settings.max_processing_hours
             )
 
@@ -212,7 +212,7 @@ class OrphanService:
 
                     # If somehow still naive, add UTC timezone
                     if job_created.tzinfo is None:
-                        job_created = job_created.replace(tzinfo=timezone.utc)
+                        job_created = job_created.replace(tzinfo=UTC)
 
                     if job_created < cutoff_time:
                         logger.debug(
@@ -288,7 +288,7 @@ class OrphanService:
 
                     # If somehow still naive, add UTC timezone
                     if job_created.tzinfo is None:
-                        job_created = job_created.replace(tzinfo=timezone.utc)
+                        job_created = job_created.replace(tzinfo=UTC)
 
                     if job_created < cutoff_time:
                         logger.warning(

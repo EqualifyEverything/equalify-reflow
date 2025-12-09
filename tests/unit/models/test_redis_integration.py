@@ -1,21 +1,22 @@
 """Tests for Redis integration and key generation."""
 
+from datetime import UTC, datetime
+
 import pytest
-from datetime import datetime
 
 from shared.models import (
-    job_status_key,
-    queue_key,
-    timeout_key,
-    metrics_key,
-    PII_QUEUE,
     APPROVAL_QUEUE,
-    PROCESSING_QUEUE,
     APPROVAL_TIMEOUTS,
     DAILY_METRICS,
     JOB_STATUS_PREFIX,
+    PII_QUEUE,
+    PROCESSING_QUEUE,
     JobStatus,
-    JobSubmission
+    JobSubmission,
+    job_status_key,
+    metrics_key,
+    queue_key,
+    timeout_key,
 )
 
 
@@ -103,7 +104,7 @@ class TestModelRedisCompatibility:
         submission = JobSubmission(
             job_id="550e8400-e29b-41d4-a716-446655440000",
             s3_key="temp/550e8400-e29b-41d4-a716-446655440000/test.pdf",
-            created_at=datetime.utcnow(),
+            created_at=datetime.now(UTC),
             file_size_bytes=1024000,
             original_filename="test.pdf"
         )
@@ -119,7 +120,7 @@ class TestModelRedisCompatibility:
 
     def test_job_status_redis_serialization(self):
         """Test JobStatus model serializes for Redis."""
-        now = datetime.utcnow()
+        now = datetime.now(UTC)
         status = JobStatus(
             job_id="550e8400-e29b-41d4-a716-446655440000",
             status="processing",
@@ -157,7 +158,7 @@ class TestModelRedisCompatibility:
 
     def test_optional_fields_serialization(self):
         """Test optional fields serialize correctly as None."""
-        now = datetime.utcnow()
+        now = datetime.now(UTC)
         status = JobStatus(
             job_id="550e8400-e29b-41d4-a716-446655440000",
             status="pii_scanning",
@@ -177,7 +178,7 @@ class TestModelRedisCompatibility:
         """Test nested models serialize correctly."""
         from shared.models import PIIFinding
 
-        now = datetime.utcnow()
+        now = datetime.now(UTC)
         findings = [
             PIIFinding(
                 entity_type="PERSON",
@@ -232,7 +233,6 @@ class TestRedisKeyNamespacing:
     def test_key_patterns_for_scanning(self):
         """Test key patterns work for Redis SCAN operations."""
         # Pattern to find all job status keys
-        pattern = f"{JOB_STATUS_PREFIX}*"
 
         # Generate some example keys
         job_ids = [

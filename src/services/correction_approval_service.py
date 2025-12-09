@@ -9,7 +9,7 @@ from datetime import UTC, datetime
 from typing import Any
 
 from ..shared.constants.statuses import STATUS_COMPLETED
-from ..utils.retry_helpers import retry_with_backoff_sync
+from ..utils.retry_helpers import retry_with_backoff_for_sync_func
 from ..utils.token_generator import generate_secure_token
 from .job_service import JobService
 from .storage_service import StorageService
@@ -313,7 +313,7 @@ class CorrectionApprovalService:
             logger.info(f"Downloading corrected markdown for job {job_id} (key: {corrected_key})")
 
             # Download corrected markdown from results bucket
-            response = await retry_with_backoff_sync(
+            response = await retry_with_backoff_for_sync_func(
                 lambda: self.storage.s3_client.get_object(
                     Bucket=self.storage.results_bucket,
                     Key=corrected_key
@@ -381,7 +381,7 @@ class CorrectionApprovalService:
             logger.info(f"Downloading original markdown for job {job_id} (key: {original_key})")
 
             # Download original markdown from results bucket
-            response = await retry_with_backoff_sync(
+            response = await retry_with_backoff_for_sync_func(
                 lambda: self.storage.s3_client.get_object(
                     Bucket=self.storage.results_bucket,
                     Key=original_key

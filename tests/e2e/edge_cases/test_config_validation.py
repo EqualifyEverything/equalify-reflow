@@ -2,7 +2,6 @@
 
 import pytest
 from pydantic import ValidationError
-
 from src.config import Settings
 
 
@@ -380,49 +379,26 @@ class TestConfigurationValidation:
         assert settings_zero.claude_temperature == 0.0
         assert settings_one.claude_temperature == 1.0
 
-    def test_negative_concurrent_pages(self):
-        """Test negative max concurrent pages."""
-        try:
-            settings = Settings(max_concurrent_pages=-1)
-            assert settings.max_concurrent_pages >= 0
-        except (ValidationError, ValueError):
-            pass
+    def test_negative_max_pages(self):
+        """Test negative max pages full context."""
+        with pytest.raises(ValidationError):
+            Settings(max_pages_full_context=-1)
 
-    def test_zero_concurrent_pages(self):
-        """Test zero max concurrent pages."""
-        try:
-            settings = Settings(max_concurrent_pages=0)
-            # Zero concurrent might be invalid
-            assert settings.max_concurrent_pages >= 0
-        except (ValidationError, ValueError):
-            pass
+    def test_zero_max_pages(self):
+        """Test zero max pages full context."""
+        with pytest.raises(ValidationError):
+            Settings(max_pages_full_context=0)
 
-    def test_extreme_concurrent_pages(self):
-        """Test extremely high concurrent pages are rejected."""
+    def test_extreme_max_pages(self):
+        """Test extremely high max pages are rejected."""
         # With Field constraints, values > 50 should be rejected
         with pytest.raises(ValidationError):
-            Settings(max_concurrent_pages=1000)
+            Settings(max_pages_full_context=1000)
 
-    def test_negative_retry_attempts(self):
-        """Test negative retry attempts."""
-        try:
-            settings = Settings(page_retry_attempts=-1)
-            assert settings.page_retry_attempts >= 0
-        except (ValidationError, ValueError):
-            pass
-
-    def test_zero_retry_attempts(self):
-        """Test zero retry attempts (no retries)."""
-        settings = Settings(page_retry_attempts=0)
-
-        # Zero retries is valid (fail immediately)
-        assert settings.page_retry_attempts == 0
-
-    def test_extreme_retry_attempts(self):
-        """Test extremely high retry attempts are rejected."""
-        # With Field constraints, values > 10 should be rejected
-        with pytest.raises(ValidationError):
-            Settings(page_retry_attempts=100)
+    def test_valid_max_pages(self):
+        """Test valid max pages full context."""
+        settings = Settings(max_pages_full_context=15)
+        assert settings.max_pages_full_context == 15
 
     def test_retention_policies_consistency(self):
         """Test that retention policies are logically consistent."""

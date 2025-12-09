@@ -1,9 +1,9 @@
 """Tests for rate limit service."""
 
-import pytest
 import time
 from unittest.mock import AsyncMock, MagicMock
 
+import pytest
 from src.services.rate_limit_service import RateLimitService
 
 

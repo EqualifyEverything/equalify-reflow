@@ -1,9 +1,9 @@
-"""HTTP Basic authentication middleware for Swagger/OpenAPI documentation."""
+"""HTTP Basic authentication middleware for Swagger/OpenAPI documentation and demo UI."""
 
 import base64
 import logging
 import secrets
-from typing import Callable
+from collections.abc import Callable
 
 from fastapi import Request, Response, status
 from fastapi.responses import JSONResponse
@@ -16,9 +16,9 @@ logger = logging.getLogger(__name__)
 
 class DocsAuthMiddleware(BaseHTTPMiddleware):
     """
-    Middleware for HTTP Basic authentication on documentation endpoints.
+    Middleware for HTTP Basic authentication on documentation and demo endpoints.
 
-    Protects /docs, /openapi.json, and /redoc with username/password.
+    Protects /docs, /openapi.json, /redoc, and /demo with username/password.
     Triggers browser login prompt via WWW-Authenticate header.
     """
 
@@ -93,12 +93,13 @@ class DocsAuthMiddleware(BaseHTTPMiddleware):
 
     def _is_docs_endpoint(self, request: Request) -> bool:
         """
-        Check if endpoint is a documentation endpoint.
+        Check if endpoint is a protected endpoint.
 
         Protected endpoints:
         - /docs (Swagger UI)
         - /openapi.json (OpenAPI schema)
         - /redoc (ReDoc alternative UI)
+        - /demo/* (Demo UI)
 
         Args:
             request: Incoming request
@@ -107,8 +108,14 @@ class DocsAuthMiddleware(BaseHTTPMiddleware):
             True if endpoint requires docs auth
         """
         path = request.url.path
-        docs_paths = ["/docs", "/openapi.json", "/redoc"]
-        return path in docs_paths
+        # Exact match paths
+        exact_paths = ["/docs", "/openapi.json", "/redoc"]
+        if path in exact_paths:
+            return True
+        # Prefix match for demo UI (includes /demo, /demo/, /demo/assets/*, etc.)
+        if path == "/demo" or path.startswith("/demo/"):
+            return True
+        return False
 
     def _decode_credentials(self, auth_header: str) -> tuple[str, str] | None:
         """

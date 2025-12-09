@@ -1,9 +1,9 @@
 """Tests for TimeoutService - Approval timeout monitoring."""
 
-import pytest
-from datetime import datetime, timezone, timedelta
-from unittest.mock import AsyncMock, MagicMock
+from datetime import UTC, datetime, timedelta
+from unittest.mock import AsyncMock
 
+import pytest
 from src.services.timeout_service import TimeoutService
 
 
@@ -65,7 +65,7 @@ def expired_job_data():
         "job_id": "test-job-123",
         "status": "awaiting_approval",
         "s3_key": "temp/test-job-123.pdf",
-        "created_at": (datetime.now(timezone.utc) - timedelta(hours=5)).isoformat(),
+        "created_at": (datetime.now(UTC) - timedelta(hours=5)).isoformat(),
         "pii_findings": '[{"type": "SSN", "confidence": 0.9}]'
     }
 
@@ -77,7 +77,7 @@ def completed_job_data():
         "job_id": "test-job-456",
         "status": "completed",
         "s3_key": "temp/test-job-456.pdf",
-        "created_at": (datetime.now(timezone.utc) - timedelta(hours=1)).isoformat(),
+        "created_at": (datetime.now(UTC) - timedelta(hours=1)).isoformat(),
         "result_url": "https://s3.example.com/results/test-job-456/output.md"
     }
 

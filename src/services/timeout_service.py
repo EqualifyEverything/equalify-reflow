@@ -5,14 +5,11 @@ and performs cleanup operations (status updates, temp file removal).
 """
 
 import logging
-from datetime import datetime, timezone
-from typing import List
 
-from .queue_service import QueueService
-from .job_service import JobService
 from .cleanup_service import CleanupService
+from .job_service import JobService
 from .metrics_service import MetricsService
-from ..config import settings
+from .queue_service import QueueService
 
 logger = logging.getLogger(__name__)
 

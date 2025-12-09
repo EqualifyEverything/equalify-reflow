@@ -1,4 +1,4 @@
-.PHONY: help dev prod up down logs health test test-fast test-unit test-integration test-concurrent test-e2e test-large-files test-slow test-all clean build shell test-docker logs-api grafana-url prometheus-url metrics-url coverage coverage-html coverage-report aws-health aws-logs aws-status aws-deploy aws-shell localstack-debug
+.PHONY: help dev prod up down logs health test test-fast test-unit test-integration test-concurrent test-e2e test-large-files test-slow test-all clean build build-demo-ui build-demo-ui-silent shell test-docker logs-api grafana-url prometheus-url metrics-url coverage coverage-html coverage-report aws-health aws-logs aws-status aws-deploy aws-shell localstack-debug
 
 # Default target
 help:
@@ -28,6 +28,7 @@ help:
 	@echo ""
 	@echo "Docker:"
 	@echo "  make build        - Build Docker images"
+	@echo "  make build-demo-ui - Build demo UI (for dev, then restart)"
 	@echo "  make shell        - Access API container shell"
 	@echo "  make test-docker  - Run tests inside container"
 	@echo ""
@@ -54,16 +55,26 @@ help:
 	@echo ""
 
 # Development environment
-dev:
-	@if ! aws sts get-caller-identity --profile $${AWS_PROFILE:-uic} > /dev/null 2>&1; then \
-		echo "⚠️  AWS credentials not found - Bedrock AI unavailable"; \
+dev: build-demo-ui-silent
+	@AWS_PROFILE=$${AWS_PROFILE:-uic}; \
+	if aws sts get-caller-identity --profile $$AWS_PROFILE > /dev/null 2>&1; then \
+		echo "✅ AWS credentials valid for profile $$AWS_PROFILE, exporting for Docker..."; \
+		eval "$$(aws configure export-credentials --profile $$AWS_PROFILE --format env)" && \
+		export AWS_ACCESS_KEY_ID AWS_SECRET_ACCESS_KEY AWS_SESSION_TOKEN && \
+		docker compose -f docker-compose.yml -f docker-compose.dev.yml up -d; \
+	else \
+		echo "⚠️  AWS credentials not found for profile $$AWS_PROFILE - Bedrock AI unavailable"; \
 		echo "   To enable, run:"; \
-		echo "     aws sso login --profile uic"; \
-		echo "     eval \"\$$(aws configure export-credentials --profile uic --format env)\""; \
+		echo "     aws sso login --profile $$AWS_PROFILE"; \
 		echo "     make down && make dev"; \
 		echo ""; \
+		echo "Starting without Bedrock (LocalStack S3 only)..."; \
+		docker compose -f docker-compose.yml -f docker-compose.dev.yml up -d; \
 	fi
-	docker compose -f docker-compose.yml -f docker-compose.dev.yml up -d
+
+# Build demo UI silently (used by dev target)
+build-demo-ui-silent:
+	@cd frontend/demo-ui && pnpm install --silent && pnpm run build --silent 2>/dev/null || pnpm run build
 
 # Production environment
 prod:
@@ -139,6 +150,16 @@ redis-cli:
 # Build Docker images
 build:
 	docker compose -f docker-compose.yml -f docker-compose.dev.yml build
+
+# Build demo UI static files (for development)
+# After building, restart the API container to pick up changes
+build-demo-ui:
+	@echo "Building demo UI..."
+	cd frontend/demo-ui && pnpm install && pnpm run build
+	@echo ""
+	@echo "✅ Demo UI built to frontend/demo-ui/dist/"
+	@echo "   Restart with: make down && make dev"
+	@echo "   Then access: http://localhost:8080/demo"
 
 # Access API container shell for debugging
 shell:

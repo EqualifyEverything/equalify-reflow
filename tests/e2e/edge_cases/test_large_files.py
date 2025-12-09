@@ -1,12 +1,13 @@
 """Edge case tests for large file handling."""
 
-import pytest
 from io import BytesIO
-from fastapi import HTTPException, UploadFile
-import filelock
 
-from src.services.storage_service import StorageService
+import filelock
+import pytest
+from fastapi import HTTPException, UploadFile
 from src.config import settings
+from src.services.storage_service import StorageService
+
 from tests.e2e.edge_cases.helpers import generate_large_pdf
 
 

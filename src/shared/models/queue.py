@@ -1,7 +1,7 @@
 """Queue payload models for Redis queue communication."""
 
 from datetime import datetime
-from typing import List, Optional
+
 from pydantic import BaseModel, ConfigDict, Field
 
 from .pii import PIIFinding
@@ -83,7 +83,7 @@ class ApprovalQueuePayload(BaseModel):
         min_length=1,
         description="S3 object key for PDF"
     )
-    pii_findings: List[PIIFinding] = Field(
+    pii_findings: list[PIIFinding] = Field(
         ...,
         min_length=1,
         description="Detected PII entities"
@@ -148,7 +148,7 @@ class ProcessingQueuePayload(BaseModel):
         min_length=1,
         description="S3 object key for PDF"
     )
-    approved_at: Optional[datetime] = Field(
+    approved_at: datetime | None = Field(
         default=None,
         description="UTC approval timestamp if required"
     )

@@ -5,13 +5,11 @@ Pure functions with no external dependencies.
 """
 
 import pytest
-
 from src.utils.confidence_scoring import (
-    classify_confidence_level,
     aggregate_page_confidences,
     calculate_document_confidence,
+    classify_confidence_level,
 )
-
 
 pytestmark = pytest.mark.unit
 

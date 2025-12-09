@@ -1,10 +1,10 @@
 """Integration tests for approval workflow API endpoints."""
 
-import pytest
-from datetime import datetime, timezone, timedelta
-from httpx import AsyncClient, ASGITransport
+from datetime import UTC, datetime, timedelta
 from unittest.mock import AsyncMock, patch
 
+import pytest
+from httpx import ASGITransport, AsyncClient
 from src.main import app
 
 
@@ -16,8 +16,8 @@ def valid_job_data():
         "s3_key": "temp/test-doc.pdf",
         "status": "awaiting_approval",
         "approval_token": "valid-token-abc123",
-        "approval_expires_at": (datetime.now(timezone.utc) + timedelta(hours=2)).isoformat(),
-        "created_at": datetime.now(timezone.utc).isoformat(),
+        "approval_expires_at": (datetime.now(UTC) + timedelta(hours=2)).isoformat(),
+        "created_at": datetime.now(UTC).isoformat(),
         "pii_findings": [
             {
                 "entity_type": "EMAIL_ADDRESS",
@@ -36,8 +36,8 @@ def expired_job_data():
         "s3_key": "temp/expired-doc.pdf",
         "status": "awaiting_approval",
         "approval_token": "expired-token-xyz",
-        "approval_expires_at": (datetime.now(timezone.utc) - timedelta(hours=1)).isoformat(),
-        "created_at": datetime.now(timezone.utc).isoformat(),
+        "approval_expires_at": (datetime.now(UTC) - timedelta(hours=1)).isoformat(),
+        "created_at": datetime.now(UTC).isoformat(),
         "pii_findings": []
     }
 
@@ -66,7 +66,7 @@ async def test_get_review_details_valid_token(valid_job_data, api_key_headers):
         mock_job_service.get_job_by_approval_token.return_value = valid_job_data
         mock_job_service_class.return_value = mock_job_service
 
-        # Make request
+        # Make request with API key headers
         async with AsyncClient(
             transport=ASGITransport(app=app),
             base_url="http://test"
@@ -96,7 +96,7 @@ async def test_get_review_details_invalid_token(api_key_headers):
         mock_s3 = AsyncMock()
         mock_s3_dep.return_value = mock_s3
 
-        # Make request
+        # Make request with API key headers
         async with AsyncClient(
             transport=ASGITransport(app=app),
             base_url="http://test"
@@ -130,7 +130,7 @@ async def test_get_review_details_expired_token(expired_job_data, api_key_header
         mock_job_service.get_job_by_approval_token.return_value = expired_job_data
         mock_job_service_class.return_value = mock_job_service
 
-        # Make request
+        # Make request with API key headers
         async with AsyncClient(
             transport=ASGITransport(app=app),
             base_url="http://test"
@@ -146,6 +146,7 @@ async def test_get_review_details_expired_token(expired_job_data, api_key_header
 async def test_submit_approval_approved_decision(valid_job_data, api_key_headers):
     """Test POST /api/approval/{token}/decision with approved decision."""
     import json
+
     from src.dependencies import get_redis_client, get_s3_client
 
     # Add updated_at field required by Job model
@@ -189,7 +190,7 @@ async def test_submit_approval_approved_decision(valid_job_data, api_key_headers
     app.dependency_overrides[get_s3_client] = lambda: mock_s3
 
     try:
-        # Make request
+        # Make request with API key headers
         async with AsyncClient(
             transport=ASGITransport(app=app),
             base_url="http://test"
@@ -254,7 +255,7 @@ async def test_submit_approval_denied_decision(valid_job_data, api_key_headers):
         # Mock cleanup service
         mock_cleanup.return_value = True
 
-        # Make request
+        # Make request with API key headers
         async with AsyncClient(
             transport=ASGITransport(app=app),
             base_url="http://test"
@@ -296,7 +297,7 @@ async def test_submit_approval_invalid_token(api_key_headers):
         mock_s3 = AsyncMock()
         mock_s3_dep.return_value = mock_s3
 
-        # Make request
+        # Make request with API key headers
         async with AsyncClient(
             transport=ASGITransport(app=app),
             base_url="http://test"
@@ -323,6 +324,7 @@ async def test_submit_approval_validation_errors(api_key_headers):
         "justification": "Too short"  # Less than 10 characters
     }
 
+    # Make request with API key headers
     async with AsyncClient(
         transport=ASGITransport(app=app),
         base_url="http://test"

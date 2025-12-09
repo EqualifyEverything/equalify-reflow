@@ -1,9 +1,8 @@
 """Integration tests for PII false positive validation."""
 
-import pytest
-from pathlib import Path
 
-from src.services.pii_analyzer import PIIAnalyzer, ENTITY_TYPES
+import pytest
+from src.services.pii_analyzer import ENTITY_TYPES, PIIAnalyzer
 
 
 class TestPIIFalsePositiveReduction:

@@ -15,7 +15,7 @@ Typical usage:
     >>>
     >>> # Before operation
     >>> if breaker.is_open:
-    >>>     raise CircuitBreakerOpen("S3 circuit breaker open")
+    >>>     raise CircuitBreakerOpenError("S3 circuit breaker open")
     >>>
     >>> try:
     >>>     result = await some_s3_operation()
@@ -25,11 +25,10 @@ Typical usage:
     >>>     raise
 """
 
-import time
 import logging
-from enum import Enum
+import time
 from dataclasses import dataclass
-from typing import Optional
+from enum import Enum
 from threading import Lock
 
 logger = logging.getLogger(__name__)
@@ -42,7 +41,7 @@ class CircuitState(str, Enum):
     HALF_OPEN = "half_open"    # Testing recovery
 
 
-class CircuitBreakerOpen(Exception):
+class CircuitBreakerOpenError(Exception):
     """Exception raised when circuit breaker is open (blocking requests)."""
     pass
 
@@ -80,7 +79,7 @@ class CircuitBreaker:
         >>> breaker = CircuitBreaker("s3-upload")
         >>>
         >>> # Check state before operation
-        >>> breaker.check_state()  # Raises CircuitBreakerOpen if open
+        >>> breaker.check_state()  # Raises CircuitBreakerOpenError if open
         >>>
         >>> try:
         >>>     result = await s3_client.put_object(...)
@@ -93,10 +92,10 @@ class CircuitBreaker:
     def __init__(
         self,
         name: str,
-        config: Optional[CircuitBreakerConfig] = None,
-        failure_threshold: Optional[int] = None,
-        success_threshold: Optional[int] = None,
-        timeout: Optional[float] = None
+        config: CircuitBreakerConfig | None = None,
+        failure_threshold: int | None = None,
+        success_threshold: int | None = None,
+        timeout: float | None = None
     ):
         """Initialize circuit breaker.
 
@@ -124,7 +123,7 @@ class CircuitBreaker:
         self._state = CircuitState.CLOSED
         self._failure_count = 0
         self._success_count = 0
-        self._last_failure_time: Optional[float] = None
+        self._last_failure_time: float | None = None
         self._half_open_calls = 0
 
         # Thread safety
@@ -163,13 +162,13 @@ class CircuitBreaker:
         """Check circuit state and raise exception if open.
 
         Raises:
-            CircuitBreakerOpen: If circuit is open or half-open limit reached
+            CircuitBreakerOpenError: If circuit is open or half-open limit reached
         """
         with self._lock:
             self._update_state()
 
             if self._state == CircuitState.OPEN:
-                raise CircuitBreakerOpen(
+                raise CircuitBreakerOpenError(
                     f"Circuit breaker '{self.name}' is open. "
                     f"Service has failed {self._failure_count} times. "
                     f"Retry after {self.config.timeout}s."
@@ -177,7 +176,7 @@ class CircuitBreaker:
 
             if self._state == CircuitState.HALF_OPEN:
                 if self._half_open_calls >= self.config.half_open_max_calls:
-                    raise CircuitBreakerOpen(
+                    raise CircuitBreakerOpenError(
                         f"Circuit breaker '{self.name}' is half-open with max concurrent calls reached."
                     )
                 self._half_open_calls += 1

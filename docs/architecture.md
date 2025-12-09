@@ -15,6 +15,7 @@ The Equalify PDF Converter is a monolithic Python application with background ta
 ## Technology Stack
 
 ### Backend Framework
+
 - **Python 3.11+** - Modern async/await support, type hints
 - **FastAPI 0.115+** - High-performance async web framework
 - **Uvicorn** - ASGI server with hot-reload support
@@ -22,6 +23,7 @@ The Equalify PDF Converter is a monolithic Python application with background ta
 - **uv** - Fast Python package manager (replaces pip/poetry)
 
 ### AI/ML Processing
+
 - **PydanticAI 1.0+** - Multi-agent AI orchestration framework
 - **AWS Bedrock** - Claude AI models via AWS Bedrock
 - **IBM Docling 2.55+** - PDF to Markdown conversion with OCR
@@ -29,18 +31,21 @@ The Equalify PDF Converter is a monolithic Python application with background ta
 - **spaCy 3.7** - NLP models for Presidio (en_core_web_sm)
 
 ### Infrastructure
+
 - **Redis 5.0+** - Task queues, job state, rate limiting, distributed locks
 - **AWS S3** - Object storage for PDFs and results
 - **LocalStack** - Local AWS emulation for development
 - **Docker & Docker Compose** - Containerized services
 
 ### Monitoring & Observability
+
 - **Prometheus** - Metrics collection and storage
 - **Grafana** - Metrics visualization and dashboards
 - **OpenTelemetry** - Distributed tracing instrumentation
 - **prometheus-client** - Python metrics exporter
 
 ### Testing
+
 - **pytest 7.4+** - Test framework
 - **pytest-asyncio** - Async test support
 - **pytest-xdist** - Parallel test execution
@@ -50,6 +55,7 @@ The Equalify PDF Converter is a monolithic Python application with background ta
 - **reportlab** - PDF generation for test fixtures
 
 ### Deployment
+
 - **AWS ECS Fargate** - Container orchestration (production)
 - **AWS ElastiCache** - Managed Redis (production)
 - **AWS CloudWatch** - Logging and monitoring (production)
@@ -194,19 +200,23 @@ src/
 #### Files
 
 **`api/documents.py`** - Document lifecycle management
+
 - `POST /api/documents/submit` - Submit PDF for processing (returns job_id)
 - `GET /api/documents/{job_id}` - Check processing status
 - `GET /api/documents/{job_id}/result` - Retrieve processed HTML/MDX with presigned URLs
 
 **`api/approval.py`** - Human approval workflow
+
 - `GET /api/approval/{token}/review` - Get job details for PII review (requires token)
 - `POST /api/approval/{token}/decision` - Submit approval/denial decision (requires token)
 
 **`api/health.py`** - Health checks and metrics
+
 - `GET /health` - Application health status (Redis/S3 connectivity)
 - `GET /metrics` - Prometheus metrics endpoint
 
 **`api/dev_monitoring.py`** - Development-only endpoints (disabled in production)
+
 - `GET /api/dev/monitoring/queues` - Real-time queue depths and job counts
 
 ### 2. Service Layer (Business Logic)
@@ -218,6 +228,7 @@ src/
 #### Storage & State Management
 
 **`services/storage_service.py`** - S3 operations
+
 - Upload PDFs to temp bucket, results to permanent bucket
 - Download files for processing
 - Generate presigned URLs for client downloads
@@ -225,11 +236,13 @@ src/
 - Exponential backoff retry on transient errors
 
 **`services/queue_service.py`** - Redis queue operations
+
 - `enqueue()` - LPUSH to Redis lists (eq-pdf:queue:pii, eq-pdf:queue:processing)
 - `dequeue()` - BLPOP with timeout for graceful shutdown
 - `queue_depth()` - LLEN for monitoring
 
 **`services/job_service.py`** - Job state management
+
 - Create job metadata in Redis hashes (eq-pdf:job:{job_id})
 - Update status with automatic TTL (7 days active, 30 days completed)
 - Retrieve job details with status filtering
@@ -238,11 +251,13 @@ src/
 #### PII Detection
 
 **`services/pii_service.py`** - PII detection orchestration
+
 - Coordinate PDF download, text extraction, Presidio scanning
 - Handle approval workflow initiation
 - Store PII findings in job metadata
 
 **`services/pii_analyzer.py`** - Microsoft Presidio wrapper
+
 - Initialize Presidio AnalyzerEngine with spaCy models
 - Detect entities (PERSON, EMAIL_ADDRESS, PHONE_NUMBER, SSN, etc.)
 - Return structured PII findings with confidence scores
@@ -250,22 +265,26 @@ src/
 #### Document Processing
 
 **`services/processing_service.py`** - Main processing pipeline
+
 - Orchestrate PDF → Markdown → AI-enhanced HTML workflow
 - Manage multi-stage processing with error recovery
 - Calculate confidence scores
 - Store results in S3 with versioning
 
 **`services/pdf_converter.py`** - Docling PDF → Markdown
+
 - Convert PDF to Markdown with page images
 - Handle multi-page documents
 - OCR for scanned documents
 - Preserve document structure (headings, lists, tables)
 
 **`services/pdf_extractor.py`** - Docling text extraction
+
 - Extract raw text for PII scanning (faster than full conversion)
 - Normalize whitespace and formatting
 
 **`services/ai_enhancement_service.py`** - AI accessibility enhancement
+
 - Process pages concurrently (configurable concurrency)
 - Add alt text to images
 - Improve heading hierarchy
@@ -275,27 +294,32 @@ src/
 #### Approval & Cleanup
 
 **`services/approval_service.py`** - Approval workflow
+
 - Generate secure approval tokens (cryptographically random)
 - Validate tokens and approval state
 - Transition jobs from awaiting_approval → processing (approved) or denied (rejected)
 - Trigger cleanup for denied jobs
 
 **`services/timeout_service.py`** - Approval timeout monitoring
+
 - Monitor Redis sorted set for expired approvals (eq-pdf:timeouts:approval)
 - Auto-reject documents after timeout (default: 4 hours)
 - Remove from timeout queue on approval/rejection
 
 **`services/cleanup_service.py`** - Denied job cleanup
+
 - Delete temp files from S3 when job is rejected
 - Remove job metadata from Redis
 - Log cleanup actions for audit trail
 
 **`services/s3_cleanup_service.py`** - S3 temporary file cleanup
+
 - Periodic cleanup of temp files older than retention period (default: 24 hours)
 - List and delete in batches for efficiency
 - Track cleanup metrics
 
 **`services/orphan_service.py`** - Orphaned job detection
+
 - Detect jobs stuck in processing state beyond max processing time (default: 2 hours)
 - Mark as failed with timeout reason
 - Clean up orphaned S3 files
@@ -303,11 +327,13 @@ src/
 #### Infrastructure Services
 
 **`services/rate_limit_service.py`** - Rate limiting
+
 - Redis sliding window algorithm
 - Per-IP and global rate limits
 - Configurable time windows and request limits
 
 **`services/metrics_service.py`** - Prometheus metrics
+
 - Track job counts by status
 - Monitor queue depths
 - Record processing times
@@ -323,6 +349,7 @@ src/
 #### Files
 
 **`workers/pii_worker.py`** - PII detection worker
+
 - `BLPOP eq-pdf:queue:pii` - Wait for PII scan jobs
 - Download PDF from S3 temp bucket
 - Run Microsoft Presidio scan
@@ -331,6 +358,7 @@ src/
 - Graceful shutdown on signal (completes current job, max 30s)
 
 **`workers/processing_worker.py`** - Document processing worker
+
 - `BLPOP eq-pdf:queue:processing` - Wait for approved jobs
 - Download PDF from S3
 - Docling: PDF → Markdown with page images
@@ -340,6 +368,7 @@ src/
 - Graceful shutdown on signal
 
 **`workers/timeout_worker.py`** - Scheduled maintenance worker
+
 - **Approval timeout checks** (every 30 seconds)
   - `ZRANGEBYSCORE eq-pdf:timeouts:approval` - Find expired approvals
   - Auto-reject and cleanup
@@ -395,30 +424,36 @@ FastAPI middleware executes in reverse order of registration (last added = first
 #### Files
 
 **`shared/models/job.py`** - Job lifecycle models
+
 - `Job` - Complete job with all fields (status, s3_key, result URLs, timestamps)
 - `JobCreate` - Minimal fields for job creation (filename, content_type)
 - `JobUpdate` - Partial update model (status, s3_key, error_message)
 - `JobStatus` - Read-only status response for clients
 
 **`shared/models/queue.py`** - Queue message payloads
+
 - `QueueMessage` - Base message (job_id, timestamp)
 - `PIIQueuePayload` - PII scan job (job_id, s3_key)
 - `ProcessingQueuePayload` - Processing job (job_id, s3_key, approved_at)
 
 **`shared/models/pii.py`** - PII detection models
+
 - `PIIFinding` - Presidio entity result (entity_type, start, end, score)
 - `PIIResult` - Scan result (has_pii, findings, confidence)
 - `PIIApprovalRequest` - Approval action (job_id, decision, justification)
 
 **`shared/models/processing.py`** - Processing results
+
 - `ProcessingResult` - Complete result (markdown_url, confidence_score)
 - `ProcessingError` - Structured error (stage, error_type, message, retryable)
 
 **`shared/models/approval.py`** - Approval workflow
+
 - `ApprovalRequest` - Client request (decision, justification, token)
 - `ApprovalResponse` - Server response (accepted, new_status, message)
 
 **`shared/models/redis_schema.py`** - Redis data structure documentation
+
 - Type definitions for Redis hash fields
 - Key patterns and naming conventions
 - TTL policies
@@ -432,6 +467,7 @@ FastAPI middleware executes in reverse order of registration (last added = first
 #### Files
 
 **`shared/constants/statuses.py`** - Job status constants
+
 ```python
 SUBMITTED = "submitted"
 PII_SCANNING = "pii_scanning"
@@ -443,12 +479,14 @@ DENIED = "denied"
 ```
 
 **`shared/constants/queues.py`** - Queue names
+
 ```python
 QUEUE_PII = "eq-pdf:queue:pii"
 QUEUE_PROCESSING = "eq-pdf:queue:processing"
 ```
 
 **`shared/constants/redis_keys.py`** - Redis key patterns
+
 ```python
 JOB_PREFIX = "eq-pdf:job:"
 TIMEOUT_PREFIX = "eq-pdf:timeouts:"
@@ -465,29 +503,34 @@ LOCK_PREFIX = "eq-pdf:lock:"
 #### Files
 
 **`utils/circuit_breaker.py`** - Circuit breaker pattern
+
 - `CircuitBreaker` class with states (CLOSED, OPEN, HALF_OPEN)
 - Track consecutive failures (threshold: 5)
 - Timeout before recovery test (60 seconds)
 - Separate circuits for S3 upload/download/delete
 
 **`utils/retry_helpers.py`** - Exponential backoff retry
-- `retry_with_backoff_sync()` - Synchronous retry with exponential backoff
-- `retry_with_backoff_async()` - Async version
+
+- `retry_with_backoff_for_sync_func()` - Async wrapper for synchronous functions with exponential backoff
+- `retry_with_backoff()` - Async version for async functions
 - Categorize errors as retriable vs non-retriable
 - Max attempts: 3, base delay: 1s, max delay: 8s
 
 **`utils/confidence_scoring.py`** - AI quality scoring
+
 - Calculate overall confidence from page-level scores
 - Weight by page length
 - Classify as HIGH (>0.85), MEDIUM (0.60-0.85), LOW (<0.60)
 
 **`utils/text_cleanup.py`** - Text normalization
+
 - Remove excessive whitespace
 - Normalize line endings
 - Fix common PDF extraction artifacts
 - Preserve code blocks and preformatted text
 
 **`utils/token_generator.py`** - Secure token generation
+
 - Generate cryptographically secure random tokens for approval URLs
 - URL-safe base64 encoding
 - Configurable token length (default: 32 bytes → 43 characters)
@@ -510,6 +553,7 @@ LOCK_PREFIX = "eq-pdf:lock:"
 3. Generate job_id (UUID4)
 4. Upload PDF to S3 temp bucket: `s3://equalify-pdf-temp/{job_id}.pdf`
 5. Create job in Redis:
+
    ```python
    HSET eq-pdf:job:{job_id}
      status "pii_scanning"
@@ -517,11 +561,15 @@ LOCK_PREFIX = "eq-pdf:lock:"
      filename "course-syllabus.pdf"
      created_at "2025-01-15T10:00:00Z"
    ```
+
 6. Queue for PII scanning:
+
    ```python
    LPUSH eq-pdf:queue:pii '{"job_id": "...", "s3_key": "temp/..."}'
    ```
+
 7. Return immediately:
+
    ```json
    {
      "job_id": "abc-123-def-456",
@@ -546,9 +594,11 @@ LOCK_PREFIX = "eq-pdf:lock:"
 #### Flow
 
 1. PII worker blocks on queue:
+
    ```python
    job = BLPOP eq-pdf:queue:pii 60  # 60s timeout for graceful shutdown
    ```
+
 2. Download PDF from S3 temp bucket
 3. Extract text using Docling (fast extraction, no images)
 4. Run Microsoft Presidio scan:
@@ -559,6 +609,7 @@ LOCK_PREFIX = "eq-pdf:lock:"
    **If NO PII detected** (findings empty):
    - Update job status to `processing`
    - Queue for processing:
+
      ```python
      LPUSH eq-pdf:queue:processing '{"job_id": "...", "s3_key": "..."}'
      ```
@@ -566,6 +617,7 @@ LOCK_PREFIX = "eq-pdf:lock:"
    **If PII detected** (findings exist):
    - Generate secure approval token
    - Update job:
+
      ```python
      HSET eq-pdf:job:{job_id}
        status "awaiting_approval"
@@ -573,10 +625,13 @@ LOCK_PREFIX = "eq-pdf:lock:"
        approval_token "secure-random-token"
        expires_at "2025-01-15T14:00:00Z"  # +4 hours
      ```
+
    - Add to timeout queue:
+
      ```python
      ZADD eq-pdf:timeouts:approval 1705329600 "{job_id}"  # Unix timestamp
      ```
+
    - Send email notification to faculty (future phase)
 
 #### Edge Cases
@@ -634,9 +689,11 @@ LOCK_PREFIX = "eq-pdf:lock:"
 #### Flow
 
 1. Processing worker blocks on queue:
+
    ```python
    job = BLPOP eq-pdf:queue:processing 60
    ```
+
 2. Download PDF from S3 temp bucket
 3. **Docling conversion** (PDF → Markdown):
    - Extract text with structure (headings, lists, tables)
@@ -661,6 +718,7 @@ LOCK_PREFIX = "eq-pdf:lock:"
    - Upload Markdown: `s3://equalify-pdf-results/{job_id}/result.md`
    - Generate presigned URL (valid 7 days)
 7. **Update job:**
+
    ```python
    HSET eq-pdf:job:{job_id}
      status "completed"
@@ -690,6 +748,7 @@ LOCK_PREFIX = "eq-pdf:lock:"
 2. API retrieves job from Redis: `HGET eq-pdf:job:{job_id}`
 3. Validate status is `completed`
 4. Return result:
+
    ```json
    {
      "job_id": "abc-123-def-456",
@@ -701,6 +760,7 @@ LOCK_PREFIX = "eq-pdf:lock:"
      "completed_at": "2025-01-15T10:05:23Z"
    }
    ```
+
 5. Client downloads files from presigned URLs
 6. Result URLs expire after 7 days (regenerate if needed)
 
@@ -721,9 +781,11 @@ LOCK_PREFIX = "eq-pdf:lock:"
 #### Operations
 
 1. **Check expired approvals:**
+
    ```python
    expired_jobs = ZRANGEBYSCORE eq-pdf:timeouts:approval 0 {current_timestamp}
    ```
+
 2. For each expired job:
    - Check job status (race condition protection)
    - If still `awaiting_approval`:
@@ -834,11 +896,13 @@ eq-pdf:queue:processing = [
 ```
 
 **Operations:**
+
 - **Enqueue:** `LPUSH eq-pdf:queue:pii '{...}'` (left push, FIFO order)
 - **Dequeue:** `BRPOP eq-pdf:queue:pii 60` (blocking right pop, 60s timeout)
 - **Depth:** `LLEN eq-pdf:queue:pii` (queue length for monitoring)
 
 **Why Lists?**
+
 - FIFO ordering (documents processed in submission order)
 - Blocking operations (workers sleep when idle, wake on new jobs)
 - Atomic operations (no race conditions)
@@ -885,18 +949,21 @@ eq-pdf:job:ghi-789 = {
 ```
 
 **TTL Policy:**
+
 - **Active jobs** (`pii_scanning`, `awaiting_approval`, `processing`): 7 days
 - **Completed jobs:** 30 days
 - **Failed jobs:** 30 days
 - **Denied jobs:** 7 days
 
 **Operations:**
+
 - **Create:** `HSET eq-pdf:job:{job_id} status submitted ... | EXPIRE eq-pdf:job:{job_id} 604800`
 - **Update:** `HSET eq-pdf:job:{job_id} status processing updated_at ...`
 - **Read:** `HGETALL eq-pdf:job:{job_id}`
 - **Delete:** `DEL eq-pdf:job:{job_id}` (or let TTL expire)
 
 **Why Hashes?**
+
 - Efficient storage (fields stored inline, not separate keys)
 - Atomic field updates (status transitions without race conditions)
 - Flexible schema (add fields as needed, no migration)
@@ -916,12 +983,14 @@ eq-pdf:timeouts:approval = {
 ```
 
 **Operations:**
+
 - **Add deadline:** `ZADD eq-pdf:timeouts:approval {timestamp} {job_id}`
 - **Find expired:** `ZRANGEBYSCORE eq-pdf:timeouts:approval 0 {current_time}`
 - **Remove:** `ZREM eq-pdf:timeouts:approval {job_id}`
 - **Count pending:** `ZCARD eq-pdf:timeouts:approval`
 
 **Why Sorted Sets?**
+
 - Efficient range queries (find expired in O(log N + M))
 - Automatic ordering (no need to sort)
 - Score-based expiration (Unix timestamps as scores)
@@ -937,10 +1006,12 @@ eq-pdf:lock:job:abc-123 = "worker-instance-id"  # EX 60 (expires in 60 seconds)
 ```
 
 **Operations:**
+
 - **Acquire:** `SET eq-pdf:lock:job:{job_id} {worker_id} NX EX 60`
 - **Release:** `DEL eq-pdf:lock:job:{job_id}` (only if owner)
 
 **Use Cases:**
+
 - Prevent duplicate PII scans (if job re-queued)
 - Prevent duplicate processing (if approval timeout and manual approval race)
 - Cleanup operations (ensure one worker cleans temp files)
@@ -971,6 +1042,7 @@ eq-pdf:metrics:weekly:2025-W03 = {
 ```
 
 **TTL Policy:**
+
 - Daily metrics: 90 days
 - Weekly metrics: 2 years
 
@@ -991,6 +1063,7 @@ equalify-pdf-temp/
 ```
 
 **Lifecycle Policy:**
+
 - Delete files older than 24 hours (backup cleanup)
 - No versioning (temp files, not critical)
 
@@ -1014,6 +1087,7 @@ equalify-pdf-results/
 ```
 
 **Lifecycle Policy:**
+
 - Transition to Glacier after 1 year (cost optimization)
 - Versioning enabled (support document updates)
 - Server-side encryption (AES-256)
@@ -1040,11 +1114,13 @@ equalify-pdf-results/
 ### Local Development Setup
 
 **Prerequisites:**
+
 - Docker Desktop
 - 8GB+ RAM (for LocalStack + containers)
 - 20GB+ disk space
 
 **Start services:**
+
 ```bash
 make dev
 # Equivalent to:
@@ -1052,6 +1128,7 @@ make dev
 ```
 
 **Services started:**
+
 - **api-gateway** (port 8080) - FastAPI application
 - **redis** (port 6379) - Task queues and state
 - **localstack** (port 4566) - Local AWS emulation
@@ -1061,14 +1138,16 @@ make dev
 - **redis-exporter** (port 9121) - Redis metrics
 
 **Access points:**
-- API: http://localhost:8080
-- API Docs: http://localhost:8080/docs
-- Metrics: http://localhost:8080/metrics
-- Demo UI: http://localhost:5173
-- Grafana: http://localhost:3000 (admin/admin)
-- Prometheus: http://localhost:9090
+
+- API: <http://localhost:8080>
+- API Docs: <http://localhost:8080/docs>
+- Metrics: <http://localhost:8080/metrics>
+- Demo UI: <http://localhost:5173>
+- Grafana: <http://localhost:3000> (admin/admin)
+- Prometheus: <http://localhost:9090>
 
 **Hot reload:**
+
 - Source code mounted as read-only volume
 - Uvicorn `--reload` watches for changes
 - Tests mounted for containerized test runs
@@ -1078,6 +1157,7 @@ make dev
 ### Production Deployment (AWS)
 
 **Architecture:**
+
 - **ECS Fargate:** Single task definition (API + workers), spot instances
 - **ElastiCache:** Redis cluster (multi-AZ, automatic failover)
 - **S3:** Two buckets (temp, results) with lifecycle policies
@@ -1086,6 +1166,7 @@ make dev
 - **Secrets Manager:** API keys, database credentials
 
 **Deployment process:**
+
 1. Build Docker image with production target
 2. Push to AWS ECR (Elastic Container Registry)
 3. Update ECS task definition with new image tag
@@ -1095,6 +1176,7 @@ make dev
 **Infrastructure as Code:** See [scripts/deploy-aws.sh](../scripts/deploy-aws.sh) and [docs/aws-guide.md](aws-guide.md)
 
 **Monitoring:**
+
 - **CloudWatch Logs:** Structured JSON logs from containers
 - **CloudWatch Metrics:** Custom metrics (queue depths, processing times)
 - **CloudWatch Alarms:** Alert on error rates, queue backlogs, high latency
@@ -1110,6 +1192,7 @@ make dev
 #### Implementation
 
 Three independent circuit breakers:
+
 - **`upload_circuit`** - For `put_object`, `upload_fileobj`
 - **`download_circuit`** - For `get_object`, `head_object`, `list_objects`
 - **`delete_circuit`** - For `delete_object`, `delete_objects`
@@ -1134,6 +1217,7 @@ Three independent circuit breakers:
 #### Monitoring
 
 Prometheus metrics:
+
 ```python
 # Circuit breaker state (0=closed, 1=half-open, 2=open)
 s3_circuit_breaker_state{circuit_name="s3-upload"} 0
@@ -1173,6 +1257,7 @@ for attempt in range(1, max_attempts + 1):
 #### Error Categorization
 
 **Retriable errors** (temporary, retry):
+
 - `503 Service Unavailable`
 - `SlowDown` (rate limiting)
 - `RequestTimeout`
@@ -1180,6 +1265,7 @@ for attempt in range(1, max_attempts + 1):
 - `ThrottlingException`
 
 **Non-retriable errors** (permanent, fail immediately):
+
 - `403 Forbidden` (permissions)
 - `404 Not Found`
 - `NoSuchKey`
@@ -1188,6 +1274,7 @@ for attempt in range(1, max_attempts + 1):
 #### Boto3 Adaptive Retry
 
 Enabled in S3 client configuration:
+
 ```python
 config = Config(
     retries={
@@ -1272,6 +1359,7 @@ await asyncio.wait_for(worker_task, timeout=30)  # Max 30s grace period
 **Alternatives considered:** Microservices, separate worker processes
 
 **Reasoning:**
+
 - **Simplicity:** Shared codebase, single deployment, easier debugging
 - **Shared state:** Direct access to Redis and S3 clients (no network overhead)
 - **Development velocity:** Faster iteration, no inter-service communication
@@ -1279,6 +1367,7 @@ await asyncio.wait_for(worker_task, timeout=30)  # Max 30s grace period
 - **Sufficient scale:** UIC use case (<1000 documents/day, not Netflix-scale)
 
 **Trade-offs:**
+
 - Less flexible scaling (can't scale PII worker independently)
 - Single point of failure (but ECS auto-restarts)
 - Future migration path: Extract workers into separate services if needed
@@ -1289,12 +1378,14 @@ await asyncio.wait_for(worker_task, timeout=30)  # Max 30s grace period
 **Alternatives considered:** Background polling with `HGETALL` scans, separate timeout service
 
 **Reasoning:**
+
 - **Efficient queries:** `ZRANGEBYSCORE` finds expired in O(log N + M)
 - **Automatic ordering:** No need to sort, Redis handles it
 - **Atomic operations:** `ZADD`/`ZREM` prevent race conditions
 - **Flexible deadlines:** Can extend timeout by updating score
 
 **Trade-offs:**
+
 - Requires scheduled worker (timeout worker runs every 30s)
 - Not real-time (30s delay between timeout and action)
 
@@ -1304,12 +1395,14 @@ await asyncio.wait_for(worker_task, timeout=30)  # Max 30s grace period
 **Alternatives considered:** Simple retry, no circuit breaker, single shared circuit
 
 **Reasoning:**
+
 - **Fail fast:** Avoid waiting for timeouts when S3 is degraded
 - **Cascading failure prevention:** Don't queue thousands of jobs when S3 is down
 - **Independent failures:** Upload throttling shouldn't block downloads
 - **Recovery testing:** Half-open state tests if S3 has recovered
 
 **Trade-offs:**
+
 - Complexity (state management, metrics)
 - False positives (temporary failure could open circuit unnecessarily)
 
@@ -1339,12 +1432,14 @@ await asyncio.wait_for(worker_task, timeout=30)  # Max 30s grace period
 ### Prometheus Metrics
 
 **Queue metrics:**
+
 ```
 queue_depth{queue="pii"} 5
 queue_depth{queue="processing"} 2
 ```
 
 **Job metrics:**
+
 ```
 jobs_total{status="completed"} 1234
 jobs_total{status="failed"} 12
@@ -1352,6 +1447,7 @@ jobs_total{status="denied"} 5
 ```
 
 **Processing metrics:**
+
 ```
 processing_duration_seconds{stage="pii_scan"} 15.3
 processing_duration_seconds{stage="docling_conversion"} 45.2
@@ -1359,6 +1455,7 @@ processing_duration_seconds{stage="ai_enhancement"} 123.4
 ```
 
 **S3 metrics:**
+
 ```
 s3_operations_total{operation="upload", result="success"} 1234
 s3_circuit_breaker_state{circuit="upload"} 0
@@ -1368,6 +1465,7 @@ s3_operation_duration_seconds{operation="upload"} 0.123
 ### Grafana Dashboards
 
 **Overview dashboard:**
+
 - Jobs submitted (rate per minute)
 - Jobs completed (rate per minute)
 - Success rate (completed / submitted)
@@ -1375,12 +1473,14 @@ s3_operation_duration_seconds{operation="upload"} 0.123
 - Worker health (up/down)
 
 **Performance dashboard:**
+
 - P50/P95/P99 processing times
 - API latency distribution
 - S3 operation latency
 - Redis operation latency
 
 **Errors dashboard:**
+
 - Error rate by type
 - Failed jobs by reason
 - Circuit breaker trips

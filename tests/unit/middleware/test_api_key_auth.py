@@ -1,10 +1,10 @@
 """Unit tests for API key authentication middleware."""
 
+from unittest.mock import AsyncMock, MagicMock, patch
+
 import pytest
-from unittest.mock import MagicMock, patch, AsyncMock
 from fastapi import Request, Response
 from fastapi.responses import JSONResponse
-
 from src.middleware.api_key_auth import APIKeyAuthMiddleware
 
 
@@ -362,3 +362,74 @@ def test_multiple_keys_loaded_correctly():
         assert "key1" in loaded_keys
         assert "key2" in loaded_keys
         assert "key3" in loaded_keys
+
+
+@pytest.mark.unit
+def test_keys_loaded_once_at_initialization():
+    """Test that API keys are loaded only once at initialization."""
+    # Setup
+    mock_app = MagicMock()
+    with patch("src.middleware.api_key_auth.settings") as mock_settings:
+        mock_settings.api_key_header_name = "X-API-Key"
+        mock_settings.environment = "production"
+        mock_settings.api_keys = MagicMock()
+        mock_settings.api_keys.get_secret_value.return_value = "test-key-1,test-key-2"
+
+        # Track _load_api_keys calls by patching at module level
+        original_load = APIKeyAuthMiddleware._load_api_keys
+        load_calls = []
+
+        def tracked_load(self):
+            load_calls.append(1)
+            return original_load(self)
+
+        with patch.object(APIKeyAuthMiddleware, '_load_api_keys', tracked_load):
+            # Execute - create middleware instance
+            middleware = APIKeyAuthMiddleware(mock_app)
+
+            # Assert - _load_api_keys called exactly once during __init__
+            assert len(load_calls) == 1
+
+            # Verify keys are cached
+            assert len(middleware._cached_keys) == 2
+            assert "test-key-1" in middleware._cached_keys
+            assert "test-key-2" in middleware._cached_keys
+
+
+@pytest.mark.unit
+@pytest.mark.asyncio
+async def test_cached_keys_used_on_multiple_requests():
+    """Test that cached keys are used for multiple requests without reloading."""
+    # Setup
+    mock_app = MagicMock()
+    with patch("src.middleware.api_key_auth.settings") as mock_settings:
+        mock_settings.api_key_header_name = "X-API-Key"
+        mock_settings.environment = "production"
+        mock_settings.api_keys = MagicMock()
+        mock_settings.api_keys.get_secret_value.return_value = "test-key-1"
+
+        # Track _load_api_keys calls
+        original_load = APIKeyAuthMiddleware._load_api_keys
+        call_count = 0
+
+        def tracked_load(self):
+            nonlocal call_count
+            call_count += 1
+            return original_load(self)
+
+        with patch.object(APIKeyAuthMiddleware, '_load_api_keys', tracked_load):
+            # Create middleware (loads keys once)
+            middleware = APIKeyAuthMiddleware(mock_app)
+            initial_call_count = call_count
+
+            # Execute - make multiple requests
+            call_next = AsyncMock(return_value=Response(status_code=200))
+
+            for _ in range(5):
+                request = create_mock_request("/api/documents/submit", {"X-API-Key": "test-key-1"})
+                await middleware.dispatch(request, call_next)
+
+            # Assert - _load_api_keys only called once during initialization
+            assert call_count == initial_call_count
+            assert call_count == 1
+            assert call_next.call_count == 5

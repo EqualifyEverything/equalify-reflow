@@ -1,13 +1,12 @@
 """Core job models for document conversion tracking."""
 
 from datetime import datetime
-from typing import List, Literal, Optional
+from typing import Literal
+
 from pydantic import BaseModel, ConfigDict, Field, field_validator
 
-
-from .pii import PIIFinding
 from .approval import ApprovalRequest
-
+from .pii import PIIFinding
 
 # Valid state transitions for job status state machine
 VALID_TRANSITIONS = {
@@ -158,34 +157,34 @@ class JobStatus(BaseModel):
     )
 
     # Optional fields populated at different stages
-    pii_findings: Optional[List[PIIFinding]] = Field(
+    pii_findings: list[PIIFinding] | None = Field(
         default=None,
         description="PII entities detected (if any)"
     )
-    approval_token: Optional[str] = Field(
+    approval_token: str | None = Field(
         default=None,
         description="Approval workflow token"
     )
-    expires_at: Optional[datetime] = Field(
+    expires_at: datetime | None = Field(
         default=None,
         description="Approval expiration timestamp"
     )
-    markdown_url: Optional[str] = Field(
+    markdown_url: str | None = Field(
         default=None,
         description="S3 URL for Markdown output"
     )
-    confidence_score: Optional[float] = Field(
+    confidence_score: float | None = Field(
         default=None,
         ge=0.0,
         le=1.0,
         description="AI confidence score"
     )
-    error_message: Optional[str] = Field(
+    error_message: str | None = Field(
         default=None,
         max_length=2000,
         description="Error details if failed"
     )
-    approval_decision: Optional[ApprovalRequest] = Field(
+    approval_decision: ApprovalRequest | None = Field(
         default=None,
         description="Approval decision details"
     )

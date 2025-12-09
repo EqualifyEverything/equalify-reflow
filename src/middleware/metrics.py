@@ -11,7 +11,7 @@ Metrics exported on port 8001 (configurable via METRICS_PORT env var):
 """
 
 import logging
-from typing import Callable
+from collections.abc import Callable
 
 from fastapi import FastAPI, Request, Response
 from prometheus_client import (
@@ -19,12 +19,10 @@ from prometheus_client import (
     Counter,
     Gauge,
     Histogram,
-    make_asgi_app,
     generate_latest,
 )
 from starlette.middleware.base import BaseHTTPMiddleware
 from starlette.routing import Match
-from starlette.types import ASGIApp
 
 from ..config import settings
 
@@ -94,7 +92,7 @@ class MetricsMiddleware(BaseHTTPMiddleware):
 
             return response
 
-        except Exception as e:
+        except Exception:
             # Record error
             http_requests_total.labels(
                 method=method,

@@ -1,10 +1,11 @@
 """Integration tests for API authentication."""
 
-import pytest
 import base64
-from httpx import AsyncClient, ASGITransport
-from unittest.mock import patch, AsyncMock, MagicMock
+import os
+from unittest.mock import AsyncMock, MagicMock, patch
 
+import pytest
+from httpx import ASGITransport, AsyncClient
 from src.main import app
 
 
@@ -40,6 +41,10 @@ def create_basic_auth_header(username: str, password: str) -> str:
 
 @pytest.mark.integration
 @pytest.mark.asyncio
+@pytest.mark.skipif(
+    os.getenv("ENABLE_API_KEY_AUTH", "").lower() == "false",
+    reason="Auth tests require auth enabled"
+)
 async def test_api_key_required_for_protected_endpoint(enable_api_key_auth):
     """Test that API key is required for protected endpoints."""
     # Mock dependencies to avoid real service calls
@@ -114,7 +119,7 @@ async def test_valid_api_key_allows_access(enable_api_key_auth):
 @pytest.mark.asyncio
 async def test_health_endpoint_bypasses_api_key_auth(enable_api_key_auth):
     """Test that health endpoint works without API key."""
-    from src.dependencies import get_storage_service, get_queue_service
+    from src.dependencies import get_queue_service, get_storage_service
 
     # Mock storage service
     mock_storage = AsyncMock()
@@ -158,7 +163,6 @@ async def test_multiple_api_keys_supported(enable_api_key_auth):
 
     with patch("src.dependencies.get_job_service") as mock_job_service_dep:
         # Find the middleware instance in the app's middleware stack
-        api_key_middleware = None
         for middleware in app.user_middleware:
             if middleware.cls == APIKeyAuthMiddleware:
                 # Access the middleware instance through the app
@@ -166,7 +170,6 @@ async def test_multiple_api_keys_supported(enable_api_key_auth):
                     pass  # Middleware not instantiated yet in test context
 
         # Directly patch the method that validates keys
-        original_is_valid = APIKeyAuthMiddleware._is_valid_key
 
         def mock_is_valid_key(self, provided_key: str) -> bool:
             return provided_key in {"key-1", "key-2", "key-3"}
@@ -340,7 +343,7 @@ async def test_both_auth_methods_work_together():
 @pytest.mark.asyncio
 async def test_rate_limiting_still_works_with_auth():
     """Test that rate limiting middleware still functions with auth enabled."""
-    from src.dependencies import get_storage_service, get_queue_service
+    from src.dependencies import get_queue_service, get_storage_service
 
     # Mock storage service
     mock_storage = AsyncMock()

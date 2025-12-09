@@ -12,8 +12,7 @@ All functions return unique values per call unless specified.
 """
 
 import uuid
-from datetime import datetime, timezone
-from typing import Optional
+from datetime import UTC, datetime
 from io import BytesIO
 
 from src.shared.models.queue import PIIQueuePayload, ProcessingQueuePayload
@@ -38,10 +37,10 @@ def generate_document_id() -> str:
 
 
 def create_test_job_dict(
-    job_id: Optional[str] = None,
+    job_id: str | None = None,
     status: str = "pending",
-    confidence_score: Optional[float] = None,
-    created_at: Optional[datetime] = None,
+    confidence_score: float | None = None,
+    created_at: datetime | None = None,
     **kwargs
 ) -> dict:
     """Create test job dictionary with realistic defaults.
@@ -57,7 +56,7 @@ def create_test_job_dict(
         dict: Test job data
     """
     job_id = job_id or generate_job_id()
-    created_at = created_at or datetime.now(timezone.utc)
+    created_at = created_at or datetime.now(UTC)
 
     defaults = {
         "job_id": job_id,
@@ -77,9 +76,9 @@ def create_test_job_dict(
 
 
 def create_pii_queue_payload(
-    job_id: Optional[str] = None,
-    s3_key: Optional[str] = None,
-    created_at: Optional[datetime] = None,
+    job_id: str | None = None,
+    s3_key: str | None = None,
+    created_at: datetime | None = None,
 ) -> PIIQueuePayload:
     """Create test PII queue payload.
 
@@ -93,7 +92,7 @@ def create_pii_queue_payload(
     """
     job_id = job_id or generate_job_id()
     s3_key = s3_key or f"temp/{job_id}/document.pdf"
-    created_at = created_at or datetime.now(timezone.utc)
+    created_at = created_at or datetime.now(UTC)
 
     return PIIQueuePayload(
         job_id=job_id,
@@ -103,10 +102,10 @@ def create_pii_queue_payload(
 
 
 def create_processing_queue_payload(
-    job_id: Optional[str] = None,
-    s3_key: Optional[str] = None,
+    job_id: str | None = None,
+    s3_key: str | None = None,
     pii_approved: bool = True,
-    created_at: Optional[datetime] = None,
+    created_at: datetime | None = None,
 ) -> ProcessingQueuePayload:
     """Create test processing queue payload.
 
@@ -121,7 +120,7 @@ def create_processing_queue_payload(
     """
     job_id = job_id or generate_job_id()
     s3_key = s3_key or f"temp/{job_id}/document.pdf"
-    created_at = created_at or datetime.now(timezone.utc)
+    created_at = created_at or datetime.now(UTC)
 
     return ProcessingQueuePayload(
         job_id=job_id,
@@ -155,7 +154,7 @@ def create_test_pdf_content() -> bytes:
     return pdf_content
 
 
-def create_test_upload_file(mocker, filename: str = "test.pdf", content: Optional[bytes] = None):
+def create_test_upload_file(mocker, filename: str = "test.pdf", content: bytes | None = None):
     """Create mock UploadFile for FastAPI endpoints.
 
     Args:

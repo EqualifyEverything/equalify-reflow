@@ -3,21 +3,20 @@
 Tests mdformat integration, spell checking, and cleanup pipeline.
 """
 
-import pytest
-from unittest.mock import patch, mock_open, MagicMock
+from unittest.mock import mock_open, patch
 
+import pytest
 from src.utils.markdown_cleanup import (
-    format_markdown,
+    MarkdownCleanupResult,
+    SpellingFlag,
+    _create_spell_checker,
+    _extract_prose_words,
+    _load_technical_dictionary,
     check_spelling,
     cleanup_markdown,
+    format_markdown,
     format_spelling_flags_for_prompt,
-    SpellingFlag,
-    MarkdownCleanupResult,
-    _load_technical_dictionary,
-    _extract_prose_words,
-    _create_spell_checker,
 )
-
 
 pytestmark = pytest.mark.unit
 
@@ -401,7 +400,7 @@ class TestLoadTechnicalDictionary:
         """Test graceful handling of read errors."""
         with patch("src.utils.markdown_cleanup.TECHNICAL_DICT_PATH") as mock_path:
             mock_path.exists.return_value = True
-            with patch("builtins.open", side_effect=IOError("Read error")):
+            with patch("builtins.open", side_effect=OSError("Read error")):
                 result = _load_technical_dictionary()
 
         assert result == set()

@@ -1,12 +1,13 @@
-"""Integration tests for Storage Service."""
+"""Unit tests for StorageService (core upload/download operations)."""
+
+from io import BytesIO
 
 import pytest
-from io import BytesIO
-from fastapi import HTTPException, UploadFile
 from botocore.exceptions import ClientError
-
-from src.services.storage_service import StorageService
+from fastapi import HTTPException, UploadFile
 from src.config import settings
+from src.services.storage_service import StorageService
+
 from tests.conftest_fixtures.data_factories import create_test_upload_file
 
 
@@ -204,6 +205,47 @@ class TestUploadResult:
         assert "Failed to upload result" in exc.value.detail
 
 
+class TestUploadImage:
+    """Tests for upload_image method."""
+
+    @pytest.mark.asyncio
+    async def test_upload_image_returns_key(self, storage_service, mock_s3_client):
+        """Test uploading generic image returns S3 key."""
+        mock_s3_client.put_object.return_value = None
+
+        s3_key = await storage_service.upload_image(
+            job_id="job123",
+            image_data=b"PNG image data",
+            image_name="figure-1.png"
+        )
+
+        # Should return S3 key, not URL
+        assert s3_key == "job123/images/figure-1.png"
+        assert "http" not in s3_key
+        assert "s3.amazonaws.com" not in s3_key
+
+        mock_s3_client.put_object.assert_called_once()
+        call_kwargs = mock_s3_client.put_object.call_args.kwargs
+        assert call_kwargs["ContentType"] == "image/png"
+        assert call_kwargs["Bucket"] == settings.s3_results_bucket
+        assert call_kwargs["Key"] == "job123/images/figure-1.png"
+
+    @pytest.mark.asyncio
+    async def test_upload_image_failure(self, storage_service, mock_s3_client):
+        """Test handling of image upload failure."""
+        mock_s3_client.put_object.side_effect = Exception("S3 error")
+
+        with pytest.raises(HTTPException) as exc:
+            await storage_service.upload_image(
+                job_id="job456",
+                image_data=b"PNG",
+                image_name="table-1.png"
+            )
+
+        assert exc.value.status_code == 500
+        assert "Failed to upload image" in exc.value.detail
+
+
 class TestUploadPageImage:
     """Tests for upload_page_image method."""
 
@@ -281,32 +323,6 @@ class TestUploadPageImage:
         assert "Failed to upload page 1 image" in exc.value.detail
 
 
-class TestDeleteTempFile:
-    """Tests for delete_temp_file method."""
-
-    @pytest.mark.asyncio
-    async def test_delete_success(self, storage_service, mock_s3_client):
-        """Test successful file deletion."""
-        mock_s3_client.delete_object.return_value = None
-
-        result = await storage_service.delete_temp_file("temp/job123/file.pdf")
-
-        assert result is True
-        mock_s3_client.delete_object.assert_called_once_with(
-            Bucket=settings.s3_temp_bucket,
-            Key="temp/job123/file.pdf"
-        )
-
-    @pytest.mark.asyncio
-    async def test_delete_failure(self, storage_service, mock_s3_client):
-        """Test handling of deletion failure - best effort, no exception raised."""
-        mock_s3_client.delete_object.side_effect = Exception("S3 error")
-
-        result = await storage_service.delete_temp_file("temp/file.pdf")
-
-        assert result is False  # Returns False instead of raising exception
-
-
 class TestFileExists:
     """Tests for file_exists method."""
 
@@ -340,65 +356,6 @@ class TestFileExists:
         assert exists is False  # Should default to False on error
 
 
-class TestGetPresignedUrl:
-    """Tests for get_presigned_url method."""
-
-    @pytest.mark.asyncio
-    async def test_generate_presigned_url(self, storage_service, mock_s3_client):
-        """Test presigned URL generation."""
-        expected_url = "https://s3.amazonaws.com/bucket/key?signature=..."
-        mock_s3_client.generate_presigned_url.return_value = expected_url
-
-        url = await storage_service.get_presigned_url("bucket", "key", expiration=3600)
-
-        assert url == expected_url
-        mock_s3_client.generate_presigned_url.assert_called_once_with(
-            "get_object",
-            Params={"Bucket": "bucket", "Key": "key"},
-            ExpiresIn=3600
-        )
-
-    @pytest.mark.asyncio
-    async def test_presigned_url_default_expiration(self, storage_service, mock_s3_client):
-        """Test default expiration time."""
-        mock_s3_client.generate_presigned_url.return_value = "https://url"
-
-        await storage_service.get_presigned_url("bucket", "key")
-
-        call_kwargs = mock_s3_client.generate_presigned_url.call_args.kwargs
-        assert call_kwargs["ExpiresIn"] == 3600  # Default 1 hour
-
-    @pytest.mark.asyncio
-    async def test_presigned_url_failure(self, storage_service, mock_s3_client):
-        """Test handling of URL generation failure."""
-        mock_s3_client.generate_presigned_url.side_effect = Exception("Error")
-
-        with pytest.raises(HTTPException) as exc:
-            await storage_service.get_presigned_url("bucket", "key")
-
-        assert exc.value.status_code == 500
-        assert "Failed to generate presigned URL" in exc.value.detail
-
-
-class TestGetResultUrl:
-    """Tests for get_result_url method."""
-
-    @pytest.mark.asyncio
-    async def test_get_result_url(self, storage_service):
-        """Test result URL generation."""
-        url = storage_service.get_result_url("job123", "md")
-
-        assert "job123.md" in url
-        assert settings.s3_results_bucket in url
-
-    @pytest.mark.asyncio
-    async def test_get_result_url_with_extension(self, storage_service):
-        """Test result URL generation with custom extension."""
-        url = storage_service.get_result_url("job456", "txt")
-
-        assert "job456.txt" in url
-
-
 class TestCheckS3Access:
     """Tests for check_s3_access method."""
 
@@ -420,351 +377,3 @@ class TestCheckS3Access:
         accessible = await storage_service.check_s3_access()
 
         assert accessible is False
-
-
-class TestCleanupTempFilesForJob:
-    """Tests for cleanup_temp_files_for_job method."""
-
-    @pytest.mark.asyncio
-    async def test_cleanup_single_file(self, storage_service, mock_s3_client, mocker):
-        """Test cleanup of single PDF file for job."""
-        # Mock paginator
-        mock_paginator = mocker.MagicMock()
-        mock_s3_client.get_paginator.return_value = mock_paginator
-        mock_paginator.paginate.return_value = [
-            {
-                'Contents': [
-                    {'Key': 'temp/job123.pdf'}
-                ]
-            }
-        ]
-
-        # Mock batch delete
-        mock_s3_client.delete_objects.return_value = {
-            'Deleted': [{'Key': 'temp/job123.pdf'}]
-        }
-
-        # Execute
-        count = await storage_service.cleanup_temp_files_for_job("job123")
-
-        # Verify
-        assert count == 1
-        mock_s3_client.delete_objects.assert_called_once()
-
-    @pytest.mark.asyncio
-    async def test_cleanup_multiple_files(self, storage_service, mock_s3_client, mocker):
-        """Test cleanup of multiple files for job."""
-        mock_paginator = mocker.MagicMock()
-        mock_s3_client.get_paginator.return_value = mock_paginator
-        mock_paginator.paginate.return_value = [
-            {
-                'Contents': [
-                    {'Key': 'temp/job456/file1.pdf'},
-                    {'Key': 'temp/job456/file2.pdf'},
-                    {'Key': 'temp/job456/metadata.json'}
-                ]
-            }
-        ]
-
-        mock_s3_client.delete_objects.return_value = {
-            'Deleted': [
-                {'Key': 'temp/job456/file1.pdf'},
-                {'Key': 'temp/job456/file2.pdf'},
-                {'Key': 'temp/job456/metadata.json'}
-            ]
-        }
-
-        count = await storage_service.cleanup_temp_files_for_job("job456")
-
-        assert count == 3
-
-    @pytest.mark.asyncio
-    async def test_cleanup_no_files(self, storage_service, mock_s3_client, mocker):
-        """Test cleanup when no files exist for job."""
-        mock_paginator = mocker.MagicMock()
-        mock_s3_client.get_paginator.return_value = mock_paginator
-        mock_paginator.paginate.return_value = [{}]  # No Contents key
-
-        count = await storage_service.cleanup_temp_files_for_job("job789")
-
-        assert count == 0
-        mock_s3_client.delete_objects.assert_not_called()
-
-    @pytest.mark.asyncio
-    async def test_cleanup_batch_delete_large_set(self, storage_service, mock_s3_client, mocker):
-        """Test batch deletion with >1000 files (multiple batches)."""
-        # Create 1500 files to test batching
-        files = [{'Key': f'temp/job999/file{i}.pdf'} for i in range(1500)]
-
-        mock_paginator = mocker.MagicMock()
-        mock_s3_client.get_paginator.return_value = mock_paginator
-        mock_paginator.paginate.return_value = [{'Contents': files}]
-
-        # Mock delete_objects to return deleted count
-        def delete_side_effect(**kwargs):
-            return {'Deleted': kwargs['Delete']['Objects']}
-
-        mock_s3_client.delete_objects.side_effect = delete_side_effect
-
-        count = await storage_service.cleanup_temp_files_for_job("job999")
-
-        assert count == 1500
-        # Should be called twice (1000 + 500)
-        assert mock_s3_client.delete_objects.call_count == 2
-
-    @pytest.mark.asyncio
-    async def test_cleanup_handles_errors(self, storage_service, mock_s3_client, mocker):
-        """Test error handling during cleanup."""
-        mock_paginator = mocker.MagicMock()
-        mock_s3_client.get_paginator.return_value = mock_paginator
-        mock_paginator.paginate.side_effect = ClientError(
-            {"Error": {"Code": "AccessDenied"}},
-            "ListObjectsV2"
-        )
-
-        with pytest.raises(HTTPException) as exc:
-            await storage_service.cleanup_temp_files_for_job("job-error")
-
-        assert exc.value.status_code == 500
-
-
-class TestListTempFiles:
-    """Tests for list_temp_files method (PRD-003 completion)."""
-
-    @pytest.mark.asyncio
-    async def test_list_old_files(self, storage_service, mock_s3_client, mocker):
-        """Test listing files older than threshold."""
-        from datetime import datetime, timedelta, timezone
-
-        now = datetime.now(timezone.utc)
-        old_time = now - timedelta(hours=48)  # 48 hours ago
-        recent_time = now - timedelta(hours=12)  # 12 hours ago
-
-        mock_paginator = mocker.MagicMock()
-        mock_s3_client.get_paginator.return_value = mock_paginator
-        mock_paginator.paginate.return_value = [
-            {
-                'Contents': [
-                    {'Key': 'temp/old1.pdf', 'Size': 1024, 'LastModified': old_time},
-                    {'Key': 'temp/old2.pdf', 'Size': 2048, 'LastModified': old_time},
-                    {'Key': 'temp/recent.pdf', 'Size': 512, 'LastModified': recent_time}
-                ]
-            }
-        ]
-
-        # List files older than 24 hours
-        old_files = await storage_service.list_temp_files(older_than_hours=24)
-
-        assert len(old_files) == 2
-        assert old_files[0]['key'] == 'temp/old1.pdf'
-        assert old_files[1]['key'] == 'temp/old2.pdf'
-        assert all(f['age_hours'] >= 24 for f in old_files)
-
-    @pytest.mark.asyncio
-    async def test_list_no_old_files(self, storage_service, mock_s3_client, mocker):
-        """Test when no files exceed age threshold."""
-        from datetime import datetime, timedelta, timezone
-
-        now = datetime.now(timezone.utc)
-        recent_time = now - timedelta(hours=6)
-
-        mock_paginator = mocker.MagicMock()
-        mock_s3_client.get_paginator.return_value = mock_paginator
-        mock_paginator.paginate.return_value = [
-            {
-                'Contents': [
-                    {'Key': 'temp/recent.pdf', 'Size': 1024, 'LastModified': recent_time}
-                ]
-            }
-        ]
-
-        old_files = await storage_service.list_temp_files(older_than_hours=24)
-
-        assert len(old_files) == 0
-
-    @pytest.mark.asyncio
-    async def test_list_empty_bucket(self, storage_service, mock_s3_client, mocker):
-        """Test listing when bucket is empty."""
-        mock_paginator = mocker.MagicMock()
-        mock_s3_client.get_paginator.return_value = mock_paginator
-        mock_paginator.paginate.return_value = [{}]
-
-        old_files = await storage_service.list_temp_files()
-
-        assert len(old_files) == 0
-
-    @pytest.mark.asyncio
-    async def test_list_handles_timezone_naive(self, storage_service, mock_s3_client, mocker):
-        """Test handling of timezone-naive datetimes."""
-        from datetime import datetime, timedelta
-
-        # Create timezone-naive datetime (simulates some S3 responses)
-        naive_time = datetime.utcnow() - timedelta(hours=48)
-
-        mock_paginator = mocker.MagicMock()
-        mock_s3_client.get_paginator.return_value = mock_paginator
-        mock_paginator.paginate.return_value = [
-            {
-                'Contents': [
-                    {'Key': 'temp/naive.pdf', 'Size': 1024, 'LastModified': naive_time}
-                ]
-            }
-        ]
-
-        # Should not raise exception
-        old_files = await storage_service.list_temp_files(older_than_hours=24)
-
-        assert len(old_files) == 1
-
-    @pytest.mark.asyncio
-    async def test_list_handles_errors(self, storage_service, mock_s3_client, mocker):
-        """Test error handling during listing."""
-        mock_paginator = mocker.MagicMock()
-        mock_s3_client.get_paginator.return_value = mock_paginator
-        mock_paginator.paginate.side_effect = Exception("Network error")
-
-        with pytest.raises(HTTPException) as exc:
-            await storage_service.list_temp_files()
-
-        assert exc.value.status_code == 500
-
-
-class TestDeleteFromS3:
-    """Tests for delete_from_s3 method (PRD-003 completion)."""
-
-    @pytest.mark.asyncio
-    async def test_delete_success(self, storage_service, mock_s3_client):
-        """Test successful deletion."""
-        mock_s3_client.delete_object.return_value = None
-
-        success = await storage_service.delete_from_s3("bucket", "key")
-
-        assert success is True
-        mock_s3_client.delete_object.assert_called_once_with(
-            Bucket="bucket",
-            Key="key"
-        )
-
-    @pytest.mark.asyncio
-    async def test_delete_idempotent(self, storage_service, mock_s3_client):
-        """Test idempotent deletion (file already deleted)."""
-        error = ClientError(
-            {"Error": {"Code": "NoSuchKey"}},
-            "DeleteObject"
-        )
-        mock_s3_client.delete_object.side_effect = error
-
-        # Should still return True (idempotent)
-        success = await storage_service.delete_from_s3("bucket", "missing")
-
-        assert success is True
-
-    @pytest.mark.asyncio
-    async def test_delete_other_errors(self, storage_service, mock_s3_client):
-        """Test handling of non-NoSuchKey errors."""
-        error = ClientError(
-            {"Error": {"Code": "AccessDenied"}},
-            "DeleteObject"
-        )
-        mock_s3_client.delete_object.side_effect = error
-
-        success = await storage_service.delete_from_s3("bucket", "key")
-
-        assert success is False
-
-    @pytest.mark.asyncio
-    async def test_delete_generic_exception(self, storage_service, mock_s3_client):
-        """Test handling of generic exceptions."""
-        mock_s3_client.delete_object.side_effect = Exception("Network timeout")
-
-        success = await storage_service.delete_from_s3("bucket", "key")
-
-        assert success is False
-
-
-class TestGenerateUrl:
-    """Tests for generate_url method (API Refactoring Phase 1)."""
-
-    @pytest.mark.asyncio
-    async def test_generate_url_localstack(self, storage_service, monkeypatch):
-        """Test URL generation for LocalStack environment."""
-        # Mock LocalStack environment
-        monkeypatch.setattr(settings, "aws_endpoint_url", "http://localstack:4566")
-
-        url = await storage_service.generate_url("results/abc-123.md")
-
-        assert url == f"http://localstack:4566/{settings.s3_results_bucket}/results/abc-123.md"
-        assert "localstack" in url
-        assert "results/abc-123.md" in url
-
-    @pytest.mark.asyncio
-    async def test_generate_url_localstack_with_custom_bucket(self, storage_service, monkeypatch):
-        """Test URL generation for LocalStack with custom bucket."""
-        monkeypatch.setattr(settings, "aws_endpoint_url", "http://localstack:4566")
-
-        url = await storage_service.generate_url(
-            "temp/job-456/pages/page-1.png",
-            bucket="custom-bucket"
-        )
-
-        assert url == "http://localstack:4566/custom-bucket/temp/job-456/pages/page-1.png"
-        assert "custom-bucket" in url
-
-    @pytest.mark.asyncio
-    async def test_generate_url_aws_production(self, storage_service, monkeypatch):
-        """Test URL generation for AWS production environment."""
-        # Mock AWS production environment (no endpoint URL)
-        monkeypatch.setattr(settings, "aws_endpoint_url", None)
-        monkeypatch.setattr(settings, "aws_region", "us-east-1")
-
-        url = await storage_service.generate_url("results/xyz-789.md")
-
-        expected_url = f"https://{settings.s3_results_bucket}.s3.us-east-1.amazonaws.com/results/xyz-789.md"
-        assert url == expected_url
-        assert url.startswith("https://")
-        assert ".s3.us-east-1.amazonaws.com" in url
-        assert "results/xyz-789.md" in url
-
-    @pytest.mark.asyncio
-    async def test_generate_url_aws_with_custom_region(self, storage_service, monkeypatch):
-        """Test URL generation for AWS with custom region."""
-        monkeypatch.setattr(settings, "aws_endpoint_url", None)
-        monkeypatch.setattr(settings, "aws_region", "eu-west-1")
-
-        url = await storage_service.generate_url("results/test.md")
-
-        assert ".s3.eu-west-1.amazonaws.com" in url
-        assert url.startswith("https://")
-
-    @pytest.mark.asyncio
-    async def test_generate_url_aws_fallback_region(self, storage_service, monkeypatch):
-        """Test URL generation falls back to us-east-1 if region not set."""
-        monkeypatch.setattr(settings, "aws_endpoint_url", None)
-        monkeypatch.setattr(settings, "aws_region", None)
-
-        url = await storage_service.generate_url("results/test.md")
-
-        assert ".s3.us-east-1.amazonaws.com" in url
-        assert url.startswith("https://")
-
-    @pytest.mark.asyncio
-    async def test_generate_url_defaults_to_results_bucket(self, storage_service, monkeypatch):
-        """Test URL generation defaults to results_bucket when bucket not specified."""
-        monkeypatch.setattr(settings, "aws_endpoint_url", "http://localstack:4566")
-
-        url = await storage_service.generate_url("some-key.md")
-
-        assert settings.s3_results_bucket in url
-
-    @pytest.mark.asyncio
-    async def test_generate_url_with_temp_bucket(self, storage_service, monkeypatch):
-        """Test URL generation with temp bucket explicitly specified."""
-        monkeypatch.setattr(settings, "aws_endpoint_url", "http://localstack:4566")
-
-        url = await storage_service.generate_url(
-            "job-123/pages/page-1.png",
-            bucket=storage_service.temp_bucket
-        )
-
-        assert storage_service.temp_bucket in url
-        assert "job-123/pages/page-1.png" in url

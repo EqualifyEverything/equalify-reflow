@@ -1,36 +1,27 @@
 """Tests for S3CleanupService - S3 temporary file cleanup operations."""
 
-import pytest
-from datetime import datetime, timezone, timedelta
-from unittest.mock import AsyncMock
+from datetime import UTC, datetime, timedelta
 
+import pytest
 from src.services.s3_cleanup_service import S3CleanupService
 
 
 @pytest.fixture
-def mock_storage_service(mocker):
-    """Create mock StorageService."""
-    service = mocker.AsyncMock()
-    service.list_temp_files = AsyncMock(return_value=[])
-    service.delete_from_s3 = AsyncMock(return_value=True)
-    service.cleanup_temp_files_for_job = AsyncMock(return_value=0)
-    return service
+def mock_s3_client(mocker):
+    """Create mock S3 client."""
+    client = mocker.MagicMock()
+    # Configure paginator for list_objects_v2
+    paginator = mocker.MagicMock()
+    client.get_paginator.return_value = paginator
+    return client
 
 
 @pytest.fixture
-def mock_metrics_service(mocker):
-    """Create mock MetricsService."""
-    service = mocker.AsyncMock()
-    service.increment_metric = AsyncMock()
-    return service
-
-
-@pytest.fixture
-def s3_cleanup_service(mock_storage_service, mock_metrics_service):
-    """Create S3CleanupService with mocked dependencies."""
+def s3_cleanup_service(mock_s3_client):
+    """Create S3CleanupService with mocked S3 client."""
     return S3CleanupService(
-        storage_service=mock_storage_service,
-        metrics_service=mock_metrics_service
+        s3_client=mock_s3_client,
+        temp_bucket="test-temp-bucket"
     )
 
 
@@ -41,17 +32,17 @@ def old_temp_files():
         {
             "Key": "temp/job-1/input.pdf",
             "Size": 1024000,
-            "LastModified": datetime.now(timezone.utc) - timedelta(hours=48)
+            "LastModified": datetime.now(UTC) - timedelta(hours=48)
         },
         {
             "Key": "temp/job-2/input.pdf",
             "Size": 2048000,
-            "LastModified": datetime.now(timezone.utc) - timedelta(hours=36)
+            "LastModified": datetime.now(UTC) - timedelta(hours=36)
         },
         {
             "Key": "temp/job-3/input.pdf",
             "Size": 512000,
-            "LastModified": datetime.now(timezone.utc) - timedelta(hours=25)
+            "LastModified": datetime.now(UTC) - timedelta(hours=25)
         }
     ]
 
@@ -63,10 +54,12 @@ class TestCleanupExpiredTempFiles:
     async def test_no_expired_files(
         self,
         s3_cleanup_service,
-        mock_storage_service
+        mock_s3_client
     ):
         """Test when no temp files have expired."""
-        mock_storage_service.list_temp_files.return_value = []
+        # Mock paginator to return empty results
+        paginator = mock_s3_client.get_paginator.return_value
+        paginator.paginate.return_value = []
 
         result = await s3_cleanup_service.cleanup_expired_temp_files()
 
@@ -78,13 +71,16 @@ class TestCleanupExpiredTempFiles:
     async def test_cleanup_multiple_files(
         self,
         s3_cleanup_service,
-        mock_storage_service,
-        mock_metrics_service,
+        mock_s3_client,
         old_temp_files
     ):
         """Test cleaning up multiple expired files."""
-        mock_storage_service.list_temp_files.return_value = old_temp_files
-        mock_storage_service.delete_from_s3.return_value = True
+        # Mock paginator to return old temp files
+        paginator = mock_s3_client.get_paginator.return_value
+        paginator.paginate.return_value = [{'Contents': old_temp_files}]
+
+        # Mock successful deletion
+        mock_s3_client.delete_object.return_value = {}
 
         result = await s3_cleanup_service.cleanup_expired_temp_files()
 
@@ -92,28 +88,34 @@ class TestCleanupExpiredTempFiles:
         assert result["bytes_freed"] == 3584000  # Sum of all file sizes
         assert result["errors"] == 0
 
-        # Verify metrics updated
-        mock_metrics_service.increment_metric.assert_any_call(
-            "temp_files_deleted", 3
-        )
-        mock_metrics_service.increment_metric.assert_any_call(
-            "temp_bytes_freed", 3584000
-        )
+        # Verify delete_object was called for each file
+        assert mock_s3_client.delete_object.call_count == 3
 
     @pytest.mark.asyncio
     async def test_partial_cleanup_failure(
         self,
         s3_cleanup_service,
-        mock_storage_service,
-        mock_metrics_service,
+        mock_s3_client,
         old_temp_files
     ):
         """Test handling partial cleanup failures."""
-        mock_storage_service.list_temp_files.return_value = old_temp_files
+        from botocore.exceptions import ClientError
+
+        # Mock paginator to return old temp files
+        paginator = mock_s3_client.get_paginator.return_value
+        paginator.paginate.return_value = [{'Contents': old_temp_files}]
 
         # First file succeeds, second fails, third succeeds
-        delete_results = [True, False, True]
-        mock_storage_service.delete_from_s3.side_effect = delete_results
+        def delete_side_effect(*args, **kwargs):
+            key = kwargs.get('Key', '')
+            if 'job-2' in key:
+                raise ClientError(
+                    {'Error': {'Code': 'AccessDenied', 'Message': 'Access denied'}},
+                    'delete_object'
+                )
+            return {}
+
+        mock_s3_client.delete_object.side_effect = delete_side_effect
 
         result = await s3_cleanup_service.cleanup_expired_temp_files()
 
@@ -121,28 +123,26 @@ class TestCleanupExpiredTempFiles:
         assert result["bytes_freed"] == 1536000  # file 1 + file 3
         assert result["errors"] == 1
 
-        # Verify error metric incremented
-        mock_metrics_service.increment_metric.assert_any_call(
-            "temp_cleanup_errors", 1
-        )
-
     @pytest.mark.asyncio
     async def test_cleanup_with_delete_exception(
         self,
         s3_cleanup_service,
-        mock_storage_service,
+        mock_s3_client,
         old_temp_files
     ):
         """Test handling exceptions during file deletion."""
-        mock_storage_service.list_temp_files.return_value = old_temp_files
+        # Mock paginator to return old temp files
+        paginator = mock_s3_client.get_paginator.return_value
+        paginator.paginate.return_value = [{'Contents': old_temp_files}]
 
         # First file raises exception, others succeed
-        def delete_side_effect(bucket, key):
+        def delete_side_effect(*args, **kwargs):
+            key = kwargs.get('Key', '')
             if "job-1" in key:
                 raise Exception("S3 error")
-            return True
+            return {}
 
-        mock_storage_service.delete_from_s3.side_effect = delete_side_effect
+        mock_s3_client.delete_object.side_effect = delete_side_effect
 
         result = await s3_cleanup_service.cleanup_expired_temp_files()
 
@@ -150,24 +150,22 @@ class TestCleanupExpiredTempFiles:
         assert result["errors"] == 1
 
     @pytest.mark.asyncio
-    async def test_list_files_exception_propagates(
+    async def test_list_files_exception_handled(
         self,
         s3_cleanup_service,
-        mock_storage_service,
-        mock_metrics_service
+        mock_s3_client
     ):
-        """Test that exceptions from list_temp_files propagate."""
-        mock_storage_service.list_temp_files.side_effect = Exception("S3 list error")
+        """Test that exceptions during file listing are handled."""
+        # Mock paginator to raise exception
+        paginator = mock_s3_client.get_paginator.return_value
+        paginator.paginate.side_effect = Exception("S3 list error")
 
-        with pytest.raises(Exception) as exc:
-            await s3_cleanup_service.cleanup_expired_temp_files()
+        # Should not raise - errors are counted
+        result = await s3_cleanup_service.cleanup_expired_temp_files()
 
-        assert "S3 list error" in str(exc.value)
-
-        # Verify error metric incremented
-        mock_metrics_service.increment_metric.assert_called_with(
-            "temp_cleanup_errors", 1
-        )
+        assert result["files_deleted"] == 0
+        assert result["bytes_freed"] == 0
+        assert result["errors"] == 1
 
 
 class TestCleanupJobTempFiles:
@@ -177,68 +175,98 @@ class TestCleanupJobTempFiles:
     async def test_cleanup_job_with_files(
         self,
         s3_cleanup_service,
-        mock_storage_service,
-        mock_metrics_service
+        mock_s3_client
     ):
         """Test cleaning up files for a specific job."""
-        mock_storage_service.cleanup_temp_files_for_job.return_value = 3
+        # Mock paginator to return 3 files for the job
+        paginator = mock_s3_client.get_paginator.return_value
+        paginator.paginate.return_value = [{
+            'Contents': [
+                {'Key': 'temp/test-job-123/input.pdf'},
+                {'Key': 'temp/test-job-123/page1.png'},
+                {'Key': 'temp/test-job-123/page2.png'},
+            ]
+        }]
 
-        result = await s3_cleanup_service.cleanup_job_temp_files("test-job-123")
+        # Mock successful batch deletion
+        mock_s3_client.delete_objects.return_value = {
+            'Deleted': [
+                {'Key': 'temp/test-job-123/input.pdf'},
+                {'Key': 'temp/test-job-123/page1.png'},
+                {'Key': 'temp/test-job-123/page2.png'},
+            ]
+        }
 
-        assert result is True
-        mock_storage_service.cleanup_temp_files_for_job.assert_called_once_with(
-            "test-job-123"
-        )
-        mock_metrics_service.increment_metric.assert_called_once_with(
-            "job_temp_files_deleted", 3
-        )
+        result = await s3_cleanup_service.cleanup_temp_files_for_job("test-job-123")
+
+        assert result == 3
+        mock_s3_client.delete_objects.assert_called_once()
 
     @pytest.mark.asyncio
     async def test_cleanup_job_no_files(
         self,
         s3_cleanup_service,
-        mock_storage_service,
-        mock_metrics_service
+        mock_s3_client
     ):
         """Test cleaning up job with no temp files."""
-        mock_storage_service.cleanup_temp_files_for_job.return_value = 0
+        # Mock paginator to return no files
+        paginator = mock_s3_client.get_paginator.return_value
+        paginator.paginate.return_value = []
 
-        result = await s3_cleanup_service.cleanup_job_temp_files("test-job-456")
+        result = await s3_cleanup_service.cleanup_temp_files_for_job("test-job-456")
 
-        assert result is True
-        # Should not increment metric when no files deleted
-        mock_metrics_service.increment_metric.assert_not_called()
+        assert result == 0
+        # delete_objects should not be called when there are no files
+        mock_s3_client.delete_objects.assert_not_called()
 
     @pytest.mark.asyncio
-    async def test_cleanup_job_exception_returns_false(
+    async def test_cleanup_job_exception_raises(
         self,
         s3_cleanup_service,
-        mock_storage_service
+        mock_s3_client
     ):
-        """Test that exceptions during job cleanup return False."""
-        mock_storage_service.cleanup_temp_files_for_job.side_effect = Exception(
-            "S3 error"
-        )
+        """Test that exceptions during job cleanup are raised."""
+        from fastapi import HTTPException
 
-        result = await s3_cleanup_service.cleanup_job_temp_files("test-job-789")
+        # Mock paginator to raise exception
+        paginator = mock_s3_client.get_paginator.return_value
+        paginator.paginate.side_effect = Exception("S3 error")
 
-        assert result is False
+        with pytest.raises(HTTPException) as exc:
+            await s3_cleanup_service.cleanup_temp_files_for_job("test-job-789")
+
+        assert "Unexpected error during cleanup" in str(exc.value.detail)
 
     @pytest.mark.asyncio
     async def test_cleanup_multiple_jobs(
         self,
         s3_cleanup_service,
-        mock_storage_service
+        mock_s3_client
     ):
         """Test cleaning up multiple jobs sequentially."""
-        mock_storage_service.cleanup_temp_files_for_job.return_value = 2
+        # Mock paginator to return 2 files per job
+        paginator = mock_s3_client.get_paginator.return_value
+        paginator.paginate.return_value = [{
+            'Contents': [
+                {'Key': 'temp/job-x/file1.pdf'},
+                {'Key': 'temp/job-x/file2.pdf'},
+            ]
+        }]
+
+        # Mock successful batch deletion
+        mock_s3_client.delete_objects.return_value = {
+            'Deleted': [
+                {'Key': 'temp/job-x/file1.pdf'},
+                {'Key': 'temp/job-x/file2.pdf'},
+            ]
+        }
 
         job_ids = ["job-1", "job-2", "job-3"]
         results = []
 
         for job_id in job_ids:
-            result = await s3_cleanup_service.cleanup_job_temp_files(job_id)
+            result = await s3_cleanup_service.cleanup_temp_files_for_job(job_id)
             results.append(result)
 
-        assert all(results)
-        assert mock_storage_service.cleanup_temp_files_for_job.call_count == 3
+        assert all(r == 2 for r in results)
+        assert mock_s3_client.delete_objects.call_count == 3

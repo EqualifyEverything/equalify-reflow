@@ -4,13 +4,16 @@ import { DashboardLayout } from '@/components/layout/DashboardLayout'
 import { Dashboard } from '@/pages/Dashboard'
 import { JobDetailPage } from '@/pages/JobDetailPage'
 import { ApprovalReviewPage } from '@/pages/ApprovalReviewPage'
-import { MonitoringPage } from '@/pages/MonitoringPage'
+import { CorrectionReviewPage } from '@/pages/CorrectionReviewPage'
 import { queryClient } from '@/lib/queryClient'
+
+// Base path for routing - must match Vite's base config
+const basename = import.meta.env.BASE_URL.replace(/\/$/, '') || '/'
 
 function App() {
   return (
     <QueryClientProvider client={queryClient}>
-      <BrowserRouter>
+      <BrowserRouter basename={basename}>
         <Routes>
           {/* Routes with dashboard layout */}
           <Route
@@ -29,16 +32,7 @@ function App() {
               </DashboardLayout>
             }
           />
-          <Route
-            path="/monitoring"
-            element={
-              <DashboardLayout>
-                <MonitoringPage />
-              </DashboardLayout>
-            }
-          />
-
-          {/* Approval review - standalone page (no sidebar) */}
+          {/* PII Approval review - standalone page (no sidebar) */}
           <Route
             path="/review/:token"
             element={
@@ -57,6 +51,16 @@ function App() {
                   <ApprovalReviewPage />
                 </div>
               </div>
+            }
+          />
+
+          {/* Correction review - with dashboard layout */}
+          <Route
+            path="/corrections/:jobId/review"
+            element={
+              <DashboardLayout>
+                <CorrectionReviewPage />
+              </DashboardLayout>
             }
           />
         </Routes>

@@ -2,14 +2,13 @@
 
 import logging
 import uuid
-from datetime import UTC, datetime, timedelta
 
 from botocore.exceptions import ClientError
 from fastapi import HTTPException, UploadFile
 
 from ..config import settings
-from ..utils.circuit_breaker import CircuitBreaker, CircuitBreakerOpen
-from ..utils.retry_helpers import retry_with_backoff_sync
+from ..utils.circuit_breaker import CircuitBreaker, CircuitBreakerOpenError
+from ..utils.retry_helpers import retry_with_backoff_for_sync_func
 
 logger = logging.getLogger(__name__)
 
@@ -42,12 +41,6 @@ class StorageService:
             success_threshold=2,
             timeout=60.0
         )
-        self.delete_circuit = CircuitBreaker(
-            name="s3-delete",
-            failure_threshold=5,
-            success_threshold=2,
-            timeout=60.0
-        )
 
     async def store_document(self, file: UploadFile) -> tuple[str, str]:
         """
@@ -61,12 +54,12 @@ class StorageService:
 
         Raises:
             HTTPException: If file validation fails or upload fails
-            CircuitBreakerOpen: If S3 upload circuit breaker is open
+            CircuitBreakerOpenError: If S3 upload circuit breaker is open
         """
         # Check circuit breaker first
         self.upload_circuit.check_state()
         if self.upload_circuit.is_open:
-            raise CircuitBreakerOpen("S3 upload circuit breaker is open due to repeated failures")
+            raise CircuitBreakerOpenError("S3 upload circuit breaker is open due to repeated failures")
 
         # Validate PDF format
         if file.content_type != "application/pdf":
@@ -107,7 +100,7 @@ class StorageService:
 
         try:
             # Upload to S3 with retry logic
-            await retry_with_backoff_sync(
+            await retry_with_backoff_for_sync_func(
                 lambda: self.s3_client.upload_fileobj(
                     file.file,
                     self.temp_bucket,
@@ -121,7 +114,7 @@ class StorageService:
             # Record success in circuit breaker
             self.upload_circuit.record_success()
 
-        except CircuitBreakerOpen:
+        except CircuitBreakerOpenError:
             # Circuit breaker already logged the issue
             raise
         except Exception as e:
@@ -135,30 +128,6 @@ class StorageService:
 
         return job_id, s3_key
 
-    def get_result_url(self, job_id: str, file_type: str) -> str:
-        """
-        Generate S3 URL for result file.
-
-        Supports both LocalStack (development) and production AWS S3:
-        - LocalStack: http://localstack:4566/bucket/key (path-style)
-        - Production: https://bucket.s3.region.amazonaws.com/key (virtual-hosted-style)
-
-        Args:
-            job_id: Job identifier
-            file_type: File extension (md)
-
-        Returns:
-            S3 URL for the result file
-        """
-        s3_key = f"{job_id}.{file_type}"
-
-        # LocalStack development environment
-        if settings.aws_endpoint_url:
-            return f"{settings.aws_endpoint_url}/{self.results_bucket}/{s3_key}"
-
-        # Production AWS S3 - use virtual-hosted-style URL
-        region = settings.aws_region or "us-east-1"
-        return f"https://{self.results_bucket}.s3.{region}.amazonaws.com/{s3_key}"
 
     async def check_s3_access(self) -> bool:
         """
@@ -185,16 +154,16 @@ class StorageService:
 
         Raises:
             HTTPException: If download fails
-            CircuitBreakerOpen: If S3 download circuit breaker is open
+            CircuitBreakerOpenError: If S3 download circuit breaker is open
         """
         # Check circuit breaker
         self.download_circuit.check_state()
         if self.download_circuit.is_open:
-            raise CircuitBreakerOpen("S3 download circuit breaker is open due to repeated failures")
+            raise CircuitBreakerOpenError("S3 download circuit breaker is open due to repeated failures")
 
         try:
             # Download with retry logic
-            response = await retry_with_backoff_sync(
+            response = await retry_with_backoff_for_sync_func(
                 lambda: self.s3_client.get_object(
                     Bucket=self.temp_bucket,
                     Key=s3_key
@@ -209,7 +178,7 @@ class StorageService:
 
             return response['Body'].read()
 
-        except CircuitBreakerOpen:
+        except CircuitBreakerOpenError:
             raise
         except ClientError as e:
             # Record failure
@@ -254,12 +223,12 @@ class StorageService:
 
         Raises:
             HTTPException: If upload fails
-            CircuitBreakerOpen: If S3 upload circuit breaker is open
+            CircuitBreakerOpenError: If S3 upload circuit breaker is open
         """
         # Check circuit breaker
         self.upload_circuit.check_state()
         if self.upload_circuit.is_open:
-            raise CircuitBreakerOpen("S3 upload circuit breaker is open due to repeated failures")
+            raise CircuitBreakerOpenError("S3 upload circuit breaker is open due to repeated failures")
 
         # Build S3 key with optional suffix
         if suffix:
@@ -277,7 +246,7 @@ class StorageService:
             # Upload to results bucket with retry
             body = content if isinstance(content, bytes) else content.encode('utf-8')
 
-            await retry_with_backoff_sync(
+            await retry_with_backoff_for_sync_func(
                 lambda: self.s3_client.put_object(
                     Bucket=self.results_bucket,
                     Key=s3_key,
@@ -296,7 +265,7 @@ class StorageService:
             # Return S3 key (not URL)
             return s3_key
 
-        except CircuitBreakerOpen:
+        except CircuitBreakerOpenError:
             raise
         except ClientError as e:
             # Record failure
@@ -334,21 +303,21 @@ class StorageService:
             image_name: Filename for image (e.g., "figure-1.png", "table-2.png")
 
         Returns:
-            Public URL to the uploaded image
+            S3 key (e.g., "abc-123/images/figure-1.png")
 
         Raises:
             HTTPException: If upload fails
-            CircuitBreakerOpen: If S3 upload circuit breaker is open
+            CircuitBreakerOpenError: If S3 upload circuit breaker is open
         """
         # Check circuit breaker
         self.upload_circuit.check_state()
         if self.upload_circuit.is_open:
-            raise CircuitBreakerOpen("S3 upload circuit breaker is open due to repeated failures")
+            raise CircuitBreakerOpenError("S3 upload circuit breaker is open due to repeated failures")
 
         s3_key = f"{job_id}/images/{image_name}"
 
         try:
-            await retry_with_backoff_sync(
+            await retry_with_backoff_for_sync_func(
                 lambda: self.s3_client.put_object(
                     Bucket=self.results_bucket,
                     Key=s3_key,
@@ -364,14 +333,10 @@ class StorageService:
             # Record success
             self.upload_circuit.record_success()
 
-            # Return public URL
-            if settings.aws_endpoint_url:
-                return f"{settings.aws_endpoint_url}/{self.results_bucket}/{s3_key}"
-            else:
-                region = settings.aws_region or "us-east-1"
-                return f"https://{self.results_bucket}.s3.{region}.amazonaws.com/{s3_key}"
+            # Return S3 key (URL generation delegated to S3URLService)
+            return s3_key
 
-        except CircuitBreakerOpen:
+        except CircuitBreakerOpenError:
             raise
         except ClientError as e:
             # Record failure
@@ -414,17 +379,17 @@ class StorageService:
 
         Raises:
             HTTPException: If upload fails
-            CircuitBreakerOpen: If S3 upload circuit breaker is open
+            CircuitBreakerOpenError: If S3 upload circuit breaker is open
         """
         # Check circuit breaker
         self.upload_circuit.check_state()
         if self.upload_circuit.is_open:
-            raise CircuitBreakerOpen("S3 upload circuit breaker is open due to repeated failures")
+            raise CircuitBreakerOpenError("S3 upload circuit breaker is open due to repeated failures")
 
         s3_key = f"{job_id}/pages/page-{page_num}.png"
 
         try:
-            await retry_with_backoff_sync(
+            await retry_with_backoff_for_sync_func(
                 lambda: self.s3_client.put_object(
                     Bucket=self.temp_bucket,
                     Key=s3_key,
@@ -443,7 +408,7 @@ class StorageService:
             # Return S3 key (not URL)
             return s3_key
 
-        except CircuitBreakerOpen:
+        except CircuitBreakerOpenError:
             raise
         except ClientError as e:
             # Record failure
@@ -463,33 +428,6 @@ class StorageService:
                 detail=f"Failed to upload page {page_num} image: {str(e)}"
             )
 
-    async def delete_temp_file(self, s3_key: str) -> bool:
-        """
-        Delete temporary file from temp bucket.
-
-        This is a best-effort operation - errors are logged but not raised.
-        Cleanup failures should not block the main workflow.
-
-        Args:
-            s3_key: S3 key of file to delete
-
-        Returns:
-            bool: True if deletion succeeded, False on error
-        """
-        try:
-            self.s3_client.delete_object(
-                Bucket=self.temp_bucket,
-                Key=s3_key
-            )
-            logger.debug(f"Successfully deleted temp file: {s3_key}")
-            return True
-        except ClientError as e:
-            # Log error but don't fail - cleanup is best effort
-            logger.warning(f"Failed to delete temp file {s3_key}: {str(e)}")
-            return False
-        except Exception as e:
-            logger.warning(f"Unexpected error deleting temp file {s3_key}: {str(e)}")
-            return False
 
     async def file_exists(self, bucket: str, key: str) -> bool:
         """
@@ -513,279 +451,6 @@ class StorageService:
         except Exception:
             return False
 
-    async def get_presigned_url(
-        self,
-        bucket: str,
-        key: str,
-        expiration: int = 3600
-    ) -> str:
-        """
-        Generate presigned URL for secure file access.
 
-        Args:
-            bucket: Bucket name
-            key: S3 object key
-            expiration: URL expiration time in seconds (default: 1 hour)
 
-        Returns:
-            Presigned URL string
 
-        Raises:
-            HTTPException: If URL generation fails
-        """
-        try:
-            url = self.s3_client.generate_presigned_url(
-                'get_object',
-                Params={'Bucket': bucket, 'Key': key},
-                ExpiresIn=expiration
-            )
-            return url
-        except Exception as e:
-            raise HTTPException(
-                status_code=500,
-                detail=f"Failed to generate presigned URL: {str(e)}"
-            )
-
-    async def cleanup_temp_files_for_job(self, job_id: str) -> int:
-        """Delete all temporary files associated with a specific job.
-
-        This method finds and deletes all S3 objects with the prefix temp/{job_id}/
-        or the specific temp/{job_id}.pdf file. Useful for cleaning up after job
-        completion, failure, or timeout.
-
-        Args:
-            job_id: Job identifier (UUID)
-
-        Returns:
-            int: Number of files successfully deleted
-
-        Raises:
-            HTTPException: If S3 list or delete operations fail
-
-        Example:
-            >>> storage = StorageService(s3_client, "temp-bucket", "results-bucket")
-            >>> deleted = await storage.cleanup_temp_files_for_job("abc-123")
-            >>> print(f"Deleted {deleted} files")
-        """
-        try:
-            deleted_count = 0
-
-            # List all objects with job_id prefix (handles both temp/{job_id}.pdf and temp/{job_id}/*)
-            paginator = self.s3_client.get_paginator('list_objects_v2')
-            pages = paginator.paginate(
-                Bucket=self.temp_bucket,
-                Prefix=f"temp/{job_id}"
-            )
-
-            # Collect all object keys to delete
-            objects_to_delete = []
-            for page in pages:
-                if 'Contents' in page:
-                    for obj in page['Contents']:
-                        objects_to_delete.append({'Key': obj['Key']})
-
-            # Batch delete objects (S3 allows up to 1000 per request)
-            if objects_to_delete:
-                # Delete in batches of 1000
-                batch_size = 1000
-                for i in range(0, len(objects_to_delete), batch_size):
-                    batch = objects_to_delete[i:i + batch_size]
-                    response = self.s3_client.delete_objects(
-                        Bucket=self.temp_bucket,
-                        Delete={'Objects': batch}
-                    )
-                    deleted_count += len(response.get('Deleted', []))
-
-                    # Log any errors
-                    if 'Errors' in response and response['Errors']:
-                        for error in response['Errors']:
-                            logger.error(
-                                f"Failed to delete {error['Key']}: {error['Message']}"
-                            )
-
-                logger.info(
-                    f"Cleaned up {deleted_count} temp files for job {job_id}"
-                )
-
-            return deleted_count
-
-        except ClientError as e:
-            logger.error(
-                f"S3 ClientError cleaning up job {job_id}: {str(e)}",
-                exc_info=True
-            )
-            raise HTTPException(
-                status_code=500,
-                detail=f"Failed to cleanup temp files: {str(e)}"
-            )
-        except Exception as e:
-            logger.error(
-                f"Unexpected error cleaning up job {job_id}: {str(e)}",
-                exc_info=True
-            )
-            raise HTTPException(
-                status_code=500,
-                detail=f"Unexpected error during cleanup: {str(e)}"
-            )
-
-    async def list_temp_files(
-        self,
-        older_than_hours: int = 24
-    ) -> list[dict[str, any]]:
-        """List temporary files older than specified hours.
-
-        Scans the temp bucket and returns metadata for files that are older
-        than the retention period. Used by timeout worker for periodic cleanup.
-
-        Args:
-            older_than_hours: Age threshold in hours (default: 24)
-
-        Returns:
-            List of dicts with keys:
-                - 'key': S3 object key
-                - 'size': File size in bytes
-                - 'last_modified': datetime object (timezone-aware)
-                - 'age_hours': Age in hours (float)
-
-        Raises:
-            HTTPException: If S3 list operation fails
-
-        Example:
-            >>> storage = StorageService(s3_client, "temp-bucket", "results-bucket")
-            >>> old_files = await storage.list_temp_files(older_than_hours=48)
-            >>> for file in old_files:
-            ...     print(f"{file['key']} is {file['age_hours']:.1f} hours old")
-        """
-        try:
-            cutoff_time = datetime.now(UTC) - timedelta(hours=older_than_hours)
-            old_files = []
-
-            # Paginate through temp bucket
-            paginator = self.s3_client.get_paginator('list_objects_v2')
-            pages = paginator.paginate(
-                Bucket=self.temp_bucket,
-                Prefix='temp/'
-            )
-
-            for page in pages:
-                if 'Contents' not in page:
-                    continue
-
-                for obj in page['Contents']:
-                    # Ensure LastModified is timezone-aware
-                    last_modified = obj['LastModified']
-                    if last_modified.tzinfo is None:
-                        last_modified = last_modified.replace(tzinfo=UTC)
-
-                    # Check if file is older than cutoff
-                    if last_modified < cutoff_time:
-                        age_hours = (datetime.now(UTC) - last_modified).total_seconds() / 3600
-                        old_files.append({
-                            'key': obj['Key'],
-                            'size': obj['Size'],
-                            'last_modified': last_modified,
-                            'age_hours': age_hours
-                        })
-
-            logger.info(
-                f"Found {len(old_files)} temp files older than {older_than_hours} hours"
-            )
-            return old_files
-
-        except ClientError as e:
-            logger.error(
-                f"S3 ClientError listing temp files: {str(e)}",
-                exc_info=True
-            )
-            raise HTTPException(
-                status_code=500,
-                detail=f"Failed to list temp files: {str(e)}"
-            )
-        except Exception as e:
-            logger.error(
-                f"Unexpected error listing temp files: {str(e)}",
-                exc_info=True
-            )
-            raise HTTPException(
-                status_code=500,
-                detail=f"Unexpected error listing temp files: {str(e)}"
-            )
-
-    async def delete_from_s3(self, bucket: str, key: str) -> bool:
-        """Delete a specific object from S3.
-
-        Generic deletion method for any bucket/key combination. Idempotent -
-        succeeds even if object doesn't exist.
-
-        Args:
-            bucket: S3 bucket name
-            key: S3 object key
-
-        Returns:
-            bool: True if object was deleted or didn't exist, False on error
-
-        Example:
-            >>> storage = StorageService(s3_client, "temp-bucket", "results-bucket")
-            >>> success = await storage.delete_from_s3("temp-bucket", "temp/abc-123.pdf")
-        """
-        try:
-            self.s3_client.delete_object(
-                Bucket=bucket,
-                Key=key
-            )
-            logger.debug(f"Deleted s3://{bucket}/{key}")
-            return True
-
-        except ClientError as e:
-            # Check if object doesn't exist (idempotent success)
-            if e.response['Error']['Code'] == 'NoSuchKey':
-                logger.debug(f"Object already deleted: s3://{bucket}/{key}")
-                return True
-
-            logger.error(
-                f"Failed to delete s3://{bucket}/{key}: {str(e)}",
-                exc_info=True
-            )
-            return False
-
-        except Exception as e:
-            logger.error(
-                f"Unexpected error deleting s3://{bucket}/{key}: {str(e)}",
-                exc_info=True
-            )
-            return False
-
-    async def generate_url(
-        self,
-        s3_key: str,
-        bucket: str = None,
-        expiration: int = 3600
-    ) -> str:
-        """Generate URL from S3 key.
-
-        For LocalStack: Returns path-style URL (http://localstack:4566/bucket/key)
-        For AWS: Returns virtual-hosted style URL (https://bucket.s3.region.amazonaws.com/key)
-
-        Args:
-            s3_key: S3 object key (e.g., "results/abc-123.md")
-            bucket: Bucket name (defaults to results_bucket)
-            expiration: Presigned URL expiration in seconds (default: 1 hour)
-
-        Returns:
-            Full URL to S3 object
-
-        Example:
-            >>> storage = StorageService(s3_client, "temp-bucket", "results-bucket")
-            >>> url = await storage.generate_url("results/abc-123.md")
-            >>> # LocalStack: http://localstack:4566/results-bucket/results/abc-123.md
-            >>> # AWS: https://results-bucket.s3.us-east-1.amazonaws.com/results/abc-123.md
-        """
-        bucket = bucket or self.results_bucket
-
-        if settings.aws_endpoint_url:
-            # LocalStack: path-style URL
-            return f"{settings.aws_endpoint_url}/{bucket}/{s3_key}"
-        else:
-            # AWS Production: virtual-hosted style
-            region = settings.aws_region or "us-east-1"
-            return f"https://{bucket}.s3.{region}.amazonaws.com/{s3_key}"

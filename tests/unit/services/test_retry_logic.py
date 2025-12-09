@@ -8,19 +8,20 @@ Tests the retry_helpers module to ensure:
 5. Successful retries after transient failures
 """
 
-import pytest
 import asyncio
 from unittest.mock import AsyncMock, Mock
-from botocore.exceptions import ClientError, BotoCoreError
-from redis.exceptions import RedisError, ConnectionError as RedisConnectionError
 
+import pytest
+from botocore.exceptions import BotoCoreError, ClientError
+from redis.exceptions import ConnectionError as RedisConnectionError
+from redis.exceptions import RedisError
 from src.utils.retry_helpers import (
+    NON_RETRYABLE_BOTO_ERROR_CODES,
+    RETRYABLE_BOTO_ERROR_CODES,
+    RETRYABLE_HTTP_CODES,
     is_retryable_error,
     retry_with_backoff,
-    retry_with_backoff_sync,
-    RETRYABLE_BOTO_ERROR_CODES,
-    NON_RETRYABLE_BOTO_ERROR_CODES,
-    RETRYABLE_HTTP_CODES
+    retry_with_backoff_for_sync_func,
 )
 
 
@@ -77,7 +78,7 @@ class TestErrorCategorization:
 
     def test_network_errors_retryable(self):
         """Test that network errors are retryable."""
-        assert is_retryable_error(asyncio.TimeoutError())
+        assert is_retryable_error(TimeoutError())
         assert is_retryable_error(ConnectionError("Connection refused"))
         assert is_retryable_error(TimeoutError("Request timeout"))
 
@@ -174,7 +175,7 @@ class TestRetryWithBackoff:
         """Test that exponential backoff delays are correct."""
         import time
 
-        retryable_error = asyncio.TimeoutError()
+        retryable_error = TimeoutError()
         mock_func = AsyncMock(side_effect=retryable_error)
 
         start_time = time.time()
@@ -246,8 +247,8 @@ class TestRetryWithBackoff:
         assert result == "data_success"
 
 
-class TestRetryWithBackoffSync:
-    """Tests for retry_with_backoff_sync() synchronous function."""
+class TestRetryWithBackoffForSyncFunc:
+    """Tests for retry_with_backoff_for_sync_func() - async wrapper for synchronous functions."""
 
     @pytest.mark.asyncio
     async def test_sync_function_success(self):
@@ -261,7 +262,7 @@ class TestRetryWithBackoffSync:
                 raise ConnectionError("Network error")
             return "success"
 
-        result = await retry_with_backoff_sync(
+        result = await retry_with_backoff_for_sync_func(
             sync_func,
             max_attempts=3,
             base_delay=0.1,
@@ -281,7 +282,7 @@ class TestRetryWithBackoffSync:
             )
 
         with pytest.raises(ClientError) as exc_info:
-            await retry_with_backoff_sync(
+            await retry_with_backoff_for_sync_func(
                 sync_func,
                 max_attempts=3,
                 operation_name="sync_operation"

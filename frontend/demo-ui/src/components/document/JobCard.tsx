@@ -5,11 +5,12 @@ import type { JobStatus } from '@/types/api'
 import { formatDate } from '@/lib/utils'
 import { Link } from 'react-router-dom'
 
-const statusConfig = {
+const statusConfig: Record<string, { color: string; icon: typeof Clock; label: string }> = {
   pending: { color: 'bg-gray-500', icon: Clock, label: 'Pending' },
   pii_scanning: { color: 'bg-blue-500', icon: Clock, label: 'PII Scanning' },
   processing: { color: 'bg-blue-500', icon: Clock, label: 'Processing' },
-  awaiting_approval: { color: 'bg-yellow-500', icon: AlertCircle, label: 'Awaiting Approval' },
+  awaiting_approval: { color: 'bg-yellow-500', icon: AlertCircle, label: 'Awaiting PII Review' },
+  awaiting_correction_approval: { color: 'bg-purple-500', icon: AlertCircle, label: 'Awaiting Correction Review' },
   completed: { color: 'bg-green-500', icon: CheckCircle2, label: 'Completed' },
   failed: { color: 'bg-red-500', icon: XCircle, label: 'Failed' },
   denied: { color: 'bg-red-700', icon: XCircle, label: 'Denied' },
@@ -43,9 +44,14 @@ export function JobCard({ job }: JobCardProps) {
             </div>
 
             <div className="flex items-center gap-2">
-              {job.pii_detected && (
+              {job.pii_findings && job.pii_findings.length > 0 && (
                 <Badge variant="outline" className="border-yellow-500 text-yellow-700">
-                  PII Detected
+                  PII ({job.pii_findings.length})
+                </Badge>
+              )}
+              {job.correction_summary && (
+                <Badge variant="outline" className="border-purple-500 text-purple-700">
+                  {job.correction_summary.total_corrections} corrections
                 </Badge>
               )}
               <Badge className={`${config.color} text-white flex items-center gap-1`}>

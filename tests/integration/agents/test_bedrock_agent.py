@@ -16,18 +16,16 @@ real AWS credentials and are intended for manual testing or CI/CD environments
 with proper AWS access configured.
 """
 
-import os
-import pytest
 import base64
-from pathlib import Path
+import os
 
+import pytest
 from src.agents.accessibility_agent import (
     AccessibilityAgent,
     PageImprovementResult,
     get_accessibility_agent,
 )
 from src.config import settings
-
 
 pytestmark = pytest.mark.integration
 
@@ -37,7 +35,8 @@ pytestmark = pytest.mark.integration
 skip_bedrock = pytest.mark.skipif(
     os.getenv("SKIP_BEDROCK_TESTS") == "1"
     or settings.ai_provider != "bedrock"
-    or settings.aws_endpoint_url is not None,  # Skip if using LocalStack
+    or os.getenv("AWS_ENDPOINT_URL") is not None  # Skip if using LocalStack (generic endpoint)
+    or os.getenv("AWS_ENDPOINT_URL_S3") is not None,  # Skip if using LocalStack (S3-specific endpoint)
     reason="Bedrock integration tests skipped (SKIP_BEDROCK_TESTS=1, AI_PROVIDER!=bedrock, or using LocalStack)"
 )
 
@@ -246,7 +245,7 @@ def test_bedrock_region_configuration():
     """Test Bedrock region is configured (via AWS SDK)."""
     # Note: Bedrock region is configured via AWS SDK/boto3 (environment variables,
     # credentials file, or IAM role), not directly in PydanticAI
-    agent = AccessibilityAgent()
+    AccessibilityAgent()
 
     # Configuration should have region setting (for boto3)
     assert settings.bedrock_region is not None
@@ -256,7 +255,7 @@ def test_bedrock_region_configuration():
 @skip_bedrock
 def test_bedrock_model_id_configuration():
     """Test Bedrock uses configured model ID."""
-    agent = AccessibilityAgent()
+    AccessibilityAgent()
 
     # Should be using configured model ID
     assert settings.bedrock_model_id is not None

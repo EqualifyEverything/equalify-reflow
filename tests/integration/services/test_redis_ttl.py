@@ -4,19 +4,17 @@ Tests ensure job hashes automatically expire to prevent Redis memory exhaustion.
 Verifies TTL is set correctly on job creation and updated on status transitions.
 """
 
-import pytest
-import json
-from datetime import datetime, timezone
 
-from src.services.job_service import JobService
+import pytest
 from src.config import settings
+from src.services.job_service import JobService
 from src.shared.constants.statuses import (
-    STATUS_PII_SCANNING,
     STATUS_AWAITING_APPROVAL,
-    STATUS_PROCESSING,
     STATUS_COMPLETED,
+    STATUS_DENIED,
     STATUS_FAILED,
-    STATUS_DENIED
+    STATUS_PII_SCANNING,
+    STATUS_PROCESSING,
 )
 
 

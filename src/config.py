@@ -9,9 +9,10 @@ class Settings(BaseSettings):
 
     model_config = SettingsConfigDict(env_file=".env", extra="ignore")
 
-    # AWS Configuration
-    aws_endpoint_url: str | None = None  # Set to "http://localstack:4566" for local dev, None for production
+    # AWS Configuration (boto3 reads AWS_ENDPOINT_URL_S3 from environment automatically)
     aws_region: str = "us-east-1"
+    # Public S3 URL for client-facing links (localhost:4566 in dev, real S3 URL in prod)
+    s3_public_url: str | None = None  # e.g., "http://localhost:4566" for dev
     aws_access_key_id: str | None = None  # Uses IAM role in production, "test" for local dev
     aws_secret_access_key: str | None = None  # Uses IAM role in production, "test" for local dev
 
@@ -65,17 +66,72 @@ class Settings(BaseSettings):
 
     # Bedrock Configuration
     bedrock_region: str = "us-east-1"
-    bedrock_model_id: str = "anthropic.claude-3-haiku-20240307-v1:0"
+    bedrock_model_id: str = "us.anthropic.claude-haiku-4-5-20251001-v1:0"
 
     # Claude Model Settings
     claude_max_tokens: int = Field(ge=1, le=100000, default=4096)
     claude_temperature: float = Field(ge=0.0, le=2.0, default=0.2)
 
     # AI Processing Configuration
-    max_concurrent_pages: int = Field(ge=1, le=50, default=5)  # Process up to 5 pages concurrently
-    page_retry_attempts: int = Field(ge=0, le=10, default=3)  # Retry failed pages up to 3 times
+    max_pages_full_context: int = Field(
+        ge=1, le=50, default=15,
+        description="Maximum pages for full-document extraction before chunking is needed"
+    )
     confidence_threshold_high: float = Field(ge=0.0, le=1.0, default=0.85)
     confidence_threshold_medium: float = Field(ge=0.0, le=1.0, default=0.60)
+
+    # Multi-Agent Configuration (PRD-011)
+    agent_prompts_dir: str = Field(
+        default="config/agents",
+        description="Directory containing agent YAML prompt files"
+    )
+    agent_max_retries: int = Field(
+        ge=0, le=10, default=2,
+        description="Maximum retries for agent output validation failures"
+    )
+    agent_default_temperature: float = Field(
+        ge=0.0, le=2.0, default=0.2,
+        description="Default temperature for agent LLM calls"
+    )
+
+    # Deterministic Pre-Analysis Configuration (PRD-012)
+    # VeraPDF settings for PDF/UA-1 accessibility validation
+    verapdf_url: str = Field(
+        default="http://verapdf:8080",
+        description="VeraPDF REST API URL"
+    )
+    verapdf_timeout: int = Field(
+        ge=30, le=600, default=120,
+        description="VeraPDF request timeout in seconds"
+    )
+    verapdf_enabled: bool = Field(
+        default=True,
+        description="Enable VeraPDF PDF/UA-1 validation"
+    )
+
+    # PyMarkdown settings for markdown structure validation
+    pymarkdown_enabled: bool = Field(
+        default=True,
+        description="Enable PyMarkdown structure linting"
+    )
+    pymarkdown_rules: str = Field(
+        default="MD001,MD025,MD036,MD045",
+        description="Comma-separated list of PyMarkdown rules to enable"
+    )
+
+    # Document Context Extraction Configuration (PRD-013)
+    context_extraction_enabled: bool = Field(
+        default=True,
+        description="Enable document context extraction for agent grounding"
+    )
+    context_max_headings: int = Field(
+        ge=10, le=500, default=100,
+        description="Maximum headings to track per document"
+    )
+    context_recurring_threshold: float = Field(
+        ge=0.1, le=1.0, default=0.5,
+        description="Minimum page occurrence rate to consider element recurring (0.5 = 50%)"
+    )
 
     # Timeout Worker Configuration
     approval_timeout_hours: int = Field(ge=1, le=168, default=4)  # Approval deadline (hours), max 1 week
@@ -118,6 +174,28 @@ class Settings(BaseSettings):
     job_ttl_failed: int = Field(ge=3600, le=365 * 24 * 3600, default=30 * 24 * 3600)
     # Denied jobs: 7 days (min 1 hour, max 30 days)
     job_ttl_denied: int = Field(ge=3600, le=30 * 24 * 3600, default=7 * 24 * 3600)
+
+    # Worker Queue Configuration
+    pii_worker_queue_timeout_seconds: int = Field(
+        ge=1, le=300, default=30,
+        description="PII worker queue blocking timeout in seconds"
+    )
+    processing_worker_queue_timeout_seconds: int = Field(
+        ge=1, le=300, default=60,
+        description="Processing worker queue blocking timeout in seconds"
+    )
+    worker_error_sleep_seconds: int = Field(
+        ge=1, le=300, default=5,
+        description="Sleep duration after worker error to avoid tight error loops"
+    )
+    timeout_worker_check_interval_seconds: int = Field(
+        ge=1, le=300, default=10,
+        description="Timeout worker loop check interval in seconds"
+    )
+    timeout_worker_error_sleep_seconds: int = Field(
+        ge=1, le=300, default=60,
+        description="Timeout worker sleep duration on error"
+    )
 
     # Testing Configuration
     disable_workers: bool = False  # Set to True to disable background workers (for testing)

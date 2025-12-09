@@ -1,4 +1,4 @@
- File Upload Demo - Complete API Workflow Walkthrough
+# File Upload Demo - Complete API Workflow Walkthrough
 
 Walk through the complete end-to-end API workflow by uploading and processing a PDF document.
 
@@ -16,7 +16,7 @@ Example: `/file-upload-demo /path/to/custom.pdf production` (production with cus
 
 ## Environment Setup
 
-First, determine the API URL based on environment:
+First, determine the API URL and set up authentication:
 
 ```bash
 # Set API_URL based on whether "production" argument is present
@@ -28,7 +28,11 @@ else
   ENV_NAME="LOCAL"
 fi
 
-echo "🌍 Running against: $ENV_NAME ($API_URL)"
+# Get API key from .env file (first key if multiple)
+API_KEY=$(grep '^API_KEYS=' .env | sed 's/API_KEYS=//' | cut -d',' -f1)
+
+echo "Environment: $ENV_NAME ($API_URL)"
+echo "API Key loaded from .env"
 ```
 
 **IMPORTANT - Curl Usage Notes:**
@@ -39,43 +43,35 @@ Due to shell escaping issues with curl, follow these guidelines:
 3. **For approval requests** - Always write JSON to file first, then use -d @file
 4. **Test commands** - If curl gives "blank argument" errors, refactor to use files
 
-Example of what NOT to do:
-```bash
-# ❌ FAILS - Spaces in JSON string confuse curl
-curl -d '{"key": "value with spaces"}' ...
-```
-
-Example of what TO do:
-```bash
-# ✅ WORKS - Write JSON to file first
-cat > /tmp/payload.json << 'EOF'
-{"key": "value with spaces"}
-EOF
-curl -d @/tmp/payload.json ...
-```
-
 ---
 
 ## Step 1: Pre-Flight Checks
 
-Verify system is ready:
+Verify system is ready using API endpoints only:
 
 ```bash
 # Check API health
 curl -s $API_URL/health | jq .
+```
 
-# For LOCAL only - Check Docker containers
+**Expected Response (Healthy):**
+```json
+{
+  "status": "healthy",
+  "checks": {
+    "redis": true,
+    "s3": true,
+    "queue_depth": 0
+  }
+}
+```
+
+For LOCAL environment only - check queue status:
+```bash
 if [ "$ENV_NAME" == "LOCAL" ]; then
-  docker ps --format "table {{.Names}}\t{{.Status}}" | grep equalify-pdf
-
-  # Check queue status (dev endpoint only available locally)
   curl -s $API_URL/api/dev/monitoring/queues | jq .
 fi
 ```
-
-Expected: All services healthy, queues empty
-
-**Note:** Production does not expose dev monitoring endpoints for security reasons.
 
 ---
 
@@ -83,83 +79,74 @@ Expected: All services healthy, queues empty
 
 Upload the PDF to start processing:
 
-**IMPORTANT:** Use a shell script to avoid curl escaping issues with file uploads:
-
 ```bash
 # Set PDF file path (use argument or default)
 PDF_FILE="${1:-project-docs/pdfs/11_structured_programming.pdf}"
 
-# Create submission script
+# Skip if first arg is "production"
+if [[ "$PDF_FILE" == "production" ]]; then
+  PDF_FILE="project-docs/pdfs/11_structured_programming.pdf"
+fi
+
+# Create submission script to avoid curl escaping issues
 cat > /tmp/submit_pdf.sh << SCRIPT
 #!/bin/bash
 curl -X POST $API_URL/api/documents/submit \
+  -H "X-API-Key: $API_KEY" \
   -F "file=@$PDF_FILE" \
   -F 'metadata={"title":"Demo","source":"walkthrough"}' \
-  -s | jq .
+  -s
 SCRIPT
 
 chmod +x /tmp/submit_pdf.sh
-/tmp/submit_pdf.sh | tee /tmp/submit_response.json
+/tmp/submit_pdf.sh | jq . | tee /tmp/submit_response.json
 ```
 
-Alternative approach (if script method fails):
-```bash
-# Keep metadata simple - no spaces
-curl -X POST $API_URL/api/documents/submit \
-  -F "file=@$PDF_FILE" \
-  -F 'metadata={"title":"Demo","source":"test"}' \
-  -s | jq .
-```
-
-**Expected Response**:
+**Expected Response:**
 ```json
 {
   "job_id": "xxxxxxxx-xxxx-xxxx-xxxx-xxxxxxxxxxxx",
   "status": "pii_scanning",
   "estimated_completion_minutes": 5,
-  "created_at": "2025-10-06T..."
+  "created_at": "2025-01-06T..."
 }
 ```
 
-**Save the job_id** for next steps.
-
+**Save the job_id** for next steps:
 ```bash
-# Extract job_id from response
 JOB_ID=$(cat /tmp/submit_response.json | jq -r '.job_id')
 echo "Job ID: $JOB_ID"
 ```
 
-**What happened**:
+**What happened:**
 - PDF uploaded to S3 temp storage
-- Job record created
+- Job record created in Redis
 - Queued in `pii_scan` queue
-- PII worker picks up job
+- PII worker picks up job for scanning
 
 ---
 
 ## Step 3: Monitor PII Scanning
 
-Check job status (wait 5-10 seconds first for PII scan to complete):
+Check job status (wait 5-10 seconds for PII scan to complete):
 
 ```bash
-# Wait for PII scan to complete
+# Wait for PII scan to start processing
 sleep 5
 
 # Check status
-curl -s "$API_URL/api/documents/$JOB_ID" | jq .
-
-# If still scanning, wait and check again
-sleep 10
-curl -s "$API_URL/api/documents/$JOB_ID" | jq . | tee /tmp/pii_status.json
+curl -s -H "X-API-Key: $API_KEY" "$API_URL/api/documents/$JOB_ID" | jq . | tee /tmp/pii_status.json
 ```
 
-**Possible outcomes**:
+**Possible outcomes:**
 
 **A) PII Found** - Status: `awaiting_approval`
 ```json
 {
   "job_id": "...",
   "status": "awaiting_approval",
+  "created_at": "2025-01-06T10:00:00Z",
+  "updated_at": "2025-01-06T10:05:00Z",
   "pii_findings": [
     {
       "entity_type": "EMAIL_ADDRESS",
@@ -167,32 +154,40 @@ curl -s "$API_URL/api/documents/$JOB_ID" | jq . | tee /tmp/pii_status.json
       "score": 1.0
     }
   ],
-  "approval_token": "xxxxxxxxxxxxx"
+  "approval_token": "xxxxxxxxxxxxx",
+  "approval_expires_at": "2025-01-06T14:00:00Z"
 }
 ```
 
 **B) No PII** - Status: `processing` (auto-approved)
+```json
+{
+  "job_id": "...",
+  "status": "processing",
+  "created_at": "2025-01-06T10:00:00Z",
+  "updated_at": "2025-01-06T10:05:00Z",
+  "estimated_completion_minutes": 5
+}
+```
 
-**What happened**:
+**What happened:**
 - Microsoft Presidio scanned document text
-- Detected PII entities (emails, phone numbers, etc.)
-- If PII found: moved to `approval_pending` queue
-- If no PII: auto-approved, moved to `processing` queue
+- Detected PII entities (emails, phone numbers, SSNs, etc.)
+- If PII found: moved to `awaiting_approval` status
+- If no PII: auto-approved, moved to `processing` status
 
 ---
 
 ## Step 4: Approve PII (if needed)
 
-If status is `awaiting_approval`, submit approval:
-
-**CRITICAL:** Must use file-based JSON to avoid curl escaping errors:
+If status is `awaiting_approval`, submit approval decision:
 
 ```bash
 # Extract approval token from PII status
 APPROVAL_TOKEN=$(cat /tmp/pii_status.json | jq -r '.approval_token')
 echo "Approval Token: $APPROVAL_TOKEN"
 
-# Create approval JSON file
+# Create approval JSON file (avoids curl escaping issues)
 cat > /tmp/approval.json << 'EOF'
 {
   "decision": "approved",
@@ -201,16 +196,15 @@ cat > /tmp/approval.json << 'EOF'
 }
 EOF
 
-# Submit approval using file
+# Submit approval (requires both API key AND approval token)
 curl -X POST "$API_URL/api/approval/$APPROVAL_TOKEN/decision" \
+  -H "X-API-Key: $API_KEY" \
   -H "Content-Type: application/json" \
   -d @/tmp/approval.json \
   -s | jq . | tee /tmp/approval_response.json
 ```
 
-**Note:** The approval endpoint may take 10-30 seconds to respond, especially in production. Be patient.
-
-**Expected Response**:
+**Expected Response:**
 ```json
 {
   "message": "Job approved for processing successfully",
@@ -219,125 +213,126 @@ curl -X POST "$API_URL/api/approval/$APPROVAL_TOKEN/decision" \
 }
 ```
 
-**What happened**:
-- Approval decision recorded
-- Job moved from `approval_pending` to `processing` queue
-- Processing worker picks up job
+**Note:** The approval endpoint may take 10-30 seconds to respond. Be patient.
+
+**What happened:**
+- Approval decision recorded in Redis
+- Job moved to `processing` status
+- Processing worker picks up job for AI conversion
 
 ---
 
 ## Step 5: Monitor AI Processing
 
-Check processing status (poll every 10-15 seconds):
+Poll for processing completion (AI processing takes 1-5 minutes depending on page count):
 
 ```bash
-# Poll for completion (AI processing takes 2-8 minutes)
-for i in {1..30}; do
+# Poll for completion
+for i in {1..40}; do
   echo "=== Check $i ($(date +%H:%M:%S)) ==="
-  curl -s "$API_URL/api/documents/$JOB_ID" | jq .
 
-  STATUS=$(curl -s "$API_URL/api/documents/$JOB_ID" | jq -r '.status')
+  RESPONSE=$(curl -s -H "X-API-Key: $API_KEY" "$API_URL/api/documents/$JOB_ID")
+  echo "$RESPONSE" | jq . | tee /tmp/processing_status.json
 
-  if [ "$STATUS" == "completed" ] || [ "$STATUS" == "failed" ]; then
-    echo "✅ Processing finished with status: $STATUS"
+  STATUS=$(echo "$RESPONSE" | jq -r '.status')
+
+  if [ "$STATUS" == "completed" ]; then
+    echo "Job completed!"
+    break
+  elif [ "$STATUS" == "failed" ]; then
+    echo "Job failed!"
     break
   fi
 
   sleep 15
 done
-
-# For LOCAL only - Check queue depth and logs
-if [ "$ENV_NAME" == "LOCAL" ]; then
-  curl -s $API_URL/api/dev/monitoring/queues | jq .
-  docker logs equalify-pdf-api-gateway --tail 50
-fi
 ```
 
-**Status**: `processing`
+**What's happening during processing:**
 
-**What's happening**:
-1. **Docling Conversion**: PDF → Markdown + Page Images (PNG)
-   - Extracts text and structure from PDF
-   - Generates high-resolution page images for visual comparison
-2. **Text Correction via AWS Bedrock** (Claude Haiku):
-   - Lazy-initializes TextCorrectionAgent on first job
-   - Processes pages concurrently (max 5 at once)
-   - For each page:
-     - Sends page image + extracted markdown to Claude Haiku
-     - Claude compares visual layout to markdown structure
-     - Identifies corrections needed:
-       - Heading levels (e.g., H1 vs H2 based on font size/weight)
-       - List types (bullets vs numbers vs nested)
-       - Table structure (column headers, cell alignment)
-       - Paragraph breaks (spacing, indentation)
-     - Returns corrections with confidence scores (0.0-1.0)
-   - Applies corrections to markdown
-   - Calculates overall confidence (average of page confidences)
-3. Uploads corrected Markdown to S3 results bucket
-4. Updates job status with confidence score
+The FullDocumentAgent uses a **two-phase extraction approach**:
 
-**Typical duration**: 1-3 minutes (depends on page count and AWS Bedrock API latency)
+1. **Docling Conversion**: PDF to Page Images (PNG)
+   - Generates high-resolution page images for AI processing
+   - No OCR or markdown extraction (AI handles this directly)
 
-**Expected Results:**
-- **Confidence score**: 0.85-0.95 (typical range for well-formatted documents)
-- **Processing time**: 60-180 seconds (varies with page count and API latency)
-- **Corrections found**: 1-5 per page on average (heading levels, list formatting)
-- **Concurrent processing**: Up to 5 pages analyzed simultaneously via AWS Bedrock
+2. **Phase 1 - Structure Analysis** (AWS Bedrock / Claude):
+   - Receives all page images
+   - Analyzes document structure
+   - Builds a HeadingTree with document outline
+   - Detects layout type (single_column, two_column, mixed)
 
-**⚠️ If you see unexpected results:**
-- Confidence score = 0.0 → Text correction was skipped (check AWS credentials)
-- Processing time < 30 seconds → AI step may have failed (check logs)
-- No corrections found → Document may already be perfectly formatted
-- Check logs: `docker logs equalify-pdf-api-gateway | grep "text correction"`
+3. **Phase 2 - Guided Transcription** (AWS Bedrock / Claude):
+   - Receives all page images + HeadingTree from Phase 1
+   - Transcribes document content guided by the heading structure
+   - Produces complete markdown with proper hierarchy
 
----
-
-## Step 6: Retrieve Results
-
-Once status changes to `completed`:
-
-```bash
-# Check final status
-curl -s "$API_URL/api/documents/$JOB_ID" | jq .
-
-# Get results
-curl -s "$API_URL/api/documents/$JOB_ID/result" | jq . | tee /tmp/final_result.json
-```
-
-**Expected Response**:
+**Status when complete:** `completed`
 ```json
 {
   "job_id": "...",
   "status": "completed",
-  "markdown_url": "https://s3.../results/<job_id>/output.md",
-  "confidence_score": 0.87,
-  "processing_metadata": {
-    "pages_processed": 15,
-    "processing_time_seconds": 145,
-    "ai_model": "claude-3-5-haiku-20241022"
+  "created_at": "2025-01-06T10:00:00Z",
+  "updated_at": "2025-01-06T10:15:00Z",
+  "result": {
+    "markdown_url": "https://s3.../results/550e8400.../output.md",
+    "confidence_score": 0.92,
+    "processing_time_seconds": 145
+  },
+  "llm_usage": {
+    "input_tokens": 15000,
+    "output_tokens": 3000,
+    "total_tokens": 18000,
+    "estimated_cost_cents": 1.5
   }
 }
 ```
 
+**Page Limit:** Documents are limited to 15 pages for full-context processing. Larger documents will fail with an error message.
+
 ---
 
-## Step 7: Download and Inspect
+## Step 6: Retrieve and Download Results
 
-Download the processed markdown file to your Downloads folder:
+Get the final result and download the markdown:
 
 ```bash
-# Extract markdown URL from result
+# Get final result
+curl -s -H "X-API-Key: $API_KEY" "$API_URL/api/documents/$JOB_ID/result" | jq . | tee /tmp/final_result.json
+```
+
+**Expected Response:**
+```json
+{
+  "job_id": "...",
+  "status": "completed",
+  "markdown_url": "https://s3.../results/550e8400.../output.md",
+  "confidence_score": 0.92,
+  "processing_time_seconds": 145,
+  "llm_usage": {
+    "input_tokens": 15000,
+    "output_tokens": 3000,
+    "total_tokens": 18000,
+    "estimated_cost_cents": 1.5
+  }
+}
+```
+
+**Download the markdown file:**
+
+```bash
+# Extract markdown URL
 MARKDOWN_URL=$(cat /tmp/final_result.json | jq -r '.markdown_url')
 echo "Markdown URL: $MARKDOWN_URL"
 
 # Generate output filename with timestamp
 TIMESTAMP=$(date +%Y%m%d_%H%M%S)
-OUTPUT_FILE="~/Downloads/equalify_result_${TIMESTAMP}.md"
+OUTPUT_FILE=~/Downloads/equalify_result_${TIMESTAMP}.md
 
-# Download Markdown to Downloads folder
+# Download to Downloads folder
 curl -s "$MARKDOWN_URL" -o "$OUTPUT_FILE"
 
-# Verify file was downloaded
+# Verify download
 ls -lh "$OUTPUT_FILE"
 
 # Preview first 30 lines
@@ -348,13 +343,12 @@ head -30 "$OUTPUT_FILE"
 open "$OUTPUT_FILE"
 ```
 
-**Verify**:
-- ✅ Corrected heading levels (based on visual font size/weight)
-- ✅ Proper list formatting (bullets vs numbers, nesting preserved)
-- ✅ Table structure improvements (headers, alignment)
-- ✅ Paragraph breaks matching visual spacing
-- ✅ High confidence score (0.85-0.95 typical)
-- ✅ File saved to Downloads folder
+**Verify the output:**
+- Proper heading hierarchy based on visual analysis
+- Correct list formatting (bullets vs numbers)
+- Table structure preserved
+- Paragraph breaks matching visual spacing
+- File saved to Downloads folder
 
 ---
 
@@ -363,24 +357,20 @@ open "$OUTPUT_FILE"
 ```
 1. Submit PDF → API uploads to S3
 2. PII Scan → Presidio detects sensitive data
-3. Approval → Human reviews PII findings (if PII found)
-4. Processing:
-   a. Docling converts PDF → Markdown + Page Images (PNG)
-   b. AWS Bedrock (Claude Haiku) compares images to markdown
-   c. Identifies layout/structure corrections
-   d. Applies corrections, calculates confidence
-5. Results → Corrected Markdown available via S3 URL
+3. PII Approval → Human reviews findings (if PII found)
+4. Processing → Docling page images + FullDocumentAgent two-phase extraction
+5. Results → Final markdown available via S3 URL
 6. Download → File saved to user's Downloads folder
 ```
 
-**Queue Progression**:
+**Queue Progression:**
 ```
 pii_scan → approval_pending → processing → completed
 ```
 
-**Status Progression**:
+**Status Progression:**
 ```
-submitted → pii_scanning → awaiting_approval → processing → completed
+pii_scanning → awaiting_approval → processing → completed
 ```
 
 ---
@@ -390,229 +380,106 @@ submitted → pii_scanning → awaiting_approval → processing → completed
 If status is `failed`:
 
 ```bash
-curl -s "$API_URL/api/documents/$JOB_ID/result" | jq .
+curl -s -H "X-API-Key: $API_KEY" "$API_URL/api/documents/$JOB_ID/result" | jq .
 ```
 
-**Common failures**:
+**Common failures:**
 - **AWS Bedrock API errors**:
   - 403 Forbidden: Invalid/expired AWS credentials (run `aws sso login --profile uic`)
   - 429 Throttling: Too many concurrent requests to Bedrock
   - 500 Internal Error: Bedrock service issues (retry helps)
-  - Connection timeout: Network issues or IMDS hang (check AWS_EC2_METADATA_DISABLED=true)
 - **Processing failures**:
   - Invalid PDF format (corrupted or encrypted PDFs)
-  - OCR failures (scanned PDFs with poor image quality)
-  - Text correction timeouts (large documents with many pages)
+  - Document exceeds 15 pages (max_pages_full_context limit)
+  - Docling page image generation failures
 - **Infrastructure failures**:
-  - S3 upload/download failures (LocalStack or AWS connectivity)
-  - Redis connection errors (worker communication)
-
-Check logs (LOCAL only):
-```bash
-docker logs equalify-pdf-api-gateway --tail 100
-```
-
-For production errors, check AWS CloudWatch logs:
-```bash
-# From terraform directory
-make aws-logs
-```
-
----
-
-## Implementation Notes
-
-**Execution Style**: Act as a tour guide walking the user through the system. Explain what's happening at each step and why it matters.
-
-**Execute these steps**:
-1. Determine environment (local vs production) from arguments
-2. Set API_URL and ENV_NAME variables
-3. Run pre-flight checks and explain system readiness
-4. Submit PDF using shell script method to avoid curl escaping issues
-5. Extract job_id and save to variable
-6. Poll status until not `pii_scanning` and explain PII detection purpose
-7. If `awaiting_approval`, extract approval_token and submit approval using file-based JSON
-8. Poll status until not `processing` (expect 2-8 minutes for AI)
-9. Retrieve results and save to /tmp files
-10. Download markdown to ~/Downloads with timestamped filename
-11. Report complete workflow with timestamps and insights
-
-**Critical Implementation Details**:
-
-1. **Always use shell scripts or files for curl with JSON**
-   - Direct curl with -d and JSON strings containing spaces WILL FAIL
-   - Use `cat > file.json << 'EOF'` then `curl -d @file.json`
-   - Or create .sh scripts with curl commands
-
-2. **Variable expansion in heredocs**
-   - Use `<< 'EOF'` (quoted) to prevent variable expansion
-   - Use `<< EOF` (unquoted) if you need variable substitution
-   - For API_URL in scripts, use unquoted heredocs or direct variable substitution
-
-3. **Save all responses to /tmp files**
-   - Use `| tee /tmp/response.json` to save and display
-   - Extract values with jq: `$(cat /tmp/file.json | jq -r '.field')`
-   - Makes debugging easier and allows data flow between steps
-
-4. **Production timing differences**
-   - Production approval endpoint may take 10-30s to respond (be patient)
-   - AI processing should take 2-8 minutes (if faster, it failed silently)
-   - Check confidence_score and processing_time_seconds to verify AI ran
-
-**Narrative Guidelines**:
-- Use friendly, explanatory language ("Now we're submitting the PDF to the API...")
-- Explain the "why" behind each step ("We scan for PII to ensure student data privacy...")
-- Point out what's happening in the background ("The worker is now processing in the `pii_scan` queue...")
-- Celebrate milestones ("✅ PII scan complete! Found 1 email address...")
-- Provide context about timing ("This typically takes 2-5 seconds...")
-- Flag anomalies ("⚠️ Completed in 60s - expected 2-8min for AI processing")
-
-**Report format**:
-```
-✅ Step 1: Services healthy (all containers up and running)
-✅ Step 2: PDF submitted (job_id: xxx, queued in pii_scan)
-✅ Step 3: PII scan complete (found X entities - emails, phone numbers)
-✅ Step 4: Approval submitted (justified as course material)
-🔄 Step 5: Processing (AI enhancing accessibility...)
-✅ Step 6: Results ready (markdown generated, uploaded to S3)
-✅ Step 7: Downloaded to ~/Downloads/result.md
-
-Total time: X minutes
-Confidence: 87% (High)
-
-📝 Your processed document is now in your Downloads folder!
-```
+  - S3 upload/download failures
+  - Redis connection errors
 
 ---
 
 ## Troubleshooting
 
-### Curl "blank argument where content is expected" Error
-
-**Problem:** When running curl with inline JSON containing spaces:
+### Check Service Health
 ```bash
-# ❌ This FAILS
-curl -d '{"key": "value with spaces"}' ...
+curl -s $API_URL/health | jq .
 ```
 
-**Root cause:** Shell escapes and special characters in JSON confuse curl argument parsing
+### Check Queue Status (LOCAL only)
+```bash
+curl -s $API_URL/api/dev/monitoring/queues | jq .
+```
+
+### View Container Logs (LOCAL only, for debugging)
+```bash
+docker logs equalify-pdf-api-gateway --tail 100
+```
+
+### Check Processing Activity (LOCAL only)
+```bash
+docker logs equalify-pdf-api-gateway 2>&1 | grep -E "FullDocumentAgent|Phase 1|Phase 2|BedrockConverseModel"
+```
+
+### Curl Escaping Issues
+
+**Problem:** curl with inline JSON gives "blank argument" errors
 
 **Solution:** Always use file-based JSON:
 ```bash
-# ✅ This WORKS
 cat > /tmp/data.json << 'EOF'
 {"key": "value with spaces"}
 EOF
 curl -d @/tmp/data.json ...
 ```
 
-### AWS Bedrock Text Correction Not Working
+### AWS Bedrock Not Working
 
 **Symptoms:**
-- Job completes in <30 seconds (too fast for AI processing)
+- Job completes in <30 seconds (too fast)
 - `confidence_score: 0.0` in result
-- No "text correction" messages in logs
 
-**Investigation steps:**
-
-1. **Check AWS credentials are valid:**
-   ```bash
-   # Login to AWS SSO
-   aws sso login --profile uic
-
-   # Verify credentials loaded
-   aws sts get-caller-identity --profile uic
-   ```
-
-2. **Check logs for text correction activity:**
-   ```bash
-   docker logs equalify-pdf-api-gateway 2>&1 | grep -E "text correction|Lazy-initializing|BedrockConverseModel|Processing page"
-   ```
-
-   Expected logs:
-   - "Starting AI text correction analysis"
-   - "Lazy-initializing TextCorrectionAgent on first use"
-   - "BedrockConverseModel created successfully"
-   - "Processing page X for text corrections with bedrock"
-   - "Page X analyzed: Y corrections found (confidence: 0.XX)"
-
-3. **Check for AWS Bedrock errors:**
-   ```bash
-   docker logs equalify-pdf-api-gateway 2>&1 | grep -E "403|Forbidden|Throttling|AccessDenied|IMDS"
-   ```
-
-4. **Verify environment variables:**
-   ```bash
-   docker exec equalify-pdf-api-gateway env | grep -E "AWS_|AI_PROVIDER|BEDROCK"
-   ```
-
-   Expected:
-   - `AI_PROVIDER=bedrock`
-   - `AWS_DEFAULT_REGION=us-east-1`
-   - `AWS_EC2_METADATA_DISABLED=true`
-   - `AWS_ENDPOINT_URL_S3=http://localstack:4566`
-   - `AWS_ENDPOINT_URL_BEDROCK_RUNTIME` should be UNSET (not pointing to LocalStack)
-
-5. **Restart with fresh credentials:**
-   ```bash
-   ./restart-and-test.sh
-   ```
-
-**Common fixes:**
-- Expired AWS SSO session → Run `aws sso login --profile uic`
-- IMDS hang → Ensure `AWS_EC2_METADATA_DISABLED=true` in docker-compose
-- Bedrock routing to LocalStack → Check no global `AWS_ENDPOINT_URL` variable
-
-### File Upload Metadata Issues
-
-**Problem:** File upload with complex metadata fails
-
-**Solution:** Keep metadata simple or use a shell script:
+**Solution:**
 ```bash
-# Simple metadata (works)
-curl -F "file=@path.pdf" -F 'metadata={"title":"Demo","source":"test"}' ...
+# Login to AWS SSO
+aws sso login --profile uic
 
-# Complex metadata (use script)
-cat > /tmp/upload.sh << 'SCRIPT'
-#!/bin/bash
-curl -F "file=@$PDF_FILE" \
-  -F 'metadata={"title":"Complex Title","source":"walkthrough"}' \
-  $API_URL/api/documents/submit
-SCRIPT
-chmod +x /tmp/upload.sh
-/tmp/upload.sh
+# Restart services (LOCAL)
+./restart-and-test.sh
 ```
 
-### Approval Endpoint Slow Response
+---
 
-**Symptom:** Approval request hangs or takes 10-30 seconds
+## Implementation Notes
 
-**Explanation:** This is normal behavior in production. The endpoint:
-1. Records approval decision in Redis
-2. Moves job to processing queue
-3. May wait for worker to pick up job
-4. Returns success response
+**Execution Style**: Act as a tour guide walking the user through the system. Explain what's happening at each step.
 
-**Solution:** Be patient, don't kill the request. Use timeouts:
-```bash
-curl --max-time 60 -d @/tmp/approval.json ...
+**Execute these steps:**
+1. Determine environment (local vs production) from arguments
+2. Set API_URL, ENV_NAME, and API_KEY variables
+3. Run pre-flight health check via API
+4. Submit PDF with API key authentication
+5. Extract job_id and save for subsequent calls
+6. Poll status until not `pii_scanning`
+7. If `awaiting_approval`, submit PII approval decision
+8. Poll status until `completed` or `failed` (expect 1-5 minutes)
+9. Retrieve final results
+10. Download markdown to ~/Downloads with timestamp
+11. Report complete workflow with cost summary
+
+**Report format:**
 ```
+Step 1: Health check passed (services healthy)
+Step 2: PDF submitted (job_id: xxx)
+Step 3: PII scan complete (found X entities)
+Step 4: PII approval submitted
+Step 5: AI processing (1-5 minutes)...
+        - Phase 1: Structure analysis
+        - Phase 2: Guided transcription
+Step 6: Results downloaded to ~/Downloads/equalify_result_xxx.md
 
-### Variables Not Expanding in Heredocs
+Total time: X minutes
+LLM Cost: $0.0XXX (X.X cents)
+Confidence: 92%
 
-**Problem:** `$API_URL` appears literally in output
-
-**Root cause:** Quoted heredoc `<< 'EOF'` prevents variable expansion
-
-**Solution:** Use unquoted heredoc for variable substitution:
-```bash
-# Variables NOT expanded
-cat > file.sh << 'EOF'
-curl $API_URL/health
-EOF
-
-# Variables expanded
-cat > file.sh << EOF
-curl $API_URL/health
-EOF
+Your processed document is ready!
 ```

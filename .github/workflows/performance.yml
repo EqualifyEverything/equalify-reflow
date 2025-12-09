@@ -1,0 +1,66 @@
+name: Performance Tests
+
+on:
+  workflow_dispatch:
+    inputs:
+      branch:
+        description: "Branch to test"
+        required: false
+        default: "main"
+
+env:
+  PYTHON_VERSION: "3.11"
+
+jobs:
+  performance:
+    name: Performance & Load Tests
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+        with:
+          ref: ${{ github.event.inputs.branch || github.ref }}
+
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: ${{ env.PYTHON_VERSION }}
+
+      - name: Set up Docker Buildx
+        uses: docker/setup-buildx-action@v3
+
+      - name: Cache uv
+        uses: actions/cache@v4
+        with:
+          path: ~/.cache/uv
+          key: uv-${{ runner.os }}-${{ hashFiles('pyproject.toml') }}
+          restore-keys: uv-${{ runner.os }}-
+
+      - name: Install uv and dependencies
+        run: |
+          pip install uv
+          uv sync --all-extras
+
+      - name: Run performance tests
+        env:
+          ANTHROPIC_API_KEY: test-key-for-ci
+          AWS_ACCESS_KEY_ID: test
+          AWS_SECRET_ACCESS_KEY: test
+          AWS_DEFAULT_REGION: us-east-1
+        run: |
+          uv run pytest tests/ \
+            -v \
+            --tb=short \
+            -m "performance" \
+            --durations=0
+
+      - name: Performance summary
+        if: always()
+        run: |
+          echo "## Performance Test Results" >> $GITHUB_STEP_SUMMARY
+          echo "" >> $GITHUB_STEP_SUMMARY
+          echo "- **Branch:** ${{ github.event.inputs.branch || github.ref_name }}" >> $GITHUB_STEP_SUMMARY
+          echo "- **Commit:** ${{ github.sha }}" >> $GITHUB_STEP_SUMMARY
+          echo "- **Run:** $(date -u '+%Y-%m-%d %H:%M:%S UTC')" >> $GITHUB_STEP_SUMMARY

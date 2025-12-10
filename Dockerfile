@@ -52,6 +52,10 @@ RUN uv pip install --system torch torchvision --index-url https://download.pytor
 # Fallback to regular sync if no lock file exists
 RUN uv sync --frozen || uv sync
 
+# Pre-download spaCy model for Presidio PII detection
+# This avoids cold start delays when the PII worker processes its first request
+RUN uv run python -m spacy download en_core_web_sm
+
 # ==============================================================================
 # Stage 4: Development - Hot-reload for fast iteration
 # ==============================================================================

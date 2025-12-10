@@ -132,6 +132,13 @@ async def start_pii_worker(shutdown_event: asyncio.Event = None) -> None:
 
     logger.info("Initializing PII worker...")
 
+    # Eagerly initialize Presidio analyzer to avoid cold start on first request
+    # This loads the spaCy model and Presidio recognizers during startup
+    from ..services.pii_analyzer import get_pii_analyzer
+    logger.info("Pre-loading Presidio PII analyzer (spaCy model + recognizers)...")
+    get_pii_analyzer()
+    logger.info("Presidio PII analyzer pre-loaded successfully")
+
     # Import dependencies dynamically to avoid circular imports
     from ..config import settings
     from ..dependencies import get_redis_client, get_s3_client

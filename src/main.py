@@ -187,5 +187,21 @@ async def root() -> dict[str, str]:
 # The static files are built and copied during Docker image creation
 _demo_ui_path = Path(__file__).parent.parent / "static" / "demo-ui"
 if _demo_ui_path.exists():
+    from fastapi.responses import FileResponse
+
+    # Serve index.html for SPA client-side routes
+    # This must be defined BEFORE the StaticFiles mount
+    @app.get("/demo/{full_path:path}")
+    async def serve_spa(full_path: str) -> FileResponse:
+        """Serve index.html for all demo UI routes (SPA fallback)."""
+        # Check if requesting a static asset (has file extension)
+        if "." in full_path.split("/")[-1]:
+            # Let StaticFiles handle actual files
+            file_path = _demo_ui_path / full_path
+            if file_path.exists():
+                return FileResponse(file_path)
+        # For all other paths, serve index.html (SPA routing)
+        return FileResponse(_demo_ui_path / "index.html")
+
     app.mount("/demo", StaticFiles(directory=_demo_ui_path, html=True), name="demo-ui")
     logger.info("✅ Demo UI mounted at /demo")

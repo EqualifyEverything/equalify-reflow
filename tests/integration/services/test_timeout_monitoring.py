@@ -30,7 +30,7 @@ def mock_job_service(mocker):
 def mock_cleanup_service(mocker):
     """Create mock CleanupService."""
     service = mocker.AsyncMock()
-    service.cleanup_denied_job = AsyncMock(return_value=True)
+    service.cleanup_job_files = AsyncMock(return_value=True)
     return service
 
 
@@ -121,7 +121,7 @@ class TestProcessExpiredApprovals:
             status="failed",
             error_message="Approval deadline exceeded - no response received"
         )
-        mock_cleanup_service.cleanup_denied_job.assert_called_once_with("test-job-123")
+        mock_cleanup_service.cleanup_job_files.assert_called_once_with("temp/test-job-123.pdf")
         mock_queue_service.remove_from_timeout_tracking.assert_called_once_with(
             "test-job-123"
         )

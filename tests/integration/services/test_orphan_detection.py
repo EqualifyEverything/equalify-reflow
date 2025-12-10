@@ -22,7 +22,7 @@ def mock_job_service(mocker):
 def mock_s3_cleanup_service(mocker):
     """Create mock S3CleanupService."""
     service = mocker.AsyncMock()
-    service.cleanup_job_temp_files = AsyncMock(return_value=True)
+    service.cleanup_temp_files_for_job = AsyncMock(return_value=True)
     return service
 
 
@@ -141,7 +141,7 @@ class TestCleanupOldCompletedJobs:
         assert result["jobs_cleaned"] == 1
         assert result["errors"] == 0
 
-        mock_s3_cleanup_service.cleanup_job_temp_files.assert_called_once_with(
+        mock_s3_cleanup_service.cleanup_temp_files_for_job.assert_called_once_with(
             "old-job-123"
         )
         mock_job_service.cleanup_old_job.assert_called_once_with("old-job-123")
@@ -282,7 +282,7 @@ class TestCleanupStuckProcessingJobs:
             status="failed",
             error_message="Job exceeded maximum processing time and was terminated"
         )
-        mock_s3_cleanup_service.cleanup_job_temp_files.assert_called_once_with(
+        mock_s3_cleanup_service.cleanup_temp_files_for_job.assert_called_once_with(
             "stuck-job-111"
         )
         mock_metrics_service.increment_metric.assert_called_once_with(

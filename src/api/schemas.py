@@ -60,6 +60,9 @@ class ProcessingResponse(JobStatusBase):
     estimated_completion_minutes: int = Field(
         ..., description="Estimated minutes until completion"
     )
+    pii_skipped: bool | None = Field(
+        None, description="Whether PII scan was skipped (true if bypassed)"
+    )
 
 
 class AwaitingPIIApprovalResponse(JobStatusBase):

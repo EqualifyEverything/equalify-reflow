@@ -2,7 +2,7 @@
 
 from datetime import UTC, datetime
 
-from fastapi import APIRouter, Depends, File, HTTPException, UploadFile, status
+from fastapi import APIRouter, Depends, File, Form, HTTPException, UploadFile, status
 from pydantic import BaseModel
 
 from ..config import settings
@@ -13,6 +13,8 @@ from ..dependencies import (
     get_storage_service,
 )
 from ..services import JobService, QueueService, S3URLService, StorageService
+from ..shared.constants.queues import PROCESSING_QUEUE
+from ..shared.models.queue import ProcessingQueuePayload
 from .schemas import (
     AwaitingCorrectionApprovalResponse,
     AwaitingPIIApprovalResponse,
@@ -73,23 +75,57 @@ class JobSubmissionResponse(BaseModel):
 )
 async def submit_document(
     file: UploadFile = File(...),
+    skip_pii_scan: bool = Form(default=False, description="Skip PII scanning and queue directly for processing"),
+    skip_reason: str | None = Form(default=None, description="Optional reason for skipping PII scan (for audit trail)"),
     storage: StorageService = Depends(get_storage_service),
     queue: QueueService = Depends(get_queue_service),
     job_service: JobService = Depends(get_job_service),
 ):
-    """Submit a PDF document for processing."""
-    job_id, s3_key = await storage.store_document(file)
-    await job_service.create_job(
-        job_id, s3_key, status="pii_scanning", original_filename=file.filename
-    )
-    await queue.queue_pii_job(job_id, s3_key)
+    """Submit a PDF document for processing.
 
-    return JobSubmissionResponse(
-        job_id=job_id,
-        status="pii_scanning",
-        estimated_completion_minutes=settings.estimated_processing_minutes,
-        created_at=datetime.now(UTC).isoformat().replace("+00:00", "Z"),
-    )
+    Args:
+        file: PDF file to process
+        skip_pii_scan: If True, bypass PII scanning and queue directly for processing
+        skip_reason: Optional justification for skipping PII scan (recorded in audit trail)
+    """
+    job_id, s3_key = await storage.store_document(file)
+
+    if skip_pii_scan:
+        # Direct to processing queue (bypass PII scanning)
+        await job_service.create_job(
+            job_id,
+            s3_key,
+            status="processing",
+            original_filename=file.filename,
+            pii_skipped=True,
+            pii_skip_reason=skip_reason or "User requested PII scan skip"
+        )
+        processing_payload = ProcessingQueuePayload(
+            job_id=job_id,
+            s3_key=s3_key,
+            approved_at=None  # No approval needed - PII scan skipped
+        )
+        await queue.enqueue(PROCESSING_QUEUE, processing_payload)
+
+        return JobSubmissionResponse(
+            job_id=job_id,
+            status="processing",
+            estimated_completion_minutes=settings.estimated_processing_minutes,
+            created_at=datetime.now(UTC).isoformat().replace("+00:00", "Z"),
+        )
+    else:
+        # Standard flow: PII scanning first
+        await job_service.create_job(
+            job_id, s3_key, status="pii_scanning", original_filename=file.filename
+        )
+        await queue.queue_pii_job(job_id, s3_key)
+
+        return JobSubmissionResponse(
+            job_id=job_id,
+            status="pii_scanning",
+            estimated_completion_minutes=settings.estimated_processing_minutes,
+            created_at=datetime.now(UTC).isoformat().replace("+00:00", "Z"),
+        )
 
 
 @router.get("/{job_id}", response_model=DocumentStatusResponse)
@@ -128,6 +164,7 @@ async def get_job(
             return ProcessingResponse(
                 **base,
                 estimated_completion_minutes=settings.estimated_processing_minutes,
+                pii_skipped=job.get("pii_skipped") == "true" if job.get("pii_skipped") else None,
             )
 
         case "awaiting_approval":

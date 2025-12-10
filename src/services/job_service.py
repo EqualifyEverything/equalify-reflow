@@ -94,7 +94,9 @@ class JobService:
         job_id: str,
         s3_key: str,
         status: str = "pii_scanning",
-        original_filename: str | None = None
+        original_filename: str | None = None,
+        pii_skipped: bool = False,
+        pii_skip_reason: str | None = None
     ) -> None:
         """
         Create a new job in Redis with automatic TTL.
@@ -107,10 +109,20 @@ class JobService:
             s3_key: S3 key where document is stored
             status: Initial job status (default: "pii_scanning")
             original_filename: Original filename from upload
+            pii_skipped: Whether PII scan was skipped (for audit trail)
+            pii_skip_reason: Reason PII scan was skipped
 
         Example:
             >>> await job_service.create_job("job-123", "temp/file.pdf", original_filename="doc.pdf")
             # Creates job with 7-day TTL (active job default)
+
+            >>> await job_service.create_job(
+            ...     "job-456", "temp/file.pdf",
+            ...     status="processing",
+            ...     pii_skipped=True,
+            ...     pii_skip_reason="Trusted source"
+            ... )
+            # Creates job with PII skip audit trail
         """
         created_at = datetime.now(UTC).isoformat()
 
@@ -123,6 +135,12 @@ class JobService:
         }
         if original_filename:
             mapping["original_filename"] = original_filename
+
+        # Add PII skip audit fields if applicable
+        if pii_skipped:
+            mapping["pii_skipped"] = "true"
+            if pii_skip_reason:
+                mapping["pii_skip_reason"] = pii_skip_reason
 
         await self.redis.hset(
             f"{self.status_prefix}{job_id}",

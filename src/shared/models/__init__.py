@@ -2,13 +2,19 @@
 
 This package provides type-safe Pydantic models for all data structures
 used across microservices including job tracking, queue payloads, PII
-detection, approval workflows, and processing results.
+detection, approval workflows, processing results, and remediation pipeline.
 """
 
 from .approval import ApprovalDecision, ApprovalRequest
 from .job import VALID_TRANSITIONS, JobStatus, JobSubmission
+from .observation import (
+    VALID_OBSERVATION_TRANSITIONS,
+    Observation,
+    ObservationLocation,
+)
 from .pii import PIIFinding, PIIResult
 from .processing import LLMUsage, ProcessingJob, ProcessingResult
+from .proposal import VALID_PROPOSAL_TRANSITIONS, Proposal, SearchReplaceDiff
 from .queue import ApprovalQueuePayload, PIIQueuePayload, ProcessingQueuePayload
 from .redis_schema import (
     APPROVAL_QUEUE,
@@ -21,6 +27,12 @@ from .redis_schema import (
     metrics_key,
     queue_key,
     timeout_key,
+)
+from .remediation import DocumentManifest, PageFeatures
+from .remediation_progress import (
+    VALID_SUBSTATUSES,
+    RemediationProgress,
+    SubstatusType,
 )
 
 __all__ = [
@@ -46,6 +58,19 @@ __all__ = [
     "PIIQueuePayload",
     "ApprovalQueuePayload",
     "ProcessingQueuePayload",
+
+    # Remediation models
+    "PageFeatures",
+    "DocumentManifest",
+    "ObservationLocation",
+    "Observation",
+    "VALID_OBSERVATION_TRANSITIONS",
+    "SearchReplaceDiff",
+    "Proposal",
+    "VALID_PROPOSAL_TRANSITIONS",
+    "RemediationProgress",
+    "VALID_SUBSTATUSES",
+    "SubstatusType",
 
     # Redis schema utilities
     "job_status_key",

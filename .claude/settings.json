@@ -6,8 +6,19 @@
         "hooks": [
           {
             "type": "command",
-            "command": "bash -c 'cd \"$CLAUDE_PROJECT_DIR\" && uv run .claude/hooks/lint_modified.py'",
-            "timeout": 60
+            "command": "bash -c 'FILE=$(echo \"$TOOL_INPUT\" | jq -r .file_path 2>/dev/null); [[ \"$FILE\" == *.py ]] && uv run ruff check --fix \"$FILE\" && uv run ruff format \"$FILE\" || true'",
+            "timeout": 15
+          }
+        ]
+      }
+    ],
+    "Stop": [
+      {
+        "hooks": [
+          {
+            "type": "command",
+            "command": "bash -c 'cd \"$CLAUDE_PROJECT_DIR\" && git diff --name-only --diff-filter=AM 2>/dev/null | grep \"\\.py$\" | head -20 | xargs -r uv run mypy --no-error-summary 2>&1 || true'",
+            "timeout": 120
           }
         ]
       }

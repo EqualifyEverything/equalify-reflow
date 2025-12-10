@@ -113,9 +113,8 @@ class Proposal(BaseModel):
 
     # What this addresses
     resolves: list[str] = Field(
-        ...,
-        min_length=1,
-        description="Observation IDs this proposal resolves"
+        default_factory=list,
+        description="Observation IDs this proposal resolves (empty for human-initiated edits)"
     )
 
     # The edit

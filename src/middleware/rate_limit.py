@@ -48,28 +48,33 @@ class RateLimitMiddleware(BaseHTTPMiddleware):
             logger.warning("Rate limiter not available in app state, allowing request")
             return await call_next(request)
 
-        # Check rate limits based on endpoint
-        if request.url.path == "/api/documents/submit" and request.method == "POST":
-            # Submission endpoint - strict limits
-            allowed, retry_after = await rate_limiter.check_submit_rate_limit(client_ip)
+        # Check rate limits based on endpoint (fail-open on errors for availability)
+        try:
+            if request.url.path == "/api/documents/submit" and request.method == "POST":
+                # Submission endpoint - strict limits
+                allowed, retry_after = await rate_limiter.check_submit_rate_limit(client_ip)
 
-            if not allowed:
-                return self._rate_limit_response(
-                    request=request,
-                    retry_after=retry_after,
-                    limit_type="submission"
-                )
+                if not allowed:
+                    return self._rate_limit_response(
+                        request=request,
+                        retry_after=retry_after,
+                        limit_type="submission"
+                    )
 
-        elif "/status" in request.url.path and request.method == "GET":
-            # Status check endpoint - prevent polling storms
-            allowed, retry_after = await rate_limiter.check_status_rate_limit(client_ip)
+            elif "/status" in request.url.path and request.method == "GET":
+                # Status check endpoint - prevent polling storms
+                allowed, retry_after = await rate_limiter.check_status_rate_limit(client_ip)
 
-            if not allowed:
-                return self._rate_limit_response(
-                    request=request,
-                    retry_after=retry_after,
-                    limit_type="status_check"
-                )
+                if not allowed:
+                    return self._rate_limit_response(
+                        request=request,
+                        retry_after=retry_after,
+                        limit_type="status_check"
+                    )
+        except Exception as e:
+            # Fail-open: if rate limiting fails (e.g., Redis down), allow the request
+            # This ensures availability is not impacted by rate limiter issues
+            logger.warning(f"Rate limit check failed, allowing request (fail-open): {e}")
 
         # Get quota info for response headers
         try:

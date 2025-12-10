@@ -269,7 +269,7 @@ class TestAgentCreation:
     @patch("pydantic_ai.models.bedrock.BedrockConverseModel")
     @patch("src.agents.base_agent.Agent")
     def test_agent_created_with_correct_params(self, mock_agent_class, mock_bedrock):
-        """Test that PydanticAI Agent is created with correct parameters."""
+        """Test that PydanticAI Agent is created with correct parameters on first use."""
         mock_model = MagicMock()
         mock_bedrock.return_value = mock_model
         mock_agent = MagicMock()
@@ -283,7 +283,13 @@ class TestAgentCreation:
             max_retries=3,
             temperature=0.3
         )
-        ConcreteTestAgent(config)
+        agent = ConcreteTestAgent(config)
+
+        # Agent is lazy initialized - should not be created yet
+        assert agent._agent is None
+
+        # Trigger lazy initialization by calling _get_agent()
+        agent._get_agent()
 
         # Verify Agent was called with correct params
         mock_agent_class.assert_called_once()

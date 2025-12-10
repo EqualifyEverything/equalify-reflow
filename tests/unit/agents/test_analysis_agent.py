@@ -13,7 +13,6 @@ from unittest.mock import AsyncMock, MagicMock, patch
 
 import pytest
 from pydantic import ValidationError
-
 from src.agents.analysis_agent import (
     AnalysisAgent,
     AnalysisAgentConfig,
@@ -33,8 +32,7 @@ from src.shared.llm_cost import (
 )
 from src.shared.models.observation import Observation
 from src.shared.models.processing import LLMUsage
-from src.shared.models.remediation import DocumentManifest, PageFeatures
-
+from src.shared.models.remediation import DocumentManifest
 
 # =============================================================================
 # Model Tier Tests

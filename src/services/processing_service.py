@@ -4,7 +4,7 @@ The processing pipeline consists of:
 1. Analysis Phase (Sonnet) - Deep document analysis, manifest generation (PRD-012)
 2. Extraction Phase (Haiku) - Guided markdown extraction (PRD-013)
 3. Specialized Agents (Sonnet) - Figures, tables, structure, typography (PRD-014)
-4. Consolidation - Observations to proposals (PRD-015, future)
+4. Consolidation (Sonnet) - Observations to proposals (PRD-015)
 """
 
 import logging
@@ -19,6 +19,7 @@ from ..agents.structure_agent import StructureAgent
 from ..agents.tables_agent import TablesAgent
 from ..agents.typography_agent import TypographyAgent
 from ..config import settings
+from ..services.consolidation_service import ConsolidationService
 from ..services.document_context_service import DocumentContextService
 from ..services.job_service import JobService
 from ..services.pdf_converter import PDFConverter
@@ -249,23 +250,73 @@ class ProcessingService:
                 )
                 all_observations = initial_observations
 
+            # Step 7: Consolidation Phase (Sonnet) - PRD-015
+            # Transform observations into actionable proposals
+            consolidation_usage = LLMUsage(
+                input_tokens=0, output_tokens=0, total_tokens=0, estimated_cost_cents=0.0
+            )
+            proposal_count = 0
+            auto_proposal_count = 0
+            manual_proposal_count = 0
+
+            if all_observations:
+                logger.info(
+                    f"Job {job.job_id}: Starting consolidation phase (Sonnet)..."
+                )
+
+                # Update substatus to "consolidating"
+                await retry_with_backoff(
+                    lambda: self.job.update_job_status(
+                        job.job_id,
+                        "processing",
+                        substatus="consolidating",
+                    ),
+                    max_attempts=3,
+                    operation_name=f"Update job {job.job_id} substatus to consolidating",
+                )
+
+                # Run consolidation service
+                consolidation_service = ConsolidationService(self.remediation_storage)
+                proposals, auto_proposal_count, manual_proposal_count, consolidation_usage = (
+                    await consolidation_service.consolidate_observations(
+                        job_id=job.job_id,
+                        markdown=full_markdown,
+                    )
+                )
+
+                proposal_count = len(proposals)
+
+                logger.info(
+                    f"Job {job.job_id}: Consolidation complete - "
+                    f"{proposal_count} proposals ({auto_proposal_count} auto, {manual_proposal_count} manual), "
+                    f"consolidation cost: ${consolidation_usage.estimated_cost_cents/100:.4f}"
+                )
+            else:
+                logger.info(
+                    f"Job {job.job_id}: No observations to consolidate, skipping Phase 4"
+                )
+
             # Combine usage from all phases
             total_usage = LLMUsage(
                 input_tokens=analysis_usage.input_tokens
                 + extraction_usage.input_tokens
-                + specialized_usage.input_tokens,
+                + specialized_usage.input_tokens
+                + consolidation_usage.input_tokens,
                 output_tokens=analysis_usage.output_tokens
                 + extraction_usage.output_tokens
-                + specialized_usage.output_tokens,
+                + specialized_usage.output_tokens
+                + consolidation_usage.output_tokens,
                 total_tokens=analysis_usage.total_tokens
                 + extraction_usage.total_tokens
-                + specialized_usage.total_tokens,
+                + specialized_usage.total_tokens
+                + consolidation_usage.total_tokens,
                 estimated_cost_cents=analysis_usage.estimated_cost_cents
                 + extraction_usage.estimated_cost_cents
-                + specialized_usage.estimated_cost_cents,
+                + specialized_usage.estimated_cost_cents
+                + consolidation_usage.estimated_cost_cents,
             )
 
-            # Step 7: Calculate confidence level
+            # Step 8: Calculate confidence level
             # Use extraction confidence (analysis confidence is stored in manifest)
             avg_confidence = extraction_confidence
 
@@ -276,7 +327,7 @@ class ProcessingService:
             else:
                 confidence_level = "low"
 
-            # Step 7: Upload result to S3
+            # Step 9: Upload result to S3
             logger.info(f"Job {job.job_id}: Uploading extracted markdown to S3")
             result_url = await self.storage.upload_result(
                 job_id=job.job_id,
@@ -284,7 +335,7 @@ class ProcessingService:
                 format="md",
             )
 
-            # Step 8: Update job status to completed
+            # Step 10: Update job status to completed
             processing_time = int(time.time() - start_time)
 
             # Parse heading tree from manifest to get section count and layout
@@ -302,11 +353,14 @@ class ProcessingService:
                 "llm_input_tokens": total_usage.input_tokens,
                 "llm_output_tokens": total_usage.output_tokens,
                 "llm_total_tokens": total_usage.total_tokens,
-                "extraction_method": "analysis_extraction",  # PRD-012/013/014 pipeline
+                "extraction_method": "analysis_extraction",  # PRD-012/013/014/015 pipeline
                 "extraction_model": extraction_agent.model_id,
                 "layout_type": heading_tree.layout_type,
                 "section_count": len(heading_tree.sections),
-                "observation_count": len(all_observations),  # Includes specialized agent findings
+                "observation_count": len(all_observations),  # From specialized agents
+                "proposal_count": proposal_count,  # From consolidation (PRD-015)
+                "auto_proposal_count": auto_proposal_count,
+                "manual_proposal_count": manual_proposal_count,
                 "required_agents": ",".join(manifest.required_agents),
                 "analysis_model": manifest.analysis_model,
             }

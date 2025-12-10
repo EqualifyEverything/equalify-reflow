@@ -13,11 +13,13 @@ This module provides the multi-agent framework (PRD-011) including:
   - StructureAgent: Heading hierarchy
   - TypographyAgent: Semantic typography
 - AgentRouter: Routes specialized agents based on manifest
+- ConsolidationAgent: Observations to proposals (PRD-015)
 """
 
 from .agent_router import AgentRouter
 from .analysis_agent import AnalysisAgent
 from .base_agent import AgentConfig, BaseDocumentAgent
+from .consolidation_agent import ConsolidationAgent, ConsolidationOutput, ProposalDraft
 from .extraction_agent import ExtractionAgent
 from .figures_agent import FiguresAgent
 from .full_document_agent import FullDocumentAgent
@@ -80,4 +82,8 @@ __all__ = [
     "StructureAnalysisOutput",
     "TypographyIssue",
     "TypographyAnalysisOutput",
+    # Consolidation agent (PRD-015)
+    "ConsolidationAgent",
+    "ConsolidationOutput",
+    "ProposalDraft",
 ]

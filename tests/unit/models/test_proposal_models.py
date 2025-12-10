@@ -1,11 +1,10 @@
 """Unit tests for proposal models (Proposal, SearchReplaceDiff)."""
 
 import json
-from datetime import datetime, UTC
+from datetime import UTC, datetime
 
 import pytest
 from pydantic import ValidationError
-
 from src.shared.models.proposal import (
     VALID_PROPOSAL_TRANSITIONS,
     Proposal,
@@ -160,17 +159,17 @@ class TestProposal:
         # IDs should be UUID format
         assert len(prop1.id) == 36
 
-    def test_resolves_must_not_be_empty(self) -> None:
-        """Test resolves must contain at least one observation ID."""
-        with pytest.raises(ValidationError) as exc_info:
-            Proposal(
-                job_id="job-123",
-                resolves=[],  # Empty list
-                diff=SearchReplaceDiff(search="a", replace="b"),
-                justification="test"
-            )
+    def test_resolves_can_be_empty_for_human_edits(self) -> None:
+        """Test resolves can be empty for human-initiated edits (PRD-016)."""
+        # Human-initiated proposals don't resolve agent observations
+        prop = Proposal(
+            job_id="job-123",
+            resolves=[],  # Empty list allowed for human edits
+            diff=SearchReplaceDiff(search="a", replace="b"),
+            justification="Human edit: fixing typo"
+        )
 
-        assert "resolves" in str(exc_info.value).lower()
+        assert prop.resolves == []
 
     def test_justification_must_not_be_empty(self) -> None:
         """Test justification must not be empty."""

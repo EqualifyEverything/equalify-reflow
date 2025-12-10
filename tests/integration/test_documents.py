@@ -180,3 +180,65 @@ async def test_get_job_result_processing(client, api_key_headers):
         assert "estimated_completion_minutes" in data
     finally:
         app.dependency_overrides.clear()
+
+
+@pytest.mark.asyncio
+async def test_submit_document_skip_pii_scan(client, sample_pdf, api_key_headers):
+    """Test skip_pii_scan=True bypasses PII queue and goes directly to processing.
+
+    Catches: PII bypass flow routing incorrectly (compliance risk if broken).
+    """
+    # Use valid UUID format (required by ProcessingQueuePayload validation)
+    test_job_id = "550e8400-e29b-41d4-a716-446655440000"
+
+    # Create mock services
+    mock_storage = MagicMock()
+    mock_storage.store_document = AsyncMock(return_value=(test_job_id, f"temp/{test_job_id}.pdf"))
+
+    mock_queue = MagicMock()
+    mock_queue.enqueue = AsyncMock()
+    mock_queue.queue_pii_job = AsyncMock()  # Should NOT be called
+
+    mock_job = MagicMock()
+    mock_job.create_job = AsyncMock()
+
+    # Override dependencies
+    app.dependency_overrides[get_storage_service] = lambda: mock_storage
+    app.dependency_overrides[get_queue_service] = lambda: mock_queue
+    app.dependency_overrides[get_job_service] = lambda: mock_job
+
+    try:
+        # Submit document with skip_pii_scan=True
+        files = {"file": ("test.pdf", io.BytesIO(sample_pdf), "application/pdf")}
+        data = {"skip_pii_scan": "true", "skip_reason": "Pre-scanned document"}
+        response = client.post(
+            "/api/documents/submit",
+            files=files,
+            data=data,
+            headers=api_key_headers
+        )
+
+        # Assertions
+        assert response.status_code == status.HTTP_201_CREATED
+        response_data = response.json()
+
+        # Key assertion: status should be "processing", NOT "pii_scanning"
+        assert response_data["status"] == "processing"
+        assert response_data["job_id"] == test_job_id
+
+        # Verify job was created with correct parameters
+        mock_job.create_job.assert_called_once()
+        call_kwargs = mock_job.create_job.call_args
+        # Check positional args: job_id, s3_key
+        assert call_kwargs[0][0] == test_job_id
+        assert call_kwargs[0][1] == f"temp/{test_job_id}.pdf"
+        # Check keyword args
+        assert call_kwargs[1]["status"] == "processing"
+        assert call_kwargs[1]["pii_skipped"] is True
+        assert call_kwargs[1]["pii_skip_reason"] == "Pre-scanned document"
+
+        # Verify enqueue was called (to PROCESSING_QUEUE), NOT queue_pii_job
+        mock_queue.enqueue.assert_called_once()
+        mock_queue.queue_pii_job.assert_not_called()
+    finally:
+        app.dependency_overrides.clear()

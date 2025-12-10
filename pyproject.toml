@@ -114,6 +114,16 @@ disallow_untyped_defs = true
 strict = true
 packages = ["src"]
 explicit_package_bases = true
+exclude = [
+    ".venv/",
+]
+# Disable type-arg check - Redis is not generic at runtime in Python 3.11
+# but types-redis declares it as generic. This causes runtime errors with FastAPI.
+disable_error_code = ["type-arg"]
+
+[[tool.mypy.overrides]]
+module = ["redis.*"]
+ignore_missing_imports = true
 
 [tool.ruff]
 target-version = "py311"
@@ -137,6 +147,7 @@ build-backend = "hatchling.build"
 [dependency-groups]
 dev = [
     "aioboto3>=15.1.0",
+    "boto3-stubs>=1.42.6",
     "mypy>=1.5.0",
     "pytest-asyncio>=1.2.0",
     "pytest-cov>=7.0.0",
@@ -144,4 +155,6 @@ dev = [
     "reportlab>=4.4.4",
     "ruff>=0.8.0",
     "testcontainers[localstack,redis]>=4.8.0",
+    "types-pyyaml>=6.0.12.20250915",
+    "types-redis>=4.6.0.20241004",
 ]

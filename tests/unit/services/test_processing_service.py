@@ -47,8 +47,12 @@ def mock_llm_usage():
 
 @pytest.fixture
 def mock_storage_service_extended():
-    """Mock StorageService with all methods needed for ProcessingService tests."""
-    mock = AsyncMock()
+    """Mock StorageService with all methods needed for ProcessingService tests.
+
+    Uses MagicMock as container with AsyncMock for async methods.
+    This prevents unawaited coroutine warnings when tests don't call all mocked methods.
+    """
+    mock = MagicMock()
     mock.download_temp_file = AsyncMock(return_value=b"fake_pdf_content")
     mock.upload_result = AsyncMock(
         return_value="s3://equalify-results/550e8400.../v20250101_120000/output.md"

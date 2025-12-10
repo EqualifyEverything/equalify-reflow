@@ -11,14 +11,15 @@ from src.shared.models.agent_models import AgentInput, LLMUsage
 
 
 # Test output model for concrete agent implementation
-class TestOutput(BaseModel):
+# Named with underscore prefix to avoid pytest collection (PytestCollectionWarning)
+class _TestOutput(BaseModel):
     """Simple output model for testing."""
     message: str = Field(..., description="Test message")
     confidence: float = Field(..., ge=0.0, le=1.0)
 
 
 # Concrete implementation for testing
-class ConcreteTestAgent(BaseDocumentAgent[TestOutput]):
+class ConcreteTestAgent(BaseDocumentAgent[_TestOutput]):
     """Concrete implementation of BaseDocumentAgent for testing."""
 
     def _default_prompts(self) -> dict:
@@ -27,9 +28,9 @@ class ConcreteTestAgent(BaseDocumentAgent[TestOutput]):
             "user_prompt_template": "Process this: {content}"
         }
 
-    async def process(self, input_data: AgentInput) -> TestOutput:
+    async def process(self, input_data: AgentInput) -> _TestOutput:
         """Simple implementation that returns mock output."""
-        return TestOutput(message="Test result", confidence=0.9)
+        return _TestOutput(message="Test result", confidence=0.9)
 
 
 @pytest.mark.unit
@@ -41,12 +42,12 @@ class TestAgentConfig:
         config = AgentConfig(
             name="test_agent",
             prompts_file=Path("test_prompts.yaml"),
-            output_type=TestOutput,
+            output_type=_TestOutput,
             correction_types=["heading_level"]
         )
         assert config.name == "test_agent"
         assert config.prompts_file == Path("test_prompts.yaml")
-        assert config.output_type == TestOutput
+        assert config.output_type == _TestOutput
         assert config.correction_types == ["heading_level"]
         # Check defaults
         assert config.max_retries == 2
@@ -57,7 +58,7 @@ class TestAgentConfig:
         config = AgentConfig(
             name="custom_agent",
             prompts_file=Path("prompts.yaml"),
-            output_type=TestOutput,
+            output_type=_TestOutput,
             correction_types=["spelling", "emphasis"],
             max_retries=5,
             temperature=0.5
@@ -71,7 +72,7 @@ class TestAgentConfig:
         config = AgentConfig(
             name="no_corrections",
             prompts_file=Path("test.yaml"),
-            output_type=TestOutput,
+            output_type=_TestOutput,
             correction_types=[]
         )
         assert config.correction_types == []
@@ -91,7 +92,7 @@ class TestBaseDocumentAgentProperties:
         config = AgentConfig(
             name="my_test_agent",
             prompts_file=Path("test.yaml"),
-            output_type=TestOutput,
+            output_type=_TestOutput,
             correction_types=["other"]
         )
         agent = ConcreteTestAgent(config)
@@ -107,7 +108,7 @@ class TestBaseDocumentAgentProperties:
         config = AgentConfig(
             name="test",
             prompts_file=Path("test.yaml"),
-            output_type=TestOutput,
+            output_type=_TestOutput,
             correction_types=["heading_level", "list_structure"]
         )
         agent = ConcreteTestAgent(config)
@@ -135,7 +136,7 @@ class TestPromptLoading:
         config = AgentConfig(
             name="yaml_test",
             prompts_file=prompts_file,
-            output_type=TestOutput,
+            output_type=_TestOutput,
             correction_types=[]
         )
         agent = ConcreteTestAgent(config)
@@ -153,7 +154,7 @@ class TestPromptLoading:
         config = AgentConfig(
             name="fallback_test",
             prompts_file=Path("nonexistent_file.yaml"),
-            output_type=TestOutput,
+            output_type=_TestOutput,
             correction_types=[]
         )
         agent = ConcreteTestAgent(config)
@@ -185,7 +186,7 @@ class TestPromptLoading:
         config = AgentConfig(
             name="relative_test",
             prompts_file=Path("relative_prompts.yaml"),  # Relative path
-            output_type=TestOutput,
+            output_type=_TestOutput,
             correction_types=[]
         )
         agent = ConcreteTestAgent(config)
@@ -207,7 +208,7 @@ class TestCostCalculation:
         config = AgentConfig(
             name="cost_test",
             prompts_file=Path("test.yaml"),
-            output_type=TestOutput,
+            output_type=_TestOutput,
             correction_types=[]
         )
         agent = ConcreteTestAgent(config)
@@ -232,7 +233,7 @@ class TestCostCalculation:
         config = AgentConfig(
             name="zero_cost_test",
             prompts_file=Path("test.yaml"),
-            output_type=TestOutput,
+            output_type=_TestOutput,
             correction_types=[]
         )
         agent = ConcreteTestAgent(config)
@@ -250,7 +251,7 @@ class TestCostCalculation:
         config = AgentConfig(
             name="large_cost_test",
             prompts_file=Path("test.yaml"),
-            output_type=TestOutput,
+            output_type=_TestOutput,
             correction_types=[]
         )
         agent = ConcreteTestAgent(config)
@@ -278,7 +279,7 @@ class TestAgentCreation:
         config = AgentConfig(
             name="creation_test",
             prompts_file=Path("test.yaml"),
-            output_type=TestOutput,
+            output_type=_TestOutput,
             correction_types=[],
             max_retries=3,
             temperature=0.3
@@ -294,7 +295,7 @@ class TestAgentCreation:
         # Verify Agent was called with correct params
         mock_agent_class.assert_called_once()
         call_kwargs = mock_agent_class.call_args
-        assert call_kwargs[1]["output_type"] == TestOutput
+        assert call_kwargs[1]["output_type"] == _TestOutput
         assert call_kwargs[1]["retries"] == 3
         assert "system_prompt" in call_kwargs[1]
 
@@ -312,7 +313,7 @@ class TestRunAgent:
 
         # Mock the agent's run method
         mock_result = MagicMock()
-        mock_result.output = TestOutput(message="Result", confidence=0.85)
+        mock_result.output = _TestOutput(message="Result", confidence=0.85)
         mock_result.usage.return_value = MagicMock(input_tokens=100, output_tokens=50)
 
         mock_agent = MagicMock()
@@ -322,7 +323,7 @@ class TestRunAgent:
         config = AgentConfig(
             name="run_test",
             prompts_file=Path("test.yaml"),
-            output_type=TestOutput,
+            output_type=_TestOutput,
             correction_types=[]
         )
         agent = ConcreteTestAgent(config)
@@ -343,7 +344,7 @@ class TestRunAgent:
         mock_bedrock.return_value = MagicMock()
 
         mock_result = MagicMock()
-        mock_result.output = TestOutput(message="Image result", confidence=0.90)
+        mock_result.output = _TestOutput(message="Image result", confidence=0.90)
         mock_result.usage.return_value = MagicMock(input_tokens=500, output_tokens=100)
 
         mock_agent = MagicMock()
@@ -353,7 +354,7 @@ class TestRunAgent:
         config = AgentConfig(
             name="image_test",
             prompts_file=Path("test.yaml"),
-            output_type=TestOutput,
+            output_type=_TestOutput,
             correction_types=[]
         )
         agent = ConcreteTestAgent(config)
@@ -378,7 +379,7 @@ class TestAbstractMethods:
             config = AgentConfig(
                 name="test",
                 prompts_file=Path("test.yaml"),
-                output_type=TestOutput,
+                output_type=_TestOutput,
                 correction_types=[]
             )
             BaseDocumentAgent(config)
@@ -388,15 +389,15 @@ class TestAbstractMethods:
     def test_subclass_must_implement_default_prompts(self):
         """Test that subclass must implement _default_prompts."""
 
-        class IncompleteAgent(BaseDocumentAgent[TestOutput]):
-            async def process(self, input_data: AgentInput) -> TestOutput:
-                return TestOutput(message="test", confidence=0.5)
+        class IncompleteAgent(BaseDocumentAgent[_TestOutput]):
+            async def process(self, input_data: AgentInput) -> _TestOutput:
+                return _TestOutput(message="test", confidence=0.5)
 
         with pytest.raises(TypeError) as exc_info:
             config = AgentConfig(
                 name="incomplete",
                 prompts_file=Path("test.yaml"),
-                output_type=TestOutput,
+                output_type=_TestOutput,
                 correction_types=[]
             )
             IncompleteAgent(config)
@@ -406,7 +407,7 @@ class TestAbstractMethods:
     def test_subclass_must_implement_process(self):
         """Test that subclass must implement process."""
 
-        class IncompleteAgent(BaseDocumentAgent[TestOutput]):
+        class IncompleteAgent(BaseDocumentAgent[_TestOutput]):
             def _default_prompts(self) -> dict:
                 return {"system_prompt": "test"}
 
@@ -414,7 +415,7 @@ class TestAbstractMethods:
             config = AgentConfig(
                 name="incomplete",
                 prompts_file=Path("test.yaml"),
-                output_type=TestOutput,
+                output_type=_TestOutput,
                 correction_types=[]
             )
             IncompleteAgent(config)

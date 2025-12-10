@@ -128,8 +128,12 @@ def sample_page_improvement_result():
 
 @pytest.fixture
 def mock_storage_service():
-    """Mock StorageService for unit tests."""
-    mock = AsyncMock()
+    """Mock StorageService for unit tests.
+
+    Uses MagicMock as container with AsyncMock for async methods.
+    This prevents unawaited coroutine warnings when tests override side_effect.
+    """
+    mock = MagicMock()
     mock.download_temp_file = AsyncMock(return_value=b"fake_pdf_content")
     mock.upload_result = AsyncMock(
         return_value="s3://equalify-results/550e8400.../v20250101_120000/output.md"

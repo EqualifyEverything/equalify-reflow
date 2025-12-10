@@ -91,8 +91,8 @@ class BaseDocumentAgent(ABC, Generic[TOutput]):
         self.prompts = self._load_prompts()
         logger.debug(f"Agent {config.name}: Prompts loaded")
 
-        # Create PydanticAI agent with Bedrock backend
-        self._agent: Agent[None, TOutput] = self._create_agent()
+        # Lazy initialization - agent is created on first use
+        self._agent: Agent[None, TOutput] | None = None
         logger.info(
             f"Agent {config.name} initialized with model tier {self.model_tier.value} "
             f"({self.model_id}) (handles: {config.correction_types}, retries: {config.max_retries})"
@@ -147,6 +147,19 @@ class BaseDocumentAgent(ABC, Generic[TOutput]):
             'user_prompt_template' for formatting with input data.
         """
         pass
+
+    def _get_agent(self) -> Agent[None, TOutput]:
+        """Get or create the PydanticAI agent (lazy initialization).
+
+        Creates the agent on first call, reuses on subsequent calls.
+        This allows agent instantiation without AWS connections for testing.
+
+        Returns:
+            Configured PydanticAI Agent instance
+        """
+        if self._agent is None:
+            self._agent = self._create_agent()
+        return self._agent
 
     def _create_agent(self) -> Agent[None, TOutput]:
         """Create PydanticAI agent with AWS Bedrock backend.
@@ -240,8 +253,9 @@ class BaseDocumentAgent(ABC, Generic[TOutput]):
             f"image: {image_bytes is not None}"
         )
 
-        # Execute agent
-        result = await self._agent.run(
+        # Get agent (lazy initialization) and execute
+        agent = self._get_agent()
+        result = await agent.run(
             messages,
             model_settings={
                 "max_tokens": settings.claude_max_tokens,

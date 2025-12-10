@@ -3,7 +3,7 @@
 The processing pipeline consists of:
 1. Analysis Phase (Sonnet) - Deep document analysis, manifest generation (PRD-012)
 2. Extraction Phase (Haiku) - Guided markdown extraction (PRD-013)
-3. Specialized Agents - Figures, tables, structure, typography (PRD-014, future)
+3. Specialized Agents (Sonnet) - Figures, tables, structure, typography (PRD-014)
 4. Consolidation - Observations to proposals (PRD-015, future)
 """
 
@@ -11,8 +11,13 @@ import logging
 import time
 from typing import Any
 
+from ..agents.agent_router import AgentRouter
 from ..agents.analysis_agent import AnalysisAgent
 from ..agents.extraction_agent import ExtractionAgent
+from ..agents.figures_agent import FiguresAgent
+from ..agents.structure_agent import StructureAgent
+from ..agents.tables_agent import TablesAgent
+from ..agents.typography_agent import TypographyAgent
 from ..config import settings
 from ..services.document_context_service import DocumentContextService
 from ..services.job_service import JobService
@@ -178,15 +183,6 @@ class ProcessingService:
                 suffix="v0",
             )
 
-            # Combine usage from analysis and extraction
-            total_usage = LLMUsage(
-                input_tokens=analysis_usage.input_tokens + extraction_usage.input_tokens,
-                output_tokens=analysis_usage.output_tokens + extraction_usage.output_tokens,
-                total_tokens=analysis_usage.total_tokens + extraction_usage.total_tokens,
-                estimated_cost_cents=analysis_usage.estimated_cost_cents
-                + extraction_usage.estimated_cost_cents,
-            )
-
             logger.info(
                 f"Job {job.job_id}: Extraction complete - "
                 f"{len(full_markdown)} chars, "
@@ -194,7 +190,82 @@ class ProcessingService:
                 f"extraction cost: ${extraction_usage.estimated_cost_cents/100:.4f}"
             )
 
-            # Step 6: Calculate confidence level
+            # Step 6: Specialized Agents Phase (Sonnet) - PRD-014
+            # Run specialized agents based on manifest.required_agents
+            specialized_observations = []
+            specialized_usage = LLMUsage(
+                input_tokens=0, output_tokens=0, total_tokens=0, estimated_cost_cents=0.0
+            )
+
+            if manifest.required_agents:
+                logger.info(
+                    f"Job {job.job_id}: Starting specialized analysis phase (Sonnet)..."
+                )
+
+                # Update substatus to "analyzing_specialized"
+                await retry_with_backoff(
+                    lambda: self.job.update_job_status(
+                        job.job_id,
+                        "processing",
+                        substatus="analyzing_specialized",
+                    ),
+                    max_attempts=3,
+                    operation_name=f"Update job {job.job_id} substatus to analyzing_specialized",
+                )
+
+                # Create and configure agent router with all specialized agents
+                router = AgentRouter()
+                router.register_agent("figures", FiguresAgent())
+                router.register_agent("tables", TablesAgent())
+                router.register_agent("structure", StructureAgent())
+                router.register_agent("typography", TypographyAgent())
+
+                # Run required agents and collect observations
+                specialized_observations = await router.run_required_agents(
+                    manifest=manifest,
+                    pages=pages,
+                    markdown=full_markdown,
+                    job_id=job.job_id,
+                )
+
+                # Note: Individual agent usage is logged per-agent; we track total here
+                # In future, we could aggregate usage from each agent for detailed tracking
+                logger.info(
+                    f"Job {job.job_id}: Specialized analysis complete - "
+                    f"{len(specialized_observations)} additional observations found"
+                )
+
+                # Append specialized observations to initial observations
+                all_observations = initial_observations + specialized_observations
+
+                # Save updated observations to S3
+                if specialized_observations:
+                    await self.remediation_storage.save_observations(
+                        job.job_id, all_observations
+                    )
+            else:
+                logger.info(
+                    f"Job {job.job_id}: No specialized agents required, skipping Phase 3"
+                )
+                all_observations = initial_observations
+
+            # Combine usage from all phases
+            total_usage = LLMUsage(
+                input_tokens=analysis_usage.input_tokens
+                + extraction_usage.input_tokens
+                + specialized_usage.input_tokens,
+                output_tokens=analysis_usage.output_tokens
+                + extraction_usage.output_tokens
+                + specialized_usage.output_tokens,
+                total_tokens=analysis_usage.total_tokens
+                + extraction_usage.total_tokens
+                + specialized_usage.total_tokens,
+                estimated_cost_cents=analysis_usage.estimated_cost_cents
+                + extraction_usage.estimated_cost_cents
+                + specialized_usage.estimated_cost_cents,
+            )
+
+            # Step 7: Calculate confidence level
             # Use extraction confidence (analysis confidence is stored in manifest)
             avg_confidence = extraction_confidence
 
@@ -231,11 +302,11 @@ class ProcessingService:
                 "llm_input_tokens": total_usage.input_tokens,
                 "llm_output_tokens": total_usage.output_tokens,
                 "llm_total_tokens": total_usage.total_tokens,
-                "extraction_method": "analysis_extraction",  # PRD-012/013 pipeline
+                "extraction_method": "analysis_extraction",  # PRD-012/013/014 pipeline
                 "extraction_model": extraction_agent.model_id,
                 "layout_type": heading_tree.layout_type,
                 "section_count": len(heading_tree.sections),
-                "observation_count": len(initial_observations),
+                "observation_count": len(all_observations),  # Includes specialized agent findings
                 "required_agents": ",".join(manifest.required_agents),
                 "analysis_model": manifest.analysis_model,
             }

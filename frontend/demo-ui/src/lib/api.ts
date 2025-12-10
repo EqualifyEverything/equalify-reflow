@@ -2,9 +2,9 @@
  * API client for Equalify PDF Converter backend.
  * Types match the FastAPI backend schemas.
  *
- * Authentication: Uses HTTP Basic Auth credentials from browser session.
- * The demo UI is protected by Basic Auth, and those same credentials
- * are sent with API requests (via credentials: 'include').
+ * Authentication: The demo UI is served from the same origin as the API
+ * and protected by HTTP Basic Auth. The backend allows same-origin requests
+ * from /demo without requiring an API key.
  */
 
 const API_URL = import.meta.env.VITE_API_URL || ''
@@ -21,9 +21,6 @@ async function request<T>(path: string, options: RequestInit = {}): Promise<T> {
   const response = await fetch(`${API_URL}${path}`, {
     ...options,
     headers,
-    // Include credentials (cookies, HTTP Basic Auth) with requests
-    // This sends the same Basic Auth used to access the demo UI
-    credentials: 'include',
   })
 
   if (!response.ok) {
@@ -32,15 +29,6 @@ async function request<T>(path: string, options: RequestInit = {}): Promise<T> {
   }
 
   return response.json()
-}
-
-// Legacy API key functions - no longer needed but kept for compatibility
-export function setApiKey(_key: string) {
-  // No-op: API key not required when using Basic Auth
-}
-
-export function getApiKey(): string | null {
-  return null
 }
 
 // ============================================================================

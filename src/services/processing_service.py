@@ -2,7 +2,7 @@
 
 The processing pipeline consists of:
 1. Analysis Phase (Sonnet) - Deep document analysis, manifest generation (PRD-012)
-2. Extraction Phase (Haiku) - Guided markdown extraction (PRD-013, future)
+2. Extraction Phase (Haiku) - Guided markdown extraction (PRD-013)
 3. Specialized Agents - Figures, tables, structure, typography (PRD-014, future)
 4. Consolidation - Observations to proposals (PRD-015, future)
 """
@@ -12,7 +12,7 @@ import time
 from typing import Any
 
 from ..agents.analysis_agent import AnalysisAgent
-from ..agents.full_document_agent import FullDocumentAgent
+from ..agents.extraction_agent import ExtractionAgent
 from ..config import settings
 from ..services.document_context_service import DocumentContextService
 from ..services.job_service import JobService
@@ -20,7 +20,7 @@ from ..services.pdf_converter import PDFConverter
 from ..services.queue_service import QueueService
 from ..services.remediation_storage_service import RemediationStorageService
 from ..services.storage_service import StorageService
-from ..shared.models.processing import ProcessingResult
+from ..shared.models.processing import LLMUsage, ProcessingResult
 from ..shared.models.queue import ProcessingQueuePayload
 from ..utils.retry_helpers import retry_with_backoff
 
@@ -154,37 +154,49 @@ class ProcessingService:
                 operation_name=f"Update job {job.job_id} substatus to extracting",
             )
 
-            # Step 5: Extraction Phase (Haiku) - Using FullDocumentAgent for now
-            # TODO: Replace with ExtractionAgent guided by manifest (PRD-013)
+            # Step 5: Extraction Phase (Haiku) - PRD-013
+            # ExtractionAgent uses manifest guidance for accurate transcription
             logger.info(
                 f"Job {job.job_id}: Starting extraction phase (Haiku)..."
             )
-            full_doc_agent = FullDocumentAgent()
+            extraction_agent = ExtractionAgent()
 
-            # This will:
-            # - Phase 1: Analyze structure → HeadingTree (redundant with above, but needed for extraction)
-            # - Phase 2: Transcribe with heading guidance → Markdown
-            full_markdown, heading_tree, extraction_usage = await full_doc_agent.process(
-                pages
+            # Extract markdown guided by the manifest from analysis phase
+            full_markdown, extraction_confidence, extraction_usage = (
+                await extraction_agent.extract(
+                    pages=pages,
+                    manifest=manifest,
+                    job_id=job.job_id,
+                )
+            )
+
+            # Save v0 markdown (original extraction, never modified)
+            await self.storage.upload_result(
+                job_id=job.job_id,
+                content=full_markdown,
+                format="md",
+                suffix="v0",
             )
 
             # Combine usage from analysis and extraction
-            total_usage = extraction_usage
-            total_usage.input_tokens += analysis_usage.input_tokens
-            total_usage.output_tokens += analysis_usage.output_tokens
-            total_usage.total_tokens += analysis_usage.total_tokens
-            total_usage.estimated_cost_cents += analysis_usage.estimated_cost_cents
+            total_usage = LLMUsage(
+                input_tokens=analysis_usage.input_tokens + extraction_usage.input_tokens,
+                output_tokens=analysis_usage.output_tokens + extraction_usage.output_tokens,
+                total_tokens=analysis_usage.total_tokens + extraction_usage.total_tokens,
+                estimated_cost_cents=analysis_usage.estimated_cost_cents
+                + extraction_usage.estimated_cost_cents,
+            )
 
             logger.info(
                 f"Job {job.job_id}: Extraction complete - "
                 f"{len(full_markdown)} chars, "
-                f"{len(heading_tree.sections)} sections, "
-                f"layout={heading_tree.layout_type}, "
+                f"confidence: {extraction_confidence:.2f}, "
                 f"extraction cost: ${extraction_usage.estimated_cost_cents/100:.4f}"
             )
 
-            # Step 6: Calculate confidence level from heading tree
-            avg_confidence = heading_tree.confidence
+            # Step 6: Calculate confidence level
+            # Use extraction confidence (analysis confidence is stored in manifest)
+            avg_confidence = extraction_confidence
 
             if avg_confidence >= 0.9:
                 confidence_level = "high"
@@ -204,6 +216,11 @@ class ProcessingService:
             # Step 8: Update job status to completed
             processing_time = int(time.time() - start_time)
 
+            # Parse heading tree from manifest to get section count and layout
+            from ..agents.full_document_agent import HeadingTree
+
+            heading_tree = HeadingTree.model_validate_json(manifest.heading_tree_json)
+
             update_fields = {
                 "markdown_url": result_url,
                 "confidence_score": avg_confidence,
@@ -214,7 +231,8 @@ class ProcessingService:
                 "llm_input_tokens": total_usage.input_tokens,
                 "llm_output_tokens": total_usage.output_tokens,
                 "llm_total_tokens": total_usage.total_tokens,
-                "extraction_method": "analysis_extraction",  # PRD-012 pipeline
+                "extraction_method": "analysis_extraction",  # PRD-012/013 pipeline
+                "extraction_model": extraction_agent.model_id,
                 "layout_type": heading_tree.layout_type,
                 "section_count": len(heading_tree.sections),
                 "observation_count": len(initial_observations),
@@ -245,7 +263,7 @@ class ProcessingService:
             )
 
         except ValueError as e:
-            # Handle document too large error from FullDocumentAgent
+            # Handle validation errors (e.g., no pages provided)
             error_msg = f"Processing failed: {str(e)}"
             logger.error(f"Job {job.job_id} failed: {error_msg}")
 

@@ -10,12 +10,15 @@ from unittest.mock import AsyncMock
 
 import pytest
 from botocore.exceptions import ClientError
+from src.agents.full_document_agent import HeadingTree
 from src.services.job_service import JobService
 from src.services.pii_service import PIIDetectionService
 from src.services.processing_service import ProcessingService
 from src.services.queue_service import QueueService
 from src.services.storage_service import StorageService
+from src.shared.models.processing import LLMUsage
 from src.shared.models.queue import PIIQueuePayload, ProcessingQueuePayload
+from src.shared.models.remediation import DocumentManifest, PageFeatures
 
 
 @pytest.fixture
@@ -261,11 +264,12 @@ class TestProcessingServiceS3Failures:
         mock_s3_client.get_object.return_value = {'Body': BytesIO(pdf_content)}
 
         # Mock upload: Pipeline calls put_object for:
-        # 1. Original markdown (step 6) - should succeed
-        # 2. Final result (auto-approve) - fail first time (ServiceUnavailable)
-        # 3. Final result retry - succeed
+        # 1. Manifest upload - succeed
+        # 2. v0 markdown upload - fail with ServiceUnavailable
+        # 3. v0 markdown retry - succeed
+        # 4. Final markdown upload - succeed
         mock_s3_client.put_object.side_effect = [
-            None,  # Original markdown upload succeeds
+            None,  # Manifest upload succeeds
             ClientError(
                 {
                     'Error': {'Code': 'ServiceUnavailable'},
@@ -273,12 +277,12 @@ class TestProcessingServiceS3Failures:
                 },
                 'PutObject'
             ),
-            None  # Final result upload succeeds on retry
+            None,  # v0 markdown retry succeeds
+            None   # Final markdown succeeds
         ]
 
         # Mock PDF converter
         from src.services.pdf_converter import PageData, PDFConversionResult
-        from src.shared.models.processing import LLMUsage
         mock_result = PDFConversionResult(
             pages=[
                 PageData(
@@ -294,30 +298,59 @@ class TestProcessingServiceS3Failures:
         mock_converter.convert_with_page_images = AsyncMock(return_value=mock_result)
         processing_service.pdf_converter = mock_converter
 
-        # Mock FullDocumentAgent
-        mock_heading_tree = mocker.Mock()
-        mock_heading_tree.sections = []
-        mock_heading_tree.confidence = 0.95
-        mock_heading_tree.layout_type = "single_column"
-
-        mock_usage = LLMUsage(
+        # Mock AnalysisAgent
+        mock_heading_tree = HeadingTree(
+            document_title="Test Document",
+            title_page=1,
+            sections=[],
+            total_pages=1,
+            layout_type="single_column",
+            confidence=0.9
+        )
+        mock_analysis_manifest = DocumentManifest(
+            job_id=job.job_id,
+            document_title="Test Document",
+            document_type="lecture_notes",
+            total_pages=1,
+            heading_tree_json=mock_heading_tree.model_dump_json(),
+            page_features=[PageFeatures(page_num=1)],
+            required_agents=[],
+            skip_agents=[],
+            analysis_confidence=0.9,
+            analysis_notes="Test",
+            analysis_model="us.anthropic.claude-sonnet-4-5-20250514-v1:0"
+        )
+        mock_analysis_usage = LLMUsage(
             input_tokens=100, output_tokens=50, total_tokens=150, estimated_cost_cents=0.01
         )
+        mock_analysis_agent_class = mocker.patch(
+            "src.services.processing_service.AnalysisAgent"
+        )
+        mock_analysis_agent = mocker.Mock()
+        mock_analysis_agent.analyze = AsyncMock(
+            return_value=(mock_analysis_manifest, [], mock_analysis_usage)
+        )
+        mock_analysis_agent_class.return_value = mock_analysis_agent
 
-        mock_agent_class = mocker.patch(
-            "src.services.processing_service.FullDocumentAgent"
+        # Mock ExtractionAgent
+        mock_extraction_usage = LLMUsage(
+            input_tokens=100, output_tokens=50, total_tokens=150, estimated_cost_cents=0.01
         )
-        mock_agent = mocker.Mock()
-        mock_agent.process = AsyncMock(
-            return_value=("# Test Improved", mock_heading_tree, mock_usage)
+        mock_extraction_agent_class = mocker.patch(
+            "src.services.processing_service.ExtractionAgent"
         )
-        mock_agent_class.return_value = mock_agent
+        mock_extraction_agent = mocker.Mock()
+        mock_extraction_agent.model_id = "us.anthropic.claude-haiku-4-5-20251001-v1:0"
+        mock_extraction_agent.extract = AsyncMock(
+            return_value=("# Test Improved", 0.88, mock_extraction_usage)
+        )
+        mock_extraction_agent_class.return_value = mock_extraction_agent
 
         # Execute
         result = await processing_service.process_document(job)
 
-        # Verify upload was retried (the new pipeline has 1 upload)
-        assert mock_s3_client.put_object.call_count >= 1
+        # Verify upload was retried (should have 4 calls: manifest, fail, success, success)
+        assert mock_s3_client.put_object.call_count == 4
         assert result.markdown_url is not None
 
     @pytest.mark.asyncio
@@ -340,7 +373,6 @@ class TestProcessingServiceS3Failures:
 
         # Mock converter
         from src.services.pdf_converter import PageData, PDFConversionResult
-        from src.shared.models.processing import LLMUsage
 
         mock_result = PDFConversionResult(
             pages=[PageData(page_num=1, image_base64="base64")],
@@ -352,24 +384,53 @@ class TestProcessingServiceS3Failures:
         mock_converter.convert_with_page_images = AsyncMock(return_value=mock_result)
         processing_service.pdf_converter = mock_converter
 
-        # Mock FullDocumentAgent
-        mock_heading_tree = mocker.Mock()
-        mock_heading_tree.sections = []
-        mock_heading_tree.confidence = 0.95
-        mock_heading_tree.layout_type = "single_column"
-
-        mock_usage = LLMUsage(
+        # Mock AnalysisAgent
+        mock_heading_tree = HeadingTree(
+            document_title="Test Document",
+            title_page=1,
+            sections=[],
+            total_pages=1,
+            layout_type="single_column",
+            confidence=0.9
+        )
+        mock_analysis_manifest = DocumentManifest(
+            job_id=job.job_id,
+            document_title="Test Document",
+            document_type="lecture_notes",
+            total_pages=1,
+            heading_tree_json=mock_heading_tree.model_dump_json(),
+            page_features=[PageFeatures(page_num=1)],
+            required_agents=[],
+            skip_agents=[],
+            analysis_confidence=0.9,
+            analysis_notes="Test",
+            analysis_model="us.anthropic.claude-sonnet-4-5-20250514-v1:0"
+        )
+        mock_analysis_usage = LLMUsage(
             input_tokens=100, output_tokens=50, total_tokens=150, estimated_cost_cents=0.01
         )
+        mock_analysis_agent_class = mocker.patch(
+            "src.services.processing_service.AnalysisAgent"
+        )
+        mock_analysis_agent = mocker.Mock()
+        mock_analysis_agent.analyze = AsyncMock(
+            return_value=(mock_analysis_manifest, [], mock_analysis_usage)
+        )
+        mock_analysis_agent_class.return_value = mock_analysis_agent
 
-        mock_agent_class = mocker.patch(
-            "src.services.processing_service.FullDocumentAgent"
+        # Mock ExtractionAgent
+        mock_extraction_usage = LLMUsage(
+            input_tokens=100, output_tokens=50, total_tokens=150, estimated_cost_cents=0.01
         )
-        mock_agent = mocker.Mock()
-        mock_agent.process = AsyncMock(
-            return_value=("# Test", mock_heading_tree, mock_usage)
+        mock_extraction_agent_class = mocker.patch(
+            "src.services.processing_service.ExtractionAgent"
         )
-        mock_agent_class.return_value = mock_agent
+        mock_extraction_agent = mocker.Mock()
+        mock_extraction_agent.model_id = "us.anthropic.claude-haiku-4-5-20251001-v1:0"
+        mock_extraction_agent.extract = AsyncMock(
+            return_value=("# Test", 0.88, mock_extraction_usage)
+        )
+        mock_extraction_agent_class.return_value = mock_extraction_agent
 
         # Execute - should NOT raise, but catch exception and mark job as failed
         result = await processing_service.process_document(job)

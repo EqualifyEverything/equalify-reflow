@@ -1,12 +1,13 @@
 """Unit tests for ProcessingService.
 
 Tests the main processing orchestrator with all dependencies mocked.
-Validates the analysis + extraction pipeline (PRD-012).
+Validates the analysis + extraction pipeline (PRD-012, PRD-013).
 """
 
 from unittest.mock import AsyncMock, MagicMock, patch
 
 import pytest
+from src.agents.full_document_agent import HeadingNode, HeadingTree
 from src.services.pdf_converter import PageData, PDFConversionResult
 from src.services.processing_service import ProcessingService
 from src.shared.models.processing import LLMUsage
@@ -22,12 +23,15 @@ pytestmark = pytest.mark.unit
 
 @pytest.fixture
 def mock_heading_tree():
-    """Mock HeadingTree response from FullDocumentAgent."""
-    mock = MagicMock()
-    mock.sections = [MagicMock(), MagicMock()]  # 2 sections
-    mock.confidence = 0.92
-    mock.layout_type = "single_column"
-    return mock
+    """Mock HeadingTree for manifest parsing."""
+    return HeadingTree(
+        document_title="Test Document",
+        title_page=1,
+        sections=[HeadingNode(level=1, title="Intro", page=1)],
+        total_pages=2,
+        layout_type="single_column",
+        confidence=0.92,
+    )
 
 
 @pytest.fixture
@@ -67,14 +71,14 @@ def sample_pdf_conversion_result_no_markdown():
 
 
 @pytest.fixture
-def mock_analysis_manifest():
+def mock_analysis_manifest(mock_heading_tree):
     """Mock DocumentManifest from AnalysisAgent."""
     return DocumentManifest(
         job_id="550e8400-e29b-41d4-a716-446655440000",
         document_title="Test Document",
         document_type="lecture_notes",
         total_pages=2,
-        heading_tree_json='{"document_title": "Test", "sections": []}',
+        heading_tree_json=mock_heading_tree.model_dump_json(),
         page_features=[
             PageFeatures(page_num=1),
             PageFeatures(page_num=2),
@@ -149,8 +153,8 @@ async def test_process_document_happy_path(
     with patch(
         "src.services.processing_service.AnalysisAgent"
     ) as mock_analysis_agent_class, patch(
-        "src.services.processing_service.FullDocumentAgent"
-    ) as mock_full_document_agent_class:
+        "src.services.processing_service.ExtractionAgent"
+    ) as mock_extraction_agent_class:
         # Mock analysis agent
         mock_analysis_agent = MagicMock()
         mock_analysis_agent.analyze = AsyncMock(
@@ -158,16 +162,17 @@ async def test_process_document_happy_path(
         )
         mock_analysis_agent_class.return_value = mock_analysis_agent
 
-        # Mock extraction agent
+        # Mock extraction agent (PRD-013)
         mock_extraction_agent = MagicMock()
-        mock_extraction_agent.process = AsyncMock(
+        mock_extraction_agent.model_id = "us.anthropic.claude-haiku-4-5-20251001-v1:0"
+        mock_extraction_agent.extract = AsyncMock(
             return_value=(
                 "# Test Document\n\nContent here.",
-                mock_heading_tree,
+                0.88,  # confidence
                 mock_llm_usage,
             )
         )
-        mock_full_document_agent_class.return_value = mock_extraction_agent
+        mock_extraction_agent_class.return_value = mock_extraction_agent
 
         service = ProcessingService(
             storage_service=mock_storage_service_extended,
@@ -189,12 +194,13 @@ async def test_process_document_happy_path(
     mock_storage_service_extended.download_temp_file.assert_called_once()
     mock_pdf_converter.convert_with_page_images.assert_called_once()
     mock_analysis_agent.analyze.assert_called_once()  # Analysis phase
-    mock_extraction_agent.process.assert_called_once()  # Extraction phase
-    mock_storage_service_extended.upload_result.assert_called()
+    mock_extraction_agent.extract.assert_called_once()  # Extraction phase (PRD-013)
+    # Should upload both v0 and final markdown
+    assert mock_storage_service_extended.upload_result.call_count >= 2
 
 
 @pytest.mark.asyncio
-async def test_process_document_confidence_from_heading_tree(
+async def test_process_document_confidence_from_extraction(
     sample_job_payload,
     mock_storage_service_extended,
     mock_queue_service,
@@ -205,21 +211,16 @@ async def test_process_document_confidence_from_heading_tree(
     mock_analysis_usage,
     sample_pdf_conversion_result_no_markdown,
 ):
-    """Test confidence score comes from heading tree analysis."""
+    """Test confidence score comes from extraction agent (PRD-013)."""
     mock_pdf_converter.convert_with_page_images.return_value = (
         sample_pdf_conversion_result_no_markdown
     )
 
-    mock_heading_tree = MagicMock()
-    mock_heading_tree.sections = [MagicMock()]
-    mock_heading_tree.confidence = 0.85
-    mock_heading_tree.layout_type = "two_column"
-
     with patch(
         "src.services.processing_service.AnalysisAgent"
     ) as mock_analysis_agent_class, patch(
-        "src.services.processing_service.FullDocumentAgent"
-    ) as mock_full_document_agent_class:
+        "src.services.processing_service.ExtractionAgent"
+    ) as mock_extraction_agent_class:
         # Mock analysis agent
         mock_analysis_agent = MagicMock()
         mock_analysis_agent.analyze = AsyncMock(
@@ -227,12 +228,13 @@ async def test_process_document_confidence_from_heading_tree(
         )
         mock_analysis_agent_class.return_value = mock_analysis_agent
 
-        # Mock extraction agent
-        mock_agent = MagicMock()
-        mock_agent.process = AsyncMock(
-            return_value=("# Test", mock_heading_tree, mock_llm_usage)
+        # Mock extraction agent with specific confidence
+        mock_extraction_agent = MagicMock()
+        mock_extraction_agent.model_id = "us.anthropic.claude-haiku-4-5-20251001-v1:0"
+        mock_extraction_agent.extract = AsyncMock(
+            return_value=("# Test", 0.85, mock_llm_usage)  # 0.85 confidence
         )
-        mock_full_document_agent_class.return_value = mock_agent
+        mock_extraction_agent_class.return_value = mock_extraction_agent
 
         service = ProcessingService(
             storage_service=mock_storage_service_extended,
@@ -243,7 +245,7 @@ async def test_process_document_confidence_from_heading_tree(
 
         result = await service.process_document(sample_job_payload)
 
-    # Confidence should come from heading tree
+    # Confidence should come from extraction agent
     assert result.confidence_score == 0.85
 
 
@@ -313,7 +315,7 @@ async def test_process_document_missing_page_images_raises_error(
 
 
 @pytest.mark.asyncio
-async def test_process_document_handles_document_too_large(
+async def test_process_document_handles_extraction_error(
     sample_job_payload,
     mock_storage_service_extended,
     mock_queue_service,
@@ -323,7 +325,7 @@ async def test_process_document_handles_document_too_large(
     mock_analysis_usage,
     sample_pdf_conversion_result_no_markdown,
 ):
-    """Test handling when document exceeds max pages limit."""
+    """Test handling when extraction fails."""
     mock_pdf_converter.convert_with_page_images.return_value = (
         sample_pdf_conversion_result_no_markdown
     )
@@ -331,8 +333,8 @@ async def test_process_document_handles_document_too_large(
     with patch(
         "src.services.processing_service.AnalysisAgent"
     ) as mock_analysis_agent_class, patch(
-        "src.services.processing_service.FullDocumentAgent"
-    ) as mock_full_document_agent_class:
+        "src.services.processing_service.ExtractionAgent"
+    ) as mock_extraction_agent_class:
         # Mock analysis agent - succeeds
         mock_analysis_agent = MagicMock()
         mock_analysis_agent.analyze = AsyncMock(
@@ -340,12 +342,12 @@ async def test_process_document_handles_document_too_large(
         )
         mock_analysis_agent_class.return_value = mock_analysis_agent
 
-        # Mock extraction agent - fails with too large
-        mock_agent = MagicMock()
-        mock_agent.process = AsyncMock(
-            side_effect=ValueError("Document has 20 pages, exceeding the maximum")
+        # Mock extraction agent - fails
+        mock_extraction_agent = MagicMock()
+        mock_extraction_agent.extract = AsyncMock(
+            side_effect=ValueError("No pages provided for extraction")
         )
-        mock_full_document_agent_class.return_value = mock_agent
+        mock_extraction_agent_class.return_value = mock_extraction_agent
 
         service = ProcessingService(
             storage_service=mock_storage_service_extended,
@@ -357,7 +359,7 @@ async def test_process_document_handles_document_too_large(
         result = await service.process_document(sample_job_payload)
 
     assert result.error_message is not None
-    assert "exceeding" in result.error_message.lower() or "pages" in result.error_message.lower()
+    assert "pages" in result.error_message.lower() or "extraction" in result.error_message.lower()
 
 
 # ============================================================================
@@ -411,8 +413,8 @@ async def test_process_document_s3_upload_failure(
     with patch(
         "src.services.processing_service.AnalysisAgent"
     ) as mock_analysis_agent_class, patch(
-        "src.services.processing_service.FullDocumentAgent"
-    ) as mock_full_document_agent_class:
+        "src.services.processing_service.ExtractionAgent"
+    ) as mock_extraction_agent_class:
         # Mock analysis agent
         mock_analysis_agent = MagicMock()
         mock_analysis_agent.analyze = AsyncMock(
@@ -421,11 +423,12 @@ async def test_process_document_s3_upload_failure(
         mock_analysis_agent_class.return_value = mock_analysis_agent
 
         # Mock extraction agent
-        mock_agent = MagicMock()
-        mock_agent.process = AsyncMock(
-            return_value=("# Test", mock_heading_tree, mock_llm_usage)
+        mock_extraction_agent = MagicMock()
+        mock_extraction_agent.model_id = "us.anthropic.claude-haiku-4-5-20251001-v1:0"
+        mock_extraction_agent.extract = AsyncMock(
+            return_value=("# Test", 0.9, mock_llm_usage)
         )
-        mock_full_document_agent_class.return_value = mock_agent
+        mock_extraction_agent_class.return_value = mock_extraction_agent
 
         service = ProcessingService(
             storage_service=mock_storage_service,

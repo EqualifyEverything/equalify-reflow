@@ -5,9 +5,13 @@ This module provides the multi-agent framework (PRD-011) including:
 - AgentConfig: Configuration dataclass for agent initialization
 - Agent registry functions for dynamic agent discovery
 - FullDocumentAgent: Two-phase document extraction agent
+- AnalysisAgent: Document analysis agent (PRD-012)
+- ExtractionAgent: Manifest-guided extraction agent (PRD-013)
 """
 
+from .analysis_agent import AnalysisAgent
 from .base_agent import AgentConfig, BaseDocumentAgent
+from .extraction_agent import ExtractionAgent
 from .full_document_agent import FullDocumentAgent
 from .registry import (
     clear_registry,
@@ -37,4 +41,7 @@ __all__ = [
     "clear_registry",
     # Full document extraction agent
     "FullDocumentAgent",
+    # Analysis and extraction agents (PRD-012, PRD-013)
+    "AnalysisAgent",
+    "ExtractionAgent",
 ]

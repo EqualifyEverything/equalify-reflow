@@ -429,7 +429,8 @@ async def submit_correction_decision(
     except HTTPException:
         raise
     except ValueError as e:
-        raise HTTPException(status_code=404, detail=str(e))
+        # ValueError indicates invalid input (e.g., bad decision value), not "not found"
+        raise HTTPException(status_code=400, detail=str(e))
     except Exception as e:
         logger.error(f"Failed to process correction decision: {str(e)}", exc_info=True)
         raise HTTPException(

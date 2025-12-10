@@ -10,10 +10,12 @@ from botocore.config import Config
 from fastapi import Depends
 
 from .config import settings
+from .services.consolidation_service import ConsolidationService
 from .services.correction_approval_service import CorrectionApprovalService
 from .services.job_service import JobService
 from .services.queue_service import QueueService
 from .services.rate_limit_service import RateLimitService
+from .services.remediation_storage_service import RemediationStorageService
 from .services.s3_cleanup_service import S3CleanupService
 from .services.s3_url_service import S3URLService
 from .services.storage_service import StorageService
@@ -282,3 +284,51 @@ async def get_correction_approval_service(
         job_service=job_service,
         storage_service=storage
     )
+
+
+async def get_remediation_storage(
+    storage: StorageService = Depends(get_storage_service),
+) -> RemediationStorageService:
+    """Get remediation storage service instance.
+
+    Provides S3 operations for remediation artifacts:
+    - observations.json
+    - proposals.json
+    - manifest.json
+
+    Args:
+        storage: StorageService (injected)
+
+    Returns:
+        RemediationStorageService instance
+
+    Note:
+        In FastAPI routes, use:
+            remediation_storage: RemediationStorageService = Depends(
+                get_remediation_storage
+            )
+    """
+    return RemediationStorageService(storage_service=storage)
+
+
+async def get_consolidation_service(
+    remediation_storage: RemediationStorageService = Depends(get_remediation_storage),
+) -> ConsolidationService:
+    """Get consolidation service instance.
+
+    Provides observation consolidation into proposals, including
+    re-consolidation for human-submitted observations.
+
+    Args:
+        remediation_storage: RemediationStorageService (injected)
+
+    Returns:
+        ConsolidationService instance
+
+    Note:
+        In FastAPI routes, use:
+            consolidation: ConsolidationService = Depends(
+                get_consolidation_service
+            )
+    """
+    return ConsolidationService(storage=remediation_storage)

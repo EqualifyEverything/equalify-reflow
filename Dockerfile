@@ -54,7 +54,10 @@ RUN uv sync --frozen || uv sync
 
 # Pre-download spaCy model for Presidio PII detection
 # This avoids cold start delays when the PII worker processes its first request
-RUN uv run python -m spacy download en_core_web_sm
+# Note: Installing directly from GitHub releases instead of `python -m spacy download`
+# because the latter requires pip, which uv doesn't install in virtualenvs by default
+# Model version should match spacy version - check https://github.com/explosion/spacy-models/releases
+RUN uv pip install https://github.com/explosion/spacy-models/releases/download/en_core_web_sm-3.7.1/en_core_web_sm-3.7.1-py3-none-any.whl
 
 # ==============================================================================
 # Stage 4: Development - Hot-reload for fast iteration

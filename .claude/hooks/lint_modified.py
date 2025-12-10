@@ -4,98 +4,81 @@
 # dependencies = []
 # ///
 """
-Lint modified Python files and report issues to Claude.
+Lint Python files after Edit/Write operations.
 
-This hook runs when Claude finishes a response (Stop event).
-It detects modified Python files via git and runs ruff + mypy on them.
+This hook runs after Claude edits or creates Python files.
+It reads the file path from stdin (PostToolUse event) and runs ruff + mypy.
 """
 
+import json
 import os
 import subprocess
 import sys
 
 
-def get_modified_files() -> list[str]:
-    """Get list of modified Python files from git."""
-    project_dir = os.environ.get("CLAUDE_PROJECT_DIR", ".")
-
-    try:
-        # Get staged and unstaged changes
-        result = subprocess.run(
-            ["git", "diff", "--name-only", "HEAD"],
-            capture_output=True,
-            text=True,
-            cwd=project_dir,
-        )
-        files = [f.strip() for f in result.stdout.strip().split("\n") if f.strip()]
-
-        # Also get untracked files that are new
-        result_untracked = subprocess.run(
-            ["git", "ls-files", "--others", "--exclude-standard"],
-            capture_output=True,
-            text=True,
-            cwd=project_dir,
-        )
-        untracked = [
-            f.strip() for f in result_untracked.stdout.strip().split("\n") if f.strip()
-        ]
-        files.extend(untracked)
-
-        # Filter to only .py files and remove duplicates
-        py_files = list(set(f for f in files if f.endswith(".py")))
-        return py_files
-    except Exception:
-        return []
-
-
-def run_ruff(files: list[str], project_dir: str) -> tuple[bool, str]:
-    """Run ruff on files, return (success, output)."""
-    if not files:
-        return True, ""
+def run_ruff(file_path: str, project_dir: str) -> tuple[bool, str]:
+    """Run ruff on file, return (success, output)."""
     try:
         result = subprocess.run(
-            ["uv", "run", "ruff", "check", "--no-fix"] + files,
+            ["uv", "run", "ruff", "check", "--no-fix", file_path],
             capture_output=True,
             text=True,
             cwd=project_dir,
+            timeout=30,
         )
         output = result.stdout + result.stderr
         return result.returncode == 0, output.strip()
     except FileNotFoundError:
         return True, ""  # ruff not installed
+    except subprocess.TimeoutExpired:
+        return True, "ruff timed out"
 
 
-def run_mypy(files: list[str], project_dir: str) -> tuple[bool, str]:
-    """Run mypy on files, return (success, output)."""
-    if not files:
-        return True, ""
+def run_mypy(file_path: str, project_dir: str) -> tuple[bool, str]:
+    """Run mypy on file, return (success, output)."""
     try:
         result = subprocess.run(
-            ["uv", "run", "mypy", "--no-incremental", "--no-error-summary"] + files,
+            ["uv", "run", "mypy", "--no-incremental", "--no-error-summary", file_path],
             capture_output=True,
             text=True,
             cwd=project_dir,
+            timeout=30,
         )
         output = result.stdout + result.stderr
         return result.returncode == 0, output.strip()
     except FileNotFoundError:
         return True, ""  # mypy not installed
+    except subprocess.TimeoutExpired:
+        return True, "mypy timed out"
 
 
 def main() -> None:
     project_dir = os.environ.get("CLAUDE_PROJECT_DIR", ".")
-    files = get_modified_files()
 
-    if not files:
+    # Read hook input from stdin (PostToolUse provides JSON with tool_input)
+    try:
+        input_data = json.load(sys.stdin)
+        file_path = input_data.get("tool_input", {}).get("file_path", "")
+    except (json.JSONDecodeError, AttributeError):
+        # Fallback: no valid input, exit silently
+        sys.exit(0)
+
+    # Only lint Python files
+    if not file_path or not file_path.endswith(".py"):
+        sys.exit(0)
+
+    # Skip test files and other non-src files if desired (optional)
+    skip_patterns = ["__pycache__", ".venv", "venv", ".git"]
+    if any(pattern in file_path for pattern in skip_patterns):
         sys.exit(0)
 
     issues: list[str] = []
 
-    ruff_ok, ruff_out = run_ruff(files, project_dir)
+    ruff_ok, ruff_out = run_ruff(file_path, project_dir)
     if not ruff_ok and ruff_out:
         issues.append(f"Ruff issues:\n{ruff_out}")
 
-    mypy_ok, mypy_out = run_mypy(files, project_dir)
+    mypy_ok, mypy_out = run_mypy(file_path, project_dir)
     if not mypy_ok and mypy_out:
         issues.append(f"Mypy issues:\n{mypy_out}")
 
@@ -104,7 +87,9 @@ def main() -> None:
         print("\n\n".join(issues))
         sys.exit(0)  # Warn only, don't block Claude
 
-    print(f"✓ Linting passed for {len(files)} file(s)")
+    # Success - brief confirmation
+    short_path = os.path.basename(file_path)
+    print(f"✓ {short_path} passed ruff + mypy")
     sys.exit(0)
 
 

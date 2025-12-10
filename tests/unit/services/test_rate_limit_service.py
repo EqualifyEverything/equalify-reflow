@@ -52,9 +52,9 @@ async def test_check_submit_rate_limit_allowed(rate_limiter, mock_redis):
 @pytest.mark.asyncio
 async def test_check_submit_rate_limit_exceeded(rate_limiter, mock_redis):
     """Test submission rate limit when limit exceeded."""
-    # Mock pipeline - at limit
+    # Mock pipeline - at limit (25 requests)
     mock_pipe = MagicMock()
-    mock_pipe.execute = AsyncMock(return_value=[None, 10])  # 10 requests (at limit)
+    mock_pipe.execute = AsyncMock(return_value=[None, 25])  # 25 requests (at limit)
     mock_redis.pipeline.return_value = mock_pipe
 
     # Mock oldest entry for retry calculation
@@ -122,9 +122,9 @@ async def test_get_remaining_quota_submit(rate_limiter, mock_redis):
     # Test
     quota = await rate_limiter.get_remaining_quota("192.168.1.1", "submit")
 
-    # Verify quota info
-    assert quota["limit"] == 10
-    assert quota["remaining"] == 3  # 10 - 7
+    # Verify quota info (limit is now 25)
+    assert quota["limit"] == 25
+    assert quota["remaining"] == 18  # 25 - 7
     assert "reset_at" in quota
     assert quota["window_seconds"] == 3600
 

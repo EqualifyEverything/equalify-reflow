@@ -73,12 +73,15 @@ def pii_service(storage_service, queue_service, job_service, mocker):
 
 
 @pytest.fixture
-def processing_service(storage_service, queue_service, job_service):
-    """Create processing service."""
+def processing_service(storage_service, queue_service, job_service, mocker):
+    """Create processing service with mocked PDF converter."""
+    # Create a mock PDF converter to avoid loading Docling dependencies
+    mock_converter = mocker.Mock()
     return ProcessingService(
         storage_service=storage_service,
         queue_service=queue_service,
-        job_service=job_service
+        job_service=job_service,
+        pdf_converter=mock_converter
     )
 
 
@@ -301,17 +304,17 @@ class TestProcessingServiceS3Failures:
             input_tokens=100, output_tokens=50, total_tokens=150, estimated_cost_cents=0.01
         )
 
-        with mocker.patch(
+        mock_agent_class = mocker.patch(
             "src.services.processing_service.FullDocumentAgent"
-        ) as mock_agent_class:
-            mock_agent = mocker.Mock()
-            mock_agent.process = AsyncMock(
-                return_value=("# Test Improved", mock_heading_tree, mock_usage)
-            )
-            mock_agent_class.return_value = mock_agent
+        )
+        mock_agent = mocker.Mock()
+        mock_agent.process = AsyncMock(
+            return_value=("# Test Improved", mock_heading_tree, mock_usage)
+        )
+        mock_agent_class.return_value = mock_agent
 
-            # Execute
-            result = await processing_service.process_document(job)
+        # Execute
+        result = await processing_service.process_document(job)
 
         # Verify upload was retried (the new pipeline has 1 upload)
         assert mock_s3_client.put_object.call_count >= 1
@@ -359,17 +362,17 @@ class TestProcessingServiceS3Failures:
             input_tokens=100, output_tokens=50, total_tokens=150, estimated_cost_cents=0.01
         )
 
-        with mocker.patch(
+        mock_agent_class = mocker.patch(
             "src.services.processing_service.FullDocumentAgent"
-        ) as mock_agent_class:
-            mock_agent = mocker.Mock()
-            mock_agent.process = AsyncMock(
-                return_value=("# Test", mock_heading_tree, mock_usage)
-            )
-            mock_agent_class.return_value = mock_agent
+        )
+        mock_agent = mocker.Mock()
+        mock_agent.process = AsyncMock(
+            return_value=("# Test", mock_heading_tree, mock_usage)
+        )
+        mock_agent_class.return_value = mock_agent
 
-            # Execute - should NOT raise, but catch exception and mark job as failed
-            result = await processing_service.process_document(job)
+        # Execute - should NOT raise, but catch exception and mark job as failed
+        result = await processing_service.process_document(job)
 
         # StorageService retry logic correctly identifies AccessDenied as non-retryable
         # so it fails immediately without retry

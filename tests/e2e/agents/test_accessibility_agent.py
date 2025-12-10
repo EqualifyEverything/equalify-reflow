@@ -297,9 +297,9 @@ user_prompt_template: "YAML user: {page_markdown}"
 
                     # Should have opened prompts file
                     mock_file.assert_called()
-                    # Check file path contains accessibility_prompts.yaml
+                    # Check file path contains accessibility.yaml
                     call_args = str(mock_file.call_args)
-                    assert "accessibility_prompts.yaml" in call_args
+                    assert "accessibility.yaml" in call_args
 
 
 def test_default_prompts_structure():

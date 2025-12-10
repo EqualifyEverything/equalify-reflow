@@ -7,11 +7,19 @@ This module provides the multi-agent framework (PRD-011) including:
 - FullDocumentAgent: Two-phase document extraction agent
 - AnalysisAgent: Document analysis agent (PRD-012)
 - ExtractionAgent: Manifest-guided extraction agent (PRD-013)
+- Specialized agents for accessibility analysis (PRD-014):
+  - FiguresAgent: Image accessibility
+  - TablesAgent: Table structure
+  - StructureAgent: Heading hierarchy
+  - TypographyAgent: Semantic typography
+- AgentRouter: Routes specialized agents based on manifest
 """
 
+from .agent_router import AgentRouter
 from .analysis_agent import AnalysisAgent
 from .base_agent import AgentConfig, BaseDocumentAgent
 from .extraction_agent import ExtractionAgent
+from .figures_agent import FiguresAgent
 from .full_document_agent import FullDocumentAgent
 from .registry import (
     clear_registry,
@@ -24,6 +32,19 @@ from .registry import (
     register_instance,
     unregister_agent,
 )
+from .specialized_models import (
+    FiguresAnalysisOutput,
+    ImageAnalysis,
+    StructureAnalysisOutput,
+    StructureIssue,
+    TableAnalysis,
+    TablesAnalysisOutput,
+    TypographyAnalysisOutput,
+    TypographyIssue,
+)
+from .structure_agent import StructureAgent
+from .tables_agent import TablesAgent
+from .typography_agent import TypographyAgent
 
 __all__ = [
     # Base agent framework (PRD-011)
@@ -44,4 +65,19 @@ __all__ = [
     # Analysis and extraction agents (PRD-012, PRD-013)
     "AnalysisAgent",
     "ExtractionAgent",
+    # Specialized agents (PRD-014)
+    "AgentRouter",
+    "FiguresAgent",
+    "TablesAgent",
+    "StructureAgent",
+    "TypographyAgent",
+    # Specialized agent output models
+    "ImageAnalysis",
+    "FiguresAnalysisOutput",
+    "TableAnalysis",
+    "TablesAnalysisOutput",
+    "StructureIssue",
+    "StructureAnalysisOutput",
+    "TypographyIssue",
+    "TypographyAnalysisOutput",
 ]

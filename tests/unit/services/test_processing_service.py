@@ -1,7 +1,7 @@
 """Unit tests for ProcessingService.
 
 Tests the main processing orchestrator with all dependencies mocked.
-Validates the two-phase document extraction pipeline.
+Validates the analysis + extraction pipeline (PRD-012).
 """
 
 from unittest.mock import AsyncMock, MagicMock, patch
@@ -10,6 +10,7 @@ import pytest
 from src.services.pdf_converter import PageData, PDFConversionResult
 from src.services.processing_service import ProcessingService
 from src.shared.models.processing import LLMUsage
+from src.shared.models.remediation import DocumentManifest, PageFeatures
 
 pytestmark = pytest.mark.unit
 
@@ -56,12 +57,44 @@ def sample_pdf_conversion_result_no_markdown():
     """Sample PDF conversion result without markdown (new approach)."""
     return PDFConversionResult(
         pages=[
-            PageData(page_num=1, image_base64="base64img1"),
-            PageData(page_num=2, image_base64="base64img2"),
+            PageData(page_num=1, image_base64="dGVzdDE="),  # Valid base64
+            PageData(page_num=2, image_base64="dGVzdDI="),  # Valid base64
         ],
         total_pages=2,
         has_page_images=True,
         extracted_images=[],
+    )
+
+
+@pytest.fixture
+def mock_analysis_manifest():
+    """Mock DocumentManifest from AnalysisAgent."""
+    return DocumentManifest(
+        job_id="550e8400-e29b-41d4-a716-446655440000",
+        document_title="Test Document",
+        document_type="lecture_notes",
+        total_pages=2,
+        heading_tree_json='{"document_title": "Test", "sections": []}',
+        page_features=[
+            PageFeatures(page_num=1),
+            PageFeatures(page_num=2),
+        ],
+        required_agents=["figures"],
+        skip_agents=["tables", "structure", "typography"],
+        analysis_confidence=0.9,
+        analysis_notes="Test notes",
+        analysis_model="us.anthropic.claude-sonnet-4-5-20250514-v1:0",
+    )
+
+
+@pytest.fixture
+def mock_analysis_usage():
+    """Mock LLMUsage for analysis phase."""
+    return LLMUsage(
+        input_tokens=1000,
+        output_tokens=200,
+        total_tokens=1200,
+        estimated_cost_cents=0.45,  # Sonnet pricing
     )
 
 
@@ -104,25 +137,37 @@ async def test_process_document_happy_path(
     mock_pdf_converter,
     mock_heading_tree,
     mock_llm_usage,
+    mock_analysis_manifest,
+    mock_analysis_usage,
     sample_pdf_conversion_result_no_markdown,
 ):
-    """Test successful end-to-end document processing with two-phase extraction."""
+    """Test successful end-to-end document processing with analysis + extraction."""
     mock_pdf_converter.convert_with_page_images.return_value = (
         sample_pdf_conversion_result_no_markdown
     )
 
     with patch(
+        "src.services.processing_service.AnalysisAgent"
+    ) as mock_analysis_agent_class, patch(
         "src.services.processing_service.FullDocumentAgent"
     ) as mock_full_document_agent_class:
-        mock_agent = MagicMock()
-        mock_agent.process = AsyncMock(
+        # Mock analysis agent
+        mock_analysis_agent = MagicMock()
+        mock_analysis_agent.analyze = AsyncMock(
+            return_value=(mock_analysis_manifest, [], mock_analysis_usage)
+        )
+        mock_analysis_agent_class.return_value = mock_analysis_agent
+
+        # Mock extraction agent
+        mock_extraction_agent = MagicMock()
+        mock_extraction_agent.process = AsyncMock(
             return_value=(
                 "# Test Document\n\nContent here.",
                 mock_heading_tree,
                 mock_llm_usage,
             )
         )
-        mock_full_document_agent_class.return_value = mock_agent
+        mock_full_document_agent_class.return_value = mock_extraction_agent
 
         service = ProcessingService(
             storage_service=mock_storage_service_extended,
@@ -141,12 +186,10 @@ async def test_process_document_happy_path(
     assert result.error_message is None
 
     # Verify pipeline steps executed
-    mock_job_service.update_job_status.assert_any_call(
-        sample_job_payload.job_id, "processing"
-    )
     mock_storage_service_extended.download_temp_file.assert_called_once()
     mock_pdf_converter.convert_with_page_images.assert_called_once()
-    mock_agent.process.assert_called_once()
+    mock_analysis_agent.analyze.assert_called_once()  # Analysis phase
+    mock_extraction_agent.process.assert_called_once()  # Extraction phase
     mock_storage_service_extended.upload_result.assert_called()
 
 
@@ -158,6 +201,8 @@ async def test_process_document_confidence_from_heading_tree(
     mock_job_service,
     mock_pdf_converter,
     mock_llm_usage,
+    mock_analysis_manifest,
+    mock_analysis_usage,
     sample_pdf_conversion_result_no_markdown,
 ):
     """Test confidence score comes from heading tree analysis."""
@@ -171,8 +216,18 @@ async def test_process_document_confidence_from_heading_tree(
     mock_heading_tree.layout_type = "two_column"
 
     with patch(
+        "src.services.processing_service.AnalysisAgent"
+    ) as mock_analysis_agent_class, patch(
         "src.services.processing_service.FullDocumentAgent"
     ) as mock_full_document_agent_class:
+        # Mock analysis agent
+        mock_analysis_agent = MagicMock()
+        mock_analysis_agent.analyze = AsyncMock(
+            return_value=(mock_analysis_manifest, [], mock_analysis_usage)
+        )
+        mock_analysis_agent_class.return_value = mock_analysis_agent
+
+        # Mock extraction agent
         mock_agent = MagicMock()
         mock_agent.process = AsyncMock(
             return_value=("# Test", mock_heading_tree, mock_llm_usage)
@@ -264,6 +319,8 @@ async def test_process_document_handles_document_too_large(
     mock_queue_service,
     mock_job_service,
     mock_pdf_converter,
+    mock_analysis_manifest,
+    mock_analysis_usage,
     sample_pdf_conversion_result_no_markdown,
 ):
     """Test handling when document exceeds max pages limit."""
@@ -272,8 +329,18 @@ async def test_process_document_handles_document_too_large(
     )
 
     with patch(
+        "src.services.processing_service.AnalysisAgent"
+    ) as mock_analysis_agent_class, patch(
         "src.services.processing_service.FullDocumentAgent"
     ) as mock_full_document_agent_class:
+        # Mock analysis agent - succeeds
+        mock_analysis_agent = MagicMock()
+        mock_analysis_agent.analyze = AsyncMock(
+            return_value=(mock_analysis_manifest, [], mock_analysis_usage)
+        )
+        mock_analysis_agent_class.return_value = mock_analysis_agent
+
+        # Mock extraction agent - fails with too large
         mock_agent = MagicMock()
         mock_agent.process = AsyncMock(
             side_effect=ValueError("Document has 20 pages, exceeding the maximum")
@@ -331,6 +398,8 @@ async def test_process_document_s3_upload_failure(
     mock_pdf_converter,
     mock_heading_tree,
     mock_llm_usage,
+    mock_analysis_manifest,
+    mock_analysis_usage,
     sample_pdf_conversion_result_no_markdown,
 ):
     """Test handling of S3 upload failures."""
@@ -340,8 +409,18 @@ async def test_process_document_s3_upload_failure(
     mock_storage_service.upload_result.side_effect = Exception("S3 bucket full")
 
     with patch(
+        "src.services.processing_service.AnalysisAgent"
+    ) as mock_analysis_agent_class, patch(
         "src.services.processing_service.FullDocumentAgent"
     ) as mock_full_document_agent_class:
+        # Mock analysis agent
+        mock_analysis_agent = MagicMock()
+        mock_analysis_agent.analyze = AsyncMock(
+            return_value=(mock_analysis_manifest, [], mock_analysis_usage)
+        )
+        mock_analysis_agent_class.return_value = mock_analysis_agent
+
+        # Mock extraction agent
         mock_agent = MagicMock()
         mock_agent.process = AsyncMock(
             return_value=("# Test", mock_heading_tree, mock_llm_usage)

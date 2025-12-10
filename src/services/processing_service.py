@@ -1,15 +1,24 @@
-"""Main processing service orchestrating PDF conversion and AI enhancement."""
+"""Main processing service orchestrating PDF conversion and AI enhancement.
+
+The processing pipeline consists of:
+1. Analysis Phase (Sonnet) - Deep document analysis, manifest generation (PRD-012)
+2. Extraction Phase (Haiku) - Guided markdown extraction (PRD-013, future)
+3. Specialized Agents - Figures, tables, structure, typography (PRD-014, future)
+4. Consolidation - Observations to proposals (PRD-015, future)
+"""
 
 import logging
 import time
 from typing import Any
 
+from ..agents.analysis_agent import AnalysisAgent
 from ..agents.full_document_agent import FullDocumentAgent
 from ..config import settings
 from ..services.document_context_service import DocumentContextService
 from ..services.job_service import JobService
 from ..services.pdf_converter import PDFConverter
 from ..services.queue_service import QueueService
+from ..services.remediation_storage_service import RemediationStorageService
 from ..services.storage_service import StorageService
 from ..shared.models.processing import ProcessingResult
 from ..shared.models.queue import ProcessingQueuePayload
@@ -29,6 +38,7 @@ class ProcessingService:
         redis_client: Any = None,
         pdf_converter: PDFConverter | None = None,
         document_context_service: DocumentContextService | None = None,
+        remediation_storage_service: RemediationStorageService | None = None,
     ) -> None:
         """Initialize processing service with dependencies.
 
@@ -39,6 +49,7 @@ class ProcessingService:
             redis_client: Redis client for token storage
             pdf_converter: Optional PDF converter (created if not provided)
             document_context_service: Optional context service for direct extraction
+            remediation_storage_service: Optional remediation storage (created if not provided)
         """
         self.storage = storage_service
         self.queue = queue_service
@@ -46,6 +57,9 @@ class ProcessingService:
         self.redis = redis_client
         self.pdf_converter = pdf_converter or PDFConverter()
         self.context_service = document_context_service or DocumentContextService()
+        self.remediation_storage = (
+            remediation_storage_service or RemediationStorageService(storage_service)
+        )
 
         logger.info("Processing service initialized")
 
@@ -53,14 +67,12 @@ class ProcessingService:
         self,
         job: ProcessingQueuePayload,
     ) -> ProcessingResult:
-        """Process PDF using two-phase full-document extraction.
+        """Process PDF using analysis + extraction pipeline.
 
-        This approach loads ALL page images into context and processes in two phases:
-        1. Phase 1: Analyze structure to build heading tree
-        2. Phase 2: Transcribe document guided by heading tree
-
-        This avoids the duplicate content issues that occur with per-page processing
-        and sliding context windows on multi-column documents.
+        The processing pipeline:
+        1. Analysis Phase (Sonnet) - Deep document analysis, manifest generation
+        2. Extraction Phase (Haiku) - Guided markdown extraction (via FullDocumentAgent)
+        3. Future: Specialized agents, consolidation, review (PRD-014-017)
 
         Args:
             job: Processing queue payload with job_id and s3_key
@@ -72,11 +84,13 @@ class ProcessingService:
         logger.info(f"Starting processing for job {job.job_id}")
 
         try:
-            # Step 1: Update job status to processing
+            # Step 1: Update job status to processing with "analyzing" substatus
             await retry_with_backoff(
-                lambda: self.job.update_job_status(job.job_id, "processing"),
+                lambda: self.job.update_job_status(
+                    job.job_id, "processing", substatus="analyzing"
+                ),
                 max_attempts=3,
-                operation_name=f"Update job {job.job_id} status to processing",
+                operation_name=f"Update job {job.job_id} status to processing/analyzing",
             )
 
             # Step 2: Download PDF from S3
@@ -102,30 +116,74 @@ class ProcessingService:
                 f"PDF converted: {conversion_result.total_pages} pages with images"
             )
 
-            # Step 4: Process with FullDocumentAgent (two-phase approach)
-            full_doc_agent = FullDocumentAgent()
             pages = conversion_result.pages
 
+            # Step 4: Analysis Phase (Sonnet) - PRD-012
             logger.info(
-                f"Processing {len(pages)}-page document with two-phase extraction..."
+                f"Job {job.job_id}: Starting analysis phase (Sonnet)..."
+            )
+            analysis_agent = AnalysisAgent()
+            manifest, initial_observations, analysis_usage = await analysis_agent.analyze(
+                pages, job.job_id
             )
 
+            # Save manifest and initial observations to S3
+            await self.remediation_storage.save_manifest(job.job_id, manifest)
+            if initial_observations:
+                await self.remediation_storage.save_observations(
+                    job.job_id, initial_observations
+                )
+
+            logger.info(
+                f"Job {job.job_id}: Analysis complete - "
+                f"{len(manifest.required_agents)} agents needed, "
+                f"{len(initial_observations)} initial observations, "
+                f"analysis cost: ${analysis_usage.estimated_cost_cents/100:.4f}"
+            )
+
+            # Update substatus to "extracting"
+            await retry_with_backoff(
+                lambda: self.job.update_job_status(
+                    job.job_id,
+                    "processing",
+                    substatus="extracting",
+                    observation_count=len(initial_observations),
+                    analysis_model=manifest.analysis_model,
+                ),
+                max_attempts=3,
+                operation_name=f"Update job {job.job_id} substatus to extracting",
+            )
+
+            # Step 5: Extraction Phase (Haiku) - Using FullDocumentAgent for now
+            # TODO: Replace with ExtractionAgent guided by manifest (PRD-013)
+            logger.info(
+                f"Job {job.job_id}: Starting extraction phase (Haiku)..."
+            )
+            full_doc_agent = FullDocumentAgent()
+
             # This will:
-            # - Phase 1: Analyze structure → HeadingTree
+            # - Phase 1: Analyze structure → HeadingTree (redundant with above, but needed for extraction)
             # - Phase 2: Transcribe with heading guidance → Markdown
-            full_markdown, heading_tree, total_usage = await full_doc_agent.process(
+            full_markdown, heading_tree, extraction_usage = await full_doc_agent.process(
                 pages
             )
 
+            # Combine usage from analysis and extraction
+            total_usage = extraction_usage
+            total_usage.input_tokens += analysis_usage.input_tokens
+            total_usage.output_tokens += analysis_usage.output_tokens
+            total_usage.total_tokens += analysis_usage.total_tokens
+            total_usage.estimated_cost_cents += analysis_usage.estimated_cost_cents
+
             logger.info(
-                f"Two-phase extraction complete: "
+                f"Job {job.job_id}: Extraction complete - "
                 f"{len(full_markdown)} chars, "
                 f"{len(heading_tree.sections)} sections, "
                 f"layout={heading_tree.layout_type}, "
-                f"est. cost=${total_usage.estimated_cost_cents/100:.4f}"
+                f"extraction cost: ${extraction_usage.estimated_cost_cents/100:.4f}"
             )
 
-            # Step 5: Calculate confidence level from heading tree
+            # Step 6: Calculate confidence level from heading tree
             avg_confidence = heading_tree.confidence
 
             if avg_confidence >= 0.9:
@@ -135,15 +193,15 @@ class ProcessingService:
             else:
                 confidence_level = "low"
 
-            # Step 6: Upload result to S3
-            logger.info("Uploading extracted markdown to S3")
+            # Step 7: Upload result to S3
+            logger.info(f"Job {job.job_id}: Uploading extracted markdown to S3")
             result_url = await self.storage.upload_result(
                 job_id=job.job_id,
                 content=full_markdown,
                 format="md",
             )
 
-            # Step 7: Update job status to completed
+            # Step 8: Update job status to completed
             processing_time = int(time.time() - start_time)
 
             update_fields = {
@@ -156,9 +214,12 @@ class ProcessingService:
                 "llm_input_tokens": total_usage.input_tokens,
                 "llm_output_tokens": total_usage.output_tokens,
                 "llm_total_tokens": total_usage.total_tokens,
-                "extraction_method": "two_phase",
+                "extraction_method": "analysis_extraction",  # PRD-012 pipeline
                 "layout_type": heading_tree.layout_type,
                 "section_count": len(heading_tree.sections),
+                "observation_count": len(initial_observations),
+                "required_agents": ",".join(manifest.required_agents),
+                "analysis_model": manifest.analysis_model,
             }
 
             await retry_with_backoff(

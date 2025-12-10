@@ -483,6 +483,173 @@ See [docs/architecture.md](../../docs/architecture.md) for detailed architecture
 
 ---
 
+---
+
+## Phase 4: Accessibility Remediation Pipeline
+
+> **Reference**: [Full Architecture Documentation](../../docs/features/accessibility-remediation-pipeline.md)
+> **GitHub Issues**: [#23](https://github.com/EqualifyEverything/equalify-pdf-converter/issues/23), [#24](https://github.com/EqualifyEverything/equalify-pdf-converter/issues/24)
+
+Phase 4 implements a comprehensive accessibility remediation pipeline with observation-first design, specialized AI agents, and human-in-the-loop review.
+
+### PRD-011: Remediation Data Models ✅
+**Status**: Complete
+**File**: [phase-4-remediation/PRD-011-remediation-data-models.md](phase-4-remediation/PRD-011-remediation-data-models.md)
+**Completed**: 2025-12-10
+**Effort**: ~4 hours (actual vs 2 days estimated)
+**Dependencies**: PRD-002 (Shared Data Models) ✅
+
+**Deliverables** (COMPLETE):
+- ✅ `src/shared/models/remediation.py` - PageFeatures, DocumentManifest models
+- ✅ `src/shared/models/observation.py` - Observation, ObservationLocation models
+- ✅ `src/shared/models/proposal.py` - Proposal, SearchReplaceDiff models
+- ✅ `src/shared/models/remediation_progress.py` - RemediationProgress, substatus tracking
+- ✅ `src/services/remediation_storage_service.py` - S3 operations for remediation artifacts
+- ✅ `src/shared/models/__init__.py` - Updated exports for all new models
+- ✅ `tests/unit/models/test_remediation_models.py` - 19 tests
+- ✅ `tests/unit/models/test_observation_models.py` - 24 tests
+- ✅ `tests/unit/models/test_proposal_models.py` - 27 tests
+- ✅ `tests/unit/models/test_remediation_progress_models.py` - 18 tests
+- ✅ `tests/unit/services/test_remediation_storage_service.py` - 18 tests
+
+**Implementation Notes**:
+- All Pydantic v2 models with proper validation and JSON serialization
+- State machine transitions for observation status (open → resolved/wont_fix/manual)
+- State machine transitions for proposal status (pending → approved/rejected → applied/failed)
+- Valid substatuses for "processing" phase: analyzing, extracting, specializing, consolidating, awaiting_review, applying
+- S3 storage schema: `{job_id}/manifest.json`, `{job_id}/observations.json`, `{job_id}/proposals.json`
+- 106 new tests passing, mypy passes with no errors
+- All models integrate with existing job service patterns
+
+**Unblocks**: PRD-012 (Analysis Agent), PRD-013 (Extraction Agent), PRD-014 (Specialized Agents)
+
+---
+
+### PRD-012: Analysis Agent (Sonnet Phase) ✅
+**Status**: Complete
+**Completed**: 2025-12-10
+**File**: [phase-4-remediation/PRD-012-analysis-agent.md](phase-4-remediation/PRD-012-analysis-agent.md)
+**Effort**: 3 days
+**Dependencies**: PRD-011 ✅
+
+**Deliverables**:
+- ✅ `src/agents/model_tiers.py` - ModelTier enum (REASONING/EFFICIENT) and model ID mapping
+- ✅ `src/shared/llm_cost.py` - Added SONNET_PRICING and get_pricing_for_tier()
+- ✅ `src/agents/base_agent.py` - model_tier support in AgentConfig
+- ✅ `src/agents/analysis_agent.py` - AnalysisAgent using Claude Sonnet 4.5
+- ✅ `config/agents/analysis.yaml` - Analysis prompts for document analysis
+- ✅ `src/services/processing_service.py` - Integrated analysis phase
+- ✅ `tests/unit/agents/test_analysis_agent.py` - 41 unit tests
+
+**Implementation Notes**:
+- ModelTier enum: REASONING (Sonnet 4.5), EFFICIENT (Haiku 4.5)
+- Analysis phase runs before extraction, saves manifest and observations to S3
+- Sonnet pricing: $3.00/1M input, $15.00/1M output (vs Haiku: $1.00/$5.00)
+- Agent routing: determines required_agents (figures, tables, structure, typography)
+- All 41 analysis agent tests pass, all 809 unit tests pass
+
+**Unblocks**: PRD-013 (Extraction Agent), PRD-014 (Specialized Agents)
+
+---
+
+### PRD-013: Extraction Agent (Haiku Phase)
+**Status**: Not Started
+**File**: [phase-4-remediation/PRD-013-extraction-agent.md](phase-4-remediation/PRD-013-extraction-agent.md)
+**Effort**: 2 days
+**Dependencies**: PRD-012 ✅
+
+**Deliverables**:
+- `ExtractionAgent` using Claude Haiku 4.5
+- Manifest-guided markdown extraction
+- Image placeholder generation
+
+---
+
+### PRD-014: Specialized Analysis Agents
+**Status**: Not Started
+**File**: [phase-4-remediation/PRD-014-specialized-agents.md](phase-4-remediation/PRD-014-specialized-agents.md)
+**Effort**: 5 days
+**Dependencies**: PRD-013
+
+**Deliverables**:
+- `FiguresAgent` - Image accessibility (#24)
+- `TablesAgent` - Table structure (#24)
+- `StructureAgent` - Heading hierarchy (#23)
+- `TypographyAgent` - Semantic typography (#23)
+- Agent router based on manifest
+
+---
+
+### PRD-015: Consolidation Service
+**Status**: Not Started
+**File**: [phase-4-remediation/PRD-015-consolidation-service.md](phase-4-remediation/PRD-015-consolidation-service.md)
+**Effort**: 3 days
+**Dependencies**: PRD-014
+
+**Deliverables**:
+- `ConsolidationAgent` for observations → proposals
+- Search-replace diff generation
+- Manual routing for low-confidence items
+
+---
+
+### PRD-016: Review API & Workflow
+**Status**: Not Started
+**File**: [phase-4-remediation/PRD-016-review-api.md](phase-4-remediation/PRD-016-review-api.md)
+**Effort**: 4 days
+**Dependencies**: PRD-015
+
+**Deliverables**:
+- Review API endpoints (list, approve, reject, edit)
+- Batch approval support
+- Human edit workflow (before/after or before/comment)
+
+---
+
+### PRD-017: Application Service
+**Status**: Not Started
+**File**: [phase-4-remediation/PRD-017-application-service.md](phase-4-remediation/PRD-017-application-service.md)
+**Effort**: 2 days
+**Dependencies**: PRD-016
+
+**Deliverables**:
+- Search-replace application with layered matching
+- Markdown validation
+- Version management
+- Job completion
+
+---
+
+### Phase 4 Dependencies Graph
+```
+PRD-002 (Shared Data Models)
+    │
+    ▼
+PRD-011 (Remediation Data Models)
+    │
+    ▼
+PRD-012 (Analysis Agent - Sonnet)
+    │
+    ▼
+PRD-013 (Extraction Agent - Haiku)
+    │
+    ▼
+PRD-014 (Specialized Agents)
+    │
+    ▼
+PRD-015 (Consolidation Service)
+    │
+    ▼
+PRD-016 (Review API)
+    │
+    ▼
+PRD-017 (Application Service)
+```
+
+**Total Phase 4 Effort**: ~21 days
+
+---
+
 ## For AI Agents
 
 When implementing a PRD:

@@ -329,17 +329,19 @@ class DocumentContextService:
 
             # Check for caption_text property
             if hasattr(pic, "caption_text"):
-                cap_text = pic.caption_text
-                if callable(cap_text):
+                cap_text_attr = pic.caption_text
+                if callable(cap_text_attr):
                     try:
-                        cap_text = cap_text()
+                        cap_text_result = cap_text_attr(doc)
                     except Exception:
-                        cap_text = ""
-                if cap_text:
+                        cap_text_result = ""
+                else:
+                    cap_text_result = cap_text_attr if isinstance(cap_text_attr, str) else ""
+                if cap_text_result:
                     has_alt = True
-                    alt_text = cap_text
+                    alt_text = cap_text_result
                     if not caption:
-                        caption = cap_text
+                        caption = cap_text_result
 
             figures.append(
                 FigureInfo(
@@ -398,14 +400,16 @@ class DocumentContextService:
             # Get caption
             caption = ""
             if hasattr(tbl, "caption_text"):
-                cap_text = tbl.caption_text
-                if callable(cap_text):
+                cap_text_attr = tbl.caption_text
+                if callable(cap_text_attr):
                     try:
-                        cap_text = cap_text()
+                        cap_text_result = cap_text_attr(doc)
                     except Exception:
-                        cap_text = ""
-                if cap_text:
-                    caption = cap_text
+                        cap_text_result = ""
+                else:
+                    cap_text_result = cap_text_attr if isinstance(cap_text_attr, str) else ""
+                if cap_text_result:
+                    caption = cap_text_result
 
             tables.append(
                 TableInfo(
@@ -440,7 +444,7 @@ class DocumentContextService:
 
         # Check for DOCUMENT_INDEX items (Docling's explicit TOC)
         for text_item in doc.texts:
-            if text_item.label == DocItemLabel.DOCUMENT_INDEX:
+            if text_item.label == DocItemLabel.DOCUMENT_INDEX:  # type: ignore[comparison-overlap]
                 line_no = 1
                 if text_item.prov:
                     # Use bbox to estimate line number

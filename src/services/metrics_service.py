@@ -10,6 +10,7 @@ of jobs, queues, and workers.
 
 import logging
 from datetime import UTC, datetime, timedelta
+from typing import Any
 
 from prometheus_client import Counter, Gauge, Histogram
 
@@ -100,7 +101,7 @@ class MetricsService:
     # Redis key prefix for daily metrics
     METRICS_PREFIX = "eq-pdf:metrics:daily:"
 
-    def __init__(self, redis_client):
+    def __init__(self, redis_client: Any) -> None:
         """Initialize metrics service.
 
         Args:

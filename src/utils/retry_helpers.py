@@ -165,7 +165,7 @@ async def retry_with_backoff(
     for attempt in range(1, max_attempts + 1):
         try:
             logger.debug(f"{operation_name}: attempt {attempt}/{max_attempts}")
-            result = await func()
+            result: T = await func()
 
             if attempt > 1:
                 logger.info(
@@ -239,7 +239,7 @@ async def retry_with_backoff_for_sync_func(
     for attempt in range(1, max_attempts + 1):
         try:
             logger.debug(f"{operation_name}: attempt {attempt}/{max_attempts}")
-            result = func()
+            result: T = func()
 
             if attempt > 1:
                 logger.info(

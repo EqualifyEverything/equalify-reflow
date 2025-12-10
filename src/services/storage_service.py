@@ -2,6 +2,7 @@
 
 import logging
 import uuid
+from typing import Any
 
 from botocore.exceptions import ClientError
 from fastapi import HTTPException, UploadFile
@@ -16,7 +17,7 @@ logger = logging.getLogger(__name__)
 class StorageService:
     """Service for managing document storage in S3."""
 
-    def __init__(self, s3_client, temp_bucket: str, results_bucket: str):
+    def __init__(self, s3_client: Any, temp_bucket: str, results_bucket: str):
         """Initialize storage service with S3 client and bucket names.
 
         Args:
@@ -163,7 +164,7 @@ class StorageService:
 
         try:
             # Download with retry logic
-            response = await retry_with_backoff_for_sync_func(
+            response: Any = await retry_with_backoff_for_sync_func(
                 lambda: self.s3_client.get_object(
                     Bucket=self.temp_bucket,
                     Key=s3_key
@@ -176,7 +177,7 @@ class StorageService:
             # Record success
             self.download_circuit.record_success()
 
-            return response['Body'].read()
+            return response['Body'].read()  # type: ignore[no-any-return]
 
         except CircuitBreakerOpenError:
             raise

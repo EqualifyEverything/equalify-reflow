@@ -4,7 +4,7 @@ Provides endpoints for reviewing PII-flagged documents and
 submitting approval/denial decisions.
 """
 
-from typing import Literal
+from typing import Any, Literal
 
 from fastapi import APIRouter, Depends, HTTPException
 from pydantic import BaseModel, Field
@@ -13,6 +13,7 @@ from ..dependencies import get_redis_client, get_s3_client
 from ..services.approval_service import ApprovalService
 from ..services.job_service import JobService
 from ..services.queue_service import QueueService
+from .schemas import PIIFinding
 
 router = APIRouter(prefix="/api/approval", tags=["Approval"])
 
@@ -64,7 +65,7 @@ class ReviewDetailsResponse(BaseModel):
     """
     job_id: str
     status: str
-    pii_findings: list
+    pii_findings: list[PIIFinding]
     created_at: str
     expires_at: str
     s3_key: str
@@ -91,8 +92,8 @@ class ApprovalResponse(BaseModel):
 )
 async def get_review_details(
     token: str,
-    redis_client=Depends(get_redis_client),
-    s3_client=Depends(get_s3_client)
+    redis_client: Any = Depends(get_redis_client),
+    s3_client: Any = Depends(get_s3_client)
 ) -> ReviewDetailsResponse:
     """Get job details and PII findings for review.
 
@@ -170,8 +171,8 @@ async def get_review_details(
 async def submit_decision(
     token: str,
     decision_input: ApprovalDecisionInput,
-    redis_client=Depends(get_redis_client),
-    s3_client=Depends(get_s3_client)
+    redis_client: Any = Depends(get_redis_client),
+    s3_client: Any = Depends(get_s3_client)
 ) -> ApprovalResponse:
     """Submit approval or denial decision.
 
@@ -232,7 +233,7 @@ async def submit_decision(
         await approval_service.process_approval_decision(
             job_id=job_id,
             decision=decision_input.decision,
-            justification=decision_input.justification,
+            justification=decision_input.justification or "",
             reviewed_by=decision_input.reviewed_by
         )
 

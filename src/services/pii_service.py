@@ -81,7 +81,7 @@ class PIIDetectionService:
             logger.info(f"Downloaded PDF for job {job.job_id}: {len(pdf_content)} bytes")
 
             # Step 2: Extract text content (with retry on transient extraction errors)
-            text_content = await retry_with_backoff(
+            text_content: str = await retry_with_backoff(
                 lambda: extract_pdf_text(pdf_content),
                 max_attempts=MAX_RETRY_ATTEMPTS + 1,  # Maintain existing retry count for PDF extraction
                 operation_name=f"Extract text from PDF for job {job.job_id}"

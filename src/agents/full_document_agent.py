@@ -12,6 +12,7 @@ import base64
 import logging
 from dataclasses import dataclass, field
 from pathlib import Path
+from typing import Any
 
 import yaml
 from pydantic import BaseModel, Field
@@ -122,7 +123,7 @@ class FullDocumentAgent:
 
         logger.info("FullDocumentAgent initialized")
 
-    def _load_prompts(self) -> dict:
+    def _load_prompts(self) -> dict[str, Any]:
         """Load prompts from YAML configuration file."""
         prompts_file = self.config.prompts_file
         if not prompts_file.is_absolute():
@@ -130,7 +131,7 @@ class FullDocumentAgent:
 
         try:
             with open(prompts_file) as f:
-                prompts = yaml.safe_load(f)
+                prompts: dict[str, Any] = yaml.safe_load(f)
                 logger.debug(f"Loaded prompts from {prompts_file}")
                 return dict(prompts)
         except FileNotFoundError:

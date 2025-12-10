@@ -1,6 +1,7 @@
 """Document processing endpoints."""
 
 from datetime import UTC, datetime
+from typing import Any
 
 from fastapi import APIRouter, Depends, File, Form, HTTPException, UploadFile, status
 from pydantic import BaseModel
@@ -33,7 +34,7 @@ from .schemas import (
 router = APIRouter(prefix="/api/documents", tags=["Documents"])
 
 
-def _build_llm_cost(job: dict) -> LLMCostInfo | None:
+def _build_llm_cost(job: dict[str, Any]) -> LLMCostInfo | None:
     """Build LLM cost info from job data.
 
     Costs accumulate across all processing phases (structure analysis + transcription).
@@ -80,7 +81,7 @@ async def submit_document(
     storage: StorageService = Depends(get_storage_service),
     queue: QueueService = Depends(get_queue_service),
     job_service: JobService = Depends(get_job_service),
-):
+) -> JobSubmissionResponse:
     """Submit a PDF document for processing.
 
     Args:
@@ -133,7 +134,7 @@ async def get_job(
     job_id: str,
     job_service: JobService = Depends(get_job_service),
     url_service: S3URLService = Depends(get_s3_url_service),
-):
+) -> DocumentStatusResponse:
     """
     Get current status of a processing job.
 
@@ -215,7 +216,11 @@ async def get_job(
                     for k in page_keys
                 ],
                 llm_cost=_build_llm_cost(job) or LLMCostInfo(
-                    estimated_cost_cents=0, estimated_cost_dollars=0
+                    input_tokens=0,
+                    output_tokens=0,
+                    total_tokens=0,
+                    estimated_cost_cents=0,
+                    estimated_cost_dollars=0
                 ),
             )
 
@@ -234,7 +239,11 @@ async def get_job(
                     justification=job.get("correction_justification", ""),
                 ),
                 llm_cost=_build_llm_cost(job) or LLMCostInfo(
-                    estimated_cost_cents=0, estimated_cost_dollars=0
+                    input_tokens=0,
+                    output_tokens=0,
+                    total_tokens=0,
+                    estimated_cost_cents=0,
+                    estimated_cost_dollars=0
                 ),
             )
 

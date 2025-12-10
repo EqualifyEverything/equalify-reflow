@@ -71,9 +71,11 @@ class CorrectionApprovalService:
             )
 
             # Store token in job data for lookup
-            await self.job_service.update_job(
-                job_id,
-                correction_approval_token=token
+            # Use Redis directly to add the field without changing status
+            await self.redis.hset(
+                f"eq-pdf:job:{job_id}",
+                "correction_approval_token",
+                token
             )
 
             logger.info(f"Generated correction approval token for job {job_id}")
@@ -117,12 +119,15 @@ class CorrectionApprovalService:
                     detail="Invalid or expired correction approval token"
                 )
 
-            # Decode if bytes
+            # Decode if bytes and ensure it's a string
+            job_id_str: str
             if isinstance(job_id, bytes):
-                job_id = job_id.decode('utf-8')
+                job_id_str = job_id.decode('utf-8')
+            else:
+                job_id_str = str(job_id)
 
             # Verify job still exists
-            job = await self.job_service.get_job(job_id)
+            job = await self.job_service.get_job(job_id_str)
             if not job:
                 logger.warning(f"Job {job_id} not found for valid token")
                 from fastapi import HTTPException
@@ -131,8 +136,8 @@ class CorrectionApprovalService:
                     detail="Job not found"
                 )
 
-            logger.info(f"Valid correction approval token for job {job_id}")
-            return job_id
+            logger.info(f"Valid correction approval token for job {job_id_str}")
+            return job_id_str
 
         except Exception as e:
             if hasattr(e, 'status_code'):
@@ -151,8 +156,8 @@ class CorrectionApprovalService:
     async def process_correction_approval_decision(
         self,
         job_id: str,
-        decision: dict
-    ) -> dict:
+        decision: dict[str, Any]
+    ) -> dict[str, Any] | None:
         """Process correction approval or rejection decision.
 
         Uses atomic lock to prevent duplicate processing. Based on decision:
@@ -291,8 +296,8 @@ class CorrectionApprovalService:
     async def _process_approval(
         self,
         job_id: str,
-        job: dict,
-        decision_metadata: dict
+        job: dict[str, Any],
+        decision_metadata: dict[str, Any]
     ) -> None:
         """Handle approved decision - upload CORRECTED markdown to final location.
 
@@ -313,7 +318,7 @@ class CorrectionApprovalService:
             logger.info(f"Downloading corrected markdown for job {job_id} (key: {corrected_key})")
 
             # Download corrected markdown from results bucket
-            response = await retry_with_backoff_for_sync_func(
+            response: dict[str, Any] = await retry_with_backoff_for_sync_func(
                 lambda: self.storage.s3_client.get_object(
                     Bucket=self.storage.results_bucket,
                     Key=corrected_key
@@ -359,8 +364,8 @@ class CorrectionApprovalService:
     async def _process_rejection(
         self,
         job_id: str,
-        job: dict,
-        decision_metadata: dict
+        job: dict[str, Any],
+        decision_metadata: dict[str, Any]
     ) -> None:
         """Handle rejected decision - replace final markdown with ORIGINAL version.
 
@@ -381,7 +386,7 @@ class CorrectionApprovalService:
             logger.info(f"Downloading original markdown for job {job_id} (key: {original_key})")
 
             # Download original markdown from results bucket
-            response = await retry_with_backoff_for_sync_func(
+            response: dict[str, Any] = await retry_with_backoff_for_sync_func(
                 lambda: self.storage.s3_client.get_object(
                     Bucket=self.storage.results_bucket,
                     Key=original_key

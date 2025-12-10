@@ -16,7 +16,6 @@ from pathlib import Path
 
 import httpx
 import pytest
-
 from src.analyzers.pdf_accessibility_analyzer import PDFAccessibilityAnalyzer
 from src.shared.models.hints_models import HintSource
 

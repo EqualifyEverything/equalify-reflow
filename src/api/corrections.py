@@ -249,8 +249,8 @@ async def get_correction_review(
 
         # Build correction summaries (with 200-char snippets)
         corrections = []
-        by_type = {}
-        by_page = {}
+        by_type: dict[str, int] = {}
+        by_page: dict[int, int] = {}
         total_confidence = 0.0
         total_corrections = 0
 

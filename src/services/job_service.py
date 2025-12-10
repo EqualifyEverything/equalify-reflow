@@ -3,6 +3,9 @@
 import json
 import logging
 from datetime import UTC, datetime
+from typing import Any
+
+from redis.asyncio import Redis
 
 from ..config import settings
 from ..shared.constants.statuses import STATUS_COMPLETED, STATUS_DENIED, STATUS_FAILED
@@ -13,7 +16,7 @@ logger = logging.getLogger(__name__)
 class JobService:
     """Service for managing job status and metadata."""
 
-    def __init__(self, redis_client):
+    def __init__(self, redis_client: Redis) -> None:
         """Initialize job service with Redis client.
 
         Args:
@@ -126,7 +129,7 @@ class JobService:
         """
         created_at = datetime.now(UTC).isoformat()
 
-        mapping: dict[str, str] = {
+        mapping: dict[str | bytes, bytes | float | int | str] = {
             "job_id": job_id,
             "s3_key": s3_key,
             "status": status,
@@ -150,7 +153,7 @@ class JobService:
         # Set TTL based on initial status (prevents memory leaks)
         await self._set_job_ttl(job_id, status)
 
-    async def get_job(self, job_id: str) -> dict | None:
+    async def get_job(self, job_id: str) -> dict[str, Any] | None:
         """
         Get job status and metadata.
 
@@ -160,10 +163,13 @@ class JobService:
         Returns:
             Job data dictionary or None if not found
         """
-        job_data = await self.redis.hgetall(f"{self.status_prefix}{job_id}")
+        job_data_raw = await self.redis.hgetall(f"{self.status_prefix}{job_id}")
 
-        if not job_data:
+        if not job_data_raw:
             return None
+
+        # Convert to proper dict type
+        job_data: dict[str, Any] = dict(job_data_raw)
 
         # Parse JSON array/object fields only
         # These fields are stored as JSON strings and need to be parsed
@@ -186,7 +192,7 @@ class JobService:
         self,
         job_id: str,
         status: str,
-        **additional_fields
+        **additional_fields: Any
     ) -> None:
         """
         Update job status and additional fields with automatic TTL adjustment.
@@ -206,7 +212,7 @@ class JobService:
             >>> await job_service.update_job_status("job-123", "completed")
             # Updates status and sets 30-day TTL
         """
-        update_data = {
+        update_data: dict[str | bytes, bytes | float | int | str] = {
             "status": status,
             "updated_at": datetime.now(UTC).isoformat()
         }
@@ -229,7 +235,7 @@ class JobService:
     async def add_pii_findings(
         self,
         job_id: str,
-        findings: list[dict]
+        findings: list[dict[str, Any]]
     ) -> None:
         """
         Store PII scan results for a job and maintain TTL.
@@ -375,7 +381,7 @@ class JobService:
             logger.error(f"Error listing jobs: {str(e)}", exc_info=True)
             return []
 
-    async def get_job_status(self, job_id: str) -> dict | None:
+    async def get_job_status(self, job_id: str) -> dict[str, Any] | None:
         """Get job status and metadata (alias for get_job).
 
         This method is an alias for get_job() to match the naming
@@ -487,7 +493,7 @@ class JobService:
             )
             raise Exception(f"Failed to store token mapping: {str(e)}")
 
-    async def get_job_by_approval_token(self, token: str) -> dict | None:
+    async def get_job_by_approval_token(self, token: str) -> dict[str, Any] | None:
         """Get job by approval token using O(1) Redis lookup.
 
         Uses token mapping stored in Redis to directly fetch job ID,

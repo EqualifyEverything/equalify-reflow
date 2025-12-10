@@ -7,6 +7,7 @@ for Claude model access in both development and production environments.
 import base64
 import logging
 from pathlib import Path
+from typing import Any
 
 import yaml
 from pydantic import BaseModel, Field
@@ -62,7 +63,7 @@ class AccessibilityAgent:
             f"Accessibility agent initialized with provider: {settings.ai_provider}"
         )
 
-    def _create_model(self):
+    def _create_model(self) -> Any:
         """Create AWS Bedrock model for Claude access.
 
         Returns:
@@ -92,7 +93,7 @@ class AccessibilityAgent:
                 f"Only 'bedrock' is supported."
             )
 
-    def _load_prompts(self) -> dict:
+    def _load_prompts(self) -> dict[str, Any]:
         """Load prompt templates from YAML configuration.
 
         Returns:
@@ -102,7 +103,7 @@ class AccessibilityAgent:
 
         try:
             with open(prompts_file) as f:
-                prompts = yaml.safe_load(f)
+                prompts: dict[str, Any] = yaml.safe_load(f)
                 return prompts
         except FileNotFoundError:
             logger.warning(
@@ -110,7 +111,7 @@ class AccessibilityAgent:
             )
             return self._default_prompts()
 
-    def _default_prompts(self) -> dict:
+    def _default_prompts(self) -> dict[str, Any]:
         """Fallback default prompts if YAML file is not found."""
         return {
             "system_prompt": """You are an expert accessibility specialist who improves PDF-to-markdown conversions.

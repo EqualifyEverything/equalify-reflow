@@ -4,12 +4,11 @@ Tests the PyMarkdown integration for detecting markdown structure issues
 that impact accessibility.
 """
 
-import pytest
 
 from src.analyzers.markdown_linter import (
     DEFAULT_ENABLED_RULES,
-    MarkdownLinter,
     PYMARKDOWN_CATEGORY_MAP,
+    MarkdownLinter,
 )
 from src.shared.models.hints_models import (
     HintCategory,

@@ -2,6 +2,7 @@
 
 from collections.abc import AsyncGenerator
 from functools import lru_cache
+from typing import Any
 
 import boto3
 import redis.asyncio as redis
@@ -21,7 +22,7 @@ from .services.storage_service import StorageService
 _s3_client = None
 
 @lru_cache
-def _get_s3_client_singleton():
+def _get_s3_client_singleton() -> Any:
     """Create singleton S3 client for connection reuse across requests.
 
     In production AWS: Uses IAM role credentials (no keys needed)
@@ -53,7 +54,7 @@ def _get_s3_client_singleton():
 
 
 # Client dependencies with proper resource cleanup
-async def get_s3_client():
+async def get_s3_client() -> AsyncGenerator[Any, None]:
     """Get S3 client (LocalStack or AWS) with optimized retry configuration.
 
     Configures boto3 with:
@@ -71,7 +72,7 @@ async def get_s3_client():
     yield _get_s3_client_singleton()
 
 
-async def get_redis_client() -> AsyncGenerator[redis.Redis, None]:
+async def get_redis_client() -> AsyncGenerator[Any, None]:
     """Get Redis client with connection pool and cleanup.
 
     Yields:
@@ -89,12 +90,12 @@ async def get_redis_client() -> AsyncGenerator[redis.Redis, None]:
     try:
         yield client
     finally:
-        await client.aclose()
+        await client.aclose()  # type: ignore[attr-defined]
 
 
 # Singleton StorageService for circuit breaker persistence
 @lru_cache
-def _get_storage_service_singleton():
+def _get_storage_service_singleton() -> StorageService:
     """Create singleton StorageService for circuit breaker persistence."""
     return StorageService(
         s3_client=_get_s3_client_singleton(),
@@ -105,7 +106,7 @@ def _get_storage_service_singleton():
 
 # Singleton S3URLService
 @lru_cache
-def _get_s3_url_service_singleton():
+def _get_s3_url_service_singleton() -> S3URLService:
     """Create singleton S3URLService for URL generation."""
     return S3URLService(
         s3_client=_get_s3_client_singleton(),
@@ -116,7 +117,7 @@ def _get_s3_url_service_singleton():
 
 # Singleton S3CleanupService
 @lru_cache
-def _get_s3_cleanup_service_singleton():
+def _get_s3_cleanup_service_singleton() -> S3CleanupService:
     """Create singleton S3CleanupService for cleanup operations."""
     return S3CleanupService(
         s3_client=_get_s3_client_singleton(),
@@ -179,7 +180,7 @@ async def get_s3_cleanup_service() -> S3CleanupService:
 
 
 async def get_queue_service(
-    redis_client = Depends(get_redis_client)
+    redis_client: Any = Depends(get_redis_client)
 ) -> QueueService:
     """Get queue service instance.
 
@@ -200,7 +201,7 @@ async def get_queue_service(
 
 
 async def get_job_service(
-    redis_client = Depends(get_redis_client)
+    redis_client: Any = Depends(get_redis_client)
 ) -> JobService:
     """Get job service instance.
 
@@ -221,7 +222,7 @@ async def get_job_service(
 
 
 async def get_rate_limit_service(
-    redis_client = Depends(get_redis_client)
+    redis_client: Any = Depends(get_redis_client)
 ) -> AsyncGenerator[RateLimitService, None]:
     """Get rate limit service instance.
 

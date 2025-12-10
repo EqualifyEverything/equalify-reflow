@@ -41,7 +41,7 @@ class ApprovalService:
         self.queue_service = queue_service
         self.cleanup_service = CleanupService(s3_client)
 
-    async def validate_approval_token(self, token: str) -> dict | None:
+    async def validate_approval_token(self, token: str) -> dict[str, Any] | None:
         """Find job by approval token and validate expiration.
 
         Uses O(1) Redis lookup via token mapping to find job directly.
@@ -174,7 +174,7 @@ class ApprovalService:
         self,
         job_id: str,
         s3_key: str,
-        decision_metadata: dict
+        decision_metadata: dict[str, Any]
     ) -> None:
         """Handle approved decision - route to processing queue.
 
@@ -257,7 +257,7 @@ class ApprovalService:
         self,
         job_id: str,
         s3_key: str,
-        decision_metadata: dict
+        decision_metadata: dict[str, Any]
     ) -> None:
         """Handle denied decision - cleanup files and update status.
 

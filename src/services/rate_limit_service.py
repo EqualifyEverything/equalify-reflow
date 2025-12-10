@@ -3,6 +3,7 @@
 import logging
 import time
 import uuid
+from typing import Any
 
 from redis.asyncio import Redis
 
@@ -178,7 +179,7 @@ class RateLimitService:
             # This prevents rate limiter from being a single point of failure
             return True, None
 
-    async def get_remaining_quota(self, client_ip: str, operation: str = "submit") -> dict:
+    async def get_remaining_quota(self, client_ip: str, operation: str = "submit") -> dict[str, Any]:
         """
         Get remaining quota for a client.
 

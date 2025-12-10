@@ -4,11 +4,8 @@ Tests the orchestration service that combines VeraPDF and PyMarkdown
 analyzers to build a DocumentHintsCache.
 """
 
-from pathlib import Path
-from unittest.mock import AsyncMock, MagicMock, patch
 
 import pytest
-
 from src.analyzers.hints_cache import HintsCacheService
 from src.analyzers.markdown_linter import MarkdownLinter
 from src.analyzers.pdf_accessibility_analyzer import PDFAccessibilityAnalyzer

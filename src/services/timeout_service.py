@@ -126,7 +126,12 @@ class TimeoutService:
             )
 
             # Cleanup temp files from S3
-            cleanup_success = await self.cleanup_service.cleanup_denied_job(job_id)
+            s3_key = job_data.get("s3_key")
+            cleanup_success = False
+            if s3_key:
+                cleanup_success = await self.cleanup_service.cleanup_job_files(s3_key)
+            else:
+                logger.warning(f"Job {job_id} missing s3_key, cannot cleanup files")
 
             if not cleanup_success:
                 logger.warning(

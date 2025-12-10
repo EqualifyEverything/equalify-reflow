@@ -1,6 +1,7 @@
 """S3 URL generation service (pure functions, no S3 API calls)."""
 
 import logging
+from typing import Any
 
 from fastapi import HTTPException
 
@@ -16,7 +17,7 @@ class S3URLService:
     environment configuration. It does not interact with S3 API directly.
     """
 
-    def __init__(self, s3_client, temp_bucket: str, results_bucket: str):
+    def __init__(self, s3_client: Any, temp_bucket: str, results_bucket: str):
         """Initialize URL service with bucket names and optional S3 client.
 
         Args:
@@ -87,7 +88,7 @@ class S3URLService:
                 Params={'Bucket': bucket, 'Key': key},
                 ExpiresIn=expiration
             )
-            return url
+            return url  # type: ignore[no-any-return]
         except Exception as e:
             raise HTTPException(
                 status_code=500,

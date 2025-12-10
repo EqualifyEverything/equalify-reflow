@@ -19,7 +19,7 @@ class S3CleanupService:
     Cleanup failures are logged but do not block critical workflows.
     """
 
-    def __init__(self, s3_client, temp_bucket: str):
+    def __init__(self, s3_client: Any, temp_bucket: str):
         """Initialize cleanup service with S3 client and temp bucket.
 
         Args:

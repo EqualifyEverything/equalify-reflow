@@ -11,7 +11,8 @@ from typing import TYPE_CHECKING
 if TYPE_CHECKING:
     from PIL import Image
 
-from docling.datamodel.base_models import DocumentStream, InputFormat
+from docling.datamodel.base_models import InputFormat
+from docling.datamodel.document import DocumentStream  # type: ignore[attr-defined]
 from docling.datamodel.pipeline_options import PdfPipelineOptions
 from docling.document_converter import DocumentConverter, PdfFormatOption
 
@@ -34,7 +35,7 @@ class ExtractedImage:
     image_type: str  # "picture", "table"
     caption: str  # Extracted caption text
     page_num: int  # Source page number
-    pil_image: Image.Image  # type: ignore[name-defined]
+    pil_image: Image.Image  # noqa: F821
 
 
 @dataclass
@@ -111,7 +112,7 @@ class PDFConverter:
 
                 # Extract page image if available
                 page_image_base64 = ""
-                if page.image and hasattr(page.image, "pil_image"):
+                if page.image and hasattr(page.image, "pil_image") and page.image.pil_image:
                     has_page_images = True
                     # Convert PIL Image to base64 PNG
                     page_image_base64 = self._image_to_base64(page.image.pil_image)
@@ -145,7 +146,7 @@ class PDFConverter:
 
             # Extract pictures (diagrams, photos, illustrations)
             for pic in doc.pictures:
-                if pic.image and hasattr(pic.image, "pil_image"):
+                if pic.image and hasattr(pic.image, "pil_image") and pic.image.pil_image:
                     extracted_images.append(
                         ExtractedImage(
                             ref_id=pic.self_ref,
@@ -163,7 +164,7 @@ class PDFConverter:
 
             # Extract tables (if they have image representations)
             for table in doc.tables:
-                if table.image and hasattr(table.image, "pil_image"):
+                if table.image and hasattr(table.image, "pil_image") and table.image.pil_image:
                     extracted_images.append(
                         ExtractedImage(
                             ref_id=table.self_ref,
@@ -195,7 +196,7 @@ class PDFConverter:
             logger.error(f"PDF conversion failed: {e}", exc_info=True)
             raise ValueError(f"Failed to convert PDF: {str(e)}") from e
 
-    def _image_to_base64(self, image: Image.Image) -> str:  # type: ignore[name-defined]
+    def _image_to_base64(self, image: Image.Image) -> str:  # noqa: F821
         """Convert PIL Image to base64-encoded PNG string.
 
         Args:

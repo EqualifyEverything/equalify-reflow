@@ -13,13 +13,16 @@ from datetime import UTC, datetime
 
 from ..config import settings
 from ..services.cleanup_service import CleanupService
+from ..services.job_service import JobService
 from ..services.metrics_service import (
     MetricsService,
     worker_active_gauge,
     worker_errors_total,
 )
 from ..services.orphan_service import OrphanService
+from ..services.queue_service import QueueService
 from ..services.s3_cleanup_service import S3CleanupService
+from ..services.storage_service import StorageService
 from ..services.timeout_service import TimeoutService
 
 logger = logging.getLogger(__name__)
@@ -30,12 +33,12 @@ class TimeoutWorker:
 
     def __init__(
         self,
-        storage_service,
-        queue_service,
-        job_service,
-        metrics_service,
-        s3_cleanup_service,
-    ):
+        storage_service: StorageService,
+        queue_service: QueueService,
+        job_service: JobService,
+        metrics_service: MetricsService,
+        s3_cleanup_service: S3CleanupService,
+    ) -> None:
         """Initialize timeout worker with service dependencies.
 
         Args:
@@ -69,15 +72,15 @@ class TimeoutWorker:
         )
 
         # Task scheduling state
-        self.last_approval_check = None
-        self.last_temp_cleanup = None
-        self.last_orphan_cleanup = None
-        self.last_metrics_cleanup = None
+        self.last_approval_check: datetime | None = None
+        self.last_temp_cleanup: datetime | None = None
+        self.last_orphan_cleanup: datetime | None = None
+        self.last_metrics_cleanup: datetime | None = None
 
         # Worker state
         self.running = False
 
-    async def start(self, shutdown_event: asyncio.Event = None):
+    async def start(self, shutdown_event: asyncio.Event | None = None) -> None:
         """Main worker loop with scheduled task execution.
 
         Args:
@@ -169,7 +172,7 @@ class TimeoutWorker:
 
         return elapsed >= interval_seconds
 
-    async def _run_approval_check(self):
+    async def _run_approval_check(self) -> None:
         """Run approval timeout monitoring task."""
         try:
             logger.debug("Running approval timeout check...")
@@ -182,7 +185,7 @@ class TimeoutWorker:
             logger.error(f"Error in approval timeout check: {e}", exc_info=True)
             await self.metrics_service.increment_metric("worker_task_errors", 1)
 
-    async def _run_temp_cleanup(self):
+    async def _run_temp_cleanup(self) -> None:
         """Run S3 temp file cleanup task."""
         try:
             logger.info("Running temp file cleanup...")
@@ -197,7 +200,7 @@ class TimeoutWorker:
             logger.error(f"Error in temp file cleanup: {e}", exc_info=True)
             await self.metrics_service.increment_metric("worker_task_errors", 1)
 
-    async def _run_orphan_cleanup(self):
+    async def _run_orphan_cleanup(self) -> None:
         """Run orphaned job cleanup tasks."""
         try:
             logger.info("Running orphan cleanup...")
@@ -220,7 +223,7 @@ class TimeoutWorker:
             logger.error(f"Error in orphan cleanup: {e}", exc_info=True)
             await self.metrics_service.increment_metric("worker_task_errors", 1)
 
-    async def _run_metrics_cleanup(self):
+    async def _run_metrics_cleanup(self) -> None:
         """Run metrics cleanup task."""
         try:
             logger.info("Running metrics cleanup...")
@@ -236,17 +239,17 @@ class TimeoutWorker:
             logger.error(f"Error in metrics cleanup: {e}", exc_info=True)
             await self.metrics_service.increment_metric("worker_task_errors", 1)
 
-    def stop(self):
+    def stop(self) -> None:
         """Signal worker to stop gracefully."""
         logger.info("Stopping timeout worker...")
         self.running = False
 
 
 # Global worker instance
-_worker_instance = None
+_worker_instance: TimeoutWorker | None = None
 
 
-async def start_timeout_worker(shutdown_event: asyncio.Event = None):
+async def start_timeout_worker(shutdown_event: asyncio.Event | None = None) -> None:
     """Entry point for timeout worker (called from main.py lifespan).
 
     Creates service instances and starts the worker loop.
@@ -303,7 +306,7 @@ async def start_timeout_worker(shutdown_event: asyncio.Event = None):
     await _worker_instance.start(shutdown_event)
 
 
-def get_timeout_worker():
+def get_timeout_worker() -> TimeoutWorker | None:
     """Get the global timeout worker instance.
 
     Returns:

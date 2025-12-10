@@ -30,6 +30,7 @@ import time
 from dataclasses import dataclass
 from enum import Enum
 from threading import Lock
+from typing import Any
 
 logger = logging.getLogger(__name__)
 
@@ -291,7 +292,7 @@ class CircuitBreaker:
 
         logger.info(f"Circuit breaker '{self.name}': CLOSED - service recovered")
 
-    def get_stats(self) -> dict:
+    def get_stats(self) -> dict[str, Any]:
         """Get current circuit breaker statistics.
 
         Returns:

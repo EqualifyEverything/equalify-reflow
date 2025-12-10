@@ -4,24 +4,19 @@ Tests the VeraPDF response parsing and hint generation logic.
 Uses mocked HTTP responses - integration tests cover actual VeraPDF calls.
 """
 
-from pathlib import Path
-from unittest.mock import AsyncMock, MagicMock, patch
 
-import httpx
 import pytest
-
 from src.analyzers.pdf_accessibility_analyzer import (
     CLAUSE_CATEGORY_MAP,
     KEYWORD_CATEGORY_MAP,
-    PDFAccessibilityAnalyzer,
     VERAPDF_CATEGORY_MAP,
+    PDFAccessibilityAnalyzer,
 )
 from src.shared.models.hints_models import (
     HintCategory,
     HintSeverity,
     HintSource,
 )
-
 
 # Sample VeraPDF responses for testing
 COMPLIANT_RESPONSE = {

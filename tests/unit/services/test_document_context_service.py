@@ -8,12 +8,9 @@ from dataclasses import dataclass, field
 from unittest.mock import MagicMock
 
 import pytest
-
 from docling_core.types.doc.labels import DocItemLabel
-
 from src.services.document_context_service import DocumentContextService
 from src.shared.models.context_models import DocumentType
-
 
 # ============================================================================
 # Mock Objects for DoclingDocument

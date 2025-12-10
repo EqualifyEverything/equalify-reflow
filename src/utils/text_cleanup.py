@@ -136,7 +136,7 @@ def fix_url_formatting(text: str) -> str:
     """
     # Fix markdown links with missing protocol
     # [text](example.com) → [text](http://example.com)
-    def add_protocol(match):
+    def add_protocol(match: re.Match[str]) -> str:
         link_text = match.group(1)
         url = match.group(2)
         if not url.startswith(('http://', 'https://', 'mailto:', 'ftp://')):

@@ -3,8 +3,10 @@
 import json
 import logging
 from datetime import UTC, datetime
+from typing import Any
 
 from pydantic import BaseModel
+from redis.asyncio import Redis
 
 from ..config import settings
 from ..shared.constants.redis_keys import timeout_key
@@ -15,7 +17,7 @@ logger = logging.getLogger(__name__)
 class QueueService:
     """Service for managing Redis queue operations."""
 
-    def __init__(self, redis_client):
+    def __init__(self, redis_client: Redis) -> None:
         """Initialize queue service with Redis client.
 
         Args:
@@ -49,7 +51,8 @@ class QueueService:
             Number of items in the PII queue
         """
         try:
-            return await self.redis.llen(self.pii_queue)
+            result = await self.redis.llen(self.pii_queue)
+            return int(result) if result is not None else 0
         except Exception:
             return -1
 
@@ -91,7 +94,7 @@ class QueueService:
         queue_name: str,
         timeout: int = 5,
         model_class: type[BaseModel] | None = None
-    ) -> dict | None:
+    ) -> dict[str, Any] | None:
         """
         Pop job from queue with blocking timeout.
 
@@ -117,7 +120,7 @@ class QueueService:
             _, payload_json = result
 
             # Deserialize JSON
-            payload_dict = json.loads(payload_json)
+            payload_dict: dict[str, Any] = json.loads(payload_json)
 
             # Optionally validate with Pydantic model
             if model_class:
@@ -141,7 +144,8 @@ class QueueService:
             Number of items in queue, or -1 on error
         """
         try:
-            return await self.redis.llen(queue_name)
+            result = await self.redis.llen(queue_name)
+            return int(result) if result is not None else 0
         except Exception:
             return -1
 
@@ -149,7 +153,7 @@ class QueueService:
         self,
         queue_name: str,
         count: int = 10
-    ) -> list[dict]:
+    ) -> list[dict[str, Any]]:
         """
         View queued jobs without removing them.
 
@@ -168,10 +172,10 @@ class QueueService:
             items = await self.redis.lrange(queue_name, 0, count - 1)
 
             # Deserialize each item
-            payloads = []
+            payloads: list[dict[str, Any]] = []
             for item in items:
                 try:
-                    payload = json.loads(item)
+                    payload: dict[str, Any] = json.loads(item)
                     payloads.append(payload)
                 except json.JSONDecodeError:
                     # Skip invalid items
@@ -382,8 +386,8 @@ class QueueService:
         """
         try:
             key = timeout_key(timeout_type)
-            count = await self.redis.zcard(key)
-            return count
+            result = await self.redis.zcard(key)
+            return int(result) if result is not None else 0
         except Exception as e:
             logger.error(
                 f"Failed to get timeout count: {str(e)}",

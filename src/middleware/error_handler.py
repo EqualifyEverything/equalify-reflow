@@ -1,7 +1,7 @@
 """Global error handling middleware."""
 
 import logging
-from collections.abc import Callable
+from collections.abc import Awaitable, Callable
 
 from fastapi import Request, Response, status
 from fastapi.responses import JSONResponse
@@ -16,7 +16,7 @@ class ErrorHandlerMiddleware(BaseHTTPMiddleware):
     """Middleware for handling uncaught exceptions."""
 
     async def dispatch(
-        self, request: Request, call_next: Callable
+        self, request: Request, call_next: Callable[[Request], Awaitable[Response]]
     ) -> Response:
         """
         Handle request and catch any unhandled exceptions.

@@ -11,7 +11,7 @@ Metrics exported on port 8001 (configurable via METRICS_PORT env var):
 """
 
 import logging
-from collections.abc import Callable
+from collections.abc import Awaitable, Callable
 
 from fastapi import FastAPI, Request, Response
 from prometheus_client import (
@@ -53,7 +53,7 @@ class MetricsMiddleware(BaseHTTPMiddleware):
     """Middleware to collect HTTP metrics."""
 
     async def dispatch(
-        self, request: Request, call_next: Callable[[Request], Response]
+        self, request: Request, call_next: Callable[[Request], Awaitable[Response]]
     ) -> Response:
         """Process request and collect metrics.
 
@@ -118,7 +118,7 @@ class MetricsMiddleware(BaseHTTPMiddleware):
             for route in request.app.routes:
                 match, _ = route.matches(request.scope)
                 if match == Match.FULL:
-                    return route.path
+                    return route.path  # type: ignore[no-any-return]
 
             # Fallback to raw path if no route matches
             return request.url.path

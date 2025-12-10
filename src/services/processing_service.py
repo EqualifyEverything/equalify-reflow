@@ -2,6 +2,7 @@
 
 import logging
 import time
+from typing import Any
 
 from ..agents.full_document_agent import FullDocumentAgent
 from ..config import settings
@@ -25,10 +26,10 @@ class ProcessingService:
         storage_service: StorageService,
         queue_service: QueueService,
         job_service: JobService,
-        redis_client=None,
+        redis_client: Any = None,
         pdf_converter: PDFConverter | None = None,
         document_context_service: DocumentContextService | None = None,
-    ):
+    ) -> None:
         """Initialize processing service with dependencies.
 
         Args:
@@ -138,7 +139,7 @@ class ProcessingService:
             logger.info("Uploading extracted markdown to S3")
             result_url = await self.storage.upload_result(
                 job_id=job.job_id,
-                content=full_markdown.encode("utf-8"),
+                content=full_markdown,
                 format="md",
             )
 

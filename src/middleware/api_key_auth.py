@@ -2,7 +2,8 @@
 
 import logging
 import secrets
-from collections.abc import Callable
+from collections.abc import Awaitable, Callable
+from typing import Any
 
 from fastapi import Request, Response, status
 from fastapi.responses import JSONResponse
@@ -21,7 +22,7 @@ class APIKeyAuthMiddleware(BaseHTTPMiddleware):
     Public endpoints (health, metrics, dev monitoring) bypass authentication.
     """
 
-    def __init__(self, app):
+    def __init__(self, app: Any) -> None:
         """
         Initialize API key auth middleware.
 
@@ -55,7 +56,7 @@ class APIKeyAuthMiddleware(BaseHTTPMiddleware):
         return keys
 
     async def dispatch(
-        self, request: Request, call_next: Callable
+        self, request: Request, call_next: Callable[[Request], Awaitable[Response]]
     ) -> Response:
         """
         Validate API key before processing request.

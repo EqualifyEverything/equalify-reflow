@@ -244,7 +244,7 @@ class OrphanService:
             logger.info(f"Cleaning up old job {job_id}")
 
             # Cleanup temp files from S3
-            await self.s3_cleanup_service.cleanup_job_temp_files(job_id)
+            await self.s3_cleanup_service.cleanup_temp_files_for_job(job_id)
 
             # Delete job hash from Redis
             await self.job_service.cleanup_old_job(job_id)
@@ -325,7 +325,7 @@ class OrphanService:
             )
 
             # Cleanup temp files
-            await self.s3_cleanup_service.cleanup_job_temp_files(job_id)
+            await self.s3_cleanup_service.cleanup_temp_files_for_job(job_id)
 
             logger.info(f"Successfully failed stuck job {job_id}")
             return True

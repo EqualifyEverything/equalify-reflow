@@ -2,6 +2,7 @@
 
 import asyncio
 import logging
+from typing import Any
 
 from docling.document_converter import DocumentConverter
 
@@ -13,7 +14,7 @@ class PDFExtractionError(Exception):
     pass
 
 
-def _convert_pdf_sync(tmp_path: str):
+def _convert_pdf_sync(tmp_path: str) -> Any:
     """Synchronous Docling PDF conversion (runs in thread pool).
 
     This function contains the CPU-intensive Docling processing that
@@ -70,7 +71,7 @@ async def extract_pdf_text(pdf_content: bytes) -> str:
             result = await asyncio.to_thread(_convert_pdf_sync, tmp_path)
 
             # Extract markdown text (Docling's structured output)
-            text = result.document.export_to_markdown()
+            text: str = result.document.export_to_markdown()
 
             # Validate extraction produced content
             if not text or len(text.strip()) < 10:

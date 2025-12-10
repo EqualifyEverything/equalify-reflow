@@ -1,5 +1,7 @@
 """Health check endpoints."""
 
+from typing import Any
+
 from fastapi import APIRouter, Depends, HTTPException, status
 
 from ..dependencies import get_queue_service, get_storage_service
@@ -12,7 +14,7 @@ router = APIRouter(prefix="/health", tags=["Health"])
 async def health_check(
     storage: StorageService = Depends(get_storage_service),
     queue: QueueService = Depends(get_queue_service)
-):
+) -> dict[str, Any]:
     """
     Health check endpoint for container orchestration.
 
@@ -49,7 +51,7 @@ async def health_check(
 
 
 @router.get("/ready")
-async def readiness_check():
+async def readiness_check() -> dict[str, str]:
     """
     Readiness check for Kubernetes/orchestration.
 

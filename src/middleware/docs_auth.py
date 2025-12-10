@@ -3,7 +3,8 @@
 import base64
 import logging
 import secrets
-from collections.abc import Callable
+from collections.abc import Awaitable, Callable
+from typing import Any
 
 from fastapi import Request, Response, status
 from fastapi.responses import JSONResponse
@@ -22,7 +23,7 @@ class DocsAuthMiddleware(BaseHTTPMiddleware):
     Triggers browser login prompt via WWW-Authenticate header.
     """
 
-    def __init__(self, app):
+    def __init__(self, app: Any) -> None:
         """
         Initialize docs auth middleware.
 
@@ -39,7 +40,7 @@ class DocsAuthMiddleware(BaseHTTPMiddleware):
             )
 
     async def dispatch(
-        self, request: Request, call_next: Callable
+        self, request: Request, call_next: Callable[[Request], Awaitable[Response]]
     ) -> Response:
         """
         Validate HTTP Basic auth for documentation endpoints.

@@ -47,7 +47,7 @@ class PIIWorker:
         self.queue = queue_service
         self.running = False
 
-    async def start(self, shutdown_event: asyncio.Event = None) -> None:
+    async def start(self, shutdown_event: asyncio.Event | None = None) -> None:
         """Start the PII worker main loop.
 
         Continuously polls PII queue and processes jobs.
@@ -69,15 +69,15 @@ class PIIWorker:
                     job_data = await self.queue.dequeue(PII_QUEUE, timeout=settings.pii_worker_queue_timeout_seconds)
 
                     if job_data:
+                        # Parse payload (dequeue returns dict)
+                        job = PIIQueuePayload.model_validate(job_data)
+
                         # Check shutdown before processing
                         if shutdown_event and shutdown_event.is_set():
                             logger.info("Shutdown requested, requeueing job and stopping")
                             # Requeue job for next worker
-                            await self.queue.enqueue(PII_QUEUE, job_data)
+                            await self.queue.enqueue(PII_QUEUE, job)
                             break
-
-                        # Parse payload (dequeue returns dict)
-                        job = PIIQueuePayload.model_validate(job_data)
                         logger.info(f"Received PII job: {job.job_id}")
 
                         # Process job
@@ -119,7 +119,7 @@ class PIIWorker:
 _worker_instance: PIIWorker | None = None
 
 
-async def start_pii_worker(shutdown_event: asyncio.Event = None) -> None:
+async def start_pii_worker(shutdown_event: asyncio.Event | None = None) -> None:
     """Start the PII worker as a background task.
 
     Creates service instances and starts the worker loop.

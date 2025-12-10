@@ -3,6 +3,8 @@
 import asyncio
 import logging
 
+from redis.asyncio import Redis
+
 from ..config import settings
 from ..dependencies import get_redis_client, get_s3_client
 from ..services.job_service import JobService
@@ -32,7 +34,7 @@ class ProcessingWorker:
         storage_service: StorageService,
         queue_service: QueueService,
         job_service: JobService,
-        redis_client=None,
+        redis_client: Redis | None = None,
     ):
         """Initialize processing worker.
 
@@ -51,7 +53,7 @@ class ProcessingWorker:
         self.queue = queue_service
         self.running = False
 
-    async def start(self, shutdown_event: asyncio.Event = None) -> None:
+    async def start(self, shutdown_event: asyncio.Event | None = None) -> None:
         """Start the processing worker main loop.
 
         Continuously polls processing queue and processes jobs.
@@ -75,15 +77,15 @@ class ProcessingWorker:
                     )
 
                     if job_data:
+                        # Parse payload
+                        job = ProcessingQueuePayload.model_validate(job_data)
+
                         # Check shutdown before processing
                         if shutdown_event and shutdown_event.is_set():
                             logger.info("Shutdown requested, requeueing job and stopping")
                             # Requeue job for next worker
-                            await self.queue.enqueue(PROCESSING_QUEUE, job_data)
+                            await self.queue.enqueue(PROCESSING_QUEUE, job)
                             break
-
-                        # Parse payload
-                        job = ProcessingQueuePayload.model_validate(job_data)
                         logger.info(f"Received processing job: {job.job_id}")
 
                         # Process job
@@ -125,7 +127,7 @@ class ProcessingWorker:
 _worker_instance: ProcessingWorker | None = None
 
 
-async def start_processing_worker(shutdown_event: asyncio.Event = None) -> None:
+async def start_processing_worker(shutdown_event: asyncio.Event | None = None) -> None:
     """Start the processing worker as a background task.
 
     Creates service instances and starts the worker loop.

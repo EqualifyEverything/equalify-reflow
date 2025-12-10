@@ -205,10 +205,23 @@ export interface CorrectionResponse {
 // API Methods
 // ============================================================================
 
+export interface SubmitOptions {
+  skipPiiScan?: boolean
+  skipReason?: string
+}
+
 export const api = {
-  async submitDocument(file: File): Promise<SubmitResponse> {
+  async submitDocument(file: File, options?: SubmitOptions): Promise<SubmitResponse> {
     const formData = new FormData()
     formData.append('file', file)
+
+    if (options?.skipPiiScan) {
+      formData.append('skip_pii_scan', 'true')
+      if (options.skipReason) {
+        formData.append('skip_reason', options.skipReason)
+      }
+    }
+
     return request<SubmitResponse>('/api/documents/submit', {
       method: 'POST',
       body: formData,

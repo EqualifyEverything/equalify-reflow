@@ -1,7 +1,11 @@
-"""Base agent framework for multi-agent document processing (PRD-011).
+"""Base agent framework for multi-agent document processing (PRD-011, PRD-012).
 
 This module provides the abstract base class and configuration for all
 specialist agents in the multi-agent PDF correction system.
+
+Supports model tier selection (PRD-012) for cost/capability tradeoffs:
+- REASONING tier: Claude Sonnet 4.5 for analysis, consolidation
+- EFFICIENT tier: Claude Haiku 4.5 for transcription, bulk work
 """
 
 import logging
@@ -15,8 +19,9 @@ from pydantic import BaseModel
 from pydantic_ai import Agent
 from pydantic_ai.messages import BinaryContent
 
+from src.agents.model_tiers import MODEL_TIER_MAP, ModelTier
 from src.config import settings
-from src.shared.llm_cost import calculate_estimated_cost
+from src.shared.llm_cost import calculate_estimated_cost, get_pricing_for_tier
 from src.shared.models.agent_models import AgentInput, LLMUsage
 
 logger = logging.getLogger(__name__)
@@ -35,6 +40,7 @@ class AgentConfig:
         correction_types: List of correction types this agent handles
         max_retries: Maximum retries for output validation failures
         temperature: LLM temperature setting (0.0-2.0)
+        model_tier: Model tier for cost/capability tradeoff (default: EFFICIENT)
     """
 
     name: str
@@ -43,6 +49,7 @@ class AgentConfig:
     correction_types: list[str] = field(default_factory=list)
     max_retries: int = 2
     temperature: float = 0.2
+    model_tier: ModelTier = ModelTier.EFFICIENT
 
 
 class BaseDocumentAgent(ABC, Generic[TOutput]):
@@ -75,6 +82,9 @@ class BaseDocumentAgent(ABC, Generic[TOutput]):
             config: Agent configuration including prompts file and output type
         """
         self.config = config
+        self.model_tier = config.model_tier
+        self.model_id = MODEL_TIER_MAP[self.model_tier]
+
         logger.info(f"Initializing agent: {config.name}")
 
         # Load prompts from YAML or fallback to defaults
@@ -84,8 +94,8 @@ class BaseDocumentAgent(ABC, Generic[TOutput]):
         # Create PydanticAI agent with Bedrock backend
         self._agent: Agent[None, TOutput] = self._create_agent()
         logger.info(
-            f"Agent {config.name} initialized "
-            f"(handles: {config.correction_types}, retries: {config.max_retries})"
+            f"Agent {config.name} initialized with model tier {self.model_tier.value} "
+            f"({self.model_id}) (handles: {config.correction_types}, retries: {config.max_retries})"
         )
 
     @property
@@ -142,7 +152,7 @@ class BaseDocumentAgent(ABC, Generic[TOutput]):
         """Create PydanticAI agent with AWS Bedrock backend.
 
         Initializes the Agent with:
-        - BedrockConverseModel for Claude access
+        - BedrockConverseModel for Claude access (model based on tier)
         - Structured output type from config
         - System prompt from loaded prompts
         - Retry configuration
@@ -154,10 +164,10 @@ class BaseDocumentAgent(ABC, Generic[TOutput]):
 
         logger.debug(
             f"Agent {self.name}: Creating BedrockConverseModel "
-            f"with model {settings.bedrock_model_id}"
+            f"with model {self.model_id} (tier: {self.model_tier.value})"
         )
 
-        model = BedrockConverseModel(model_name=settings.bedrock_model_id)
+        model = BedrockConverseModel(model_name=self.model_id)
 
         agent: Agent[None, TOutput] = Agent(
             model,
@@ -170,10 +180,10 @@ class BaseDocumentAgent(ABC, Generic[TOutput]):
         return agent
 
     def _calculate_estimated_cost(self, input_tokens: int, output_tokens: int) -> float:
-        """Calculate estimated cost in cents using centralized pricing.
+        """Calculate estimated cost in cents using tier-based pricing.
 
-        Uses the centralized calculate_estimated_cost function with default
-        Claude Haiku 4.5 pricing from src.shared.llm_cost.
+        Uses the centralized calculate_estimated_cost function with pricing
+        based on the agent's model tier (Sonnet for REASONING, Haiku for EFFICIENT).
 
         Args:
             input_tokens: Number of input tokens consumed
@@ -182,7 +192,8 @@ class BaseDocumentAgent(ABC, Generic[TOutput]):
         Returns:
             Estimated cost in cents (float)
         """
-        return calculate_estimated_cost(input_tokens, output_tokens)
+        pricing = get_pricing_for_tier(self.model_tier)
+        return calculate_estimated_cost(input_tokens, output_tokens, pricing)
 
     @abstractmethod
     async def process(self, input_data: AgentInput) -> TOutput:

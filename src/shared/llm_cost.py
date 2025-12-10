@@ -3,15 +3,25 @@
 This module provides a single source of truth for LLM pricing and cost calculations,
 making it easy to update pricing when AWS Bedrock rates change.
 
-Current pricing is for Claude Haiku 4.5 via AWS Bedrock (as of January 2025):
+Supported Models (as of January 2025):
+
+Claude Haiku 4.5 via AWS Bedrock:
 - Input: $1.00 per 1M tokens
 - Output: $5.00 per 1M tokens
+
+Claude Sonnet 4.5 via AWS Bedrock:
+- Input: $3.00 per 1M tokens
+- Output: $15.00 per 1M tokens
 
 Prices are stored in cents per token for precision and to avoid floating point errors
 when working with small per-token costs.
 """
 
 from dataclasses import dataclass
+from typing import TYPE_CHECKING
+
+if TYPE_CHECKING:
+    from src.agents.model_tiers import ModelTier
 
 
 @dataclass
@@ -40,7 +50,7 @@ class LLMPricing:
     model_name: str = "Unknown Model"
 
 
-# Default pricing for Claude Haiku 4.5 via AWS Bedrock
+# Default pricing for Claude Haiku 4.5 via AWS Bedrock (EFFICIENT tier)
 # Updated: January 2025
 # Source: https://aws.amazon.com/bedrock/pricing/
 DEFAULT_PRICING = LLMPricing(
@@ -48,6 +58,41 @@ DEFAULT_PRICING = LLMPricing(
     output_cost_per_token_cents=0.0005,  # $5.00 per 1M tokens = $0.000005/token = 0.0005 cents/token
     model_name="Claude Haiku 4.5 (Bedrock)",
 )
+
+# Pricing for Claude Sonnet 4.5 via AWS Bedrock (REASONING tier)
+# Updated: January 2025
+# Source: https://aws.amazon.com/bedrock/pricing/
+SONNET_PRICING = LLMPricing(
+    input_cost_per_token_cents=0.0003,  # $3.00 per 1M tokens = $0.000003/token = 0.0003 cents/token
+    output_cost_per_token_cents=0.0015,  # $15.00 per 1M tokens = $0.000015/token = 0.0015 cents/token
+    model_name="Claude Sonnet 4.5 (Bedrock)",
+)
+
+# Alias for clarity
+HAIKU_PRICING = DEFAULT_PRICING
+
+
+def get_pricing_for_tier(tier: "ModelTier") -> LLMPricing:
+    """Get pricing configuration for a model tier.
+
+    Args:
+        tier: The model tier (REASONING or EFFICIENT)
+
+    Returns:
+        LLMPricing configuration for the tier
+
+    Example:
+        >>> from src.agents.model_tiers import ModelTier
+        >>> pricing = get_pricing_for_tier(ModelTier.REASONING)
+        >>> print(pricing.model_name)
+        'Claude Sonnet 4.5 (Bedrock)'
+    """
+    # Import here to avoid circular imports
+    from src.agents.model_tiers import ModelTier
+
+    if tier == ModelTier.REASONING:
+        return SONNET_PRICING
+    return HAIKU_PRICING
 
 
 def calculate_estimated_cost(
@@ -83,6 +128,11 @@ def calculate_estimated_cost(
         >>> cost = calculate_estimated_cost(1000, 100, custom_pricing)
         >>> print(f"Cost: ${cost/100:.6f}")
         Cost: $0.003000
+
+        >>> # Calculate with Sonnet pricing
+        >>> cost = calculate_estimated_cost(1000, 100, SONNET_PRICING)
+        >>> print(f"Cost: ${cost/100:.6f}")
+        Cost: $0.004500
     """
     input_cost = input_tokens * pricing.input_cost_per_token_cents
     output_cost = output_tokens * pricing.output_cost_per_token_cents
@@ -115,6 +165,9 @@ def format_cost_dollars(cost_cents: float) -> str:
 __all__ = [
     "LLMPricing",
     "DEFAULT_PRICING",
+    "SONNET_PRICING",
+    "HAIKU_PRICING",
+    "get_pricing_for_tier",
     "calculate_estimated_cost",
     "format_cost_dollars",
 ]

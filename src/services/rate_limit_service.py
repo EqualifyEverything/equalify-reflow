@@ -29,7 +29,7 @@ class RateLimitService:
         self.redis = redis
 
         # Rate limit configurations (requests per window)
-        self.SUBMIT_PER_IP_LIMIT = 10  # 10 submissions per hour per IP
+        self.SUBMIT_PER_IP_LIMIT = 25  # 25 submissions per hour per IP
         self.SUBMIT_PER_IP_WINDOW = 3600  # 1 hour in seconds
 
         self.STATUS_PER_IP_LIMIT = 100  # 100 status checks per hour per IP

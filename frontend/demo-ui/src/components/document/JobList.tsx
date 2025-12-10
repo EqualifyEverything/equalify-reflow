@@ -1,37 +1,38 @@
-import { useState, useEffect } from 'react'
+import { useEffect } from 'react'
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card'
+import { Button } from '@/components/ui/button'
+import { Trash2 } from 'lucide-react'
 import { JobCard } from './JobCard'
-import type { JobStatus } from '@/types/api'
-import { api } from '@/lib/api'
+import { usePersistedJobs } from '@/hooks/usePersistedJobs'
 
 interface JobListProps {
   latestJobId?: string | null
 }
 
 export function JobList({ latestJobId }: JobListProps) {
-  const [jobs, setJobs] = useState<JobStatus[]>([])
+  const { jobs, isLoading, addJob, clearAllJobs } = usePersistedJobs()
 
-  // Poll for latest job status if provided
+  // When a new job is uploaded, add it to the persisted list
   useEffect(() => {
-    if (!latestJobId) return
+    if (latestJobId) {
+      addJob(latestJobId)
+    }
+  }, [latestJobId, addJob])
 
-    const interval = setInterval(async () => {
-      try {
-        const status = await api.getJobStatus(latestJobId)
-        setJobs((prev) => {
-          const existing = prev.find((j) => j.job_id === latestJobId)
-          if (existing) {
-            return prev.map((j) => (j.job_id === latestJobId ? status : j))
-          }
-          return [status, ...prev]
-        })
-      } catch (error) {
-        console.error('Failed to fetch job status:', error)
-      }
-    }, 2000)
-
-    return () => clearInterval(interval)
-  }, [latestJobId])
+  if (isLoading) {
+    return (
+      <Card>
+        <CardHeader>
+          <CardTitle className="text-uic-navy">Recent Jobs</CardTitle>
+        </CardHeader>
+        <CardContent>
+          <p className="text-muted-foreground text-center py-8">
+            Loading saved jobs...
+          </p>
+        </CardContent>
+      </Card>
+    )
+  }
 
   if (jobs.length === 0) {
     return (
@@ -50,8 +51,17 @@ export function JobList({ latestJobId }: JobListProps) {
 
   return (
     <Card>
-      <CardHeader>
+      <CardHeader className="flex flex-row items-center justify-between space-y-0">
         <CardTitle className="text-uic-navy">Recent Jobs</CardTitle>
+        <Button
+          variant="ghost"
+          size="sm"
+          onClick={clearAllJobs}
+          className="text-muted-foreground hover:text-destructive"
+        >
+          <Trash2 className="h-4 w-4 mr-1" />
+          Clear
+        </Button>
       </CardHeader>
       <CardContent className="space-y-3">
         {jobs.map((job) => (

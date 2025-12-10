@@ -326,6 +326,70 @@ class RemediationStorageService:
 
         return found
 
+    async def load_current_markdown(self, job_id: str) -> str | None:
+        """Load the current markdown content for a job.
+
+        Tries to load the current working version first ({job_id}.md),
+        falls back to v0 version ({job_id}-v0.md) if not found.
+
+        Args:
+            job_id: Job identifier
+
+        Returns:
+            Markdown content as string, or None if not found
+        """
+        # Try current version first
+        try:
+            response = self.storage.s3_client.get_object(
+                Bucket=self.storage.results_bucket,
+                Key=f"{job_id}.md"
+            )
+            content: str = response["Body"].read().decode("utf-8")
+            return content
+        except ClientError as e:
+            if e.response["Error"]["Code"] != "NoSuchKey":
+                logger.error(f"Failed to load current markdown for job {job_id}: {e}")
+                return None
+
+        # Fall back to v0 version
+        try:
+            response = self.storage.s3_client.get_object(
+                Bucket=self.storage.results_bucket,
+                Key=f"{job_id}-v0.md"
+            )
+            content = response["Body"].read().decode("utf-8")
+            return content
+        except ClientError as e:
+            if e.response["Error"]["Code"] == "NoSuchKey":
+                logger.warning(f"No markdown found for job {job_id}")
+                return None
+            logger.error(f"Failed to load v0 markdown for job {job_id}: {e}")
+            return None
+
+    async def save_current_markdown(self, job_id: str, content: str) -> str:
+        """Save the current markdown content for a job.
+
+        Args:
+            job_id: Job identifier
+            content: Markdown content
+
+        Returns:
+            S3 key where markdown was saved
+        """
+        key = f"{job_id}.md"
+        try:
+            self.storage.s3_client.put_object(
+                Bucket=self.storage.results_bucket,
+                Key=key,
+                Body=content.encode("utf-8"),
+                ContentType="text/markdown"
+            )
+            logger.info(f"Saved current markdown for job {job_id}")
+            return key
+        except Exception as e:
+            logger.error(f"Failed to save markdown for job {job_id}: {e}")
+            raise
+
     # Helper methods
 
     async def _put_json_object(self, key: str, body: bytes) -> None:

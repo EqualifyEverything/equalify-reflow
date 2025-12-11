@@ -21,7 +21,7 @@ help:
 	@echo "  make test-e2e     - Run E2E tests (full workflows, ~5min, excludes large files)"
 	@echo "  make test-large-files - Run large file edge case tests (single-threaded, ~2min)"
 	@echo "  make test-slow    - Run slow/E2E tests (same as test-e2e)"
-	@echo "  make test-all     - Run all tests including special tests (comprehensive)"
+	@echo "  make test-all     - Run all tests (unit in Docker, integration on host)"
 	@echo "  make coverage     - Run tests with coverage report"
 	@echo "  make coverage-html - Generate and open HTML coverage report"
 	@echo "  make coverage-report - Show coverage summary"
@@ -132,13 +132,20 @@ test-large-files:
 # Alias for test-e2e
 test-slow: test-e2e
 
-# Run all tests in Docker (most comprehensive, <2min with parallelization)
-# Excludes concurrent and large file tests which need single-threaded execution
+# Run all tests comprehensively
+# - Unit tests run in Docker (fast, no external dependencies)
+# - Integration tests run on host (use testcontainers which need Docker access)
+# - E2E tests run in Docker
 test-all:
-	@echo "Running all tests in Docker with parallelization..."
-	docker compose -f docker-compose.yml -f docker-compose.dev.yml exec -e SKIP_BEDROCK_TESTS=1 api-gateway sh -c "rm -f .coverage .coverage.* && uv run pytest tests/ -v -n 4 --ignore=tests/integration/workflows/test_concurrent_requests.py --ignore=tests/e2e/edge_cases/test_large_files.py"
+	@echo "=== Running unit tests in Docker ==="
+	docker compose -f docker-compose.yml -f docker-compose.dev.yml exec -e SKIP_BEDROCK_TESTS=1 api-gateway uv run pytest tests/unit -v -n auto --tb=short
+	@echo "\n=== Running integration tests on host (testcontainers) ==="
+	@echo "NOTE: These tests use testcontainers and must run on host machine"
+	SKIP_BEDROCK_TESTS=1 uv run pytest tests/integration -v --tb=short --ignore=tests/integration/workflows/test_concurrent_requests.py
 	@echo "\n=== Running concurrent integration tests (single-threaded) ==="
 	@$(MAKE) test-concurrent
+	@echo "\n=== Running E2E tests in Docker ==="
+	docker compose -f docker-compose.yml -f docker-compose.dev.yml exec -e SKIP_BEDROCK_TESTS=1 api-gateway uv run pytest tests/e2e -v --tb=short -n 2 --ignore=tests/e2e/edge_cases/test_large_files.py
 	@echo "\n=== Running large file tests (single-threaded) ==="
 	@$(MAKE) test-large-files
 	@echo "\n✅ Complete test suite finished!"

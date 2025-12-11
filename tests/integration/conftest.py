@@ -182,42 +182,103 @@ async def approval_service(real_redis_client, real_s3_client, job_service, queue
 # ============================================================================
 
 @pytest.fixture(autouse=True)
-def mock_ai_settings(request):
-    """Auto-mock AI settings for Bedrock (no API keys needed).
+def mock_ai_agents(request):
+    """Auto-mock all AI agents for integration tests (no API keys needed).
+
+    This fixture mocks the multi-agent pipeline:
+    - AnalysisAgent: Returns mock DocumentManifest and observations
+    - ExtractionAgent: Returns mock markdown content
+    - Specialized agents (FiguresAgent, TablesAgent, etc.): Skipped via empty required_agents
 
     NOTE: This fixture is EXCLUDED for test_bedrock_agent.py tests which
     are designed to test real Bedrock API integration.
     """
     from unittest.mock import AsyncMock, MagicMock, patch
 
+    from src.shared.models.processing import LLMUsage
+    from src.shared.models.remediation import DocumentManifest, PageFeatures
+
     # Skip mocking for bedrock integration tests (they test real Bedrock)
     if "test_bedrock_agent" in request.node.nodeid:
         yield
         return
 
-    # Mock settings to use bedrock provider
-    with patch('src.agents.accessibility_agent.settings') as mock_settings:
-        mock_settings.ai_provider = 'bedrock'
-        mock_settings.bedrock_model_id = 'anthropic.claude-3-haiku-20240307-v1:0'
-        mock_settings.bedrock_region = 'us-east-1'
-        mock_settings.claude_max_tokens = 4096
-        mock_settings.claude_temperature = 0.2
+    # Create mock LLM usage for cost tracking
+    mock_usage = LLMUsage(
+        input_tokens=100,
+        output_tokens=50,
+        total_tokens=150,
+        estimated_cost_cents=0.01
+    )
 
-        # Mock BedrockConverseModel and Agent to avoid AWS/API calls
-        with patch('pydantic_ai.models.bedrock.BedrockConverseModel'):
-            with patch('src.agents.accessibility_agent.Agent') as mock_agent_class:
-                # Make Agent() return a mock with an async run method
-                mock_agent = MagicMock()
-                # Agent.run() is async, must return AsyncMock
-                mock_result = MagicMock()
-                mock_result.output = MagicMock(
-                    improved_markdown="# Test",
-                    confidence_score=0.95,
-                    processing_notes="Test notes"
-                )
-                mock_agent.run = AsyncMock(return_value=mock_result)
-                mock_agent_class.return_value = mock_agent
-                yield
+    # Create mock DocumentManifest (output of AnalysisAgent)
+    import json
+    heading_tree_data = {
+        "document_title": "Test Document",
+        "title_page": 1,
+        "sections": [],
+        "total_pages": 1,
+        "layout_type": "single_column",
+        "confidence": 0.95,
+        "observations": ""
+    }
+    mock_manifest = DocumentManifest(
+        job_id="test-job-id",
+        document_title="Test Document",
+        document_type="lecture_notes",
+        total_pages=1,
+        analysis_model="mock-model",
+        heading_tree_json=json.dumps(heading_tree_data),
+        page_features=[
+            PageFeatures(
+                page_num=1,
+                has_images=False,
+                image_count=0,
+                has_tables=False,
+                table_count=0,
+                has_lists=False,
+                has_code_blocks=False,
+                has_math=False,
+                layout_type="single_column",
+                has_headers_footers=False,
+                complexity_score=0.3,
+                complexity_factors=[]
+            )
+        ],
+        required_agents=[],  # Empty = skip specialized agents
+        analysis_confidence=0.95
+    )
+
+    # Mock AnalysisAgent
+    with patch('src.agents.analysis_agent.AnalysisAgent') as mock_analysis_class:
+        mock_analysis = MagicMock()
+        # analyze() returns (manifest, observations, usage)
+        mock_analysis.analyze = AsyncMock(return_value=(mock_manifest, [], mock_usage))
+        mock_analysis_class.return_value = mock_analysis
+
+        # Mock ExtractionAgent
+        with patch('src.agents.extraction_agent.ExtractionAgent') as mock_extraction_class:
+            mock_extraction = MagicMock()
+            # extract() returns (markdown, confidence, usage)
+            mock_extraction.extract = AsyncMock(return_value=(
+                "# Test Document\n\nThis is mock extracted content.",
+                0.92,
+                mock_usage
+            ))
+            mock_extraction_class.return_value = mock_extraction
+
+            # Mock ConsolidationService (converts observations to proposals)
+            with patch('src.services.consolidation_service.ConsolidationService') as mock_consolidation_class:
+                mock_consolidation = MagicMock()
+                # consolidate() returns (proposals, usage)
+                mock_consolidation.consolidate = AsyncMock(return_value=([], mock_usage))
+                mock_consolidation_class.return_value = mock_consolidation
+
+                # Also patch at the ProcessingService module level for imports
+                with patch('src.services.processing_service.AnalysisAgent', mock_analysis_class):
+                    with patch('src.services.processing_service.ExtractionAgent', mock_extraction_class):
+                        with patch('src.services.processing_service.ConsolidationService', mock_consolidation_class):
+                            yield
 
 
 @pytest.fixture
@@ -299,17 +360,22 @@ async def pii_worker(storage_service, queue_service, job_service, mock_pii_analy
 
 
 @pytest_asyncio.fixture
-async def processing_worker(storage_service, queue_service, job_service, mock_pdf_converter, mock_ai_enhancement):
-    """Create ProcessingWorker instance with REAL services and MOCKED AI."""
+async def processing_worker(storage_service, queue_service, job_service, mock_pdf_converter, real_redis_client):
+    """Create ProcessingWorker instance with REAL services and MOCKED PDF converter.
+
+    The ProcessingService uses the new analysis+extraction pipeline which
+    calls various AI agents. These are mocked via mock_ai_settings.
+    """
     from src.services.processing_service import ProcessingService
 
-    # Create ProcessingService with mocked AI/PDF components
+    # Create ProcessingService with mocked PDF converter
+    # AI agents are mocked via the mock_ai_settings autouse fixture
     processing_service = ProcessingService(
         storage_service=storage_service,
         queue_service=queue_service,
         job_service=job_service,
+        redis_client=real_redis_client,
         pdf_converter=mock_pdf_converter,
-        ai_enhancement=mock_ai_enhancement
     )
 
     # Create worker and inject the pre-configured processing service

@@ -15,11 +15,13 @@ import pytest
 from fastapi import status
 from fastapi.testclient import TestClient
 from src.dependencies import (
+    get_application_service,
     get_consolidation_service,
     get_job_service,
     get_remediation_storage,
 )
 from src.main import app
+from src.services.application_service import ApplicationResult
 from src.shared.models.observation import Observation, ObservationLocation
 from src.shared.models.proposal import Proposal, SearchReplaceDiff
 
@@ -640,7 +642,7 @@ class TestTriggerApplication:
 
     @pytest.mark.asyncio
     async def test_apply_success(self, client, api_key_headers):
-        """Test successful application trigger."""
+        """Test successful application of approved proposals."""
         mock_job_service = MagicMock()
         mock_job_service.get_job = AsyncMock(
             return_value={
@@ -651,7 +653,21 @@ class TestTriggerApplication:
         )
         mock_job_service.update_job_status = AsyncMock()
 
+        mock_application_service = MagicMock()
+        mock_application_service.apply_approved_proposals = AsyncMock(
+            return_value=ApplicationResult(
+                applied_count=3,
+                failed_count=0,
+                skipped_count=1,
+                failed_proposals=[],
+                final_markdown_url="job-123.md",
+                validation_warnings=[],
+            )
+        )
+        mock_application_service.count_manual_observations = AsyncMock(return_value=0)
+
         app.dependency_overrides[get_job_service] = lambda: mock_job_service
+        app.dependency_overrides[get_application_service] = lambda: mock_application_service
 
         try:
             response = client.post(
@@ -661,12 +677,10 @@ class TestTriggerApplication:
 
             assert response.status_code == status.HTTP_200_OK
             data = response.json()
-            assert data["status"] == "applying"
-
-            # Verify status update was called
-            mock_job_service.update_job_status.assert_called_once_with(
-                "job-123", "processing", substatus="applying"
-            )
+            assert data["status"] == "completed"
+            assert data["applied_count"] == 3
+            assert data["failed_count"] == 0
+            assert data["final_markdown_url"] == "job-123.md"
         finally:
             app.dependency_overrides.clear()
 
@@ -689,18 +703,36 @@ class TestTriggerApplication:
             app.dependency_overrides.clear()
 
     @pytest.mark.asyncio
-    async def test_apply_wrong_substatus(self, client, api_key_headers):
-        """Test apply fails when job not in awaiting_review state."""
+    async def test_apply_all_proposals_failed(self, client, api_key_headers):
+        """Test apply when all proposals fail."""
         mock_job_service = MagicMock()
         mock_job_service.get_job = AsyncMock(
             return_value={
                 "job_id": "job-123",
                 "status": "processing",
-                "substatus": "consolidating",  # Wrong substatus
+                "substatus": "awaiting_review",
             }
         )
+        mock_job_service.update_job_status = AsyncMock()
+
+        mock_application_service = MagicMock()
+        mock_application_service.apply_approved_proposals = AsyncMock(
+            return_value=ApplicationResult(
+                applied_count=0,
+                failed_count=2,
+                skipped_count=0,
+                failed_proposals=[
+                    {"proposal_id": "prop-1", "error": "Not found"},
+                    {"proposal_id": "prop-2", "error": "Multiple matches"},
+                ],
+                final_markdown_url=None,
+                validation_warnings=[],
+            )
+        )
+        mock_application_service.count_manual_observations = AsyncMock(return_value=0)
 
         app.dependency_overrides[get_job_service] = lambda: mock_job_service
+        app.dependency_overrides[get_application_service] = lambda: mock_application_service
 
         try:
             response = client.post(
@@ -708,7 +740,55 @@ class TestTriggerApplication:
                 headers=api_key_headers,
             )
 
-            assert response.status_code == status.HTTP_400_BAD_REQUEST
-            assert "not in review state" in response.json()["detail"]
+            assert response.status_code == status.HTTP_200_OK
+            data = response.json()
+            assert data["status"] == "failed"
+            assert data["applied_count"] == 0
+            assert data["failed_count"] == 2
+        finally:
+            app.dependency_overrides.clear()
+
+    @pytest.mark.asyncio
+    async def test_apply_partial_success(self, client, api_key_headers):
+        """Test apply with some proposals succeeding and some failing."""
+        mock_job_service = MagicMock()
+        mock_job_service.get_job = AsyncMock(
+            return_value={
+                "job_id": "job-123",
+                "status": "processing",
+                "substatus": "awaiting_review",
+            }
+        )
+        mock_job_service.update_job_status = AsyncMock()
+
+        mock_application_service = MagicMock()
+        mock_application_service.apply_approved_proposals = AsyncMock(
+            return_value=ApplicationResult(
+                applied_count=2,
+                failed_count=1,
+                skipped_count=0,
+                failed_proposals=[{"proposal_id": "prop-3", "error": "Not found"}],
+                final_markdown_url="job-123.md",
+                validation_warnings=["Unbalanced code fences"],
+            )
+        )
+        mock_application_service.count_manual_observations = AsyncMock(return_value=1)
+
+        app.dependency_overrides[get_job_service] = lambda: mock_job_service
+        app.dependency_overrides[get_application_service] = lambda: mock_application_service
+
+        try:
+            response = client.post(
+                "/api/documents/job-123/apply",
+                headers=api_key_headers,
+            )
+
+            assert response.status_code == status.HTTP_200_OK
+            data = response.json()
+            assert data["status"] == "completed"  # Partial success still completes
+            assert data["applied_count"] == 2
+            assert data["failed_count"] == 1
+            assert data["manual_observations"] == 1
+            assert len(data["validation_warnings"]) == 1
         finally:
             app.dependency_overrides.clear()

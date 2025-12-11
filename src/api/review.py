@@ -16,10 +16,12 @@ from fastapi import APIRouter, Depends, HTTPException
 from pydantic import BaseModel, Field
 
 from src.dependencies import (
+    get_application_service,
     get_consolidation_service,
     get_job_service,
     get_remediation_storage,
 )
+from src.services.application_service import ApplicationService
 from src.services.consolidation_service import ConsolidationService
 from src.services.job_service import JobService
 from src.services.remediation_storage_service import RemediationStorageService
@@ -444,30 +446,106 @@ async def batch_approve_proposals(
     }
 
 
+class ApplicationResponse(BaseModel):
+    """Response from application endpoint."""
+
+    status: str
+    applied_count: int
+    failed_count: int
+    skipped_count: int
+    failed_proposals: list[dict[str, Any]]
+    final_markdown_url: str | None
+    validation_warnings: list[str]
+    manual_observations: int
+
+
 @router.post("/{job_id}/apply")
 async def trigger_application(
     job_id: str,
     job_service: JobService = Depends(get_job_service),
-) -> dict[str, Any]:
-    """Trigger application of approved proposals.
+    application_service: ApplicationService = Depends(get_application_service),
+) -> ApplicationResponse:
+    """Apply all approved proposals to the markdown document.
 
-    This endpoint transitions the job to 'applying' substatus
-    and triggers the application phase (PRD-017).
+    This endpoint:
+    1. Loads all approved proposals
+    2. Applies each using search-replace (exact match, then whitespace-normalized)
+    3. Updates observation status to resolved
+    4. Saves final markdown to S3
+    5. Updates job status to completed
+
+    Returns:
+        Application results including counts and any failures
     """
     job = await job_service.get_job(job_id)
     if not job:
         raise HTTPException(status_code=404, detail="Job not found")
 
-    if job.get("substatus") != "awaiting_review":
-        raise HTTPException(
-            status_code=400,
-            detail=f"Job not in review state, current substatus: {job.get('substatus')}",
-        )
-
-    # Update substatus to trigger application
+    # Update substatus to 'applying'
     await job_service.update_job_status(job_id, "processing", substatus="applying")
 
-    # Application will be handled by processing worker or dedicated worker
-    # See PRD-017
+    try:
+        # Apply approved proposals
+        result = await application_service.apply_approved_proposals(job_id)
 
-    return {"status": "applying", "message": "Application phase started"}
+        # Count manual observations
+        manual_obs = await application_service.count_manual_observations(job_id)
+
+        # Determine final status
+        if result.failed_count > 0 and result.applied_count == 0:
+            # All failed
+            await job_service.update_job_status(
+                job_id,
+                "failed",
+                error=f"All {result.failed_count} proposals failed to apply",
+            )
+            return ApplicationResponse(
+                status="failed",
+                applied_count=result.applied_count,
+                failed_count=result.failed_count,
+                skipped_count=result.skipped_count,
+                failed_proposals=result.failed_proposals,
+                final_markdown_url=result.final_markdown_url,
+                validation_warnings=result.validation_warnings,
+                manual_observations=manual_obs,
+            )
+
+        # Success (possibly with some failures)
+        await job_service.update_job_status(
+            job_id,
+            "completed",
+            substatus="",
+            markdown_url=result.final_markdown_url or "",
+            applied_proposals=result.applied_count,
+            failed_proposals_count=result.failed_count,
+            manual_observations=manual_obs,
+            validation_warnings=len(result.validation_warnings),
+        )
+
+        return ApplicationResponse(
+            status="completed",
+            applied_count=result.applied_count,
+            failed_count=result.failed_count,
+            skipped_count=result.skipped_count,
+            failed_proposals=result.failed_proposals,
+            final_markdown_url=result.final_markdown_url,
+            validation_warnings=result.validation_warnings,
+            manual_observations=manual_obs,
+        )
+
+    except ValueError as e:
+        # No markdown found or other validation error
+        await job_service.update_job_status(
+            job_id,
+            "failed",
+            error=str(e),
+        )
+        raise HTTPException(status_code=400, detail=str(e))
+    except Exception as e:
+        # Unexpected error
+        await job_service.update_job_status(
+            job_id,
+            "failed",
+            error=f"Application error: {str(e)}",
+        )
+        raise HTTPException(status_code=500, detail=f"Application failed: {str(e)}")

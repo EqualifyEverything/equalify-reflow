@@ -10,6 +10,7 @@ from botocore.config import Config
 from fastapi import Depends
 
 from .config import settings
+from .services.application_service import ApplicationService
 from .services.consolidation_service import ConsolidationService
 from .services.correction_approval_service import CorrectionApprovalService
 from .services.job_service import JobService
@@ -332,3 +333,34 @@ async def get_consolidation_service(
             )
     """
     return ConsolidationService(storage=remediation_storage)
+
+
+async def get_application_service(
+    remediation_storage: RemediationStorageService = Depends(get_remediation_storage),
+    storage: StorageService = Depends(get_storage_service),
+    job_service: JobService = Depends(get_job_service),
+) -> ApplicationService:
+    """Get application service instance.
+
+    Provides search-replace application of approved proposals
+    to markdown documents (PRD-017).
+
+    Args:
+        remediation_storage: RemediationStorageService (injected)
+        storage: StorageService for S3 operations (injected)
+        job_service: JobService for status updates (injected)
+
+    Returns:
+        ApplicationService instance
+
+    Note:
+        In FastAPI routes, use:
+            application: ApplicationService = Depends(
+                get_application_service
+            )
+    """
+    return ApplicationService(
+        remediation_storage=remediation_storage,
+        storage=storage,
+        job_service=job_service,
+    )

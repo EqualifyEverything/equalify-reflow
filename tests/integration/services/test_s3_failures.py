@@ -10,7 +10,6 @@ from unittest.mock import AsyncMock
 
 import pytest
 from botocore.exceptions import ClientError
-from src.agents.full_document_agent import HeadingTree
 from src.services.job_service import JobService
 from src.services.pii_service import PIIDetectionService
 from src.services.processing_service import ProcessingService
@@ -18,7 +17,7 @@ from src.services.queue_service import QueueService
 from src.services.storage_service import StorageService
 from src.shared.models.processing import LLMUsage
 from src.shared.models.queue import PIIQueuePayload, ProcessingQueuePayload
-from src.shared.models.remediation import DocumentManifest, PageFeatures
+from src.shared.models.remediation import DocumentManifest, HeadingTree, PageFeatures
 
 
 @pytest.fixture

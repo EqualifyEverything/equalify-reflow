@@ -792,3 +792,79 @@ class TestTriggerApplication:
             assert len(data["validation_warnings"]) == 1
         finally:
             app.dependency_overrides.clear()
+
+    @pytest.mark.asyncio
+    async def test_apply_wrong_substatus(self, client, api_key_headers):
+        """Test apply fails when job is not in awaiting_review substatus."""
+        mock_job_service = MagicMock()
+        mock_job_service.get_job = AsyncMock(
+            return_value={
+                "job_id": "job-123",
+                "status": "processing",
+                "substatus": "analyzing",  # Wrong substatus
+            }
+        )
+
+        app.dependency_overrides[get_job_service] = lambda: mock_job_service
+
+        try:
+            response = client.post(
+                "/api/documents/job-123/apply",
+                headers=api_key_headers,
+            )
+
+            assert response.status_code == status.HTTP_400_BAD_REQUEST
+            assert "Job not in review state" in response.json()["detail"]
+            assert "analyzing" in response.json()["detail"]
+        finally:
+            app.dependency_overrides.clear()
+
+    @pytest.mark.asyncio
+    async def test_apply_missing_substatus(self, client, api_key_headers):
+        """Test apply fails when job has no substatus."""
+        mock_job_service = MagicMock()
+        mock_job_service.get_job = AsyncMock(
+            return_value={
+                "job_id": "job-123",
+                "status": "processing",
+                # No substatus field
+            }
+        )
+
+        app.dependency_overrides[get_job_service] = lambda: mock_job_service
+
+        try:
+            response = client.post(
+                "/api/documents/job-123/apply",
+                headers=api_key_headers,
+            )
+
+            assert response.status_code == status.HTTP_400_BAD_REQUEST
+            assert "Job not in review state" in response.json()["detail"]
+        finally:
+            app.dependency_overrides.clear()
+
+    @pytest.mark.asyncio
+    async def test_apply_empty_substatus(self, client, api_key_headers):
+        """Test apply fails when job has empty substatus."""
+        mock_job_service = MagicMock()
+        mock_job_service.get_job = AsyncMock(
+            return_value={
+                "job_id": "job-123",
+                "status": "processing",
+                "substatus": "",  # Empty substatus
+            }
+        )
+
+        app.dependency_overrides[get_job_service] = lambda: mock_job_service
+
+        try:
+            response = client.post(
+                "/api/documents/job-123/apply",
+                headers=api_key_headers,
+            )
+
+            assert response.status_code == status.HTTP_400_BAD_REQUEST
+            assert "Job not in review state" in response.json()["detail"]
+        finally:
+            app.dependency_overrides.clear()

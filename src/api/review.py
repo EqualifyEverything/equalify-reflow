@@ -481,6 +481,12 @@ async def trigger_application(
     if not job:
         raise HTTPException(status_code=404, detail="Job not found")
 
+    if job.get("substatus") != "awaiting_review":
+        raise HTTPException(
+            status_code=400,
+            detail=f"Job not in review state, current substatus: {job.get('substatus')}"
+        )
+
     # Update substatus to 'applying'
     await job_service.update_job_status(job_id, "processing", substatus="applying")
 

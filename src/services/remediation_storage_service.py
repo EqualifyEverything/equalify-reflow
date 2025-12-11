@@ -390,6 +390,67 @@ class RemediationStorageService:
             logger.error(f"Failed to save markdown for job {job_id}: {e}")
             raise
 
+    async def save_application_log(
+        self,
+        job_id: str,
+        log_entries: list[dict[str, Any]]
+    ) -> str:
+        """Save application log to S3 for audit trail.
+
+        The application log records the outcome of each proposal application,
+        including success/failure status, method used, and timestamps.
+
+        Args:
+            job_id: Job identifier
+            log_entries: List of log entry dictionaries with:
+                - proposal_id: ID of the proposal
+                - status: "applied" or "failed"
+                - method: Matching method used (for applied)
+                - error: Error message (for failed)
+                - timestamp: ISO timestamp
+
+        Returns:
+            S3 key where log was saved
+
+        Raises:
+            Exception: If upload fails
+        """
+        content = json.dumps(log_entries, indent=2, default=self._json_serializer)
+        key = f"{job_id}/application-log.json"
+
+        try:
+            body = content.encode("utf-8")
+            await self._put_json_object(key, body)
+            logger.info(f"Saved application log for job {job_id} ({len(log_entries)} entries)")
+            return key
+        except Exception as e:
+            logger.error(f"Failed to save application log for job {job_id}: {e}")
+            raise
+
+    async def load_application_log(self, job_id: str) -> list[dict[str, Any]]:
+        """Load application log from S3.
+
+        Args:
+            job_id: Job identifier
+
+        Returns:
+            List of log entry dictionaries (empty list if not found)
+        """
+        key = f"{job_id}/application-log.json"
+
+        try:
+            content = await self._get_json_object(key)
+            if content is None:
+                return []
+            result: list[dict[str, Any]] = json.loads(content)
+            return result
+        except json.JSONDecodeError as e:
+            logger.error(f"Invalid JSON in application log for job {job_id}: {e}")
+            return []
+        except Exception as e:
+            logger.error(f"Failed to load application log for job {job_id}: {e}")
+            return []
+
     # Helper methods
 
     async def _put_json_object(self, key: str, body: bytes) -> None:

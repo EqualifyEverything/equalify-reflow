@@ -21,11 +21,15 @@ from src.agents.extraction_agent import (
     ExtractionAgentConfig,
     ExtractionOutput,
 )
-from src.agents.full_document_agent import HeadingNode, HeadingTree
 from src.agents.model_tiers import MODEL_TIER_MAP, ModelTier
 from src.services.pdf_converter import PageData
 from src.shared.llm_cost import HAIKU_PRICING, calculate_estimated_cost
-from src.shared.models.remediation import DocumentManifest, PageFeatures
+from src.shared.models.remediation import (
+    DocumentManifest,
+    HeadingNode,
+    HeadingTree,
+    PageFeatures,
+)
 
 # =============================================================================
 # Output Model Tests

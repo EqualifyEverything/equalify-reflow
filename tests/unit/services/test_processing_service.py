@@ -7,11 +7,15 @@ Validates the analysis + extraction pipeline (PRD-012, PRD-013).
 from unittest.mock import AsyncMock, MagicMock, patch
 
 import pytest
-from src.agents.full_document_agent import HeadingNode, HeadingTree
 from src.services.pdf_converter import PageData, PDFConversionResult
 from src.services.processing_service import ProcessingService
 from src.shared.models.processing import LLMUsage
-from src.shared.models.remediation import DocumentManifest, PageFeatures
+from src.shared.models.remediation import (
+    DocumentManifest,
+    HeadingNode,
+    HeadingTree,
+    PageFeatures,
+)
 
 pytestmark = pytest.mark.unit
 

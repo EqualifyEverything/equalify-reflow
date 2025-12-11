@@ -26,13 +26,12 @@ from pydantic import BaseModel, Field
 from pydantic_ai import Agent
 from pydantic_ai.messages import BinaryContent
 
-from src.agents.full_document_agent import HeadingTree
 from src.agents.model_tiers import MODEL_TIER_MAP, ModelTier
 from src.config import settings
 from src.services.pdf_converter import PageData
 from src.shared.llm_cost import HAIKU_PRICING, calculate_estimated_cost
 from src.shared.models.processing import LLMUsage
-from src.shared.models.remediation import DocumentManifest, PageFeatures
+from src.shared.models.remediation import DocumentManifest, HeadingTree, PageFeatures
 
 logger = logging.getLogger(__name__)
 

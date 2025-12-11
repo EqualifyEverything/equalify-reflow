@@ -33,7 +33,12 @@ from src.services.pdf_converter import PageData
 from src.shared.llm_cost import calculate_estimated_cost, get_pricing_for_tier
 from src.shared.models.observation import Observation, ObservationLocation
 from src.shared.models.processing import LLMUsage
-from src.shared.models.remediation import DocumentManifest, PageFeatures
+from src.shared.models.remediation import (
+    DocumentManifest,
+    HeadingNode,
+    HeadingTree,
+    PageFeatures,
+)
 
 logger = logging.getLogger(__name__)
 
@@ -41,34 +46,6 @@ logger = logging.getLogger(__name__)
 # =============================================================================
 # Output Models for Structured LLM Response
 # =============================================================================
-
-
-class HeadingNode(BaseModel):
-    """A single heading in the document structure."""
-
-    level: int = Field(..., ge=1, le=6, description="Heading level (1-6)")
-    title: str = Field(..., description="Heading text as it appears")
-    page: int = Field(..., ge=1, description="Page number where heading appears")
-    section_number: str | None = Field(
-        default=None, description="Section number if present (e.g., '1', '2.1', 'A')"
-    )
-
-
-class HeadingTree(BaseModel):
-    """Document heading structure from analysis."""
-
-    document_title: str = Field(..., description="Main document title (H1)")
-    title_page: int = Field(default=1, description="Page where title appears")
-    sections: list[HeadingNode] = Field(
-        default_factory=list, description="All headings in document order"
-    )
-    layout_type: Literal["single_column", "two_column", "mixed"] = Field(
-        default="single_column",
-        description="Detected layout: single_column, two_column, or mixed",
-    )
-    confidence: float = Field(
-        default=0.9, ge=0.0, le=1.0, description="Confidence in structure analysis"
-    )
 
 
 class AnalysisPageFeatures(BaseModel):
@@ -486,6 +463,6 @@ __all__ = [
     "AnalysisOutput",
     "AnalysisObservation",
     "AnalysisPageFeatures",
-    "HeadingTree",
     "HeadingNode",
+    "HeadingTree",
 ]

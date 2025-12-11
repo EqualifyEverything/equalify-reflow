@@ -12,6 +12,117 @@ from typing import Literal
 from pydantic import BaseModel, ConfigDict, Field
 
 
+class HeadingNode(BaseModel):
+    """A single heading in the document structure.
+
+    Represents a heading detected in the document, including its level,
+    title, page location, and optional section numbering.
+
+    Attributes:
+        level: Heading level (1-6) following HTML heading conventions
+        title: Heading text as it appears in the document
+        page: 1-indexed page number where heading appears
+        section_number: Optional section number (e.g., '1', '2.1', 'A')
+
+    Example:
+        >>> node = HeadingNode(
+        ...     level=2,
+        ...     title="Introduction",
+        ...     page=3,
+        ...     section_number="1.1"
+        ... )
+    """
+
+    level: int = Field(..., ge=1, le=6, description="Heading level (1-6)")
+    title: str = Field(..., description="Heading text as it appears")
+    page: int = Field(..., ge=1, description="Page number where heading appears")
+    section_number: str | None = Field(
+        default=None, description="Section number if present (e.g., '1', '2.1', 'A')"
+    )
+
+
+class HeadingTree(BaseModel):
+    """Document heading structure from analysis.
+
+    Represents the complete hierarchical structure of headings in a document,
+    including metadata about layout and confidence in the analysis.
+
+    This model is used by:
+    - Analysis agent (Sonnet 4.5) for deep document analysis
+    - Full document agent for two-phase extraction
+    - Extraction agent (Haiku) for guided markdown generation
+
+    Attributes:
+        document_title: Main document title (H1 level)
+        title_page: Page number where the title appears
+        sections: All headings in document order
+        total_pages: Total number of pages (optional for backward compatibility)
+        layout_type: Detected layout type
+        confidence: Confidence in structure analysis (0.0-1.0)
+        observations: Optional notes about document structure
+
+    Example:
+        >>> tree = HeadingTree(
+        ...     document_title="CS 101 Syllabus",
+        ...     title_page=1,
+        ...     sections=[
+        ...         HeadingNode(level=2, title="Course Overview", page=1),
+        ...         HeadingNode(level=2, title="Schedule", page=3)
+        ...     ],
+        ...     total_pages=10,
+        ...     layout_type="single_column",
+        ...     confidence=0.95
+        ... )
+    """
+
+    document_title: str = Field(..., description="Main document title (H1)")
+    title_page: int = Field(default=1, description="Page where title appears")
+    sections: list[HeadingNode] = Field(
+        default_factory=list, description="All headings in document order"
+    )
+    total_pages: int | None = Field(
+        default=None,
+        description="Total pages in document (optional for backward compatibility)"
+    )
+    layout_type: Literal["single_column", "two_column", "mixed"] = Field(
+        default="single_column",
+        description="Detected layout: single_column, two_column, or mixed",
+    )
+    confidence: float = Field(
+        default=0.9, ge=0.0, le=1.0, description="Confidence in structure analysis"
+    )
+    observations: str = Field(
+        default="", description="Notes about document structure"
+    )
+
+    model_config = ConfigDict(
+        json_schema_extra={
+            "example": {
+                "document_title": "CS 101 Course Syllabus",
+                "title_page": 1,
+                "sections": [
+                    {
+                        "level": 2,
+                        "title": "Course Overview",
+                        "page": 1,
+                        "section_number": "1"
+                    },
+                    {
+                        "level": 2,
+                        "title": "Schedule",
+                        "page": 3,
+                        "section_number": "2"
+                    }
+                ],
+                "total_pages": 10,
+                "layout_type": "single_column",
+                "confidence": 0.95,
+                "observations": "Well-structured document with clear hierarchy"
+            }
+        }
+    )
+
+
 class PageFeatures(BaseModel):
     """Features detected on a single page by the Analysis agent.
 

@@ -23,6 +23,7 @@ from src.config import settings
 from src.services.pdf_converter import PageData
 from src.shared.llm_cost import calculate_estimated_cost
 from src.shared.models.processing import LLMUsage
+from src.shared.models.remediation import HeadingTree
 
 logger = logging.getLogger(__name__)
 
@@ -30,38 +31,6 @@ logger = logging.getLogger(__name__)
 # =============================================================================
 # Output Models
 # =============================================================================
-
-
-class HeadingNode(BaseModel):
-    """A single heading in the document structure."""
-
-    level: int = Field(..., ge=1, le=6, description="Heading level (1-6)")
-    title: str = Field(..., description="Heading text as it appears")
-    page: int = Field(..., ge=1, description="Page number where heading appears")
-    section_number: str | None = Field(
-        default=None, description="Section number if present (e.g., '1', '2.1', 'A')"
-    )
-
-
-class HeadingTree(BaseModel):
-    """Document heading structure from Phase 1 analysis."""
-
-    document_title: str = Field(..., description="Main document title (H1)")
-    title_page: int = Field(default=1, description="Page where title appears")
-    sections: list[HeadingNode] = Field(
-        default_factory=list, description="All headings in document order"
-    )
-    total_pages: int = Field(..., description="Total pages in document")
-    layout_type: str = Field(
-        default="single_column",
-        description="Detected layout: single_column, two_column, or mixed",
-    )
-    confidence: float = Field(
-        default=0.9, ge=0.0, le=1.0, description="Confidence in structure analysis"
-    )
-    observations: str = Field(
-        default="", description="Notes about document structure"
-    )
 
 
 class DocumentMarkdown(BaseModel):

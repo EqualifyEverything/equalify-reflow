@@ -12,7 +12,7 @@ from __future__ import annotations
 import logging
 import uuid
 from pathlib import Path
-from typing import Any
+from typing import Any, Literal
 
 from pydantic import BaseModel, Field
 from pydantic_ai import Agent
@@ -398,7 +398,9 @@ OBSERVATION {obs.id}:
                 continue
 
             # Determine route based on confidence
-            route = "auto" if draft.confidence >= self.AUTO_ROUTE_THRESHOLD else "manual"
+            route: Literal["auto", "manual"] = (
+                "auto" if draft.confidence >= self.AUTO_ROUTE_THRESHOLD else "manual"
+            )
 
             proposal = Proposal(
                 id=str(uuid.uuid4()),

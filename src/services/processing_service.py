@@ -339,7 +339,7 @@ class ProcessingService:
             processing_time = int(time.time() - start_time)
 
             # Parse heading tree from manifest to get section count and layout
-            from ..agents.full_document_agent import HeadingTree
+            from ..shared.models.remediation import HeadingTree
 
             heading_tree = HeadingTree.model_validate_json(manifest.heading_tree_json)
 

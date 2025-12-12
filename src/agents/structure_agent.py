@@ -21,6 +21,7 @@ from src.agents.model_tiers import ModelTier
 from src.agents.specialized_models import StructureAnalysisOutput, StructureIssue
 from src.services.pdf_converter import PageData
 from src.shared.models.observation import Observation, ObservationLocation
+from src.shared.models.processing import LLMUsage
 from src.shared.models.remediation import DocumentManifest
 
 logger = logging.getLogger(__name__)
@@ -97,7 +98,7 @@ Identify structural issues.""",
         manifest: DocumentManifest,
         markdown: str,
         job_id: str,
-    ) -> list[Observation]:
+    ) -> tuple[list[Observation], LLMUsage]:
         """Analyze document structure across all pages.
 
         The StructureAgent processes all pages together to understand
@@ -110,9 +111,15 @@ Identify structural issues.""",
             job_id: Job identifier
 
         Returns:
-            List of observations for structural issues
+            Tuple of (observations for structural issues, combined usage metrics)
         """
         observations: list[Observation] = []
+        combined_usage = LLMUsage(
+            input_tokens=0,
+            output_tokens=0,
+            total_tokens=0,
+            estimated_cost_cents=0.0,
+        )
 
         # Parse heading tree for context
         heading_tree_summary = self._summarize_heading_tree(manifest.heading_tree_json)
@@ -150,6 +157,12 @@ Identify structural issues.""",
                 # Run analysis
                 output, usage = await self._run_agent(user_message, image_bytes)
 
+                # Accumulate usage
+                combined_usage.input_tokens += usage.input_tokens
+                combined_usage.output_tokens += usage.output_tokens
+                combined_usage.total_tokens += usage.total_tokens
+                combined_usage.estimated_cost_cents += usage.estimated_cost_cents
+
                 logger.debug(
                     f"StructureAgent page {page.page_num}: "
                     f"Found {len(output.issues)} issues, "
@@ -173,7 +186,7 @@ Identify structural issues.""",
                 )
                 # Continue with other pages
 
-        return observations
+        return observations, combined_usage
 
     def _summarize_heading_tree(self, heading_tree_json: str) -> str:
         """Create a readable summary of the heading tree.

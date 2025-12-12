@@ -6,17 +6,65 @@ filters pages by content type to ensure efficient processing.
 
 from __future__ import annotations
 
+import asyncio
 import logging
+from dataclasses import dataclass
 from typing import TYPE_CHECKING, Any, Protocol
 
+from src.config import settings
 from src.services.pdf_converter import PageData
 from src.shared.models.observation import Observation
+from src.shared.models.processing import LLMUsage
 from src.shared.models.remediation import DocumentManifest, PageFeatures
 
 if TYPE_CHECKING:
     pass
 
 logger = logging.getLogger(__name__)
+
+
+@dataclass
+class AgentRunResult:
+    """Result from running a single specialized agent."""
+    agent_name: str
+    observations: list[Observation]
+    usage: LLMUsage | None
+    error: Exception | None
+    pages_processed: int
+
+    @property
+    def success(self) -> bool:
+        return self.error is None
+
+
+@dataclass
+class CombinedAgentUsage:
+    """Combined usage metrics from all parallel agent runs."""
+    total_input_tokens: int = 0
+    total_output_tokens: int = 0
+    total_tokens: int = 0
+    total_estimated_cost_cents: float = 0.0
+    per_agent_usage: dict[str, LLMUsage] | None = None
+
+    def __post_init__(self) -> None:
+        if self.per_agent_usage is None:
+            self.per_agent_usage = {}
+
+    def add_usage(self, agent_name: str, usage: LLMUsage) -> None:
+        if self.per_agent_usage is not None:
+            self.per_agent_usage[agent_name] = usage
+        self.total_input_tokens += usage.input_tokens
+        self.total_output_tokens += usage.output_tokens
+        self.total_tokens += usage.total_tokens
+        self.total_estimated_cost_cents += usage.estimated_cost_cents
+
+    def to_llm_usage(self) -> LLMUsage:
+        return LLMUsage(
+            input_tokens=self.total_input_tokens,
+            output_tokens=self.total_output_tokens,
+            total_tokens=self.total_tokens,
+            estimated_cost_cents=self.total_estimated_cost_cents,
+        )
 
 
 class SpecializedAgent(Protocol):
@@ -32,7 +80,7 @@ class SpecializedAgent(Protocol):
         manifest: DocumentManifest,
         markdown: str,
         job_id: str,
-    ) -> list[Observation]:
+    ) -> tuple[list[Observation], LLMUsage]:
         """Analyze pages and generate observations.
 
         Args:
@@ -42,7 +90,7 @@ class SpecializedAgent(Protocol):
             job_id: Job identifier
 
         Returns:
-            List of observations from this agent
+            Tuple of (observations from this agent, usage metrics)
         """
         ...
 
@@ -93,11 +141,12 @@ class AgentRouter:
         pages: list[PageData],
         markdown: str,
         job_id: str,
-    ) -> list[Observation]:
-        """Run all required agents and collect observations.
+    ) -> tuple[list[Observation], CombinedAgentUsage]:
+        """Run all required agents concurrently and collect observations.
 
         Routes agents based on manifest.required_agents and filters pages
-        to only process those relevant for each agent type.
+        to only process those relevant for each agent type. Agents run in
+        parallel with configurable concurrency limit.
 
         Args:
             manifest: DocumentManifest with required_agents list
@@ -106,24 +155,26 @@ class AgentRouter:
             job_id: Job identifier for observations
 
         Returns:
-            Combined list of observations from all agents
+            Tuple of (combined observations, combined usage metrics)
         """
-        all_observations: list[Observation] = []
-
         logger.info(
-            f"Job {job_id}: Running specialized agents. "
+            f"Job {job_id}: Running specialized agents in parallel "
+            f"(max concurrency: {settings.max_concurrent_agents}). "
             f"Required: {manifest.required_agents}, "
             f"Registered: {self.registered_agents}"
         )
 
+        # Create semaphore for concurrency control
+        semaphore = asyncio.Semaphore(settings.max_concurrent_agents)
+
+        # Build tasks for all required agents
+        tasks = []
         for agent_name in manifest.required_agents:
             if agent_name not in self._agents:
                 logger.warning(
                     f"Job {job_id}: Agent '{agent_name}' required but not registered, skipping"
                 )
                 continue
-
-            agent = self._agents[agent_name]
 
             # Determine which pages this agent should process
             relevant_pages = self._get_relevant_pages(agent_name, manifest, pages)
@@ -135,36 +186,117 @@ class AgentRouter:
                 continue
 
             logger.info(
-                f"Job {job_id}: Agent '{agent_name}' processing {len(relevant_pages)} pages"
+                f"Job {job_id}: Agent '{agent_name}' queued to process {len(relevant_pages)} pages"
             )
 
+            # Create task for this agent
+            task = self._run_single_agent_with_semaphore(
+                semaphore=semaphore,
+                agent_name=agent_name,
+                agent=self._agents[agent_name],
+                relevant_pages=relevant_pages,
+                manifest=manifest,
+                markdown=markdown,
+                job_id=job_id,
+            )
+            tasks.append(task)
+
+        # Run all agents concurrently
+        if not tasks:
+            logger.info(f"Job {job_id}: No agents to run")
+            return [], CombinedAgentUsage()
+
+        results = await asyncio.gather(*tasks, return_exceptions=False)
+
+        # Combine results
+        all_observations: list[Observation] = []
+        combined_usage = CombinedAgentUsage()
+
+        for result in results:
+            if result.error:
+                logger.error(
+                    f"Job {job_id}: Agent '{result.agent_name}' failed: {result.error}",
+                    exc_info=result.error,
+                )
+                # Continue processing other results
+                continue
+
+            all_observations.extend(result.observations)
+
+            if result.usage:
+                combined_usage.add_usage(result.agent_name, result.usage)
+
+            cost = result.usage.estimated_cost_cents / 100 if result.usage else 0.0
+            logger.info(
+                f"Job {job_id}: Agent '{result.agent_name}' generated "
+                f"{len(result.observations)} observations "
+                f"(processed {result.pages_processed} pages, cost: ${cost:.4f})"
+            )
+
+        logger.info(
+            f"Job {job_id}: Specialized analysis complete. "
+            f"Total observations: {len(all_observations)}, "
+            f"Total cost: ${combined_usage.total_estimated_cost_cents/100:.4f}"
+        )
+
+        return all_observations, combined_usage
+
+    async def _run_single_agent_with_semaphore(
+        self,
+        semaphore: asyncio.Semaphore,
+        agent_name: str,
+        agent: SpecializedAgent,
+        relevant_pages: list[PageData],
+        manifest: DocumentManifest,
+        markdown: str,
+        job_id: str,
+    ) -> AgentRunResult:
+        """Run a single agent with semaphore-based concurrency control.
+
+        Args:
+            semaphore: Semaphore for limiting concurrent agents
+            agent_name: Name of the agent
+            agent: Agent instance
+            relevant_pages: Pages for this agent to process
+            manifest: Document manifest
+            markdown: Current markdown
+            job_id: Job identifier
+
+        Returns:
+            AgentRunResult with observations and usage or error
+        """
+        async with semaphore:
+            logger.info(
+                f"Job {job_id}: Agent '{agent_name}' starting (processing {len(relevant_pages)} pages)"
+            )
             try:
-                # Run agent on relevant pages
-                observations = await agent.analyze(
+                observations, usage = await agent.analyze(
                     pages=relevant_pages,
                     manifest=manifest,
                     markdown=markdown,
                     job_id=job_id,
                 )
 
-                all_observations.extend(observations)
-
-                logger.info(
-                    f"Job {job_id}: Agent '{agent_name}' generated {len(observations)} observations"
+                return AgentRunResult(
+                    agent_name=agent_name,
+                    observations=observations,
+                    usage=usage,
+                    error=None,
+                    pages_processed=len(relevant_pages),
                 )
+
             except Exception as e:
                 logger.error(
-                    f"Job {job_id}: Agent '{agent_name}' failed: {e}",
+                    f"Job {job_id}: Agent '{agent_name}' encountered error: {e}",
                     exc_info=True,
                 )
-                # Continue with other agents even if one fails
-
-        logger.info(
-            f"Job {job_id}: Specialized analysis complete. "
-            f"Total observations: {len(all_observations)}"
-        )
-
-        return all_observations
+                return AgentRunResult(
+                    agent_name=agent_name,
+                    observations=[],
+                    usage=None,
+                    error=e,
+                    pages_processed=len(relevant_pages),
+                )
 
     def _get_relevant_pages(
         self,

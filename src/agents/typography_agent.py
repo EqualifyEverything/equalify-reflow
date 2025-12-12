@@ -20,6 +20,7 @@ from src.agents.model_tiers import ModelTier
 from src.agents.specialized_models import TypographyAnalysisOutput, TypographyIssue
 from src.services.pdf_converter import PageData
 from src.shared.models.observation import Observation, ObservationLocation
+from src.shared.models.processing import LLMUsage
 from src.shared.models.remediation import DocumentManifest, PageFeatures
 
 logger = logging.getLogger(__name__)
@@ -95,7 +96,7 @@ Focus on HIGH-CONFIDENCE findings only.""",
         manifest: DocumentManifest,
         markdown: str,
         job_id: str,
-    ) -> list[Observation]:
+    ) -> tuple[list[Observation], LLMUsage]:
         """Analyze typography for semantic meaning.
 
         The TypographyAgent focuses on pages with higher complexity
@@ -108,9 +109,15 @@ Focus on HIGH-CONFIDENCE findings only.""",
             job_id: Job identifier
 
         Returns:
-            List of observations for typography issues
+            Tuple of (observations for typography issues, combined usage metrics)
         """
         observations: list[Observation] = []
+        combined_usage = LLMUsage(
+            input_tokens=0,
+            output_tokens=0,
+            total_tokens=0,
+            estimated_cost_cents=0.0,
+        )
 
         for page in pages:
             # Get page features for context
@@ -149,6 +156,12 @@ Focus on HIGH-CONFIDENCE findings only.""",
                 # Run analysis
                 output, usage = await self._run_agent(user_message, image_bytes)
 
+                # Accumulate usage
+                combined_usage.input_tokens += usage.input_tokens
+                combined_usage.output_tokens += usage.output_tokens
+                combined_usage.total_tokens += usage.total_tokens
+                combined_usage.estimated_cost_cents += usage.estimated_cost_cents
+
                 logger.debug(
                     f"TypographyAgent page {page.page_num}: "
                     f"Found {len(output.issues)} issues, "
@@ -170,7 +183,7 @@ Focus on HIGH-CONFIDENCE findings only.""",
                 )
                 # Continue with other pages
 
-        return observations
+        return observations, combined_usage
 
     def _get_page_features(
         self,

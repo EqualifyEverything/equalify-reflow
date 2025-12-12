@@ -20,6 +20,7 @@ from src.agents.model_tiers import ModelTier
 from src.agents.specialized_models import FiguresAnalysisOutput, ImageAnalysis
 from src.services.pdf_converter import PageData
 from src.shared.models.observation import Observation, ObservationLocation
+from src.shared.models.processing import LLMUsage
 from src.shared.models.remediation import DocumentManifest, PageFeatures
 
 logger = logging.getLogger(__name__)
@@ -91,7 +92,7 @@ Analyze each image for accessibility.""",
         manifest: DocumentManifest,
         markdown: str,
         job_id: str,
-    ) -> list[Observation]:
+    ) -> tuple[list[Observation], LLMUsage]:
         """Analyze images on provided pages.
 
         Args:
@@ -101,9 +102,15 @@ Analyze each image for accessibility.""",
             job_id: Job identifier
 
         Returns:
-            List of observations for image accessibility issues
+            Tuple of (observations for image accessibility issues, combined usage metrics)
         """
         observations: list[Observation] = []
+        combined_usage = LLMUsage(
+            input_tokens=0,
+            output_tokens=0,
+            total_tokens=0,
+            estimated_cost_cents=0.0,
+        )
 
         for page in pages:
             # Get page features for this page
@@ -135,6 +142,12 @@ Analyze each image for accessibility.""",
                 # Run analysis
                 output, usage = await self._run_agent(user_message, image_bytes)
 
+                # Accumulate usage
+                combined_usage.input_tokens += usage.input_tokens
+                combined_usage.output_tokens += usage.output_tokens
+                combined_usage.total_tokens += usage.total_tokens
+                combined_usage.estimated_cost_cents += usage.estimated_cost_cents
+
                 logger.debug(
                     f"FiguresAgent page {page.page_num}: "
                     f"Found {output.images_found} images, "
@@ -157,7 +170,7 @@ Analyze each image for accessibility.""",
                 )
                 # Continue with other pages
 
-        return observations
+        return observations, combined_usage
 
     def _get_page_features(
         self,

@@ -16,6 +16,8 @@ from docling.datamodel.document import DocumentStream  # type: ignore[attr-defin
 from docling.datamodel.pipeline_options import PdfPipelineOptions
 from docling.document_converter import DocumentConverter, PdfFormatOption
 
+from src.config import settings
+
 logger = logging.getLogger(__name__)
 
 
@@ -51,13 +53,20 @@ class PDFConversionResult:
 class PDFConverter:
     """Convert PDF documents to page images using Docling."""
 
-    def __init__(self) -> None:
-        """Initialize PDF converter with Docling pipeline."""
+    def __init__(self, images_scale: float | None = None) -> None:
+        """Initialize PDF converter with Docling pipeline.
+
+        Args:
+            images_scale: Optional override for image scale factor.
+                         Defaults to settings.pdf_images_scale (1.5x = 108 DPI).
+        """
+        scale = images_scale if images_scale is not None else settings.pdf_images_scale
+
         # Configure pipeline for page image generation
         pipeline_options = PdfPipelineOptions(
             generate_page_images=True,  # CRITICAL: Generate full page renders
             generate_picture_images=True,  # Also generate embedded picture images
-            images_scale=2.0,  # High resolution (2x = 144 DPI)
+            images_scale=scale,  # Configurable resolution
             do_ocr=False,  # OCR not needed - we send images directly to AI
             do_table_structure=False,  # Table structure not needed - AI handles this
         )
@@ -68,7 +77,9 @@ class PDFConverter:
             }
         )
 
-        logger.info("PDF converter initialized with page image generation enabled")
+        self.images_scale = scale  # Store for logging
+
+        logger.info(f"PDF converter initialized with page image generation enabled (scale={self.images_scale}x)")
 
     async def convert_with_page_images(
         self, pdf_content: bytes

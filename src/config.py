@@ -80,6 +80,14 @@ class Settings(BaseSettings):
     confidence_threshold_high: float = Field(ge=0.0, le=1.0, default=0.85)
     confidence_threshold_medium: float = Field(ge=0.0, le=1.0, default=0.60)
 
+    # PDF Processing Configuration
+    pdf_images_scale: float = Field(
+        ge=1.0, le=3.0, default=1.5,
+        description="Scale factor for PDF page image generation. "
+                    "1.5x (108 DPI) is optimal for Claude vision API. "
+                    "2.0x (144 DPI) may be needed for complex diagrams."
+    )
+
     # Multi-Agent Configuration (PRD-011)
     agent_prompts_dir: str = Field(
         default="config/agents",
@@ -92,6 +100,10 @@ class Settings(BaseSettings):
     agent_default_temperature: float = Field(
         ge=0.0, le=2.0, default=0.2,
         description="Default temperature for agent LLM calls"
+    )
+    max_concurrent_agents: int = Field(
+        ge=1, le=4, default=4,
+        description="Maximum specialized agents to run concurrently"
     )
 
     # Deterministic Pre-Analysis Configuration (PRD-012)
@@ -157,6 +169,17 @@ class Settings(BaseSettings):
         description="Minimum confidence score required to auto-approve corrections. "
                     "Set to 0.0 to require manual approval for all jobs, "
                     "1.0 to auto-approve all jobs (not recommended)"
+    )
+
+    # Correction review workflow
+    always_require_correction_review: bool = Field(
+        default=True,
+        description="Always route to correction review (True for demo/testing)"
+    )
+
+    correction_approval_timeout_hours: int = Field(
+        ge=1, le=168, default=4,
+        description="Hours until correction approval expires"
     )
 
     @property

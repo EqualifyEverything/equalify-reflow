@@ -59,6 +59,12 @@ RUN uv sync --frozen || uv sync
 # Model version should match spacy version - check https://github.com/explosion/spacy-models/releases
 RUN uv pip install https://github.com/explosion/spacy-models/releases/download/en_core_web_sm-3.7.1/en_core_web_sm-3.7.1-py3-none-any.whl
 
+# Pre-download Docling models for PDF processing
+# This avoids runtime model downloads that can timeout (504 errors) and adds 2-5 minutes to cold starts
+# Models are cached to ~/.cache/docling/models (or DOCLING_ARTIFACTS_PATH)
+# Download only essential models (skip easyocr which often fails to download; we use tesseract instead)
+RUN uv run docling-tools models download layout tableformer code_formula picture_classifier --quiet
+
 # ==============================================================================
 # Stage 4: Development - Hot-reload for fast iteration
 # ==============================================================================

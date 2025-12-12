@@ -15,6 +15,7 @@ interface CorrectionDiffProps {
     corrected_snippet: string
     confidence: number
     explanation: string
+    is_auto_applied: boolean
   }[]
   pageImages?: string[]
   className?: string
@@ -215,11 +216,21 @@ function CorrectionsList({ corrections }: CorrectionsListProps) {
     return acc
   }, {} as Record<string, number>)
 
+  // Count auto vs manual
+  const autoCount = corrections.filter(c => c.is_auto_applied).length
+  const manualCount = corrections.length - autoCount
+
   return (
     <Card>
       <CardHeader className="py-3">
         <CardTitle className="text-sm flex items-center gap-2">
           Corrections ({corrections.length})
+          <Badge className="bg-green-100 text-green-700 text-xs ml-2">
+            {autoCount} auto
+          </Badge>
+          <Badge className="bg-amber-100 text-amber-700 text-xs">
+            {manualCount} review
+          </Badge>
           <div className="flex gap-1 ml-auto">
             {Object.entries(byType).map(([type, count]) => (
               <Badge key={type} variant="outline" className="text-xs">
@@ -244,6 +255,15 @@ function CorrectionsList({ corrections }: CorrectionsListProps) {
                     <ChevronRight className="h-4 w-4 text-slate-400" />
                   )}
                   <Badge variant="outline">{correction.type}</Badge>
+                  {correction.is_auto_applied ? (
+                    <Badge className="bg-green-100 text-green-700 text-xs">
+                      Auto
+                    </Badge>
+                  ) : (
+                    <Badge className="bg-amber-100 text-amber-700 text-xs">
+                      Review
+                    </Badge>
+                  )}
                   <span className="text-xs text-muted-foreground">
                     Page {correction.page}
                   </span>
@@ -294,10 +314,14 @@ function CorrectionsList({ corrections }: CorrectionsListProps) {
 // Summary card for quick view
 export function CorrectionsSummary({
   totalCorrections,
+  autoAppliedCount,
+  manualReviewCount,
   confidence,
   byType
 }: {
   totalCorrections: number
+  autoAppliedCount: number
+  manualReviewCount: number
   confidence: number
   byType: Record<string, number>
 }) {
@@ -305,7 +329,15 @@ export function CorrectionsSummary({
     <div className="flex items-center gap-4 p-3 bg-slate-50 rounded-lg">
       <div className="text-center">
         <p className="text-2xl font-bold text-uic-navy">{totalCorrections}</p>
-        <p className="text-xs text-muted-foreground">corrections</p>
+        <p className="text-xs text-muted-foreground">total</p>
+      </div>
+      <div className="text-center">
+        <p className="text-2xl font-bold text-green-600">{autoAppliedCount}</p>
+        <p className="text-xs text-muted-foreground">auto-applied</p>
+      </div>
+      <div className="text-center">
+        <p className="text-2xl font-bold text-amber-600">{manualReviewCount}</p>
+        <p className="text-xs text-muted-foreground">need review</p>
       </div>
       <div className="text-center">
         <p className={cn(

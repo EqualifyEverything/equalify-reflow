@@ -5,6 +5,7 @@ import { Dashboard } from '@/pages/Dashboard'
 import { JobDetailPage } from '@/pages/JobDetailPage'
 import { ApprovalReviewPage } from '@/pages/ApprovalReviewPage'
 import { CorrectionReviewPage } from '@/pages/CorrectionReviewPage'
+import { ProcessingPhasesPage } from '@/pages/ProcessingPhasesPage'
 import { queryClient } from '@/lib/queryClient'
 
 // Base path for routing - must match Vite's base config
@@ -60,6 +61,16 @@ function App() {
             element={
               <DashboardLayout>
                 <CorrectionReviewPage />
+              </DashboardLayout>
+            }
+          />
+
+          {/* Processing phases - with dashboard layout */}
+          <Route
+            path="/job/:jobId/phases"
+            element={
+              <DashboardLayout>
+                <ProcessingPhasesPage />
               </DashboardLayout>
             }
           />

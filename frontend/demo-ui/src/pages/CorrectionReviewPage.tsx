@@ -211,6 +211,8 @@ export function CorrectionReviewPage() {
         <CardContent>
           <CorrectionsSummary
             totalCorrections={reviewData.total_corrections}
+            autoAppliedCount={reviewData.auto_applied_count}
+            manualReviewCount={reviewData.manual_review_count}
             confidence={reviewData.overall_confidence}
             byType={reviewData.by_type}
           />

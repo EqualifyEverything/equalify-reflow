@@ -30,6 +30,8 @@ interface CorrectionReviewModalProps {
   filename: string
   correctionSummary: {
     total_corrections: number
+    auto_applied_count: number
+    manual_review_count: number
     confidence_score: number
     corrections_by_type: Record<string, number>
   }
@@ -148,7 +150,19 @@ export function CorrectionReviewModal({
                   <span className="text-2xl font-bold text-purple-600">
                     {correctionSummary.total_corrections}
                   </span>
-                  <p className="text-xs text-muted-foreground">corrections</p>
+                  <p className="text-xs text-muted-foreground">total</p>
+                </div>
+                <div className="text-center">
+                  <span className="text-2xl font-bold text-green-600">
+                    {correctionSummary.auto_applied_count}
+                  </span>
+                  <p className="text-xs text-muted-foreground">auto-applied</p>
+                </div>
+                <div className="text-center">
+                  <span className="text-2xl font-bold text-amber-600">
+                    {correctionSummary.manual_review_count}
+                  </span>
+                  <p className="text-xs text-muted-foreground">need review</p>
                 </div>
                 <div className="text-center">
                   <span className={`text-2xl font-bold ${confidenceColor}`}>

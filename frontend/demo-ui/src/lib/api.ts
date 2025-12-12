@@ -68,6 +68,8 @@ export interface LLMCost {
 
 export interface CorrectionSummary {
   total_corrections: number
+  auto_applied_count: number
+  manual_review_count: number
   confidence_score: number
   corrections_by_type: Record<string, number>
 }
@@ -101,6 +103,7 @@ export interface JobStatus {
 
   // For awaiting_correction_approval status
   correction_summary?: CorrectionSummary
+  corrections?: CorrectionItem[]
   review_url?: string
   original_markdown_url?: string
   corrected_markdown_url?: string
@@ -168,6 +171,7 @@ export interface CorrectionItem {
   corrected_snippet: string
   confidence: number
   explanation: string
+  is_auto_applied: boolean
 }
 
 export interface CorrectionURLs {
@@ -179,6 +183,8 @@ export interface CorrectionURLs {
 export interface CorrectionReviewData {
   job_id: string
   total_corrections: number
+  auto_applied_count: number
+  manual_review_count: number
   overall_confidence: number
   by_type: Record<string, number>
   by_page: Record<number, number>
@@ -199,6 +205,91 @@ export interface CorrectionResponse {
   status: string
   decision: string
   message: string
+}
+
+// Processing Phases types
+export interface PageFeatureSummary {
+  page_num: number
+  has_images: boolean
+  image_count: number
+  has_tables: boolean
+  table_count: number
+  has_lists: boolean
+  complexity_score: number
+}
+
+export interface AnalysisPhase {
+  status: string
+  document_title?: string
+  document_type?: string
+  total_pages?: number
+  layout_type?: string
+  required_agents: string[]
+  analysis_confidence?: number
+  page_features: PageFeatureSummary[]
+  heading_tree?: Record<string, unknown>
+  raw_manifest?: Record<string, unknown>
+}
+
+export interface ExtractionPhase {
+  status: string
+  markdown_url?: string
+  confidence_score?: number
+  extraction_model?: string
+}
+
+export interface ObservationSummary {
+  id: string
+  agent: string
+  severity: string
+  confidence: number
+  route: string
+  status: string
+  visual_description?: string
+  markup_description?: string
+  page_num?: number
+}
+
+export interface AgentsPhase {
+  status: string
+  agents_run: string[]
+  observation_count: number
+  observations: ObservationSummary[]
+  raw_observations?: Record<string, unknown>[]
+}
+
+export interface ProposalSummary {
+  id: string
+  route: string
+  status: string
+  page_nums: number[]
+  resolves_count: number
+  search_preview: string
+  replace_preview: string
+  justification: string
+  estimated_impact?: string
+}
+
+export interface ConsolidationPhase {
+  status: string
+  proposal_count: number
+  auto_count: number
+  manual_count: number
+  proposals: ProposalSummary[]
+  raw_proposals?: Record<string, unknown>[]
+}
+
+export interface ProcessingPhasesResponse {
+  job_id: string
+  filename: string
+  status: string
+  created_at: string
+  updated_at: string
+  analysis: AnalysisPhase
+  extraction: ExtractionPhase
+  agents: AgentsPhase
+  consolidation: ConsolidationPhase
+  total_llm_cost?: LLMCost
 }
 
 // ============================================================================
@@ -274,5 +365,11 @@ export const api = {
       throw new Error(`Failed to fetch markdown: ${response.statusText}`)
     }
     return response.text()
+  },
+
+  /** Get detailed processing phases for a job */
+  async getJobPhases(jobId: string, showRaw = false): Promise<ProcessingPhasesResponse> {
+    const params = showRaw ? '?show_raw=true' : ''
+    return request<ProcessingPhasesResponse>(`/api/documents/${jobId}/phases${params}`)
   },
 }

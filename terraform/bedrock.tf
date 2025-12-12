@@ -1,4 +1,5 @@
 # AWS Bedrock Configuration and IAM Permissions
+# Note: Uses data.aws_caller_identity.current from main.tf
 
 # Bedrock Access Policy for ECS Task Role
 resource "aws_iam_role_policy" "ecs_task_bedrock" {
@@ -15,9 +16,16 @@ resource "aws_iam_role_policy" "ecs_task_bedrock" {
           "bedrock:InvokeModelWithResponseStream"
         ]
         Resource = [
-          "arn:aws:bedrock:${var.aws_region}::foundation-model/anthropic.claude-3-5-haiku-*",
-          "arn:aws:bedrock:${var.aws_region}::foundation-model/anthropic.claude-3-5-sonnet-*",
-          "arn:aws:bedrock:${var.aws_region}::foundation-model/anthropic.claude-3-opus-*"
+          # Claude 4.5 foundation models - ALL US regions for cross-region inference profiles
+          "arn:aws:bedrock:us-east-1::foundation-model/anthropic.claude-sonnet-4-5-*",
+          "arn:aws:bedrock:us-east-2::foundation-model/anthropic.claude-sonnet-4-5-*",
+          "arn:aws:bedrock:us-west-2::foundation-model/anthropic.claude-sonnet-4-5-*",
+          "arn:aws:bedrock:us-east-1::foundation-model/anthropic.claude-haiku-4-5-*",
+          "arn:aws:bedrock:us-east-2::foundation-model/anthropic.claude-haiku-4-5-*",
+          "arn:aws:bedrock:us-west-2::foundation-model/anthropic.claude-haiku-4-5-*",
+          # Inference profiles (Claude 4.5 - cross-region routing)
+          "arn:aws:bedrock:${var.aws_region}:${data.aws_caller_identity.current.account_id}:inference-profile/us.anthropic.claude-sonnet-4-5-*",
+          "arn:aws:bedrock:${var.aws_region}:${data.aws_caller_identity.current.account_id}:inference-profile/us.anthropic.claude-haiku-4-5-*"
         ]
       },
       {

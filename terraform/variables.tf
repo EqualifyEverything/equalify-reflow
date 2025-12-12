@@ -145,9 +145,9 @@ variable "ai_provider" {
 }
 
 variable "bedrock_model_id" {
-  description = "AWS Bedrock model ID for Claude"
+  description = "AWS Bedrock model ID for CloudWatch metrics (not used for model selection - see src/agents/model_tiers.py)"
   type        = string
-  default     = "anthropic.claude-3-haiku-20240307-v1:0"
+  default     = "us.anthropic.claude-haiku-4-5-20251001-v1:0"
 }
 
 variable "enable_bedrock_metrics" {

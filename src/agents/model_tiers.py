@@ -27,9 +27,10 @@ class ModelTier(str, Enum):
     EFFICIENT = "efficient"  # Haiku - transcription, simple tasks
 
 
-# Bedrock model IDs for each tier
+# Bedrock inference profile IDs for each tier
+# Note: Claude 4.5 models require inference profiles (us. prefix), not on-demand model IDs
 MODEL_TIER_MAP: dict[ModelTier, str] = {
-    ModelTier.REASONING: "us.anthropic.claude-sonnet-4-5-20250514-v1:0",
+    ModelTier.REASONING: "us.anthropic.claude-sonnet-4-5-20250929-v1:0",
     ModelTier.EFFICIENT: "us.anthropic.claude-haiku-4-5-20251001-v1:0",
 }
 
@@ -45,7 +46,7 @@ def get_model_id(tier: ModelTier) -> str:
 
     Example:
         >>> get_model_id(ModelTier.REASONING)
-        'us.anthropic.claude-sonnet-4-5-20250514-v1:0'
+        'us.anthropic.claude-sonnet-4-5-20250929-v1:0'
     """
     return MODEL_TIER_MAP[tier]
 

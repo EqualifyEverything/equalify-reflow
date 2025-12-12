@@ -294,8 +294,12 @@ def mock_pii_analyzer():
 
 @pytest.fixture
 def mock_pdf_extractor():
-    """Mock PDF text extractor."""
-    with patch('src.services.pii_service.extract_pdf_text') as mock:
+    """Mock PDF text extractor to avoid Docling model downloads in tests.
+
+    Uses AsyncMock since extract_pdf_text is an async function.
+    This prevents CI timeout issues from Docling downloading models at runtime.
+    """
+    with patch('src.services.pii_service.extract_pdf_text', new_callable=AsyncMock) as mock:
         # Default: return simple text
         mock.return_value = "Sample PDF text content for testing."
         yield mock
@@ -334,11 +338,17 @@ def mock_ai_enhancement():
 # ============================================================================
 
 @pytest_asyncio.fixture
-async def pii_worker(storage_service, queue_service, job_service, mock_pii_analyzer):
-    """Create PIIWorker instance with REAL services and MOCKED PII analyzer."""
+async def pii_worker(storage_service, queue_service, job_service, mock_pii_analyzer, mock_pdf_extractor):
+    """Create PIIWorker instance with REAL services and MOCKED PII analyzer/PDF extractor.
+
+    The mock_pdf_extractor patches extract_pdf_text to avoid Docling model downloads
+    during tests (which would cause timeouts in CI).
+    """
     from src.services.pii_service import PIIDetectionService
 
     # Create PIIDetectionService with mocked PII analyzer
+    # Note: mock_pdf_extractor is a context manager fixture that patches
+    # src.services.pii_service.extract_pdf_text automatically
     pii_service = PIIDetectionService(
         storage_service=storage_service,
         queue_service=queue_service,

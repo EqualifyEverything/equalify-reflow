@@ -34,6 +34,7 @@ class CorrectionSummary(BaseModel):
         corrected_snippet: First 200 chars of corrected text
         confidence: AI confidence in this correction (0.0-1.0)
         explanation: Human-readable explanation of the correction
+        is_auto_applied: Whether this correction was auto-applied by AI
 
     Example:
         >>> summary = CorrectionSummary(
@@ -42,7 +43,8 @@ class CorrectionSummary(BaseModel):
         ...     original_snippet="Course Schedule",
         ...     corrected_snippet="## Course Schedule",
         ...     confidence=0.95,
-        ...     explanation="Visual layout shows level 2 heading"
+        ...     explanation="Visual layout shows level 2 heading",
+        ...     is_auto_applied=True
         ... )
     """
     page: int = Field(..., ge=1, description="Page number (1-indexed)")
@@ -51,6 +53,7 @@ class CorrectionSummary(BaseModel):
     corrected_snippet: str = Field(..., max_length=200, description="Corrected text (first 200 chars)")
     confidence: float = Field(..., ge=0.0, le=1.0, description="AI confidence score")
     explanation: str = Field(..., description="Explanation of the correction")
+    is_auto_applied: bool = Field(..., description="Whether auto-applied by AI")
 
 
 class CorrectionURLs(BaseModel):
@@ -74,6 +77,8 @@ class CorrectionReviewResponse(BaseModel):
     Attributes:
         job_id: Unique job identifier
         total_corrections: Total number of corrections made
+        auto_applied_count: Count of corrections auto-applied by AI
+        manual_review_count: Count of corrections requiring manual review
         overall_confidence: Average confidence across all corrections
         by_type: Count of corrections grouped by type
         by_page: Count of corrections grouped by page
@@ -85,6 +90,8 @@ class CorrectionReviewResponse(BaseModel):
         >>> response = CorrectionReviewResponse(
         ...     job_id="abc-123",
         ...     total_corrections=5,
+        ...     auto_applied_count=3,
+        ...     manual_review_count=2,
         ...     overall_confidence=0.89,
         ...     by_type={"heading_level": 2, "list_structure": 3},
         ...     by_page={1: 3, 2: 2},
@@ -99,6 +106,8 @@ class CorrectionReviewResponse(BaseModel):
     """
     job_id: str
     total_corrections: int
+    auto_applied_count: int = Field(..., description="Corrections auto-applied by AI")
+    manual_review_count: int = Field(..., description="Corrections requiring manual review")
     overall_confidence: float = Field(..., ge=0.0, le=1.0)
     by_type: dict[str, int]
     by_page: dict[int, int]
@@ -253,6 +262,8 @@ async def get_correction_review(
         by_page: dict[int, int] = {}
         total_confidence = 0.0
         total_corrections = 0
+        auto_applied_count = 0
+        manual_review_count = 0
 
         for page_result in correction_results:
             page_num = page_result.get("page", 0)
@@ -264,6 +275,7 @@ async def get_correction_review(
                 corrected_text = correction.get("corrected", "")
                 confidence = correction.get("confidence", 0.0)
                 explanation = correction.get("explanation", "")
+                is_auto_applied = correction.get("is_auto_applied", False)
 
                 # Create snippet (first 200 chars)
                 original_snippet = original_text[:200]
@@ -275,7 +287,8 @@ async def get_correction_review(
                     original_snippet=original_snippet,
                     corrected_snippet=corrected_snippet,
                     confidence=confidence,
-                    explanation=explanation
+                    explanation=explanation,
+                    is_auto_applied=is_auto_applied,
                 ))
 
                 # Update counters
@@ -283,6 +296,10 @@ async def get_correction_review(
                 by_page[page_num] = by_page.get(page_num, 0) + 1
                 total_confidence += confidence
                 total_corrections += 1
+                if is_auto_applied:
+                    auto_applied_count += 1
+                else:
+                    manual_review_count += 1
 
         # Calculate overall confidence
         overall_confidence = total_confidence / total_corrections if total_corrections > 0 else 0.0
@@ -321,6 +338,8 @@ async def get_correction_review(
         return CorrectionReviewResponse(
             job_id=job_id,
             total_corrections=total_corrections,
+            auto_applied_count=auto_applied_count,
+            manual_review_count=manual_review_count,
             overall_confidence=overall_confidence,
             by_type=by_type,
             by_page=by_page,

@@ -79,10 +79,24 @@ class CorrectionSummary(BaseModel):
     """Summary of AI corrections made."""
 
     total_corrections: int = Field(..., description="Total corrections made")
+    auto_applied_count: int = Field(..., description="Corrections auto-applied by AI")
+    manual_review_count: int = Field(..., description="Corrections requiring manual review")
     confidence_score: float = Field(..., description="Overall confidence (0.0-1.0)")
     corrections_by_type: dict[str, int] = Field(
         ..., description="Count by correction type"
     )
+
+
+class CorrectionItem(BaseModel):
+    """Individual correction detail."""
+
+    page: int = Field(..., ge=1, description="Page number (1-indexed)")
+    type: str = Field(..., description="Correction type")
+    original_snippet: str = Field(..., description="Original text (first 200 chars)")
+    corrected_snippet: str = Field(..., description="Corrected text (first 200 chars)")
+    confidence: float = Field(..., ge=0.0, le=1.0, description="AI confidence score")
+    explanation: str = Field(..., description="Explanation of the correction")
+    is_auto_applied: bool = Field(..., description="Whether auto-applied by AI")
 
 
 class AwaitingCorrectionApprovalResponse(JobStatusBase):
@@ -91,6 +105,9 @@ class AwaitingCorrectionApprovalResponse(JobStatusBase):
     status: Literal["awaiting_correction_approval"] = "awaiting_correction_approval"
     correction_summary: CorrectionSummary = Field(
         ..., description="Summary of corrections"
+    )
+    corrections: list[CorrectionItem] = Field(
+        ..., description="All correction details"
     )
     approval_token: str = Field(..., description="Token for approval/rejection")
     approval_expires_at: str = Field(..., description="When approval token expires")
@@ -154,3 +171,106 @@ DocumentStatusResponse = (
     | FailedResponse
     | DeniedResponse
 )
+
+
+# Processing Phases Response
+class PageFeatureSummary(BaseModel):
+    """Summary of page features from analysis."""
+
+    page_num: int
+    has_images: bool
+    image_count: int
+    has_tables: bool
+    table_count: int
+    has_lists: bool
+    complexity_score: float
+
+
+class AnalysisPhase(BaseModel):
+    """Phase 1: Document Analysis output."""
+
+    status: str = Field(..., description="completed, skipped, or error")
+    document_title: str | None = Field(default=None)
+    document_type: str | None = Field(default=None)
+    total_pages: int | None = Field(default=None)
+    layout_type: str | None = Field(default=None)
+    required_agents: list[str] = Field(default_factory=list)
+    analysis_confidence: float | None = Field(default=None)
+    page_features: list[PageFeatureSummary] = Field(default_factory=list)
+    heading_tree: dict | None = Field(default=None, description="Document structure as heading tree")
+    raw_manifest: dict | None = Field(default=None, description="Full manifest JSON when show_raw=true")
+
+
+class ExtractionPhase(BaseModel):
+    """Phase 2: Markdown Extraction output."""
+
+    status: str = Field(..., description="completed, skipped, or error")
+    markdown_url: str | None = Field(default=None, description="URL to v0 (original) markdown")
+    confidence_score: float | None = Field(default=None)
+    extraction_model: str | None = Field(default=None)
+
+
+class ObservationSummary(BaseModel):
+    """Summary of a single observation."""
+
+    id: str
+    agent: str
+    severity: str
+    confidence: float
+    route: str
+    status: str
+    visual_description: str | None = Field(default=None)
+    markup_description: str | None = Field(default=None)
+    page_num: int | None = Field(default=None)
+
+
+class AgentsPhase(BaseModel):
+    """Phase 3: Specialized Agents output."""
+
+    status: str = Field(..., description="completed, skipped, or error")
+    agents_run: list[str] = Field(default_factory=list)
+    observation_count: int = Field(default=0)
+    observations: list[ObservationSummary] = Field(default_factory=list)
+    raw_observations: list[dict] | None = Field(default=None, description="Full observations when show_raw=true")
+
+
+class ProposalSummary(BaseModel):
+    """Summary of a single proposal."""
+
+    id: str
+    route: str
+    status: str
+    page_nums: list[int]
+    resolves_count: int
+    search_preview: str = Field(..., description="First 100 chars of search text")
+    replace_preview: str = Field(..., description="First 100 chars of replace text")
+    justification: str
+    estimated_impact: str | None = Field(default=None)
+
+
+class ConsolidationPhase(BaseModel):
+    """Phase 4: Consolidation output."""
+
+    status: str = Field(..., description="completed, skipped, or error")
+    proposal_count: int = Field(default=0)
+    auto_count: int = Field(default=0)
+    manual_count: int = Field(default=0)
+    proposals: list[ProposalSummary] = Field(default_factory=list)
+    raw_proposals: list[dict] | None = Field(default=None, description="Full proposals when show_raw=true")
+
+
+class ProcessingPhasesResponse(BaseModel):
+    """Response containing all processing phase outputs."""
+
+    job_id: str
+    filename: str
+    status: str
+    created_at: str
+    updated_at: str
+
+    analysis: AnalysisPhase
+    extraction: ExtractionPhase
+    agents: AgentsPhase
+    consolidation: ConsolidationPhase
+
+    total_llm_cost: LLMCostInfo | None = None

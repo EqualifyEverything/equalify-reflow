@@ -366,7 +366,7 @@ class TestTypographyAgentAnalysis:
         with patch.object(agent, '_run_agent', new_callable=AsyncMock) as mock_run:
             mock_run.return_value = (mock_output, mock_usage)
 
-            observations = await agent.analyze(
+            observations, usage = await agent.analyze(
                 pages=complex_pages[:1],
                 manifest=sample_manifest,
                 markdown="# Test",
@@ -376,6 +376,7 @@ class TestTypographyAgentAnalysis:
             assert len(observations) == 1
             assert observations[0].agent == "typography"
             assert observations[0].job_id == "test-job"
+            assert usage is not None  # Usage should be returned
 
     @pytest.mark.asyncio
     async def test_analyze_formats_complexity_factors(
@@ -396,7 +397,7 @@ class TestTypographyAgentAnalysis:
         with patch.object(agent, '_run_agent', new_callable=AsyncMock) as mock_run:
             mock_run.return_value = (mock_output, mock_usage)
 
-            await agent.analyze(
+            observations, usage = await agent.analyze(
                 pages=pages,
                 manifest=sample_manifest,
                 markdown="# Test",
@@ -407,3 +408,4 @@ class TestTypographyAgentAnalysis:
             call_args = mock_run.call_args
             user_message = call_args[0][0]
             assert "dense text" in user_message or "multiple fonts" in user_message
+            assert usage is not None  # Usage should be returned

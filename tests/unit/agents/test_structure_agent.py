@@ -403,7 +403,7 @@ class TestStructureAgentAnalysis:
         with patch.object(agent, '_run_agent', new_callable=AsyncMock) as mock_run:
             mock_run.return_value = (mock_output, mock_usage)
 
-            observations = await agent.analyze(
+            observations, usage = await agent.analyze(
                 pages=sample_pages[:1],
                 manifest=sample_manifest,
                 markdown="# Test",
@@ -413,3 +413,4 @@ class TestStructureAgentAnalysis:
             assert len(observations) == 1
             assert observations[0].agent == "structure"
             assert observations[0].job_id == "test-job"
+            assert usage is not None  # Usage should be returned

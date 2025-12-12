@@ -378,7 +378,7 @@ class TestFiguresAgentAnalysis:
             )
 
         with patch.object(agent, '_run_agent', side_effect=mock_run):
-            observations = await agent.analyze(
+            observations, usage = await agent.analyze(
                 pages=sample_pages,
                 manifest=sample_manifest,
                 markdown="# Test",
@@ -388,6 +388,7 @@ class TestFiguresAgentAnalysis:
             # Should have tried both pages despite error
             assert call_count == 2
             assert observations == []  # No observations from successful page
+            assert usage is not None  # Usage should be returned
 
     @pytest.mark.asyncio
     async def test_analyze_returns_observations(
@@ -427,7 +428,7 @@ class TestFiguresAgentAnalysis:
         with patch.object(agent, '_run_agent', new_callable=AsyncMock) as mock_run:
             mock_run.return_value = (mock_output, mock_usage)
 
-            observations = await agent.analyze(
+            observations, usage = await agent.analyze(
                 pages=sample_pages[:1],  # Just page 1
                 manifest=sample_manifest,
                 markdown="# Test",
@@ -438,3 +439,4 @@ class TestFiguresAgentAnalysis:
             assert len(observations) == 1
             assert observations[0].agent == "figures"
             assert observations[0].job_id == "test-job"
+            assert usage is not None  # Usage should be returned

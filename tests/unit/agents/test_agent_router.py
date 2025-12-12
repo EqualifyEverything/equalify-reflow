@@ -11,10 +11,22 @@ Tests cover:
 from unittest.mock import AsyncMock, MagicMock
 
 import pytest
-from src.agents.agent_router import AgentRouter
+from src.agents.agent_router import AgentRouter, CombinedAgentUsage
 from src.services.pdf_converter import PageData
 from src.shared.models.observation import Observation, ObservationLocation
+from src.shared.models.processing import LLMUsage
 from src.shared.models.remediation import DocumentManifest, PageFeatures
+
+
+# Helper to create mock LLMUsage for tests
+def mock_usage() -> LLMUsage:
+    """Create a mock LLMUsage for testing."""
+    return LLMUsage(
+        input_tokens=100,
+        output_tokens=50,
+        total_tokens=150,
+        estimated_cost_cents=0.1,
+    )
 
 # =============================================================================
 # Test Fixtures
@@ -233,26 +245,26 @@ class TestAgentRouting:
         """Test all required agents are called."""
         router = AgentRouter()
 
-        # Create mock agents
+        # Create mock agents - now return tuple of (observations, usage)
         mock_figures = AsyncMock()
-        mock_figures.analyze.return_value = [mock_observation]
+        mock_figures.analyze.return_value = ([mock_observation], mock_usage())
 
         mock_tables = AsyncMock()
-        mock_tables.analyze.return_value = []
+        mock_tables.analyze.return_value = ([], mock_usage())
 
         mock_structure = AsyncMock()
-        mock_structure.analyze.return_value = []
+        mock_structure.analyze.return_value = ([], mock_usage())
 
         mock_typography = AsyncMock()
-        mock_typography.analyze.return_value = []
+        mock_typography.analyze.return_value = ([], mock_usage())
 
         router.register_agent("figures", mock_figures)
         router.register_agent("tables", mock_tables)
         router.register_agent("structure", mock_structure)
         router.register_agent("typography", mock_typography)
 
-        # Run agents
-        observations = await router.run_required_agents(
+        # Run agents - returns tuple of (observations, combined_usage)
+        observations, combined_usage = await router.run_required_agents(
             manifest=sample_manifest,
             pages=sample_pages,
             markdown="# Test\n\nContent",
@@ -269,6 +281,10 @@ class TestAgentRouting:
         assert len(observations) == 1
         assert observations[0].id == "obs-123"
 
+        # Should have combined usage from all agents
+        assert isinstance(combined_usage, CombinedAgentUsage)
+        assert combined_usage.total_input_tokens == 400  # 4 agents * 100
+
     @pytest.mark.asyncio
     async def test_skips_unregistered_agents(
         self, sample_manifest: DocumentManifest, sample_pages: list[PageData]
@@ -276,13 +292,13 @@ class TestAgentRouting:
         """Test unregistered agents are skipped with warning."""
         router = AgentRouter()
 
-        # Only register figures agent
+        # Only register figures agent - return tuple
         mock_figures = AsyncMock()
-        mock_figures.analyze.return_value = []
+        mock_figures.analyze.return_value = ([], mock_usage())
         router.register_agent("figures", mock_figures)
 
         # Run with manifest requiring all agents
-        observations = await router.run_required_agents(
+        observations, combined_usage = await router.run_required_agents(
             manifest=sample_manifest,
             pages=sample_pages,
             markdown="# Test",
@@ -292,6 +308,8 @@ class TestAgentRouting:
         # Should complete without error
         assert observations == []
         mock_figures.analyze.assert_called_once()
+        # Only figures agent succeeded
+        assert combined_usage.total_input_tokens == 100
 
     @pytest.mark.asyncio
     async def test_skips_agents_with_no_relevant_pages(
@@ -317,7 +335,7 @@ class TestAgentRouting:
         router.register_agent("figures", mock_figures)
         router.register_agent("tables", mock_tables)
 
-        observations = await router.run_required_agents(
+        observations, combined_usage = await router.run_required_agents(
             manifest=manifest,
             pages=sample_pages[:2],
             markdown="# Test",
@@ -328,6 +346,7 @@ class TestAgentRouting:
         mock_figures.analyze.assert_not_called()
         mock_tables.analyze.assert_not_called()
         assert observations == []
+        assert combined_usage.total_input_tokens == 0
 
     @pytest.mark.asyncio
     async def test_continues_on_agent_failure(
@@ -343,9 +362,9 @@ class TestAgentRouting:
         mock_figures = AsyncMock()
         mock_figures.analyze.side_effect = Exception("Agent failed")
 
-        # Tables agent succeeds
+        # Tables agent succeeds - return tuple
         mock_tables = AsyncMock()
-        mock_tables.analyze.return_value = [mock_observation]
+        mock_tables.analyze.return_value = ([mock_observation], mock_usage())
 
         router.register_agent("figures", mock_figures)
         router.register_agent("tables", mock_tables)
@@ -353,7 +372,7 @@ class TestAgentRouting:
         # Modify manifest to only require these two
         sample_manifest.required_agents = ["figures", "tables"]
 
-        observations = await router.run_required_agents(
+        observations, combined_usage = await router.run_required_agents(
             manifest=sample_manifest,
             pages=sample_pages,
             markdown="# Test",
@@ -362,6 +381,8 @@ class TestAgentRouting:
 
         # Should have observation from tables despite figures failure
         assert len(observations) == 1
+        # Only tables agent succeeded
+        assert combined_usage.total_input_tokens == 100
 
     @pytest.mark.asyncio
     async def test_collects_observations_from_all_agents(
@@ -386,24 +407,25 @@ class TestAgentRouting:
             location=ObservationLocation(location_type="element", value="h3", page_num=1),
         )
 
+        # All agents now return tuple of (observations, usage)
         mock_figures = AsyncMock()
-        mock_figures.analyze.return_value = [obs1]
+        mock_figures.analyze.return_value = ([obs1], mock_usage())
 
         mock_tables = AsyncMock()
-        mock_tables.analyze.return_value = [obs2]
+        mock_tables.analyze.return_value = ([obs2], mock_usage())
 
         mock_structure = AsyncMock()
-        mock_structure.analyze.return_value = [obs3]
+        mock_structure.analyze.return_value = ([obs3], mock_usage())
 
         mock_typography = AsyncMock()
-        mock_typography.analyze.return_value = []
+        mock_typography.analyze.return_value = ([], mock_usage())
 
         router.register_agent("figures", mock_figures)
         router.register_agent("tables", mock_tables)
         router.register_agent("structure", mock_structure)
         router.register_agent("typography", mock_typography)
 
-        observations = await router.run_required_agents(
+        observations, combined_usage = await router.run_required_agents(
             manifest=sample_manifest,
             pages=sample_pages,
             markdown="# Test",
@@ -413,6 +435,8 @@ class TestAgentRouting:
         assert len(observations) == 3
         agent_names = {obs.agent for obs in observations}
         assert agent_names == {"figures", "tables", "structure"}
+        # All 4 agents succeeded (including typography with no observations)
+        assert combined_usage.total_input_tokens == 400
 
 
 # =============================================================================
@@ -436,9 +460,11 @@ class TestEdgeCases:
         )
 
         router = AgentRouter()
-        router.register_agent("figures", AsyncMock())
+        mock_agent = AsyncMock()
+        mock_agent.analyze.return_value = ([], mock_usage())
+        router.register_agent("figures", mock_agent)
 
-        observations = await router.run_required_agents(
+        observations, combined_usage = await router.run_required_agents(
             manifest=manifest,
             pages=sample_pages[:1],
             markdown="# Test",
@@ -446,6 +472,7 @@ class TestEdgeCases:
         )
 
         assert observations == []
+        assert combined_usage.total_input_tokens == 0
 
     @pytest.mark.asyncio
     async def test_empty_pages_list(self, sample_manifest: DocumentManifest):
@@ -453,11 +480,12 @@ class TestEdgeCases:
         router = AgentRouter()
 
         mock_agent = AsyncMock()
+        mock_agent.analyze.return_value = ([], mock_usage())
         router.register_agent("figures", mock_agent)
 
         sample_manifest.required_agents = ["figures"]
 
-        observations = await router.run_required_agents(
+        observations, combined_usage = await router.run_required_agents(
             manifest=sample_manifest,
             pages=[],
             markdown="# Test",
@@ -466,6 +494,7 @@ class TestEdgeCases:
 
         # Agent should not be called with empty pages
         assert observations == []
+        assert combined_usage.total_input_tokens == 0
 
     def test_page_features_helper(self, sample_manifest: DocumentManifest):
         """Test _get_page_features helper method."""

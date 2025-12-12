@@ -15,6 +15,7 @@ from pydantic_ai import Agent
 from pydantic_ai.messages import BinaryContent
 
 from ..config import settings
+from .model_tiers import MODEL_TIER_MAP, ModelTier
 
 logger = logging.getLogger(__name__)
 
@@ -66,32 +67,17 @@ class AccessibilityAgent:
     def _create_model(self) -> Any:
         """Create AWS Bedrock model for Claude access.
 
+        Uses EFFICIENT tier (Claude Haiku 4.5) for cost-effective processing.
+
         Returns:
             BedrockConverseModel instance for PydanticAI Agent
-
-        Raises:
-            ValueError: If ai_provider is not set to 'bedrock'
         """
-        provider = settings.ai_provider.lower()
+        from pydantic_ai.models.bedrock import BedrockConverseModel
 
-        if provider == "bedrock":
-            from pydantic_ai.models.bedrock import BedrockConverseModel
-
-            # BedrockConverseModel takes model_name as the model ID string
-            # Region is configured via AWS SDK (boto3) environment or credentials
-            model = BedrockConverseModel(
-                model_name=settings.bedrock_model_id,
-            )
-            logger.info(
-                f"Using AWS Bedrock model: {settings.bedrock_model_id}"
-            )
-            return model
-
-        else:
-            raise ValueError(
-                f"Unsupported AI provider: {provider}. "
-                f"Only 'bedrock' is supported."
-            )
+        model_id = MODEL_TIER_MAP[ModelTier.EFFICIENT]
+        model = BedrockConverseModel(model_name=model_id)
+        logger.info(f"Using AWS Bedrock model: {model_id} (tier: EFFICIENT)")
+        return model
 
     def _load_prompts(self) -> dict[str, Any]:
         """Load prompt templates from YAML configuration.

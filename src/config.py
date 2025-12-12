@@ -65,8 +65,8 @@ class Settings(BaseSettings):
     ai_provider: str = "bedrock"  # Only "bedrock" is supported
 
     # Bedrock Configuration
+    # Note: Model selection is handled by src/agents/model_tiers.py (not configurable via env)
     bedrock_region: str = "us-east-1"
-    bedrock_model_id: str = "us.anthropic.claude-haiku-4-5-20251001-v1:0"
 
     # Claude Model Settings
     claude_max_tokens: int = Field(ge=1, le=100000, default=4096)

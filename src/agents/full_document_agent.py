@@ -19,6 +19,7 @@ from pydantic import BaseModel, Field
 from pydantic_ai import Agent
 from pydantic_ai.messages import BinaryContent
 
+from src.agents.model_tiers import MODEL_TIER_MAP, ModelTier
 from src.config import settings
 from src.services.pdf_converter import PageData
 from src.shared.llm_cost import calculate_estimated_cost
@@ -108,31 +109,41 @@ class FullDocumentAgent:
             raise
 
     def _get_structure_agent(self) -> Agent[None, HeadingTree]:
-        """Get or create the structure analysis agent."""
+        """Get or create the structure analysis agent.
+
+        Uses REASONING tier (Claude Sonnet) for accurate structure analysis.
+        """
         if self._structure_agent is None:
             from pydantic_ai.models.bedrock import BedrockConverseModel
 
-            model = BedrockConverseModel(model_name=settings.bedrock_model_id)
+            model_id = MODEL_TIER_MAP[ModelTier.REASONING]
+            model = BedrockConverseModel(model_name=model_id)
             self._structure_agent = Agent(
                 model,
                 output_type=HeadingTree,
                 system_prompt=self.prompts["structure_system_prompt"],
                 retries=self.config.max_retries,
             )
+            logger.debug(f"Created structure agent with model {model_id}")
         return self._structure_agent
 
     def _get_transcription_agent(self) -> Agent[None, DocumentMarkdown]:
-        """Get or create the transcription agent."""
+        """Get or create the transcription agent.
+
+        Uses EFFICIENT tier (Claude Haiku) for cost-effective transcription.
+        """
         if self._transcription_agent is None:
             from pydantic_ai.models.bedrock import BedrockConverseModel
 
-            model = BedrockConverseModel(model_name=settings.bedrock_model_id)
+            model_id = MODEL_TIER_MAP[ModelTier.EFFICIENT]
+            model = BedrockConverseModel(model_name=model_id)
             self._transcription_agent = Agent(
                 model,
                 output_type=DocumentMarkdown,
                 system_prompt=self.prompts["transcription_system_prompt"],
                 retries=self.config.max_retries,
             )
+            logger.debug(f"Created transcription agent with model {model_id}")
         return self._transcription_agent
 
     def _calculate_estimated_cost(self, input_tokens: int, output_tokens: int) -> float:

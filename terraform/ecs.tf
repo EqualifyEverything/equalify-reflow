@@ -88,10 +88,6 @@ resource "aws_ecs_task_definition" "app" {
           value = var.aws_region
         },
         {
-          name  = "BEDROCK_MODEL_ID"
-          value = var.bedrock_model_id
-        },
-        {
           name  = "ENABLE_API_KEY_AUTH"
           value = "true"
         },

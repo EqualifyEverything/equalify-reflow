@@ -23,7 +23,7 @@ pytestmark = pytest.mark.unit
 
 
 def test_accessibility_agent_initialization():
-    """Test AccessibilityAgent initializes with Bedrock model."""
+    """Test AccessibilityAgent initializes with Bedrock model from model_tiers."""
     with patch("src.agents.accessibility_agent.Agent") as mock_agent:
         with patch("pydantic_ai.models.bedrock.BedrockConverseModel") as mock_bedrock:
             with patch.object(AccessibilityAgent, "_load_prompts", return_value={
@@ -32,13 +32,12 @@ def test_accessibility_agent_initialization():
             }):
                 with patch("src.agents.accessibility_agent.settings") as mock_settings:
                     mock_settings.ai_provider = "bedrock"
-                    mock_settings.bedrock_model_id = "anthropic.claude-3-haiku-20240307-v1:0"
 
                     AccessibilityAgent()
 
-                    # Should create Bedrock model with correct model_id
+                    # Should create Bedrock model with EFFICIENT tier model from model_tiers.py
                     mock_bedrock.assert_called_once_with(
-                        model_name="anthropic.claude-3-haiku-20240307-v1:0"
+                        model_name="us.anthropic.claude-haiku-4-5-20251001-v1:0"
                     )
 
                     # Should create PydanticAI agent with Bedrock model
@@ -59,7 +58,6 @@ user_prompt_template: "Test user prompt: {page_markdown}"
             with patch("pydantic_ai.models.bedrock.BedrockConverseModel"):
                 with patch("src.agents.accessibility_agent.settings") as mock_settings:
                     mock_settings.ai_provider = "bedrock"
-                    mock_settings.bedrock_model_id = "anthropic.claude-3-haiku-20240307-v1:0"
 
                     agent = AccessibilityAgent()
 
@@ -74,7 +72,6 @@ def test_accessibility_agent_uses_fallback_prompts_if_yaml_missing():
             with patch("pydantic_ai.models.bedrock.BedrockConverseModel"):
                 with patch("src.agents.accessibility_agent.settings") as mock_settings:
                     mock_settings.ai_provider = "bedrock"
-                    mock_settings.bedrock_model_id = "anthropic.claude-3-haiku-20240307-v1:0"
 
                     agent = AccessibilityAgent()
 
@@ -95,7 +92,6 @@ def test_accessibility_agent_system_prompt_configured():
             }):
                 with patch("src.agents.accessibility_agent.settings") as mock_settings:
                     mock_settings.ai_provider = "bedrock"
-                    mock_settings.bedrock_model_id = "anthropic.claude-3-haiku-20240307-v1:0"
 
                     AccessibilityAgent()
 
@@ -103,8 +99,8 @@ def test_accessibility_agent_system_prompt_configured():
                     assert mock_agent.call_args.kwargs["system_prompt"] == test_system_prompt
 
 
-def test_accessibility_agent_model_settings_from_config():
-    """Test agent uses Bedrock model_id from config."""
+def test_accessibility_agent_uses_efficient_tier_model():
+    """Test agent uses EFFICIENT tier model from model_tiers."""
     with patch("src.agents.accessibility_agent.Agent"):
         with patch("pydantic_ai.models.bedrock.BedrockConverseModel") as mock_bedrock:
             with patch.object(AccessibilityAgent, "_load_prompts", return_value={
@@ -113,13 +109,12 @@ def test_accessibility_agent_model_settings_from_config():
             }):
                 with patch("src.agents.accessibility_agent.settings") as mock_settings:
                     mock_settings.ai_provider = "bedrock"
-                    mock_settings.bedrock_model_id = "anthropic.claude-3-5-sonnet-20241022-v2:0"
 
                     AccessibilityAgent()
 
-                    # Should use bedrock_model_id from settings
+                    # Should use EFFICIENT tier (Haiku) from model_tiers.py
                     mock_bedrock.assert_called_once_with(
-                        model_name="anthropic.claude-3-5-sonnet-20241022-v2:0"
+                        model_name="us.anthropic.claude-haiku-4-5-20251001-v1:0"
                     )
 
 
@@ -135,7 +130,6 @@ async def test_process_page_success():
         with patch("pydantic_ai.models.bedrock.BedrockConverseModel"):
             with patch("src.agents.accessibility_agent.settings") as mock_settings:
                 mock_settings.ai_provider = "bedrock"
-                mock_settings.bedrock_model_id = "anthropic.claude-3-haiku-20240307-v1:0"
 
                 agent = AccessibilityAgent()
 
@@ -177,7 +171,6 @@ async def test_process_page_multimodal_input_formatting():
         with patch("pydantic_ai.models.bedrock.BedrockConverseModel"):
             with patch("src.agents.accessibility_agent.settings") as mock_settings:
                 mock_settings.ai_provider = "bedrock"
-                mock_settings.bedrock_model_id = "anthropic.claude-3-haiku-20240307-v1:0"
 
                 agent = AccessibilityAgent()
                 agent.user_prompt_template = "Process: {page_markdown}"
@@ -220,7 +213,6 @@ async def test_process_page_model_settings_passed():
         with patch("pydantic_ai.models.bedrock.BedrockConverseModel"):
             with patch("src.agents.accessibility_agent.settings") as mock_settings:
                 mock_settings.ai_provider = "bedrock"
-                mock_settings.bedrock_model_id = "anthropic.claude-3-haiku-20240307-v1:0"
                 mock_settings.claude_max_tokens = 4096
                 mock_settings.claude_temperature = 0.3
 
@@ -256,7 +248,6 @@ async def test_process_page_error_handling():
         with patch("pydantic_ai.models.bedrock.BedrockConverseModel"):
             with patch("src.agents.accessibility_agent.settings") as mock_settings:
                 mock_settings.ai_provider = "bedrock"
-                mock_settings.bedrock_model_id = "anthropic.claude-3-haiku-20240307-v1:0"
 
                 agent = AccessibilityAgent()
 
@@ -291,7 +282,6 @@ user_prompt_template: "YAML user: {page_markdown}"
             with patch("pydantic_ai.models.bedrock.BedrockConverseModel"):
                 with patch("src.agents.accessibility_agent.settings") as mock_settings:
                     mock_settings.ai_provider = "bedrock"
-                    mock_settings.bedrock_model_id = "anthropic.claude-3-haiku-20240307-v1:0"
 
                     AccessibilityAgent()
 
@@ -309,7 +299,6 @@ def test_default_prompts_structure():
             with patch("pydantic_ai.models.bedrock.BedrockConverseModel"):
                 with patch("src.agents.accessibility_agent.settings") as mock_settings:
                     mock_settings.ai_provider = "bedrock"
-                    mock_settings.bedrock_model_id = "anthropic.claude-3-haiku-20240307-v1:0"
 
                     agent = AccessibilityAgent()
 
@@ -337,7 +326,6 @@ def test_get_accessibility_agent_singleton():
         with patch("pydantic_ai.models.bedrock.BedrockConverseModel"):
             with patch("src.agents.accessibility_agent.settings") as mock_settings:
                 mock_settings.ai_provider = "bedrock"
-                mock_settings.bedrock_model_id = "anthropic.claude-3-haiku-20240307-v1:0"
 
                 # Reset singleton
                 import src.agents.accessibility_agent as agent_module

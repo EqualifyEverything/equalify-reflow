@@ -253,13 +253,17 @@ def test_bedrock_region_configuration():
 
 
 @skip_bedrock
-def test_bedrock_model_id_configuration():
-    """Test Bedrock uses configured model ID."""
+def test_bedrock_model_tiers_configuration():
+    """Test Bedrock uses model tiers from model_tiers.py."""
+    from src.agents.model_tiers import MODEL_TIER_MAP, ModelTier
+
     AccessibilityAgent()
 
-    # Should be using configured model ID
-    assert settings.bedrock_model_id is not None
-    assert "claude" in settings.bedrock_model_id.lower()
+    # Should have model tiers configured
+    assert ModelTier.EFFICIENT in MODEL_TIER_MAP
+    assert ModelTier.REASONING in MODEL_TIER_MAP
+    assert "claude" in MODEL_TIER_MAP[ModelTier.EFFICIENT].lower()
+    assert "claude" in MODEL_TIER_MAP[ModelTier.REASONING].lower()
 
 
 @skip_bedrock
@@ -385,9 +389,12 @@ if __name__ == "__main__":
     import asyncio
 
     async def run_manual_test():
+        from src.agents.model_tiers import MODEL_TIER_MAP, ModelTier
+
         print("Running manual Bedrock integration test...")
         print(f"AI Provider: {settings.ai_provider}")
-        print(f"Bedrock Model: {settings.bedrock_model_id}")
+        print(f"EFFICIENT Model: {MODEL_TIER_MAP[ModelTier.EFFICIENT]}")
+        print(f"REASONING Model: {MODEL_TIER_MAP[ModelTier.REASONING]}")
         print(f"Bedrock Region (for boto3): {settings.bedrock_region}")
         print()
 

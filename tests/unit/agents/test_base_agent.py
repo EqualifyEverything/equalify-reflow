@@ -180,7 +180,6 @@ class TestPromptLoading:
         prompts_file.write_text("system_prompt: 'Relative prompt'")
 
         mock_settings.agent_prompts_dir = str(agents_dir)
-        mock_settings.bedrock_model_id = "test-model"
         mock_settings.claude_max_tokens = 4096
 
         config = AgentConfig(

@@ -17,6 +17,7 @@ from ..agents.agent_router import AgentRouter
 from ..agents.analysis_agent import AnalysisAgent
 from ..agents.extraction_agent import ExtractionAgent
 from ..agents.figures_agent import FiguresAgent
+from ..agents.model_tiers import ModelTier, get_model_id
 from ..agents.structure_agent import StructureAgent
 from ..agents.tables_agent import TablesAgent
 from ..agents.typography_agent import TypographyAgent
@@ -670,7 +671,7 @@ class ProcessingService:
             "llm_output_tokens": total_usage.output_tokens,
             "llm_total_tokens": total_usage.total_tokens,
             "extraction_method": "analysis_extraction",
-            "extraction_model": manifest.analysis_model,
+            "extraction_model": get_model_id(ModelTier.EFFICIENT),
             "layout_type": heading_tree.layout_type,
             "section_count": len(heading_tree.sections),
             "observation_count": len(observations),

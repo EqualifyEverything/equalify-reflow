@@ -235,7 +235,7 @@ class ConsolidationAgent(BaseDocumentAgent[ConsolidationOutput]):
 
         for page_num in sorted(obs_by_page.keys()):
             page_obs = obs_by_page[page_num]
-            lines.append(f"=== PAGE {page_num} ({len(page_obs)} observations) ===")
+            lines.append(f"<page number=\"{page_num}\" observations=\"{len(page_obs)}\">")
 
             for obs in page_obs:
                 lines.append(f"""
@@ -250,6 +250,7 @@ OBSERVATION {obs.id}:
                 if obs.manual_reason:
                     lines.append(f"  Manual Reason: {obs.manual_reason}")
 
+            lines.append("</page>")
             lines.append("")
 
         return "\n".join(lines)

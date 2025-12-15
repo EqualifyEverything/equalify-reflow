@@ -28,6 +28,7 @@ from src.agents.model_tiers import ModelTier
 from src.services.pdf_converter import PageData
 from src.shared.models.processing import LLMUsage
 from src.shared.models.remediation import DocumentManifest, HeadingTree, PageFeatures
+from src.utils.prompt_sanitizer import sanitize_for_prompt
 
 logger = logging.getLogger(__name__)
 
@@ -149,13 +150,28 @@ class ExtractionAgent(BaseDocumentAgent[ExtractionOutput]):
         page_features_text = self._format_page_features(manifest.page_features)
 
         # Add user prompt with manifest context
+        # SECURITY: Sanitize user-influenced fields to prevent prompt injection
+        # document_title and document_type come from PDF metadata (attacker-controlled)
+        # layout_notes may contain extracted text content
         user_prompt = self.prompts["user_prompt"].format(
             total_pages=manifest.total_pages,
-            document_title=manifest.document_title,
-            document_type=manifest.document_type,
+            document_title=sanitize_for_prompt(
+                manifest.document_title,
+                max_length=200,
+                context="document_title",
+            ),
+            document_type=sanitize_for_prompt(
+                manifest.document_type,
+                max_length=50,
+                context="document_type",
+            ),
             heading_tree=heading_tree_text,
             page_features=page_features_text,
-            layout_notes=manifest.analysis_notes or "No additional notes.",
+            layout_notes=sanitize_for_prompt(
+                manifest.analysis_notes or "No additional notes.",
+                max_length=500,
+                context="layout_notes",
+            ),
         )
         messages.append(user_prompt)
 

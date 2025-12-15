@@ -1,4 +1,4 @@
-"""Tests for path validation security in AgentCore (PRD-019 Security Hardening)."""
+"""Tests for path validation security in AgentCore."""
 
 from __future__ import annotations
 

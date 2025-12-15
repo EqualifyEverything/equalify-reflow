@@ -95,7 +95,7 @@ class TestProposalDraft:
 class TestConsolidationOutput:
     """Tests for ConsolidationOutput model."""
 
-    def test_valid_output(self):
+    def test_valid_output(self) -> None:
         """Test creating a valid ConsolidationOutput."""
         output = ConsolidationOutput(
             proposals=[
@@ -114,7 +114,7 @@ class TestConsolidationOutput:
         assert len(output.manual_observations) == 1
         assert len(output.conflicts) == 1
 
-    def test_output_defaults(self):
+    def test_output_defaults(self) -> None:
         """Test ConsolidationOutput default values."""
         output = ConsolidationOutput()
         assert output.proposals == []
@@ -132,14 +132,14 @@ class TestConsolidationOutput:
 class TestConsolidationAgentInit:
     """Tests for ConsolidationAgent initialization."""
 
-    def test_agent_uses_reasoning_tier(self):
+    def test_agent_uses_reasoning_tier(self) -> None:
         """Test agent uses REASONING (Sonnet) model tier."""
         agent = ConsolidationAgent()
         assert agent.model_tier == ModelTier.REASONING
         assert agent.model_id == MODEL_TIER_MAP[ModelTier.REASONING]
         assert "sonnet" in agent.model_id.lower()
 
-    def test_agent_has_prompts(self):
+    def test_agent_has_prompts(self) -> None:
         """Test agent has prompts (from file or defaults)."""
         agent = ConsolidationAgent()
         assert "system_prompt" in agent.prompts
@@ -147,19 +147,19 @@ class TestConsolidationAgentInit:
         prompt = agent.prompts["system_prompt"].lower()
         assert "consolidat" in prompt or "observation" in prompt
 
-    def test_agent_lazy_initialization(self):
+    def test_agent_lazy_initialization(self) -> None:
         """Test agent does not create PydanticAI agent until needed."""
         agent = ConsolidationAgent()
         # _agent should be None until first use (stored in _core)
         assert agent._core._agent is None
 
-    def test_auto_route_threshold_in_settings(self):
+    def test_auto_route_threshold_in_settings(self) -> None:
         """Test confidence threshold is available via settings."""
         from src.config import settings
         # Threshold is centralized in settings, not a class constant
         assert 0.0 <= settings.min_confidence_for_auto_approval <= 1.0
 
-    def test_max_markdown_length(self):
+    def test_max_markdown_length(self) -> None:
         """Test agent has max markdown length constant."""
         agent = ConsolidationAgent()
         assert agent.MAX_MARKDOWN_LENGTH == 8000
@@ -210,7 +210,7 @@ class TestObservationFormatting:
             ),
         ]
 
-    def test_format_observations(self, sample_observations: list[Observation]):
+    def test_format_observations(self, sample_observations: list[Observation]) -> None:
         """Test formatting observations for prompt."""
         agent = ConsolidationAgent()
         formatted = agent._format_observations(sample_observations)
@@ -226,7 +226,7 @@ class TestObservationFormatting:
 
     def test_format_observations_groups_by_page(
         self, sample_observations: list[Observation]
-    ):
+    ) -> None:
         """Test observations are grouped by page with XML tags."""
         agent = ConsolidationAgent()
         formatted = agent._format_observations(sample_observations)
@@ -236,7 +236,7 @@ class TestObservationFormatting:
         page2_idx = formatted.index('<page number="2"')
         assert page1_idx < page2_idx
 
-    def test_format_observations_includes_manual_reason(self):
+    def test_format_observations_includes_manual_reason(self) -> None:
         """Test manual_reason is included when present."""
         agent = ConsolidationAgent()
         obs = Observation(
@@ -270,14 +270,14 @@ class TestObservationFormatting:
 class TestMarkdownTruncation:
     """Tests for markdown truncation."""
 
-    def test_short_markdown_unchanged(self):
+    def test_short_markdown_unchanged(self) -> None:
         """Test short markdown is not truncated."""
         agent = ConsolidationAgent()
         markdown = "# Hello World\n\nShort content."
         result = agent._truncate_markdown(markdown)
         assert result == markdown
 
-    def test_long_markdown_truncated(self):
+    def test_long_markdown_truncated(self) -> None:
         """Test long markdown is truncated with indicator."""
         agent = ConsolidationAgent()
         markdown = "x" * 10000
@@ -297,7 +297,7 @@ class TestMarkdownTruncation:
 class TestProposalValidation:
     """Tests for proposal validation and conversion."""
 
-    def test_valid_proposal_converted(self):
+    def test_valid_proposal_converted(self) -> None:
         """Test valid proposal draft is converted to Proposal."""
         agent = ConsolidationAgent()
         markdown = "# Hello World\n\nThis is content."
@@ -327,7 +327,7 @@ class TestProposalValidation:
         assert proposals[0].route == "auto"  # Confidence 0.99 exceeds threshold
         assert proposals[0].status == "pending"
 
-    def test_invalid_search_text_skipped(self):
+    def test_invalid_search_text_skipped(self) -> None:
         """Test proposals with invalid search text are skipped."""
         agent = ConsolidationAgent()
         markdown = "# Hello World"
@@ -350,7 +350,7 @@ class TestProposalValidation:
 
         assert len(proposals) == 0
 
-    def test_non_unique_search_text_skipped(self):
+    def test_non_unique_search_text_skipped(self) -> None:
         """Test proposals with non-unique search text are skipped."""
         agent = ConsolidationAgent()
         markdown = "Hello Hello Hello"
@@ -373,7 +373,7 @@ class TestProposalValidation:
 
         assert len(proposals) == 0
 
-    def test_low_confidence_routes_to_manual(self):
+    def test_low_confidence_routes_to_manual(self) -> None:
         """Test low confidence proposals route to manual."""
         agent = ConsolidationAgent()
         markdown = "# Hello World"
@@ -397,7 +397,7 @@ class TestProposalValidation:
         assert len(proposals) == 1
         assert proposals[0].route == "manual"
 
-    def test_boundary_confidence_routes_auto(self):
+    def test_boundary_confidence_routes_auto(self) -> None:
         """Test confidence exactly at threshold routes to auto."""
         from src.config import settings
         agent = ConsolidationAgent()
@@ -455,7 +455,7 @@ class TestConsolidationAgentConsolidate:
         ]
 
     @pytest.mark.asyncio
-    async def test_empty_observations_returns_empty(self):
+    async def test_empty_observations_returns_empty(self) -> None:
         """Test consolidating empty observations returns empty results."""
         agent = ConsolidationAgent()
 
@@ -471,7 +471,7 @@ class TestConsolidationAgentConsolidate:
         assert usage.output_tokens == 0
 
     @pytest.mark.asyncio
-    async def test_non_open_observations_filtered(self):
+    async def test_non_open_observations_filtered(self) -> None:
         """Test only open observations are consolidated."""
         agent = ConsolidationAgent()
 
@@ -501,7 +501,7 @@ class TestConsolidationAgentConsolidate:
     @pytest.mark.asyncio
     async def test_consolidate_calls_agent(
         self, sample_observations: list[Observation]
-    ):
+    ) -> None:
         """Test consolidate calls the PydanticAI agent."""
         agent = ConsolidationAgent()
 
@@ -551,7 +551,7 @@ class TestConsolidationAgentConsolidate:
     @pytest.mark.asyncio
     async def test_consolidate_returns_usage_metrics(
         self, sample_observations: list[Observation]
-    ):
+    ) -> None:
         """Test consolidate returns LLM usage metrics."""
         agent = ConsolidationAgent()
 
@@ -581,7 +581,7 @@ class TestConsolidationAgentConsolidate:
     @pytest.mark.asyncio
     async def test_consolidate_returns_manual_ids(
         self, sample_observations: list[Observation]
-    ):
+    ) -> None:
         """Test consolidate returns manual observation IDs."""
         agent = ConsolidationAgent()
 

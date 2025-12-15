@@ -15,14 +15,12 @@ from pathlib import Path
 from typing import Any, Literal
 
 from pydantic import BaseModel, Field
-from pydantic_ai import Agent
-from pydantic_ai.models.bedrock import BedrockConverseModel
 
-from src.agents.model_tiers import MODEL_TIER_MAP, ModelTier
+from src.agents.base_agent import AgentConfig, BaseDocumentAgent
+from src.agents.model_tiers import ModelTier
 from src.config import settings
-from src.shared.llm_cost import calculate_estimated_cost, get_pricing_for_tier
-from src.shared.models.agent_models import LLMUsage
 from src.shared.models.observation import Observation
+from src.shared.models.processing import LLMUsage
 from src.shared.models.proposal import Proposal, SearchReplaceDiff
 from src.utils.diff_utils import validate_search_replace
 
@@ -89,7 +87,7 @@ class ConsolidationOutput(BaseModel):
     )
 
 
-class ConsolidationAgent:
+class ConsolidationAgent(BaseDocumentAgent[ConsolidationOutput]):
     """Agent that consolidates observations into proposals.
 
     This agent:
@@ -119,52 +117,27 @@ class ConsolidationAgent:
         Args:
             prompts_file: Optional path to YAML prompts file (uses default if not provided)
         """
-        self.model_tier = ModelTier.REASONING
-        self.model_id = MODEL_TIER_MAP[self.model_tier]
-        self.prompts_file = prompts_file
-        self.prompts = self._load_prompts()
-
-        # Lazy initialization - agent created on first use
-        self._agent: Agent[None, ConsolidationOutput] | None = None
-
+        config = AgentConfig(
+            name="consolidation_agent",
+            prompts_file=prompts_file or Path("consolidation.yaml"),
+            output_type=ConsolidationOutput,
+            model_tier=ModelTier.REASONING,
+            max_retries=2,
+            temperature=0.3,
+            max_tokens=16000,
+        )
+        super().__init__(config)
         logger.info(
             f"ConsolidationAgent initialized with model tier {self.model_tier.value} "
             f"({self.model_id})"
         )
 
-    def _load_prompts(self) -> dict[str, Any]:
-        """Load prompts from YAML configuration file.
+    async def process(self, input_data: Any) -> ConsolidationOutput:
+        """Process method required by BaseDocumentAgent.
 
-        Raises:
-            FileNotFoundError: If prompts file does not exist (fail fast, no fallback)
+        For ConsolidationAgent, use consolidate() method instead.
         """
-        import yaml
-
-        prompts_file = self.prompts_file
-        if prompts_file is None:
-            prompts_file = Path(settings.agent_prompts_dir) / "consolidation.yaml"
-
-        with open(prompts_file) as f:
-            prompts = yaml.safe_load(f)
-            logger.debug(f"Loaded prompts from {prompts_file}")
-            return dict(prompts)
-
-    def _get_agent(self) -> Agent[None, ConsolidationOutput]:
-        """Get or create the PydanticAI agent (lazy initialization)."""
-        if self._agent is None:
-            logger.debug(
-                f"ConsolidationAgent: Creating BedrockConverseModel "
-                f"with model {self.model_id}"
-            )
-            model = BedrockConverseModel(model_name=self.model_id)
-            self._agent = Agent(
-                model,
-                output_type=ConsolidationOutput,
-                system_prompt=self.prompts["system_prompt"],
-                retries=2,
-            )
-            logger.debug("ConsolidationAgent: PydanticAI Agent created")
-        return self._agent
+        raise NotImplementedError("ConsolidationAgent uses consolidate() method, not process()")
 
     async def consolidate(
         self,
@@ -206,33 +179,21 @@ class ConsolidationAgent:
             f"Generate proposals with exact search-replace diffs."
         )
 
-        # Execute agent
+        # Execute agent (using inherited _get_agent)
         agent = self._get_agent()
 
         result = await agent.run(
             user_message,
             model_settings={
-                "max_tokens": settings.claude_max_tokens,
-                "temperature": 0.3,  # Lower temperature for more consistent diffs
+                "max_tokens": self.config.max_tokens,
+                "temperature": self.config.temperature,
             },
         )
 
         output = result.output
 
-        # Track LLM usage (PydanticAI uses request_tokens/response_tokens)
-        usage = result.usage()
-        input_tokens = usage.request_tokens or 0
-        output_tokens = usage.response_tokens or 0
-        total_tokens = input_tokens + output_tokens
-        pricing = get_pricing_for_tier(self.model_tier)
-        cost_cents = calculate_estimated_cost(input_tokens, output_tokens, pricing)
-
-        llm_usage = LLMUsage(
-            input_tokens=input_tokens,
-            output_tokens=output_tokens,
-            total_tokens=total_tokens,
-            estimated_cost_cents=cost_cents,
-        )
+        # Use inherited usage tracking
+        llm_usage = self._core.create_llm_usage(result)
 
         logger.debug(
             f"Job {job_id}: Consolidation agent returned {len(output.proposals)} drafts, "
@@ -252,7 +213,7 @@ class ConsolidationAgent:
         logger.info(
             f"Job {job_id}: Consolidation complete - "
             f"{len(proposals)} valid proposals, {len(manual_ids)} manual, "
-            f"cost: ${cost_cents/100:.4f}"
+            f"cost: ${llm_usage.estimated_cost_cents/100:.4f}"
         )
 
         return proposals, manual_ids, llm_usage

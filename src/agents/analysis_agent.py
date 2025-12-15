@@ -18,19 +18,16 @@ from __future__ import annotations
 import base64
 import logging
 import uuid
-from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Any, Literal
 
-import yaml
 from pydantic import BaseModel, Field
-from pydantic_ai import Agent
 from pydantic_ai.messages import BinaryContent
 
-from src.agents.model_tiers import MODEL_TIER_MAP, ModelTier
+from src.agents.base_agent import AgentConfig, BaseDocumentAgent
+from src.agents.model_tiers import ModelTier
 from src.config import settings
 from src.services.pdf_converter import PageData
-from src.shared.llm_cost import calculate_estimated_cost, get_pricing_for_tier
 from src.shared.models.observation import Observation, ObservationLocation
 from src.shared.models.processing import LLMUsage
 from src.shared.models.remediation import (
@@ -208,26 +205,11 @@ class AnalysisOutput(BaseModel):
 
 
 # =============================================================================
-# Agent Configuration
-# =============================================================================
-
-
-@dataclass
-class AnalysisAgentConfig:
-    """Configuration for the analysis agent."""
-
-    prompts_file: Path = field(default_factory=lambda: Path("analysis.yaml"))
-    max_retries: int = 2
-    temperature: float = 0.3  # Slightly higher for analytical reasoning
-    max_tokens: int = 4096
-
-
-# =============================================================================
 # Analysis Agent
 # =============================================================================
 
 
-class AnalysisAgent:
+class AnalysisAgent(BaseDocumentAgent[AnalysisOutput]):
     """Agent that performs deep document analysis using Sonnet.
 
     This agent:
@@ -248,52 +230,34 @@ class AnalysisAgent:
     # All possible specialized agents
     ALL_AGENTS = {"figures", "tables", "structure", "typography"}
 
-    def __init__(self, config: AnalysisAgentConfig | None = None) -> None:
+    def __init__(self, config: AgentConfig | None = None) -> None:
         """Initialize the analysis agent.
 
         Args:
             config: Optional configuration (uses defaults if not provided)
         """
-        self.config = config or AnalysisAgentConfig()
-        self.model_tier = ModelTier.REASONING
-        self.model_id = MODEL_TIER_MAP[self.model_tier]
-        self.prompts = self._load_prompts()
-        self._agent: Agent[None, AnalysisOutput] | None = None
-
+        if config is None:
+            config = AgentConfig(
+                name="analysis_agent",
+                prompts_file=Path("analysis.yaml"),
+                output_type=AnalysisOutput,
+                model_tier=ModelTier.REASONING,
+                max_retries=2,
+                temperature=0.3,
+                max_tokens=4096,
+            )
+        super().__init__(config)
         logger.info(
             f"AnalysisAgent initialized with model tier {self.model_tier.value} "
             f"({self.model_id})"
         )
 
-    def _load_prompts(self) -> dict[str, Any]:
-        """Load prompts from YAML configuration file.
+    async def process(self, input_data: Any) -> AnalysisOutput:
+        """Process method required by BaseDocumentAgent.
 
-        Raises:
-            FileNotFoundError: If prompts file does not exist (fail fast, no fallback)
+        For AnalysisAgent, use analyze() method instead.
         """
-        prompts_file = self.config.prompts_file
-        if not prompts_file.is_absolute():
-            prompts_file = Path(settings.agent_prompts_dir) / prompts_file
-
-        with open(prompts_file) as f:
-            prompts: dict[str, Any] = yaml.safe_load(f)
-            logger.debug(f"Loaded prompts from {prompts_file}")
-            return prompts
-
-    def _get_agent(self) -> Agent[None, AnalysisOutput]:
-        """Get or create the analysis agent."""
-        if self._agent is None:
-            from pydantic_ai.models.bedrock import BedrockConverseModel
-
-            model = BedrockConverseModel(model_name=self.model_id)
-            self._agent = Agent(
-                model,
-                output_type=AnalysisOutput,
-                system_prompt=self.prompts["system_prompt"],
-                retries=self.config.max_retries,
-            )
-            logger.debug(f"Created analysis agent with model {self.model_id}")
-        return self._agent
+        raise NotImplementedError("AnalysisAgent uses analyze() method, not process()")
 
     async def analyze(
         self,
@@ -337,23 +301,8 @@ class AnalysisAgent:
             },
         )
 
-        # Extract usage
-        usage_data = result.usage()
-        input_tokens = usage_data.request_tokens or 0
-        output_tokens = usage_data.response_tokens or 0
-        total_tokens = input_tokens + output_tokens
-
-        pricing = get_pricing_for_tier(self.model_tier)
-        estimated_cost_cents = calculate_estimated_cost(
-            input_tokens, output_tokens, pricing
-        )
-
-        usage = LLMUsage(
-            input_tokens=input_tokens,
-            output_tokens=output_tokens,
-            total_tokens=total_tokens,
-            estimated_cost_cents=estimated_cost_cents,
-        )
+        # Use inherited usage tracking
+        usage = self._core.create_llm_usage(result)
 
         # Convert output to DocumentManifest
         output = result.output
@@ -367,7 +316,7 @@ class AnalysisAgent:
             f"{len(manifest.page_features)} pages analyzed, "
             f"{len(manifest.required_agents)} agents needed, "
             f"{len(observations)} initial observations, "
-            f"cost: ${estimated_cost_cents/100:.4f}"
+            f"cost: ${usage.estimated_cost_cents/100:.4f}"
         )
 
         return manifest, observations, usage
@@ -473,7 +422,6 @@ class AnalysisAgent:
 
 __all__ = [
     "AnalysisAgent",
-    "AnalysisAgentConfig",
     "AnalysisOutput",
     "AnalysisObservation",
     "AnalysisPageFeatures",

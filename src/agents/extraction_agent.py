@@ -17,19 +17,15 @@ from __future__ import annotations
 
 import base64
 import logging
-from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Any
 
-import yaml
 from pydantic import BaseModel, Field
-from pydantic_ai import Agent
 from pydantic_ai.messages import BinaryContent
 
-from src.agents.model_tiers import MODEL_TIER_MAP, ModelTier
-from src.config import settings
+from src.agents.base_agent import AgentConfig, BaseDocumentAgent
+from src.agents.model_tiers import ModelTier
 from src.services.pdf_converter import PageData
-from src.shared.llm_cost import HAIKU_PRICING, calculate_estimated_cost
 from src.shared.models.processing import LLMUsage
 from src.shared.models.remediation import DocumentManifest, HeadingTree, PageFeatures
 
@@ -59,26 +55,11 @@ class ExtractionOutput(BaseModel):
 
 
 # =============================================================================
-# Agent Configuration
-# =============================================================================
-
-
-@dataclass
-class ExtractionAgentConfig:
-    """Configuration for the extraction agent."""
-
-    prompts_file: Path = field(default_factory=lambda: Path("extraction.yaml"))
-    max_retries: int = 2
-    temperature: float = 0.2  # Low temperature for consistent transcription
-    max_tokens: int = 16384  # Large output for full document transcription
-
-
-# =============================================================================
 # Extraction Agent
 # =============================================================================
 
 
-class ExtractionAgent:
+class ExtractionAgent(BaseDocumentAgent[ExtractionOutput]):
     """Agent that performs guided markdown extraction using Haiku.
 
     This agent:
@@ -96,52 +77,34 @@ class ExtractionAgent:
         >>> print(f"Extracted {len(markdown)} chars")
     """
 
-    def __init__(self, config: ExtractionAgentConfig | None = None) -> None:
+    def __init__(self, config: AgentConfig | None = None) -> None:
         """Initialize the extraction agent.
 
         Args:
             config: Optional configuration (uses defaults if not provided)
         """
-        self.config = config or ExtractionAgentConfig()
-        self.model_tier = ModelTier.EFFICIENT
-        self.model_id = MODEL_TIER_MAP[self.model_tier]
-        self.prompts = self._load_prompts()
-        self._agent: Agent[None, ExtractionOutput] | None = None
-
+        if config is None:
+            config = AgentConfig(
+                name="extraction_agent",
+                prompts_file=Path("extraction.yaml"),
+                output_type=ExtractionOutput,
+                model_tier=ModelTier.EFFICIENT,
+                max_retries=2,
+                temperature=0.2,
+                max_tokens=16384,
+            )
+        super().__init__(config)
         logger.info(
             f"ExtractionAgent initialized with model tier {self.model_tier.value} "
             f"({self.model_id})"
         )
 
-    def _load_prompts(self) -> dict[str, Any]:
-        """Load prompts from YAML configuration file.
+    async def process(self, input_data: Any) -> ExtractionOutput:
+        """Process method required by BaseDocumentAgent.
 
-        Raises:
-            FileNotFoundError: If prompts file does not exist (fail fast, no fallback)
+        For ExtractionAgent, use extract() method instead.
         """
-        prompts_file = self.config.prompts_file
-        if not prompts_file.is_absolute():
-            prompts_file = Path(settings.agent_prompts_dir) / prompts_file
-
-        with open(prompts_file) as f:
-            prompts: dict[str, Any] = yaml.safe_load(f)
-            logger.debug(f"Loaded prompts from {prompts_file}")
-            return prompts
-
-    def _get_agent(self) -> Agent[None, ExtractionOutput]:
-        """Get or create the extraction agent."""
-        if self._agent is None:
-            from pydantic_ai.models.bedrock import BedrockConverseModel
-
-            model = BedrockConverseModel(model_name=self.model_id)
-            self._agent = Agent(
-                model,
-                output_type=ExtractionOutput,
-                system_prompt=self.prompts["system_prompt"],
-                retries=self.config.max_retries,
-            )
-            logger.debug(f"Created extraction agent with model {self.model_id}")
-        return self._agent
+        raise NotImplementedError("ExtractionAgent uses extract() method, not process()")
 
     async def extract(
         self,
@@ -205,22 +168,8 @@ class ExtractionAgent:
             },
         )
 
-        # Extract usage
-        usage_data = result.usage()
-        input_tokens = usage_data.request_tokens or 0
-        output_tokens = usage_data.response_tokens or 0
-        total_tokens = input_tokens + output_tokens
-
-        estimated_cost_cents = calculate_estimated_cost(
-            input_tokens, output_tokens, HAIKU_PRICING
-        )
-
-        usage = LLMUsage(
-            input_tokens=input_tokens,
-            output_tokens=output_tokens,
-            total_tokens=total_tokens,
-            estimated_cost_cents=estimated_cost_cents,
-        )
+        # Use inherited usage tracking
+        usage = self._core.create_llm_usage(result)
 
         output = result.output
 
@@ -228,7 +177,7 @@ class ExtractionAgent:
             f"Extraction complete for job {job_id}: "
             f"{len(output.markdown)} chars, "
             f"confidence: {output.confidence:.2f}, "
-            f"cost: ${estimated_cost_cents/100:.4f}"
+            f"cost: ${usage.estimated_cost_cents/100:.4f}"
         )
 
         return output.markdown, output.confidence, usage
@@ -295,6 +244,5 @@ class ExtractionAgent:
 
 __all__ = [
     "ExtractionAgent",
-    "ExtractionAgentConfig",
     "ExtractionOutput",
 ]

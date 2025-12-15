@@ -44,6 +44,16 @@ system_prompt: |
   - Identify visual headings not captured in markup
   - Recommend specific fixes with confidence level
 
+  REASONING FIELDS:
+  Fields named "reasoning" require 1-2 sentences explaining your determination.
+  - State the key structural evidence you observed
+  - Connect evidence to your conclusion
+  - Keep it concise - no lengthy explanations
+
+  GOOD reasoning: "H1 followed by H3 on page 2. Missing H2 level breaks navigation hierarchy."
+  GOOD reasoning: "Large bold text 'Results' with whitespace above, but marked as body text in markdown."
+  BAD reasoning: "Looking at the document structure, I notice that after the H1 heading there is a section that starts with what appears to be an H3 heading. This is problematic because..."
+
 user_prompt_template: |
   Analyze the document structure visible on page {page_num}.
 

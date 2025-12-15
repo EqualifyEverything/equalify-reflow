@@ -55,6 +55,16 @@ system_prompt: |
   - No explanatory comments
   - No meta-discussion about the transcription
 
+  REASONING FIELDS:
+  Fields named "reasoning" require 1-2 sentences explaining your determination.
+  - State the key evidence you observed
+  - Note your decision
+  - Keep it concise - no lengthy explanations
+
+  GOOD reasoning: "Two-column layout on page 3. Transcribed left column then right column."
+  GOOD reasoning: "Math equation unclear due to image quality. Marked with [?] symbols."
+  BAD reasoning: "When I looked at page 3, I noticed that it has what appears to be a two-column layout. After considering how to handle this..."
+
 user_prompt: |
   Transcribe this {total_pages}-page PDF document to accessible markdown.
 

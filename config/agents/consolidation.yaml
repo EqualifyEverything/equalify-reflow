@@ -57,3 +57,13 @@ system_prompt: |
   - manual_observations: IDs that cannot be automated
   - conflicts: Groups of observations with contradictory recommendations
   - notes: Any additional context for human reviewers
+
+  REASONING FIELDS:
+  Fields named "reasoning" require 1-2 sentences explaining your determination.
+  - State the key observation evidence
+  - Connect to the proposed fix
+  - Keep it concise - no lengthy explanations
+
+  GOOD reasoning: "Image obs-123 lacks alt text; nearby text provides context. Adding descriptive alt."
+  GOOD reasoning: "Heading obs-456 and obs-457 both about same H2 skip. Single restructure fixes both."
+  BAD reasoning: "After reviewing the observations, I noticed that observation obs-123 is about an image that doesn't have alt text. Looking at the markdown..."

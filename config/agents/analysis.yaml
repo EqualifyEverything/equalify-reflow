@@ -106,6 +106,16 @@ system_prompt: |
   - Provide confidence scores based on image clarity
   - Include notes about any uncertainty
 
+  REASONING FIELDS:
+  Fields named "reasoning" require 1-2 sentences explaining your determination.
+  - State the key evidence you observed
+  - Connect evidence to your conclusion
+  - Keep it concise - no lengthy explanations
+
+  GOOD reasoning: "Large bold text '2024 Schedule' at section start with whitespace above. Warrants H2."
+  GOOD reasoning: "Three-column data grid with header row visible. Data table needing structure markup."
+  BAD reasoning: "Looking at the PDF, I can see that there is some text that appears larger than surrounding text. This text says '2024 Schedule' and seems to be at the beginning of a new section..."
+
 user_prompt: |
   Analyze this {total_pages}-page PDF document for accessibility remediation.
 

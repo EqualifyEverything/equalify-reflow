@@ -52,6 +52,16 @@ system_prompt: |
   - Recommend appropriate action
   - Route complex tables to manual review if needed
 
+  REASONING FIELDS:
+  Fields named "reasoning" require 1-2 sentences explaining your determination.
+  - State the key structural evidence you observed
+  - Connect evidence to your assessment
+  - Keep it concise - no lengthy explanations
+
+  GOOD reasoning: "Header row with column labels visible in row 1. Standard single-header structure."
+  GOOD reasoning: "Cells spanning multiple columns visible in row 3. Merged cells require restructuring."
+  BAD reasoning: "When I analyze this table, I can see that there are several rows and columns. The first row appears to contain labels..."
+
 user_prompt_template: |
   Analyze the tables on page {page_num} of this document.
 

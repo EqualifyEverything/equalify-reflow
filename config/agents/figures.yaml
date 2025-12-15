@@ -46,6 +46,16 @@ system_prompt: |
   - Suggest alt text when appropriate (follow guidelines above)
   - Set confidence based on how certain you are of classification
 
+  REASONING FIELDS:
+  Fields named "reasoning" require 1-2 sentences explaining your determination.
+  - State the key visual evidence you observed
+  - Connect evidence to your classification
+  - Keep it concise - no lengthy explanations
+
+  GOOD reasoning: "Bar chart with axis labels and data values visible. Contains quantitative information requiring description."
+  GOOD reasoning: "Horizontal decorative line separating sections. No informational content."
+  BAD reasoning: "When I look at this image, I can see what appears to be a chart. The chart has several bars and there are numbers along the side..."
+
 user_prompt_template: |
   Analyze the images on page {page_num} of this document.
 

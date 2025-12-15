@@ -150,8 +150,8 @@ class TestConsolidationAgentInit:
     def test_agent_lazy_initialization(self):
         """Test agent does not create PydanticAI agent until needed."""
         agent = ConsolidationAgent()
-        # _agent should be None until first use
-        assert agent._agent is None
+        # _agent should be None until first use (stored in _core)
+        assert agent._core._agent is None
 
     def test_auto_route_threshold_in_settings(self):
         """Test confidence threshold is available via settings."""

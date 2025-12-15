@@ -55,8 +55,8 @@ def create_mock_agent(
         correction_types = ["other"]
 
     with patch("pydantic_ai.models.bedrock.BedrockConverseModel") as mock_bedrock, \
-         patch("src.agents.base_agent.Agent") as mock_agent_class, \
-         patch("src.agents.base_agent.yaml.safe_load", return_value={"system_prompt": "test"}), \
+         patch("src.agents.core.Agent") as mock_agent_class, \
+         patch("src.agents.core.yaml.safe_load", return_value={"system_prompt": "test"}), \
          patch("builtins.open", create=True):
         mock_bedrock.return_value = MagicMock()
         mock_agent_class.return_value = MagicMock()

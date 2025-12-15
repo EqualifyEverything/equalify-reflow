@@ -15,13 +15,13 @@ import pytest
 from pydantic import ValidationError
 from src.agents.analysis_agent import (
     AnalysisAgent,
-    AnalysisAgentConfig,
     AnalysisObservation,
     AnalysisOutput,
     AnalysisPageFeatures,
     HeadingNode,
     HeadingTree,
 )
+from src.agents.base_agent import AgentConfig
 from src.agents.model_tiers import MODEL_TIER_MAP, ModelTier
 from src.services.pdf_converter import PageData
 from src.shared.llm_cost import (
@@ -303,33 +303,42 @@ class TestAnalysisOutput:
 
 @pytest.mark.unit
 class TestAnalysisAgentConfig:
-    """Tests for AnalysisAgentConfig."""
+    """Tests for AnalysisAgent configuration."""
 
     def test_default_config(self):
         """Test default configuration values."""
-        config = AnalysisAgentConfig()
-        assert config.prompts_file == Path("analysis.yaml")
-        assert config.max_retries == 2
-        assert config.temperature == 0.3
-        assert config.max_tokens == 4096
+        agent = AnalysisAgent()
+        assert agent.config.prompts_file == Path("analysis.yaml")
+        assert agent.config.max_retries == 2
+        assert agent.config.temperature == 0.3
+        assert agent.config.max_tokens == 4096
 
-    def test_custom_config(self):
+    @patch("src.agents.core.yaml.safe_load")
+    @patch("builtins.open", create=True)
+    def test_custom_config(self, mock_open, mock_yaml):
         """Test custom configuration values."""
-        config = AnalysisAgentConfig(
+        mock_yaml.return_value = {
+            "system_prompt": "test prompt",
+            "user_prompt": "test user prompt",
+        }
+        config = AgentConfig(
+            name="custom_analysis",
             prompts_file=Path("custom.yaml"),
+            output_type=AnalysisOutput,
             max_retries=3,
             temperature=0.5,
             max_tokens=8192
         )
-        assert config.prompts_file == Path("custom.yaml")
-        assert config.max_retries == 3
+        agent = AnalysisAgent(config)
+        assert agent.config.prompts_file == Path("custom.yaml")
+        assert agent.config.max_retries == 3
 
 
 @pytest.mark.unit
 class TestAnalysisAgentInitialization:
     """Tests for AnalysisAgent initialization."""
 
-    @patch("src.agents.analysis_agent.yaml.safe_load")
+    @patch("src.agents.core.yaml.safe_load")
     @patch("builtins.open", create=True)
     def test_agent_initialization(self, mock_open, mock_yaml):
         """Test agent initializes correctly."""
@@ -345,7 +354,11 @@ class TestAnalysisAgentInitialization:
 
     def test_agent_raises_when_prompts_file_not_found(self):
         """Test agent raises FileNotFoundError when prompts file not found (fail fast)."""
-        config = AnalysisAgentConfig(prompts_file=Path("nonexistent.yaml"))
+        config = AgentConfig(
+            name="test_analysis",
+            prompts_file=Path("nonexistent.yaml"),
+            output_type=AnalysisOutput,
+        )
 
         with pytest.raises(FileNotFoundError):
             AnalysisAgent(config)
@@ -362,8 +375,7 @@ class TestAnalysisAgentHelperMethods:
 
     def test_determine_skip_agents_all_required(self):
         """Test skip agents when all are required."""
-        config = AnalysisAgentConfig(prompts_file=Path("analysis.yaml"))
-        agent = AnalysisAgent(config)
+        agent = AnalysisAgent()
 
         required = ["figures", "tables", "structure", "typography"]
         skip = agent._determine_skip_agents(required)
@@ -372,8 +384,7 @@ class TestAnalysisAgentHelperMethods:
 
     def test_determine_skip_agents_some_required(self):
         """Test skip agents when some are required."""
-        config = AnalysisAgentConfig(prompts_file=Path("analysis.yaml"))
-        agent = AnalysisAgent(config)
+        agent = AnalysisAgent()
 
         required = ["figures", "tables"]
         skip = agent._determine_skip_agents(required)
@@ -382,8 +393,7 @@ class TestAnalysisAgentHelperMethods:
 
     def test_determine_skip_agents_none_required(self):
         """Test skip agents when none are required."""
-        config = AnalysisAgentConfig(prompts_file=Path("analysis.yaml"))
-        agent = AnalysisAgent(config)
+        agent = AnalysisAgent()
 
         required = []
         skip = agent._determine_skip_agents(required)
@@ -392,8 +402,7 @@ class TestAnalysisAgentHelperMethods:
 
     def test_build_image_messages(self):
         """Test building image messages from pages."""
-        config = AnalysisAgentConfig(prompts_file=Path("analysis.yaml"))
-        agent = AnalysisAgent(config)
+        agent = AnalysisAgent()
 
         # Create mock pages
         pages = [
@@ -415,8 +424,7 @@ class TestAnalysisAgentManifestCreation:
 
     def test_create_manifest_basic(self):
         """Test basic manifest creation."""
-        config = AnalysisAgentConfig(prompts_file=Path("analysis.yaml"))
-        agent = AnalysisAgent(config)
+        agent = AnalysisAgent()
 
         output = AnalysisOutput(
             document_title="Test Document",
@@ -450,8 +458,7 @@ class TestAnalysisAgentManifestCreation:
 
     def test_create_manifest_fills_missing_pages(self):
         """Test manifest creation fills missing page features."""
-        config = AnalysisAgentConfig(prompts_file=Path("analysis.yaml"))
-        agent = AnalysisAgent(config)
+        agent = AnalysisAgent()
 
         # Only provide features for page 2
         output = AnalysisOutput(
@@ -483,8 +490,7 @@ class TestAnalysisAgentObservationConversion:
 
     def test_convert_observations_basic(self):
         """Test basic observation conversion."""
-        config = AnalysisAgentConfig(prompts_file=Path("analysis.yaml"))
-        agent = AnalysisAgent(config)
+        agent = AnalysisAgent()
 
         analysis_obs = [
             AnalysisObservation(
@@ -512,8 +518,7 @@ class TestAnalysisAgentObservationConversion:
 
     def test_convert_observations_low_confidence_routes_manual(self):
         """Test low confidence observations route to manual."""
-        config = AnalysisAgentConfig(prompts_file=Path("analysis.yaml"))
-        agent = AnalysisAgent(config)
+        agent = AnalysisAgent()
 
         analysis_obs = [
             AnalysisObservation(
@@ -531,8 +536,7 @@ class TestAnalysisAgentObservationConversion:
 
     def test_convert_observations_empty_list(self):
         """Test converting empty observation list."""
-        config = AnalysisAgentConfig(prompts_file=Path("analysis.yaml"))
-        agent = AnalysisAgent(config)
+        agent = AnalysisAgent()
 
         observations = agent._convert_observations([], "job-123")
 
@@ -546,8 +550,7 @@ class TestAnalysisAgentAnalyze:
     @pytest.mark.asyncio
     async def test_analyze_raises_on_empty_pages(self):
         """Test analyze raises ValueError on empty pages."""
-        config = AnalysisAgentConfig(prompts_file=Path("analysis.yaml"))
-        agent = AnalysisAgent(config)
+        agent = AnalysisAgent()
 
         with pytest.raises(ValueError, match="No pages provided"):
             await agent.analyze([], "job-123")
@@ -578,8 +581,7 @@ class TestAnalysisAgentAnalyze:
         mock_pydantic_agent.run = AsyncMock(return_value=mock_result)
 
         # Create agent and replace _get_agent
-        config = AnalysisAgentConfig(prompts_file=Path("analysis.yaml"))
-        agent = AnalysisAgent(config)
+        agent = AnalysisAgent()
         agent._get_agent = MagicMock(return_value=mock_pydantic_agent)
 
         pages = [PageData(page_num=1, image_base64="dGVzdA==")]

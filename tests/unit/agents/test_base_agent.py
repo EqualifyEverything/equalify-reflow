@@ -82,10 +82,10 @@ class TestAgentConfig:
 class TestBaseDocumentAgentProperties:
     """Test BaseDocumentAgent properties."""
 
-    @patch("src.agents.base_agent.yaml.safe_load")
+    @patch("src.agents.core.yaml.safe_load")
     @patch("builtins.open", create=True)
     @patch("pydantic_ai.models.bedrock.BedrockConverseModel")
-    @patch("src.agents.base_agent.Agent")
+    @patch("src.agents.core.Agent")
     def test_name_property(self, mock_agent_class, mock_bedrock, mock_open, mock_yaml):
         """Test name property returns config name."""
         mock_bedrock.return_value = MagicMock()
@@ -101,10 +101,10 @@ class TestBaseDocumentAgentProperties:
         agent = ConcreteTestAgent(config)
         assert agent.name == "my_test_agent"
 
-    @patch("src.agents.base_agent.yaml.safe_load")
+    @patch("src.agents.core.yaml.safe_load")
     @patch("builtins.open", create=True)
     @patch("pydantic_ai.models.bedrock.BedrockConverseModel")
-    @patch("src.agents.base_agent.Agent")
+    @patch("src.agents.core.Agent")
     def test_correction_types_property(self, mock_agent_class, mock_bedrock, mock_open, mock_yaml):
         """Test correction_types property returns config types."""
         mock_bedrock.return_value = MagicMock()
@@ -126,7 +126,7 @@ class TestPromptLoading:
     """Test YAML prompt loading functionality."""
 
     @patch("pydantic_ai.models.bedrock.BedrockConverseModel")
-    @patch("src.agents.base_agent.Agent")
+    @patch("src.agents.core.Agent")
     def test_load_prompts_from_yaml(self, mock_agent_class, mock_bedrock, tmp_path):
         """Test loading prompts from YAML file."""
         mock_bedrock.return_value = MagicMock()
@@ -163,8 +163,8 @@ class TestPromptLoading:
             ConcreteTestAgent(config)
 
     @patch("pydantic_ai.models.bedrock.BedrockConverseModel")
-    @patch("src.agents.base_agent.Agent")
-    @patch("src.agents.base_agent.settings")
+    @patch("src.agents.core.Agent")
+    @patch("src.agents.core.settings")
     def test_load_prompts_relative_to_config_dir(
         self, mock_settings, mock_agent_class, mock_bedrock, tmp_path
     ):
@@ -196,10 +196,10 @@ class TestPromptLoading:
 class TestCostCalculation:
     """Test token cost calculation."""
 
-    @patch("src.agents.base_agent.yaml.safe_load")
+    @patch("src.agents.core.yaml.safe_load")
     @patch("builtins.open", create=True)
     @patch("pydantic_ai.models.bedrock.BedrockConverseModel")
-    @patch("src.agents.base_agent.Agent")
+    @patch("src.agents.core.Agent")
     def test_calculate_estimated_cost_basic(self, mock_agent_class, mock_bedrock, mock_open, mock_yaml):
         """Test basic cost calculation with Claude Haiku 4.5 pricing."""
         mock_bedrock.return_value = MagicMock()
@@ -224,10 +224,10 @@ class TestCostCalculation:
 
         assert cost == pytest.approx(expected_total)
 
-    @patch("src.agents.base_agent.yaml.safe_load")
+    @patch("src.agents.core.yaml.safe_load")
     @patch("builtins.open", create=True)
     @patch("pydantic_ai.models.bedrock.BedrockConverseModel")
-    @patch("src.agents.base_agent.Agent")
+    @patch("src.agents.core.Agent")
     def test_calculate_estimated_cost_zero_tokens(self, mock_agent_class, mock_bedrock, mock_open, mock_yaml):
         """Test cost calculation with zero tokens."""
         mock_bedrock.return_value = MagicMock()
@@ -245,10 +245,10 @@ class TestCostCalculation:
         cost = agent._calculate_estimated_cost(input_tokens=0, output_tokens=0)
         assert cost == 0.0
 
-    @patch("src.agents.base_agent.yaml.safe_load")
+    @patch("src.agents.core.yaml.safe_load")
     @patch("builtins.open", create=True)
     @patch("pydantic_ai.models.bedrock.BedrockConverseModel")
-    @patch("src.agents.base_agent.Agent")
+    @patch("src.agents.core.Agent")
     def test_calculate_estimated_cost_large_tokens(self, mock_agent_class, mock_bedrock, mock_open, mock_yaml):
         """Test cost calculation with large token counts."""
         mock_bedrock.return_value = MagicMock()
@@ -274,10 +274,10 @@ class TestCostCalculation:
 class TestAgentCreation:
     """Test PydanticAI agent creation."""
 
-    @patch("src.agents.base_agent.yaml.safe_load")
+    @patch("src.agents.core.yaml.safe_load")
     @patch("builtins.open", create=True)
     @patch("pydantic_ai.models.bedrock.BedrockConverseModel")
-    @patch("src.agents.base_agent.Agent")
+    @patch("src.agents.core.Agent")
     def test_agent_created_with_correct_params(self, mock_agent_class, mock_bedrock, mock_open, mock_yaml):
         """Test that PydanticAI Agent is created with correct parameters on first use."""
         mock_model = MagicMock()
@@ -296,8 +296,8 @@ class TestAgentCreation:
         )
         agent = ConcreteTestAgent(config)
 
-        # Agent is lazy initialized - should not be created yet
-        assert agent._agent is None
+        # Agent is lazy initialized in core - should not be created yet
+        assert agent._core._agent is None
 
         # Trigger lazy initialization by calling _get_agent()
         agent._get_agent()
@@ -314,10 +314,10 @@ class TestAgentCreation:
 class TestRunAgent:
     """Test _run_agent method."""
 
-    @patch("src.agents.base_agent.yaml.safe_load")
+    @patch("src.agents.core.yaml.safe_load")
     @patch("builtins.open", create=True)
     @patch("pydantic_ai.models.bedrock.BedrockConverseModel")
-    @patch("src.agents.base_agent.Agent")
+    @patch("src.agents.core.Agent")
     @pytest.mark.asyncio
     async def test_run_agent_text_only(self, mock_agent_class, mock_bedrock, mock_open, mock_yaml):
         """Test running agent with text-only input."""
@@ -349,10 +349,10 @@ class TestRunAgent:
         assert usage.input_tokens == 100
         assert usage.output_tokens == 50
 
-    @patch("src.agents.base_agent.yaml.safe_load")
+    @patch("src.agents.core.yaml.safe_load")
     @patch("builtins.open", create=True)
     @patch("pydantic_ai.models.bedrock.BedrockConverseModel")
-    @patch("src.agents.base_agent.Agent")
+    @patch("src.agents.core.Agent")
     @pytest.mark.asyncio
     async def test_run_agent_with_image(self, mock_agent_class, mock_bedrock, mock_open, mock_yaml):
         """Test running agent with image input."""

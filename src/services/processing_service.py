@@ -91,7 +91,7 @@ class ProcessingService:
 
         The processing pipeline:
         1. Analysis Phase (Sonnet) - Deep document analysis, manifest generation
-        2. Extraction Phase (Haiku) - Guided markdown extraction (via FullDocumentAgent)
+        2. Extraction Phase (Haiku) - Guided markdown extraction (via ExtractionAgent)
         3. Future: Specialized agents, consolidation, review (PRD-014-017)
 
         Args:

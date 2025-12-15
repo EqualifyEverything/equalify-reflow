@@ -4,7 +4,6 @@ This module provides the multi-agent framework (PRD-011) including:
 - BaseDocumentAgent: Abstract base class for all specialist agents
 - AgentConfig: Configuration dataclass for agent initialization
 - Agent registry functions for dynamic agent discovery
-- FullDocumentAgent: Two-phase document extraction agent
 - AnalysisAgent: Document analysis agent (PRD-012)
 - ExtractionAgent: Manifest-guided extraction agent (PRD-013)
 - Specialized agents for accessibility analysis (PRD-014):
@@ -22,7 +21,6 @@ from .base_agent import AgentConfig, BaseDocumentAgent
 from .consolidation_agent import ConsolidationAgent, ConsolidationOutput, ProposalDraft
 from .extraction_agent import ExtractionAgent
 from .figures_agent import FiguresAgent
-from .full_document_agent import FullDocumentAgent
 from .registry import (
     clear_registry,
     get_agent,
@@ -62,8 +60,6 @@ __all__ = [
     "get_registered_agent_names",
     "is_agent_registered",
     "clear_registry",
-    # Full document extraction agent
-    "FullDocumentAgent",
     # Analysis and extraction agents (PRD-012, PRD-013)
     "AnalysisAgent",
     "ExtractionAgent",

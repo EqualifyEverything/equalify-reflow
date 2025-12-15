@@ -9,20 +9,20 @@ Supports model tier selection (PRD-012) for cost/capability tradeoffs:
 """
 
 import logging
+import warnings
 from abc import ABC, abstractmethod
 from dataclasses import dataclass, field
-from pathlib import Path
-from typing import Any, Generic, TypeVar
+from typing import TYPE_CHECKING, Any, Generic, TypeVar
 
-import yaml
 from pydantic import BaseModel
 from pydantic_ai import Agent
 from pydantic_ai.messages import BinaryContent
 
-from src.agents.model_tiers import MODEL_TIER_MAP, ModelTier
-from src.config import settings
-from src.shared.llm_cost import calculate_estimated_cost, get_pricing_for_tier
+from src.agents.core import AgentConfig, AgentCore
 from src.shared.models.agent_models import AgentInput, LLMUsage
+
+if TYPE_CHECKING:
+    from src.shared.enums import ModelTier
 
 logger = logging.getLogger(__name__)
 
@@ -30,26 +30,58 @@ TOutput = TypeVar("TOutput", bound=BaseModel)
 
 
 @dataclass
-class AgentConfig:
-    """Configuration for specialist agents.
+class BatchResult(Generic[TOutput]):
+    """Result of batch processing with error tracking (PRD-018).
+
+    This dataclass provides infrastructure for agents to report partial failures
+    during batch processing. Callers can detect which specific items failed and
+    handle them appropriately.
+
+    Note:
+        This is foundational infrastructure added in PRD-018. Individual agents
+        can adopt BatchResult as return type when batch error reporting is needed.
+        Currently available for use; adoption tracked separately per agent.
 
     Attributes:
-        name: Unique agent identifier (e.g., "structure_agent")
-        prompts_file: Path to YAML file containing system/user prompts
-        output_type: Pydantic model class for structured output
-        correction_types: List of correction types this agent handles
-        max_retries: Maximum retries for output validation failures
-        temperature: LLM temperature setting (0.0-2.0)
-        model_tier: Model tier for cost/capability tradeoff (default: EFFICIENT)
+        outputs: List of successful outputs from batch processing
+        usage: Aggregated LLM usage across all calls
+        errors: List of (page_num, error_msg) tuples for failed items
+
+    Example:
+        >>> result = BatchResult(
+        ...     outputs=[output1, output2],
+        ...     usage=LLMUsage(...),
+        ...     errors=[(3, "Failed to process page 3")]
+        ... )
+        >>> print(f"Success: {result.success_count}, Errors: {result.error_count}")
+        >>> if result.has_errors:
+        ...     for page_num, error in result.errors:
+        ...         logger.warning(f"Page {page_num} failed: {error}")
     """
 
-    name: str
-    prompts_file: Path
-    output_type: type[BaseModel]
-    correction_types: list[str] = field(default_factory=list)
-    max_retries: int = 2
-    temperature: float = 0.2
-    model_tier: ModelTier = ModelTier.EFFICIENT
+    outputs: list[TOutput] = field(default_factory=list)
+    usage: LLMUsage | None = None
+    errors: list[tuple[int, str]] = field(default_factory=list)
+
+    @property
+    def has_errors(self) -> bool:
+        """Check if any errors occurred during batch processing."""
+        return len(self.errors) > 0
+
+    @property
+    def success_count(self) -> int:
+        """Get count of successful outputs."""
+        return len(self.outputs)
+
+    @property
+    def error_count(self) -> int:
+        """Get count of failed items."""
+        return len(self.errors)
+
+
+# Re-export AgentConfig from core for backward compatibility
+# (existing code imports from base_agent.py)
+__all__ = ["AgentConfig", "BaseDocumentAgent", "BatchResult"]
 
 
 class BaseDocumentAgent(ABC, Generic[TOutput]):
@@ -61,14 +93,13 @@ class BaseDocumentAgent(ABC, Generic[TOutput]):
     - Token usage and cost tracking
     - Retry logic with output validation
 
+    Uses composition pattern with AgentCore to eliminate code duplication.
+
     Type Parameters:
         TOutput: The Pydantic model type for agent output
 
     Example:
         >>> class StructureAgent(BaseDocumentAgent[StructureOutput]):
-        ...     def _default_prompts(self) -> dict:
-        ...         return {"system_prompt": "...", "user_prompt_template": "..."}
-        ...
         ...     async def process(self, input_data: AgentInput) -> StructureOutput:
         ...         user_message = self.prompts["user_prompt_template"].format(...)
         ...         output, usage = await self._run_agent(user_message, image_bytes)
@@ -82,20 +113,13 @@ class BaseDocumentAgent(ABC, Generic[TOutput]):
             config: Agent configuration including prompts file and output type
         """
         self.config = config
-        self.model_tier = config.model_tier
-        self.model_id = MODEL_TIER_MAP[self.model_tier]
+        self._core = AgentCore(config)
 
         logger.info(f"Initializing agent: {config.name}")
-
-        # Load prompts from YAML or fallback to defaults
-        self.prompts = self._load_prompts()
         logger.debug(f"Agent {config.name}: Prompts loaded")
-
-        # Lazy initialization - agent is created on first use
-        self._agent: Agent[None, TOutput] | None = None
         logger.info(
-            f"Agent {config.name} initialized with model tier {self.model_tier.value} "
-            f"({self.model_id}) (handles: {config.correction_types}, retries: {config.max_retries})"
+            f"Agent {config.name} initialized with model tier {self._core.model_tier.value} "
+            f"({self._core.model_id}) (handles: {config.correction_types}, retries: {config.max_retries})"
         )
 
     @property
@@ -108,79 +132,37 @@ class BaseDocumentAgent(ABC, Generic[TOutput]):
         """Get the correction types this agent handles."""
         return self.config.correction_types
 
-    def _load_prompts(self) -> dict[str, Any]:
-        """Load prompts from YAML configuration file.
+    @property
+    def model_tier(self) -> "ModelTier":
+        """Get the model tier from core."""
+        return self._core.model_tier
 
-        Args:
-            None (uses self.config.prompts_file)
+    @property
+    def model_id(self) -> str:
+        """Get the model ID from core."""
+        return self._core.model_id
 
-        Returns:
-            Dictionary containing at minimum 'system_prompt' and optionally
-            'user_prompt_template' keys.
-
-        Raises:
-            FileNotFoundError: If prompts file does not exist (fail fast, no fallback)
-        """
-        prompts_file = self.config.prompts_file
-
-        # Check if path is relative to agent prompts dir
-        if not prompts_file.is_absolute():
-            prompts_file = Path(settings.agent_prompts_dir) / prompts_file
-
-        with open(prompts_file) as f:
-            prompts = yaml.safe_load(f)
-            logger.debug(f"Agent {self.name}: Loaded prompts from {prompts_file}")
-            return dict(prompts)
+    @property
+    def prompts(self) -> dict[str, Any]:
+        """Get the loaded prompts from core."""
+        return self._core.prompts
 
     def _get_agent(self) -> Agent[None, TOutput]:
         """Get or create the PydanticAI agent (lazy initialization).
 
-        Creates the agent on first call, reuses on subsequent calls.
-        This allows agent instantiation without AWS connections for testing.
+        Delegates to AgentCore for agent creation and management.
 
         Returns:
             Configured PydanticAI Agent instance
         """
-        if self._agent is None:
-            self._agent = self._create_agent()
-        return self._agent
-
-    def _create_agent(self) -> Agent[None, TOutput]:
-        """Create PydanticAI agent with AWS Bedrock backend.
-
-        Initializes the Agent with:
-        - BedrockConverseModel for Claude access (model based on tier)
-        - Structured output type from config
-        - System prompt from loaded prompts
-        - Retry configuration
-
-        Returns:
-            Configured PydanticAI Agent instance
-        """
-        from pydantic_ai.models.bedrock import BedrockConverseModel
-
-        logger.debug(
-            f"Agent {self.name}: Creating BedrockConverseModel "
-            f"with model {self.model_id} (tier: {self.model_tier.value})"
-        )
-
-        model = BedrockConverseModel(model_name=self.model_id)
-
-        agent: Agent[None, TOutput] = Agent(
-            model,
-            output_type=self.config.output_type,  # type: ignore[arg-type]
-            system_prompt=self.prompts["system_prompt"],
-            retries=self.config.max_retries,
-        )
-
-        logger.debug(f"Agent {self.name}: PydanticAI Agent created successfully")
-        return agent
+        return self._core.get_agent(self.config.output_type)  # type: ignore[arg-type]
 
     def _calculate_estimated_cost(self, input_tokens: int, output_tokens: int) -> float:
         """Calculate estimated cost in cents using tier-based pricing.
 
-        Uses the centralized calculate_estimated_cost function with pricing
-        based on the agent's model tier (Sonnet for REASONING, Haiku for EFFICIENT).
+        .. deprecated::
+            Use `self._core.create_llm_usage(result).estimated_cost_cents` instead.
+            This method will be removed in a future version.
 
         Args:
             input_tokens: Number of input tokens consumed
@@ -189,6 +171,14 @@ class BaseDocumentAgent(ABC, Generic[TOutput]):
         Returns:
             Estimated cost in cents (float)
         """
+        warnings.warn(
+            "_calculate_estimated_cost is deprecated. "
+            "Use self._core.create_llm_usage(result).estimated_cost_cents instead.",
+            DeprecationWarning,
+            stacklevel=2,
+        )
+        from src.shared.llm_cost import calculate_estimated_cost, get_pricing_for_tier
+
         pricing = get_pricing_for_tier(self.model_tier)
         return calculate_estimated_cost(input_tokens, output_tokens, pricing)
 
@@ -196,8 +186,10 @@ class BaseDocumentAgent(ABC, Generic[TOutput]):
     async def process(self, input_data: AgentInput) -> TOutput:
         """Process page input and return structured output.
 
-        Subclasses must implement this method to define their specific
-        processing logic.
+        Note: This abstract method ensures all agents have a common interface.
+        Subclasses typically implement domain-specific methods (analyze(), extract(),
+        consolidate()) that internally use _run_agent(). The process() method
+        provides a unified entry point for generic agent invocation.
 
         Args:
             input_data: Unified input containing page markdown, image, context, and hints
@@ -241,28 +233,18 @@ class BaseDocumentAgent(ABC, Generic[TOutput]):
         result = await agent.run(
             messages,
             model_settings={
-                "max_tokens": settings.claude_max_tokens,
+                "max_tokens": self.config.max_tokens,  # Use config, not settings
                 "temperature": self.config.temperature,
             },
         )
 
-        # Extract usage metrics (PydanticAI uses request_tokens/response_tokens)
-        usage = result.usage()
-        input_tokens = usage.request_tokens or 0
-        output_tokens = usage.response_tokens or 0
-        total_tokens = input_tokens + output_tokens
-        estimated_cost_cents = self._calculate_estimated_cost(input_tokens, output_tokens)
-
-        llm_usage = LLMUsage(
-            input_tokens=input_tokens,
-            output_tokens=output_tokens,
-            total_tokens=total_tokens,
-            estimated_cost_cents=estimated_cost_cents,
-        )
+        # Use core for usage extraction
+        llm_usage = self._core.create_llm_usage(result)
 
         logger.debug(
             f"Agent {self.name}: Completed "
-            f"(tokens: {input_tokens}/{output_tokens}, est. cost: ${estimated_cost_cents / 100:.6f})"
+            f"(tokens: {llm_usage.input_tokens}/{llm_usage.output_tokens}, "
+            f"est. cost: ${llm_usage.estimated_cost_cents / 100:.6f})"
         )
 
         return result.output, llm_usage

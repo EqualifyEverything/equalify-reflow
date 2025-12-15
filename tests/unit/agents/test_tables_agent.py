@@ -339,8 +339,11 @@ class TestTablesAgentAnalysis:
             analyses=[],
         )
 
-        with patch.object(agent, '_run_agent', new_callable=AsyncMock) as mock_run:
-            mock_run.return_value = (mock_output, AsyncMock(estimated_cost_cents=1.0))
+        from src.shared.models.processing import LLMUsage
+        mock_usage = LLMUsage(input_tokens=100, output_tokens=50, total_tokens=150, estimated_cost_cents=1.0)
+
+        with patch.object(agent, '_run_with_deps', new_callable=AsyncMock) as mock_run:
+            mock_run.return_value = (mock_output, mock_usage)
 
             await agent.analyze(
                 pages=sample_pages,
@@ -376,10 +379,10 @@ class TestTablesAgentAnalysis:
             ],
         )
 
-        mock_usage = AsyncMock()
-        mock_usage.estimated_cost_cents = 5.0
+        from src.shared.models.processing import LLMUsage
+        mock_usage = LLMUsage(input_tokens=200, output_tokens=100, total_tokens=300, estimated_cost_cents=5.0)
 
-        with patch.object(agent, '_run_agent', new_callable=AsyncMock) as mock_run:
+        with patch.object(agent, '_run_with_deps', new_callable=AsyncMock) as mock_run:
             mock_run.return_value = (mock_output, mock_usage)
 
             observations, usage = await agent.analyze(

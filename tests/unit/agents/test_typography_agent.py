@@ -335,8 +335,11 @@ class TestTypographyAgentAnalysis:
             issues=[],
         )
 
-        with patch.object(agent, '_run_agent', new_callable=AsyncMock) as mock_run:
-            mock_run.return_value = (mock_output, AsyncMock(estimated_cost_cents=1.0))
+        from src.shared.models.processing import LLMUsage
+        mock_usage = LLMUsage(input_tokens=100, output_tokens=50, total_tokens=150, estimated_cost_cents=1.0)
+
+        with patch.object(agent, '_run_with_deps', new_callable=AsyncMock) as mock_run:
+            mock_run.return_value = (mock_output, mock_usage)
 
             await agent.analyze(
                 pages=sample_pages,
@@ -371,13 +374,13 @@ class TestTypographyAgentAnalysis:
             ],
         )
 
-        mock_usage = AsyncMock()
-        mock_usage.estimated_cost_cents = 5.0
+        from src.shared.models.processing import LLMUsage
+        mock_usage = LLMUsage(input_tokens=200, output_tokens=100, total_tokens=300, estimated_cost_cents=5.0)
 
         # Only provide pages that would be processed (complexity > 0.5)
         complex_pages = [p for p in sample_pages if p.page_num in [2, 4]]
 
-        with patch.object(agent, '_run_agent', new_callable=AsyncMock) as mock_run:
+        with patch.object(agent, '_run_with_deps', new_callable=AsyncMock) as mock_run:
             mock_run.return_value = (mock_output, mock_usage)
 
             observations, usage = await agent.analyze(
@@ -402,13 +405,14 @@ class TestTypographyAgentAnalysis:
         agent = TypographyAgent()
 
         mock_output = TypographyAnalysisOutput(page_num=2, issues=[])
-        mock_usage = AsyncMock()
-        mock_usage.estimated_cost_cents = 1.0
+
+        from src.shared.models.processing import LLMUsage
+        mock_usage = LLMUsage(input_tokens=100, output_tokens=50, total_tokens=150, estimated_cost_cents=1.0)
 
         # Only provide page 2 which has complexity factors
         pages = [p for p in sample_pages if p.page_num == 2]
 
-        with patch.object(agent, '_run_agent', new_callable=AsyncMock) as mock_run:
+        with patch.object(agent, '_run_with_deps', new_callable=AsyncMock) as mock_run:
             mock_run.return_value = (mock_output, mock_usage)
 
             observations, usage = await agent.analyze(

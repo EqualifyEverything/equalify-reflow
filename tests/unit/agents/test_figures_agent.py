@@ -349,15 +349,18 @@ class TestFiguresAgentAnalysis:
         """Test analysis skips pages without images."""
         agent = FiguresAgent()
 
-        # Mock the _run_agent method to avoid AWS calls
+        # Mock the _run_with_deps method to avoid AWS calls
         mock_output = FiguresAnalysisOutput(
             page_num=1,
             images_found=1,
             analyses=[],
         )
 
-        with patch.object(agent, '_run_agent', new_callable=AsyncMock) as mock_run:
-            mock_run.return_value = (mock_output, AsyncMock(estimated_cost_cents=1.0))
+        from src.shared.models.processing import LLMUsage
+        mock_usage = LLMUsage(input_tokens=100, output_tokens=50, total_tokens=150, estimated_cost_cents=1.0)
+
+        with patch.object(agent, '_run_with_deps', new_callable=AsyncMock) as mock_run:
+            mock_run.return_value = (mock_output, mock_usage)
 
             await agent.analyze(
                 pages=sample_pages,
@@ -380,6 +383,8 @@ class TestFiguresAgentAnalysis:
 
         call_count = 0
 
+        from src.shared.models.processing import LLMUsage
+
         async def mock_run(*args, **kwargs):
             nonlocal call_count
             call_count += 1
@@ -387,10 +392,10 @@ class TestFiguresAgentAnalysis:
                 raise Exception("LLM error")
             return (
                 FiguresAnalysisOutput(page_num=3, images_found=0, analyses=[]),
-                AsyncMock(estimated_cost_cents=1.0),
+                LLMUsage(input_tokens=100, output_tokens=50, total_tokens=150, estimated_cost_cents=1.0),
             )
 
-        with patch.object(agent, '_run_agent', side_effect=mock_run):
+        with patch.object(agent, '_run_with_deps', side_effect=mock_run):
             observations, usage = await agent.analyze(
                 pages=sample_pages,
                 manifest=sample_manifest,
@@ -435,10 +440,10 @@ class TestFiguresAgentAnalysis:
             ],
         )
 
-        mock_usage = AsyncMock()
-        mock_usage.estimated_cost_cents = 5.0
+        from src.shared.models.processing import LLMUsage
+        mock_usage = LLMUsage(input_tokens=200, output_tokens=100, total_tokens=300, estimated_cost_cents=5.0)
 
-        with patch.object(agent, '_run_agent', new_callable=AsyncMock) as mock_run:
+        with patch.object(agent, '_run_with_deps', new_callable=AsyncMock) as mock_run:
             mock_run.return_value = (mock_output, mock_usage)
 
             observations, usage = await agent.analyze(

@@ -54,6 +54,37 @@ system_prompt: |
   GOOD reasoning: "Large bold text 'Results' with whitespace above, but marked as body text in markdown."
   BAD reasoning: "Looking at the document structure, I notice that after the H1 heading there is a section that starts with what appears to be an H3 heading. This is problematic because..."
 
+  QUALITY SIGNALS:
+  Assess these observable quality factors that affect analysis reliability:
+
+  image_clarity:
+  - "clear": Sharp, readable, easy to determine visual weight
+  - "blurry": Degraded quality, hard to distinguish font sizes
+  - "partial": Cropped, missing parts of the page
+  - "missing": No image available for visual verification
+
+  text_legibility:
+  - "clear": Typed, sharp, clear font distinctions
+  - "faded": Low contrast, hard to see heading weight
+  - "mixed": Varies across page
+  - "handwritten": Manual writing affecting structure
+
+  structure_complexity:
+  - "simple": Single column, clear heading hierarchy
+  - "moderate": Some multi-column or complex layouts
+  - "complex": Multi-column, sidebars, nested structures
+
+  content_ambiguity:
+  - "unambiguous": Clear heading levels and structure
+  - "some_ambiguity": Uncertain heading levels or reading order
+  - "highly_ambiguous": Multiple valid structural interpretations
+
+  ocr_quality:
+  - "native": Text layer present in PDF
+  - "good_ocr": Clean OCR extraction
+  - "poor_ocr": OCR with significant errors
+  - "no_text": Image-only content
+
 user_prompt_template: |
   Analyze the document structure visible on page {page_num}.
 

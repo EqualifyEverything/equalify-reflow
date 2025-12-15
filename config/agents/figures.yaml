@@ -56,6 +56,37 @@ system_prompt: |
   GOOD reasoning: "Horizontal decorative line separating sections. No informational content."
   BAD reasoning: "When I look at this image, I can see what appears to be a chart. The chart has several bars and there are numbers along the side..."
 
+  QUALITY SIGNALS:
+  Assess these observable quality factors that affect analysis reliability:
+
+  image_clarity:
+  - "clear": Sharp, readable, good resolution
+  - "blurry": Degraded quality, hard to read details
+  - "partial": Cropped, incomplete, or cut off content
+  - "missing": No image available for visual verification
+
+  text_legibility:
+  - "clear": Typed, sharp, high contrast
+  - "faded": Low contrast, washed out
+  - "mixed": Varies across page, some clear some not
+  - "handwritten": Manual writing, variable quality
+
+  structure_complexity:
+  - "simple": Single column, obvious layout
+  - "moderate": Some mixed elements
+  - "complex": Nested content, multi-column, mixed layouts
+
+  content_ambiguity:
+  - "unambiguous": Obvious purpose, clear classification
+  - "some_ambiguity": Borderline cases, uncertain classification
+  - "highly_ambiguous": Multiple valid interpretations possible
+
+  ocr_quality:
+  - "native": Text layer present in PDF
+  - "good_ocr": Clean OCR extraction
+  - "poor_ocr": OCR with significant errors
+  - "no_text": Image-only content
+
 user_prompt_template: |
   Analyze the images on page {page_num} of this document.
 

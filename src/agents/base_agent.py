@@ -22,7 +22,7 @@ from src.agents.core import AgentConfig, AgentCore
 from src.shared.models.agent_models import AgentInput, LLMUsage
 
 if TYPE_CHECKING:
-    from src.shared.enums import ModelTier
+    from src.agents.model_tiers import ModelTier
 
 logger = logging.getLogger(__name__)
 

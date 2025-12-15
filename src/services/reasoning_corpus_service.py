@@ -31,6 +31,35 @@ class ReasoningCorpusService:
     - The reasoning text and resulting value
     - Metadata (length, sentence count, timestamp)
 
+    SECURITY CONSIDERATIONS
+    =======================
+
+    The reasoning corpus contains LLM-generated explanations that may include:
+    - Direct quotes from document content
+    - Paraphrased sensitive information
+    - Model hallucinations that could appear factual
+
+    Access Controls Required:
+        1. Reasoning logs should be stored in a separate, restricted location
+        2. Access should be limited to:
+           - System administrators for debugging
+           - ML engineers for model improvement
+           - Auditors for compliance review
+        3. Reasoning should NOT be:
+           - Exposed to end users without review
+           - Included in API responses
+           - Logged to general application logs
+
+    PII Handling:
+        - Consider running PII detection on reasoning text before storage
+        - Implement retention policies (e.g., 90-day auto-delete)
+        - Anonymize or redact document identifiers in exported data
+
+    Threat Model:
+        - Reasoning may inadvertently reproduce PII from documents
+        - Model hallucinations could generate false but sensitive-looking data
+        - Log aggregators could expose reasoning to unauthorized parties
+
     Example:
         >>> corpus_service = ReasoningCorpusService()
         >>> await corpus_service.log_reasoning(

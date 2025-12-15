@@ -1,4 +1,4 @@
-"""Tests for AgentCore shared infrastructure (PRD-018).
+"""Tests for AgentCore shared infrastructure.
 
 This module tests the core shared infrastructure for all agents:
 - LLM usage aggregation

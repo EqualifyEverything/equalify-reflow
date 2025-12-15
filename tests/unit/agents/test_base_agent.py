@@ -1,4 +1,4 @@
-"""Tests for BaseDocumentAgent abstract class (PRD-011)."""
+"""Tests for BaseDocumentAgent abstract class."""
 
 from pathlib import Path
 from unittest.mock import AsyncMock, MagicMock, patch

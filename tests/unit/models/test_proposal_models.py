@@ -160,7 +160,7 @@ class TestProposal:
         assert len(prop1.id) == 36
 
     def test_resolves_can_be_empty_for_human_edits(self) -> None:
-        """Test resolves can be empty for human-initiated edits (PRD-016)."""
+        """Test resolves can be empty for human-initiated edits."""
         # Human-initiated proposals don't resolve agent observations
         prop = Proposal(
             job_id="job-123",

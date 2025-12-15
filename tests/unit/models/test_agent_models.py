@@ -1,4 +1,4 @@
-"""Tests for agent input/output models (PRD-011)."""
+"""Tests for agent input/output models."""
 
 import pytest
 from pydantic import ValidationError

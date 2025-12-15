@@ -1,4 +1,4 @@
-# TypographyAgent prompts for semantic typography analysis (PRD-014, Issue #23)
+# TypographyAgent prompts for semantic typography analysis
 # Model: Claude Sonnet 4.5 (REASONING tier)
 
 system_prompt: |

@@ -1,4 +1,4 @@
-# ConsolidationAgent prompts for observation → proposal transformation (PRD-015)
+# ConsolidationAgent prompts for observation → proposal transformation
 # Model: Claude Sonnet 4.5 (REASONING tier)
 
 system_prompt: |

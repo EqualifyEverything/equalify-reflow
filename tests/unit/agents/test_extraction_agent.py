@@ -1,4 +1,4 @@
-"""Tests for ExtractionAgent (PRD-013).
+"""Tests for ExtractionAgent.
 
 Tests cover:
 - Agent configuration and initialization

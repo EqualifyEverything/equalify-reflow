@@ -1,4 +1,4 @@
-"""Tests for TablesAgent (PRD-014, Issue #24).
+"""Tests for TablesAgent.
 
 Tests cover:
 - Agent configuration and initialization

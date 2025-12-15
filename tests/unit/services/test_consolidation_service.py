@@ -1,4 +1,4 @@
-"""Unit tests for ConsolidationService (PRD-015).
+"""Unit tests for ConsolidationService.
 
 Tests cover:
 - consolidate_observations workflow

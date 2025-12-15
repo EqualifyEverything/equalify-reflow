@@ -1,4 +1,4 @@
-"""Unit tests for PDFAccessibilityAnalyzer (PRD-012).
+"""Unit tests for PDFAccessibilityAnalyzer.
 
 Tests the VeraPDF response parsing and hint generation logic.
 Uses mocked HTTP responses - integration tests cover actual VeraPDF calls.

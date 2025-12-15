@@ -1,4 +1,4 @@
-"""Document context models for multi-agent grounding (PRD-013).
+"""Document context models for multi-agent grounding.
 
 This module defines data models for document-level context extraction,
 enabling specialist agents to understand heading hierarchy, figure/table

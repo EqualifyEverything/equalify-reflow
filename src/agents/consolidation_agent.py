@@ -1,4 +1,4 @@
-"""ConsolidationAgent for transforming observations into proposals (PRD-015).
+"""ConsolidationAgent for transforming observations into proposals.
 
 The consolidation phase is the bridge between AI analysis and human review:
 1. Groups related observations (same region → one proposal)

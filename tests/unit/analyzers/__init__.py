@@ -1,1 +1,1 @@
-"""Unit tests for deterministic pre-analysis analyzers (PRD-012)."""
+"""Unit tests for deterministic pre-analysis analyzers."""

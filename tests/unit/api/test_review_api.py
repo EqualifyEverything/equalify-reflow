@@ -1,4 +1,4 @@
-"""Unit tests for Review API endpoints (PRD-016).
+"""Unit tests for Review API endpoints.
 
 Tests the review workflow API including:
 - Review summary endpoint

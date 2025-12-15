@@ -1,4 +1,4 @@
-"""Deterministic pre-analysis layer for document accessibility (PRD-012).
+"""Deterministic pre-analysis layer for document accessibility.
 
 This package provides deterministic tools for detecting accessibility issues
 before expensive LLM processing:

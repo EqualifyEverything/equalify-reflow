@@ -88,7 +88,7 @@ class Settings(BaseSettings):
                     "2.0x (144 DPI) may be needed for complex diagrams."
     )
 
-    # Multi-Agent Configuration (PRD-011)
+    # Multi-Agent Configuration
     agent_prompts_dir: str = Field(
         default="config/agents",
         description="Directory containing agent YAML prompt files"
@@ -106,7 +106,7 @@ class Settings(BaseSettings):
         description="Maximum specialized agents to run concurrently"
     )
 
-    # Deterministic Pre-Analysis Configuration (PRD-012)
+    # Deterministic Pre-Analysis Configuration
     # VeraPDF settings for PDF/UA-1 accessibility validation
     verapdf_url: str = Field(
         default="http://verapdf:8080",
@@ -131,7 +131,7 @@ class Settings(BaseSettings):
         description="Comma-separated list of PyMarkdown rules to enable"
     )
 
-    # Document Context Extraction Configuration (PRD-013)
+    # Document Context Extraction Configuration
     context_extraction_enabled: bool = Field(
         default=True,
         description="Enable document context extraction for agent grounding"

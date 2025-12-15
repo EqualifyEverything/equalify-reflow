@@ -1,4 +1,4 @@
-"""Tests for FiguresAgent (PRD-014, Issue #24).
+"""Tests for FiguresAgent.
 
 Tests cover:
 - Agent configuration and initialization

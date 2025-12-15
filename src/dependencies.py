@@ -343,7 +343,7 @@ async def get_application_service(
     """Get application service instance.
 
     Provides search-replace application of approved proposals
-    to markdown documents (PRD-017).
+    to markdown documents.
 
     Args:
         remediation_storage: RemediationStorageService (injected)

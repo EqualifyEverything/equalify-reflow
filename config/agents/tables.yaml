@@ -1,4 +1,4 @@
-# TablesAgent prompts for table structure analysis (PRD-014, Issue #24)
+# TablesAgent prompts for table structure analysis
 # Model: Claude Sonnet 4.5 (REASONING tier)
 
 system_prompt: |

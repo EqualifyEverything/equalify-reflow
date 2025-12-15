@@ -1,4 +1,4 @@
-"""Document context extraction service (PRD-013).
+"""Document context extraction service.
 
 This module provides extraction of document-level context from Docling's
 structured document model to ground specialist agents with heading hierarchy,

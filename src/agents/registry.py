@@ -1,4 +1,4 @@
-"""Agent registry for dynamic agent discovery and registration (PRD-011).
+"""Agent registry for dynamic agent discovery and registration.
 
 This module provides a centralized registry for managing specialist agents,
 enabling dynamic discovery, lookup by name or correction type, and

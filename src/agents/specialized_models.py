@@ -1,4 +1,4 @@
-"""Output models for specialized analysis agents (PRD-014, PRD-020).
+"""Output models for specialized analysis agents.
 
 These Pydantic models define the structured output for each specialized agent:
 - FiguresAgent: Image accessibility analysis
@@ -6,7 +6,7 @@ These Pydantic models define the structured output for each specialized agent:
 - StructureAgent: Heading hierarchy and reading order
 - TypographyAgent: Semantic typography detection
 
-PRD-020 enhancements:
+Reasoning enhancements:
 - Reasoned[T] wrappers for complex determinations (glass-box reasoning)
 - QualitySignals for hybrid confidence calculation
 - ReasonedOutputMixin for reasoning corpus extraction

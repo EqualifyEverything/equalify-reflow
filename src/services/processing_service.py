@@ -1,10 +1,10 @@
 """Main processing service orchestrating PDF conversion and AI enhancement.
 
 The processing pipeline consists of:
-1. Analysis Phase (Sonnet) - Deep document analysis, manifest generation (PRD-012)
-2. Extraction Phase (Haiku) - Guided markdown extraction (PRD-013)
-3. Specialized Agents (Sonnet) - Figures, tables, structure, typography (PRD-014)
-4. Consolidation (Sonnet) - Observations to proposals (PRD-015)
+1. Analysis Phase (Sonnet) - Deep document analysis, manifest generation
+2. Extraction Phase (Haiku) - Guided markdown extraction
+3. Specialized Agents (Sonnet) - Figures, tables, structure, typography
+4. Consolidation (Sonnet) - Observations to proposals
 """
 
 import base64
@@ -92,7 +92,7 @@ class ProcessingService:
         The processing pipeline:
         1. Analysis Phase (Sonnet) - Deep document analysis, manifest generation
         2. Extraction Phase (Haiku) - Guided markdown extraction (via ExtractionAgent)
-        3. Future: Specialized agents, consolidation, review (PRD-014-017)
+        3. Specialized agents, consolidation, review
 
         Args:
             job: Processing queue payload with job_id and s3_key
@@ -138,7 +138,7 @@ class ProcessingService:
 
             pages = conversion_result.pages
 
-            # Step 4: Analysis Phase (Sonnet) - PRD-012
+            # Step 4: Analysis Phase (Sonnet)
             logger.info(
                 f"Job {job.job_id}: Starting analysis phase (Sonnet)..."
             )
@@ -174,7 +174,7 @@ class ProcessingService:
                 operation_name=f"Update job {job.job_id} substatus to extracting",
             )
 
-            # Step 5: Extraction Phase (Haiku) - PRD-013
+            # Step 5: Extraction Phase (Haiku)
             # ExtractionAgent uses manifest guidance for accurate transcription
             logger.info(
                 f"Job {job.job_id}: Starting extraction phase (Haiku)..."
@@ -205,7 +205,7 @@ class ProcessingService:
                 f"extraction cost: ${extraction_usage.estimated_cost_cents/100:.4f}"
             )
 
-            # Step 6: Specialized Agents Phase (Sonnet) - PRD-014
+            # Step 6: Specialized Agents Phase (Sonnet)
             # Run specialized agents based on manifest.required_agents
             specialized_observations: list[Observation] = []
             specialized_usage = LLMUsage(
@@ -266,7 +266,7 @@ class ProcessingService:
                 )
                 all_observations = initial_observations
 
-            # Step 7: Consolidation Phase (Sonnet) - PRD-015
+            # Step 7: Consolidation Phase (Sonnet)
             # Transform observations into actionable proposals
             consolidation_usage = LLMUsage(
                 input_tokens=0, output_tokens=0, total_tokens=0, estimated_cost_cents=0.0
@@ -398,12 +398,12 @@ class ProcessingService:
                 "llm_input_tokens": total_usage.input_tokens,
                 "llm_output_tokens": total_usage.output_tokens,
                 "llm_total_tokens": total_usage.total_tokens,
-                "extraction_method": "analysis_extraction",  # PRD-012/013/014/015 pipeline
+                "extraction_method": "analysis_extraction",
                 "extraction_model": extraction_agent.model_id,
                 "layout_type": heading_tree.layout_type,
                 "section_count": len(heading_tree.sections),
                 "observation_count": len(all_observations),  # From specialized agents
-                "proposal_count": proposal_count,  # From consolidation (PRD-015)
+                "proposal_count": proposal_count,
                 "auto_proposal_count": auto_proposal_count,
                 "manual_proposal_count": manual_proposal_count,
                 "required_agents": ",".join(manifest.required_agents),

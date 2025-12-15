@@ -1,4 +1,4 @@
-"""Tests for QualitySignals model (PRD-020).
+"""Tests for QualitySignals model.
 
 Tests the quality signals model used for hybrid confidence calculation.
 """

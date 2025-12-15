@@ -1,4 +1,4 @@
-"""Markdown linter using PyMarkdown for structure validation (PRD-012).
+"""Markdown linter using PyMarkdown for structure validation.
 
 This module wraps the PyMarkdown API to detect markdown structure issues
 that impact accessibility, such as heading level skips and missing alt text.

@@ -1,4 +1,4 @@
-"""Tests for TypographyAgent (PRD-014, Issue #23).
+"""Tests for TypographyAgent.
 
 Tests cover:
 - Agent configuration and initialization

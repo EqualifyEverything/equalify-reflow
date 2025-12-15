@@ -1,4 +1,4 @@
-"""Review API endpoints for remediation workflow (PRD-016).
+"""Review API endpoints for remediation workflow.
 
 Provides human review workflow for accessibility remediation:
 - View observations and proposals

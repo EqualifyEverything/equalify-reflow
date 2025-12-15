@@ -1,4 +1,4 @@
-"""Tests for StructureAgent (PRD-014, Issue #23).
+"""Tests for StructureAgent.
 
 Tests cover:
 - Agent configuration and initialization

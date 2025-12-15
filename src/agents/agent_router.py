@@ -1,4 +1,4 @@
-"""Agent router for specialized analysis agents (PRD-014).
+"""Agent router for specialized analysis agents.
 
 Routes specialized agents based on DocumentManifest.required_agents and
 filters pages by content type to ensure efficient processing.

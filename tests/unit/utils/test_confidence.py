@@ -1,4 +1,4 @@
-"""Tests for hybrid confidence calculation (PRD-020).
+"""Tests for hybrid confidence calculation.
 
 Tests the calculate_confidence() and explain_confidence() functions
 that implement the 80/20 heuristic/model confidence blend.

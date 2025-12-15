@@ -1,4 +1,4 @@
-"""Tests for agent registry (PRD-011)."""
+"""Tests for agent registry."""
 
 from pathlib import Path
 from unittest.mock import MagicMock, patch

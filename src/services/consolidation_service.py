@@ -1,4 +1,4 @@
-"""Service for consolidating observations into proposals (PRD-015).
+"""Service for consolidating observations into proposals.
 
 The ConsolidationService wraps the ConsolidationAgent and handles:
 - Loading observations from storage

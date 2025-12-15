@@ -1,4 +1,4 @@
-"""Unified agent input/output models for multi-agent system (PRD-011).
+"""Unified agent input/output models for multi-agent system.
 
 This module provides standardized Pydantic models for agent communication,
 ensuring consistent data structures across all specialist agents.

@@ -1,4 +1,4 @@
-"""Tests for ReasoningCorpusService (PRD-020).
+"""Tests for ReasoningCorpusService.
 
 Tests the reasoning corpus service that logs reasoning from Reasoned[T] fields.
 """

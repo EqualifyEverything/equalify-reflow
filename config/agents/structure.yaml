@@ -1,4 +1,4 @@
-# StructureAgent prompts for document structure analysis (PRD-014, Issue #23)
+# StructureAgent prompts for document structure analysis
 # Model: Claude Sonnet 4.5 (REASONING tier)
 
 system_prompt: |

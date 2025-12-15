@@ -1,7 +1,7 @@
 """Unit tests for ProcessingService.
 
 Tests the main processing orchestrator with all dependencies mocked.
-Validates the analysis + extraction pipeline (PRD-012, PRD-013).
+Validates the analysis + extraction pipeline.
 """
 
 from unittest.mock import AsyncMock, MagicMock, patch
@@ -170,7 +170,7 @@ async def test_process_document_happy_path(
         )
         mock_analysis_agent_class.return_value = mock_analysis_agent
 
-        # Mock extraction agent (PRD-013)
+        # Mock extraction agent
         mock_extraction_agent = MagicMock()
         mock_extraction_agent.model_id = "us.anthropic.claude-haiku-4-5-20251001-v1:0"
         mock_extraction_agent.extract = AsyncMock(
@@ -202,7 +202,7 @@ async def test_process_document_happy_path(
     mock_storage_service_extended.download_temp_file.assert_called_once()
     mock_pdf_converter.convert_with_page_images.assert_called_once()
     mock_analysis_agent.analyze.assert_called_once()  # Analysis phase
-    mock_extraction_agent.extract.assert_called_once()  # Extraction phase (PRD-013)
+    mock_extraction_agent.extract.assert_called_once()  # Extraction phase
     # Should upload both v0 and final markdown
     assert mock_storage_service_extended.upload_result.call_count >= 2
 
@@ -219,7 +219,7 @@ async def test_process_document_confidence_from_extraction(
     mock_analysis_usage,
     sample_pdf_conversion_result_no_markdown,
 ):
-    """Test confidence score comes from extraction agent (PRD-013)."""
+    """Test confidence score comes from extraction agent."""
     mock_pdf_converter.convert_with_page_images.return_value = (
         sample_pdf_conversion_result_no_markdown
     )

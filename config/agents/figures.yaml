@@ -1,4 +1,4 @@
-# FiguresAgent prompts for image accessibility analysis (PRD-014, Issue #24)
+# FiguresAgent prompts for image accessibility analysis
 # Model: Claude Sonnet 4.5 (REASONING tier)
 
 system_prompt: |

@@ -1,4 +1,4 @@
-"""Integration tests for VeraPDF accessibility analyzer (PRD-012).
+"""Integration tests for VeraPDF accessibility analyzer.
 
 These tests require a running VeraPDF Docker container.
 Run with: pytest -m verapdf tests/integration/analyzers/

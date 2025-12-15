@@ -1,4 +1,4 @@
-"""Tests for prompt sanitization utilities (PRD-019 Security Hardening)."""
+"""Tests for prompt sanitization utilities."""
 
 from __future__ import annotations
 

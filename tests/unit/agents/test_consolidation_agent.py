@@ -1,4 +1,4 @@
-"""Tests for ConsolidationAgent (PRD-015).
+"""Tests for ConsolidationAgent.
 
 Tests cover:
 - Agent configuration and initialization
@@ -30,7 +30,7 @@ from src.shared.models.observation import Observation, ObservationLocation
 class TestProposalDraft:
     """Tests for ProposalDraft model."""
 
-    def test_valid_proposal_draft(self):
+    def test_valid_proposal_draft(self) -> None:
         """Test creating a valid ProposalDraft."""
         draft = ProposalDraft(
             observation_ids=["obs-1", "obs-2"],
@@ -45,7 +45,7 @@ class TestProposalDraft:
         assert draft.confidence == 0.9
         assert draft.page_nums == [1]
 
-    def test_proposal_draft_defaults(self):
+    def test_proposal_draft_defaults(self) -> None:
         """Test ProposalDraft default values."""
         draft = ProposalDraft(
             observation_ids=["obs-1"],
@@ -57,7 +57,7 @@ class TestProposalDraft:
         assert draft.estimated_impact == ""
         assert draft.confidence == 0.8
 
-    def test_confidence_validation_too_high(self):
+    def test_confidence_validation_too_high(self) -> None:
         """Test confidence must be <= 1.0."""
         with pytest.raises(ValidationError):
             ProposalDraft(
@@ -68,7 +68,7 @@ class TestProposalDraft:
                 confidence=1.5,
             )
 
-    def test_confidence_validation_too_low(self):
+    def test_confidence_validation_too_low(self) -> None:
         """Test confidence must be >= 0.0."""
         with pytest.raises(ValidationError):
             ProposalDraft(
@@ -79,7 +79,7 @@ class TestProposalDraft:
                 confidence=-0.1,
             )
 
-    def test_empty_observation_ids_allowed(self):
+    def test_empty_observation_ids_allowed(self) -> None:
         """Test empty observation_ids is allowed (per model definition)."""
         # This might fail validation in real usage, but model allows it
         draft = ProposalDraft(
@@ -220,19 +220,20 @@ class TestObservationFormatting:
         assert "obs-2" in formatted
         assert "figures" in formatted
         assert "structure" in formatted
-        assert "PAGE 1" in formatted
-        assert "PAGE 2" in formatted
+        # Uses XML tag format: <page number="1" ...>
+        assert '<page number="1"' in formatted
+        assert '<page number="2"' in formatted
 
     def test_format_observations_groups_by_page(
         self, sample_observations: list[Observation]
     ):
-        """Test observations are grouped by page."""
+        """Test observations are grouped by page with XML tags."""
         agent = ConsolidationAgent()
         formatted = agent._format_observations(sample_observations)
 
-        # Page sections should appear in order
-        page1_idx = formatted.index("PAGE 1")
-        page2_idx = formatted.index("PAGE 2")
+        # Page sections should appear in order using XML tag format
+        page1_idx = formatted.index('<page number="1"')
+        page2_idx = formatted.index('<page number="2"')
         assert page1_idx < page2_idx
 
     def test_format_observations_includes_manual_reason(self):

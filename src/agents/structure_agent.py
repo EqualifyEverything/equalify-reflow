@@ -19,6 +19,7 @@ from uuid import uuid4
 from src.agents.base_agent import AgentConfig, BaseDocumentAgent
 from src.agents.model_tiers import ModelTier
 from src.agents.specialized_models import StructureAnalysisOutput, StructureIssue
+from src.config import settings
 from src.services.pdf_converter import PageData
 from src.shared.models.observation import Observation, ObservationLocation
 from src.shared.models.processing import LLMUsage
@@ -54,43 +55,6 @@ class StructureAgent(BaseDocumentAgent[StructureAnalysisOutput]):
             model_tier=ModelTier.REASONING,
         )
         super().__init__(config)
-
-    def _default_prompts(self) -> dict[str, Any]:
-        """Provide fallback prompts if YAML file not found."""
-        return {
-            "system_prompt": """You are a document structure expert analyzing PDF documents.
-Evaluate heading hierarchy, reading order, and semantic structure.
-
-HEADING RULES:
-- H1 should be document title (one per document)
-- No skipped levels: H1 -> H2 -> H3 valid; H1 -> H3 invalid
-- Heading levels should match visual hierarchy
-- Nested sections use incrementing levels
-
-ISSUE TYPES:
-- heading_skip: Level was skipped (H1 -> H3)
-- heading_mismatch: Visual weight doesn't match semantic level
-- reading_order: Content order doesn't match visual flow
-- missing_landmark: Section lacks appropriate heading
-
-SEVERITY:
-- critical: Heading skips that break navigation
-- major: Mismatches that confuse structure
-- minor: Reading order issues with minimal impact""",
-            "user_prompt_template": """Analyze document structure on page {page_num}.
-Document: {document_title}
-Layout: {layout_type}
-
-Heading structure:
-{heading_tree_summary}
-
-Current markdown:
-```
-{page_markdown}
-```
-
-Identify structural issues.""",
-        }
 
     async def analyze(
         self,
@@ -137,10 +101,7 @@ Identify structural issues.""",
             page_markdown = self._extract_page_markdown(markdown, page.page_num)
 
             # Build user message
-            user_message = self.prompts.get(
-                "user_prompt_template",
-                self._default_prompts()["user_prompt_template"]
-            ).format(
+            user_message = self.prompts["user_prompt_template"].format(
                 page_num=page.page_num,
                 document_title=manifest.document_title,
                 layout_type=layout_type,
@@ -260,7 +221,7 @@ Identify structural issues.""",
                 severity = "major"
 
             # Determine routing
-            route = "auto" if issue.confidence >= 0.7 else "manual"
+            route = "auto" if issue.confidence >= settings.min_confidence_for_auto_approval else "manual"
             manual_reason = None
             if route == "manual":
                 manual_reason = "Low confidence in structural analysis"

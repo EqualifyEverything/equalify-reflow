@@ -29,11 +29,6 @@ from src.utils.diff_utils import validate_search_replace
 logger = logging.getLogger(__name__)
 
 
-# ============================================================================
-# Output Models
-# ============================================================================
-
-
 class ProposalDraft(BaseModel):
     """Draft proposal from consolidation agent.
 
@@ -94,60 +89,6 @@ class ConsolidationOutput(BaseModel):
     )
 
 
-# ============================================================================
-# System Prompt
-# ============================================================================
-
-
-CONSOLIDATION_SYSTEM_PROMPT = """You are an accessibility remediation coordinator.
-Your task is to consolidate observations into actionable proposals.
-
-CONSOLIDATION RULES:
-
-1. GROUP RELATED OBSERVATIONS
-   - Same page region → combine into one proposal
-   - Same element (e.g., one image) → one proposal
-   - Related fixes (heading + content below) → may combine
-   - Don't over-group: keep proposals focused
-
-2. GENERATE MINIMAL SEARCH TEXT
-   - Use smallest unique string that identifies location
-   - Include enough context to avoid false matches
-   - Preserve whitespace and formatting exactly
-   - Search text MUST exist exactly once in the document
-
-3. GENERATE ACCURATE REPLACE TEXT
-   - Fix all issues addressed by grouped observations
-   - Maintain document style and formatting
-   - Don't introduce new issues
-
-4. WRITE CLEAR JUSTIFICATIONS
-   - Explain why observations are grouped
-   - Describe how the edit resolves each observation
-   - Note any tradeoffs or assumptions
-
-5. ROUTE APPROPRIATELY
-   - confidence >= 0.7: can be batch-approved
-   - confidence < 0.7: needs individual review
-   - conflicting observations: flag as conflict
-
-6. FLAG FOR MANUAL HANDLING
-   - Observations with confidence < 0.5
-   - Conflicting recommendations
-   - Complex structural changes
-   - Ambiguous image classifications
-
-OUTPUT:
-- List of proposals with search/replace diffs
-- List of observation IDs needing manual handling
-- Any conflicts detected"""
-
-
-# ============================================================================
-# ConsolidationAgent
-# ============================================================================
-
-
 class ConsolidationAgent:
     """Agent that consolidates observations into proposals.
 
@@ -168,9 +109,6 @@ class ConsolidationAgent:
         ...     job_id="job-123",
         ... )
     """
-
-    # Confidence threshold for auto vs manual routing
-    AUTO_ROUTE_THRESHOLD = 0.7
 
     # Maximum markdown length to include in prompt (to manage tokens)
     MAX_MARKDOWN_LENGTH = 8000
@@ -195,30 +133,21 @@ class ConsolidationAgent:
         )
 
     def _load_prompts(self) -> dict[str, Any]:
-        """Load prompts from YAML or use defaults."""
-        if self.prompts_file and self.prompts_file.exists():
-            import yaml
+        """Load prompts from YAML configuration file.
 
-            with open(self.prompts_file) as f:
-                prompts = yaml.safe_load(f)
-                logger.debug(f"Loaded prompts from {self.prompts_file}")
-                return dict(prompts)
+        Raises:
+            FileNotFoundError: If prompts file does not exist (fail fast, no fallback)
+        """
+        import yaml
 
-        # Try default location
-        default_path = Path(settings.agent_prompts_dir) / "consolidation.yaml"
-        if default_path.exists():
-            import yaml
+        prompts_file = self.prompts_file
+        if prompts_file is None:
+            prompts_file = Path(settings.agent_prompts_dir) / "consolidation.yaml"
 
-            with open(default_path) as f:
-                prompts = yaml.safe_load(f)
-                logger.debug(f"Loaded prompts from {default_path}")
-                return dict(prompts)
-
-        # Use hardcoded defaults
-        logger.debug("Using default consolidation prompts")
-        return {
-            "system_prompt": CONSOLIDATION_SYSTEM_PROMPT,
-        }
+        with open(prompts_file) as f:
+            prompts = yaml.safe_load(f)
+            logger.debug(f"Loaded prompts from {prompts_file}")
+            return dict(prompts)
 
     def _get_agent(self) -> Agent[None, ConsolidationOutput]:
         """Get or create the PydanticAI agent (lazy initialization)."""
@@ -231,7 +160,7 @@ class ConsolidationAgent:
             self._agent = Agent(
                 model,
                 output_type=ConsolidationOutput,
-                system_prompt=self.prompts.get("system_prompt", CONSOLIDATION_SYSTEM_PROMPT),
+                system_prompt=self.prompts["system_prompt"],
                 retries=2,
             )
             logger.debug("ConsolidationAgent: PydanticAI Agent created")
@@ -290,10 +219,10 @@ class ConsolidationAgent:
 
         output = result.output
 
-        # Track LLM usage
+        # Track LLM usage (PydanticAI uses request_tokens/response_tokens)
         usage = result.usage()
-        input_tokens = usage.input_tokens or 0
-        output_tokens = usage.output_tokens or 0
+        input_tokens = usage.request_tokens or 0
+        output_tokens = usage.response_tokens or 0
         total_tokens = input_tokens + output_tokens
         pricing = get_pricing_for_tier(self.model_tier)
         cost_cents = calculate_estimated_cost(input_tokens, output_tokens, pricing)
@@ -399,7 +328,7 @@ OBSERVATION {obs.id}:
 
             # Determine route based on confidence
             route: Literal["auto", "manual"] = (
-                "auto" if draft.confidence >= self.AUTO_ROUTE_THRESHOLD else "manual"
+                "auto" if draft.confidence >= settings.min_confidence_for_auto_approval else "manual"
             )
 
             proposal = Proposal(

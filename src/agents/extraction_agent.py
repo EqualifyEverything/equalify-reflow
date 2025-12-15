@@ -114,26 +114,19 @@ class ExtractionAgent:
         )
 
     def _load_prompts(self) -> dict[str, Any]:
-        """Load prompts from YAML configuration file."""
+        """Load prompts from YAML configuration file.
+
+        Raises:
+            FileNotFoundError: If prompts file does not exist (fail fast, no fallback)
+        """
         prompts_file = self.config.prompts_file
         if not prompts_file.is_absolute():
             prompts_file = Path(settings.agent_prompts_dir) / prompts_file
 
-        try:
-            with open(prompts_file) as f:
-                prompts: dict[str, Any] = yaml.safe_load(f)
-                logger.debug(f"Loaded prompts from {prompts_file}")
-                return prompts
-        except FileNotFoundError:
-            logger.warning(f"Prompts file not found: {prompts_file}, using defaults")
-            return self._default_prompts()
-
-    def _default_prompts(self) -> dict[str, Any]:
-        """Default prompts for extraction agent."""
-        return {
-            "system_prompt": EXTRACTION_SYSTEM_PROMPT,
-            "user_prompt": EXTRACTION_USER_PROMPT,
-        }
+        with open(prompts_file) as f:
+            prompts: dict[str, Any] = yaml.safe_load(f)
+            logger.debug(f"Loaded prompts from {prompts_file}")
+            return prompts
 
     def _get_agent(self) -> Agent[None, ExtractionOutput]:
         """Get or create the extraction agent."""
@@ -298,72 +291,6 @@ class ExtractionAgent:
             lines.append("  " + ", ".join(parts))
 
         return "\n".join(lines)
-
-
-# =============================================================================
-# Default Prompts (fallback if YAML not found)
-# =============================================================================
-
-EXTRACTION_SYSTEM_PROMPT = """You are a precise document transcription agent.
-Your task is to convert PDF page images into clean, accessible markdown.
-
-CRITICAL INSTRUCTIONS:
-
-1. FOLLOW THE HEADING STRUCTURE EXACTLY
-   - Use the heading hierarchy provided in the analysis
-   - Do not create new headings or change levels
-   - Match heading text exactly as specified
-
-2. IMAGE HANDLING
-   - For each image, use placeholder format: ![TODO: describe](image-page-X-N.png)
-   - X = page number, N = image number on that page
-   - A specialized agent will generate descriptions later
-
-3. TABLE HANDLING
-   - Preserve table structure as markdown tables
-   - Use | column | separators |
-   - Include header rows with | --- | dividers
-
-4. TEXT TRANSCRIPTION
-   - Transcribe all visible text accurately
-   - Preserve paragraph breaks
-   - Maintain list structures (ordered and unordered)
-   - Keep code blocks with proper fencing
-
-5. READING ORDER
-   - Follow the layout type specified (single/two column)
-   - For two-column: transcribe left column fully, then right
-   - For mixed: follow natural reading flow
-
-6. DO NOT:
-   - Add commentary or explanations
-   - Invent content not visible in images
-   - Change the document structure
-   - Skip any visible text content
-
-Your output should be clean markdown that could be rendered directly.
-"""
-
-EXTRACTION_USER_PROMPT = """Transcribe this {total_pages}-page document to markdown.
-
-DOCUMENT: {document_title}
-TYPE: {document_type}
-
-{heading_tree}
-
-{page_features}
-
-LAYOUT NOTES: {layout_notes}
-
-INSTRUCTIONS:
-1. Follow the heading structure exactly as shown above
-2. For images, use: ![TODO: describe](image-page-X-N.png)
-3. Preserve all tables as markdown tables
-4. Transcribe all visible text accurately
-5. Maintain proper reading order based on layout
-
-Begin transcription:
-"""
 
 
 __all__ = [

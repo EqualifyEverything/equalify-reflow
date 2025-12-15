@@ -161,14 +161,16 @@ class Settings(BaseSettings):
     # PII Detection Configuration
     pii_confidence_threshold: float = Field(ge=0.0, le=1.0, default=0.85)  # Minimum confidence score for PII detection
 
-    # Text correction auto-approval
+    # Confidence threshold for auto vs manual routing
+    # Observations/proposals with confidence >= this go to auto queue, < this go to manual
     min_confidence_for_auto_approval: float = Field(
-        default=0.95,
+        default=0.7,
         ge=0.0,
         le=1.0,
-        description="Minimum confidence score required to auto-approve corrections. "
-                    "Set to 0.0 to require manual approval for all jobs, "
-                    "1.0 to auto-approve all jobs (not recommended)"
+        description="Confidence threshold for auto vs manual routing. "
+                    "Observations/proposals >= this go to auto queue (batch approval), "
+                    "< this go to manual queue (individual review). "
+                    "Set to 0.0 to auto-approve all, 1.0 to require manual review for all."
     )
 
     # Correction review workflow

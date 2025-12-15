@@ -18,6 +18,7 @@ from uuid import uuid4
 from src.agents.base_agent import AgentConfig, BaseDocumentAgent
 from src.agents.model_tiers import ModelTier
 from src.agents.specialized_models import FiguresAnalysisOutput, ImageAnalysis
+from src.config import settings
 from src.services.pdf_converter import PageData
 from src.shared.models.observation import Observation, ObservationLocation
 from src.shared.models.processing import LLMUsage
@@ -50,41 +51,6 @@ class FiguresAgent(BaseDocumentAgent[FiguresAnalysisOutput]):
             model_tier=ModelTier.REASONING,
         )
         super().__init__(config)
-
-    def _default_prompts(self) -> dict[str, Any]:
-        """Provide fallback prompts if YAML file not found."""
-        return {
-            "system_prompt": """You are an image accessibility expert analyzing PDF documents.
-Classify images and evaluate their alt text for accessibility compliance.
-
-IMAGE TYPES:
-- decorative: Visual flourish, background, spacer - needs empty alt=""
-- informative: Conveys information - needs descriptive alt text
-- complex: Charts, diagrams, infographics - needs alt + long description
-- text: Image of text - text should be transcribed
-
-CURRENT ALT STATUS:
-- "TODO placeholder": Has placeholder like "TODO: describe"
-- "empty": No alt text
-- "has description": Has existing description (evaluate quality)
-
-ACTIONS:
-- add_alt: Add descriptive alt text
-- improve_alt: Existing alt insufficient
-- mark_decorative: Should have empty alt=""
-- add_long_desc: Needs extended description
-- none: Current alt is appropriate""",
-            "user_prompt_template": """Analyze images on page {page_num}.
-Document: {document_title}
-Expected images: {expected_image_count}
-
-Current markdown:
-```
-{page_markdown}
-```
-
-Analyze each image for accessibility.""",
-        }
 
     async def analyze(
         self,
@@ -123,10 +89,7 @@ Analyze each image for accessibility.""",
             page_markdown = self._extract_page_markdown(markdown, page.page_num)
 
             # Build user message
-            user_message = self.prompts.get(
-                "user_prompt_template",
-                self._default_prompts()["user_prompt_template"]
-            ).format(
+            user_message = self.prompts["user_prompt_template"].format(
                 page_num=page.page_num,
                 document_title=manifest.document_title,
                 expected_image_count=page_features.image_count,
@@ -241,7 +204,7 @@ Analyze each image for accessibility.""",
                 severity = "minor"
 
             # Determine routing based on confidence
-            route = "auto" if analysis.confidence >= 0.7 else "manual"
+            route = "auto" if analysis.confidence >= settings.min_confidence_for_auto_approval else "manual"
             manual_reason = None
             if route == "manual":
                 manual_reason = "Low confidence in image classification"

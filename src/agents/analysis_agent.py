@@ -52,19 +52,88 @@ class AnalysisPageFeatures(BaseModel):
     """Page features detected during analysis (matches PageFeatures schema)."""
 
     page_num: int = Field(..., ge=1, description="1-indexed page number")
-    has_images: bool = Field(default=False)
-    image_count: int = Field(default=0, ge=0)
-    has_tables: bool = Field(default=False)
-    table_count: int = Field(default=0, ge=0)
-    has_lists: bool = Field(default=False)
-    has_code_blocks: bool = Field(default=False)
-    has_math: bool = Field(default=False)
-    layout_type: Literal["single_column", "two_column", "mixed"] = Field(
-        default="single_column"
+    has_images: bool = Field(
+        default=False,
+        description=(
+            "True if page contains INFORMATIVE images (charts, diagrams, photos, "
+            "screenshots with content). Exclude decorative borders, backgrounds, logos, "
+            "spacers, and purely visual flourishes."
+        ),
     )
-    has_headers_footers: bool = Field(default=False)
-    complexity_score: float = Field(default=0.5, ge=0.0, le=1.0)
-    complexity_factors: list[str] = Field(default_factory=list)
+    image_count: int = Field(
+        default=0,
+        ge=0,
+        description="Count of informative images only (same criteria as has_images).",
+    )
+    has_tables: bool = Field(
+        default=False,
+        description=(
+            "True if page contains DATA tables with rows and columns. "
+            "Exclude layout tables used purely for positioning content."
+        ),
+    )
+    table_count: int = Field(
+        default=0,
+        ge=0,
+        description="Count of data tables only (same criteria as has_tables).",
+    )
+    has_lists: bool = Field(
+        default=False,
+        description=(
+            "True if page contains ordered lists, unordered lists, or definition lists. "
+            "Look for bullet points, numbered items, or term-definition pairs."
+        ),
+    )
+    has_code_blocks: bool = Field(
+        default=False,
+        description=(
+            "True if page contains programming code, command-line examples, or "
+            "monospace-formatted technical content that should be in code blocks."
+        ),
+    )
+    has_math: bool = Field(
+        default=False,
+        description=(
+            "True if page contains mathematical notation, equations, formulas, "
+            "or expressions that would need MathML or LaTeX representation."
+        ),
+    )
+    layout_type: Literal["single_column", "two_column", "mixed"] = Field(
+        default="single_column",
+        description=(
+            "Layout for THIS PAGE only. 'single_column'=one text flow; "
+            "'two_column'=side-by-side columns; 'mixed'=ONLY if multiple layouts "
+            "appear on the SAME page. If page 1 is single and page 2 is two-column, "
+            "each gets their own layout_type (NOT 'mixed')."
+        ),
+    )
+    has_headers_footers: bool = Field(
+        default=False,
+        description=(
+            "True if page has repeating header/footer content (page numbers, "
+            "document title, chapter headings, logos that appear on every page)."
+        ),
+    )
+    complexity_score: float = Field(
+        default=0.5,
+        ge=0.0,
+        le=1.0,
+        description=(
+            "Page complexity: 0.0=simple (plain text, clear structure, minimal formatting); "
+            "0.5=moderate (some tables, images, or lists); "
+            "1.0=very complex (nested tables, multi-column, dense figures, mixed layouts). "
+            "Consider: table nesting depth, list nesting depth, image density, column count, "
+            "and overall visual density."
+        ),
+    )
+    complexity_factors: list[str] = Field(
+        default_factory=list,
+        description=(
+            "Specific factors contributing to complexity. Examples: 'nested_tables', "
+            "'merged_cells', 'multi_column', 'dense_images', 'complex_lists', "
+            "'mixed_layout', 'math_equations', 'code_blocks'."
+        ),
+    )
 
 
 class AnalysisObservation(BaseModel):
@@ -72,13 +141,40 @@ class AnalysisObservation(BaseModel):
 
     page_num: int = Field(..., ge=1, description="Page number where issue appears")
     visual_description: str = Field(
-        ..., description="What is visually presented in the PDF"
+        ...,
+        description=(
+            "What is visually presented in the PDF at this location. "
+            "Describe the actual visual content objectively without interpretation."
+        ),
     )
     markup_issue: str = Field(
-        ..., description="The accessibility issue with the markup"
+        ...,
+        description=(
+            "The accessibility issue with the markup. Describe what's wrong or missing, "
+            "not how to fix it."
+        ),
     )
-    severity: Literal["critical", "major", "minor"] = Field(default="major")
-    confidence: float = Field(default=0.8, ge=0.0, le=1.0)
+    severity: Literal["critical", "major", "minor"] = Field(
+        default="major",
+        description=(
+            "critical=Blocks access entirely (missing alt on key diagram, broken table "
+            "structure, unreadable content). "
+            "major=Significant barrier (skipped heading level, unclear reading order, "
+            "missing image description). "
+            "minor=Inconvenience (missing emphasis markup, suboptimal but functional, "
+            "cosmetic issues)."
+        ),
+    )
+    confidence: float = Field(
+        default=0.8,
+        ge=0.0,
+        le=1.0,
+        description=(
+            "Confidence in this observation (0.0-1.0). Lower if: image is blurry, "
+            "content is ambiguous, multiple interpretations possible, or visual "
+            "evidence is unclear."
+        ),
+    )
 
 
 class AnalysisOutput(BaseModel):
@@ -170,26 +266,19 @@ class AnalysisAgent:
         )
 
     def _load_prompts(self) -> dict[str, Any]:
-        """Load prompts from YAML configuration file."""
+        """Load prompts from YAML configuration file.
+
+        Raises:
+            FileNotFoundError: If prompts file does not exist (fail fast, no fallback)
+        """
         prompts_file = self.config.prompts_file
         if not prompts_file.is_absolute():
             prompts_file = Path(settings.agent_prompts_dir) / prompts_file
 
-        try:
-            with open(prompts_file) as f:
-                prompts: dict[str, Any] = yaml.safe_load(f)
-                logger.debug(f"Loaded prompts from {prompts_file}")
-                return prompts
-        except FileNotFoundError:
-            logger.warning(f"Prompts file not found: {prompts_file}, using defaults")
-            return self._default_prompts()
-
-    def _default_prompts(self) -> dict[str, Any]:
-        """Default prompts for analysis agent."""
-        return {
-            "system_prompt": ANALYSIS_SYSTEM_PROMPT,
-            "user_prompt": ANALYSIS_USER_PROMPT,
-        }
+        with open(prompts_file) as f:
+            prompts: dict[str, Any] = yaml.safe_load(f)
+            logger.debug(f"Loaded prompts from {prompts_file}")
+            return prompts
 
     def _get_agent(self) -> Agent[None, AnalysisOutput]:
         """Get or create the analysis agent."""
@@ -372,7 +461,7 @@ class AnalysisAgent:
                 ),
                 confidence=obs.confidence,
                 severity=obs.severity,
-                route="auto" if obs.confidence >= 0.7 else "manual",
+                route="auto" if obs.confidence >= settings.min_confidence_for_auto_approval else "manual",
             )
             for obs in analysis_observations
         ]
@@ -380,81 +469,6 @@ class AnalysisAgent:
     def _determine_skip_agents(self, required: list[str]) -> list[str]:
         """Determine which agents can be skipped."""
         return list(self.ALL_AGENTS - set(required))
-
-
-# =============================================================================
-# Default Prompts
-# =============================================================================
-
-ANALYSIS_SYSTEM_PROMPT = """You are an expert document accessibility analyst specializing in \
-PDF remediation for educational materials.
-
-Your task is to perform deep analysis of PDF documents to guide the accessibility remediation pipeline.
-
-ANALYSIS OBJECTIVES:
-
-1. DOCUMENT CLASSIFICATION
-   - Identify document type: syllabus, lecture_notes, exam, handout, research_paper, other
-   - Note any special characteristics (multi-column layout, scanned content, etc.)
-
-2. STRUCTURE ANALYSIS
-   - Build complete heading hierarchy (H1-H6)
-   - Detect layout: single_column, two_column, mixed
-   - Identify reading order issues in multi-column layouts
-   - Note section numbering patterns
-
-3. PER-PAGE FEATURE DETECTION
-   For each page, report:
-   - has_images: true/false (informative images, not decorative)
-   - image_count: number of images
-   - has_tables: true/false
-   - table_count: number of tables
-   - has_lists: true/false (ordered, unordered, definition)
-   - has_code_blocks: true/false
-   - has_math: true/false (mathematical notation)
-   - layout_type: single_column/two_column/mixed
-   - has_headers_footers: true/false
-   - complexity_score: 0.0-1.0 (based on content density and structure)
-   - complexity_factors: ["dense tables", "nested lists", "complex images", etc.]
-
-4. INITIAL OBSERVATIONS
-   Note any clear accessibility issues:
-   - Missing or incorrect heading levels
-   - Images that appear informative but likely lack descriptions
-   - Tables with complex structures (merged cells, nested headers)
-   - Typography conveying meaning (color-coded text, bold for emphasis)
-   - Reading order problems in multi-column layouts
-
-5. AGENT ROUTING
-   Based on content, recommend which specialized agents should run:
-   - "figures": Document has images that need description
-   - "tables": Document has data tables that need structure markup
-   - "structure": Heading hierarchy needs verification or is complex
-   - "typography": Visual styling appears to convey semantic meaning
-
-Be thorough but focused on accessibility-relevant details.
-"""
-
-ANALYSIS_USER_PROMPT = """Analyze this {total_pages}-page PDF document.
-
-Examine each page image and provide:
-
-1. Document title and type classification
-
-2. Complete heading structure with:
-   - Level (1-6)
-   - Title text as it appears
-   - Page number
-   - Section numbering if present
-
-3. Page-by-page feature analysis (for EVERY page)
-
-4. List of required specialized agents based on content
-
-5. Initial accessibility observations for any clear issues you notice
-
-Focus on content that will need accessibility remediation.
-"""
 
 
 __all__ = [

@@ -111,12 +111,15 @@ class BaseDocumentAgent(ABC, Generic[TOutput]):
     def _load_prompts(self) -> dict[str, Any]:
         """Load prompts from YAML configuration file.
 
-        Attempts to load prompts from the configured YAML file.
-        Falls back to _default_prompts() if file not found.
+        Args:
+            None (uses self.config.prompts_file)
 
         Returns:
             Dictionary containing at minimum 'system_prompt' and optionally
             'user_prompt_template' keys.
+
+        Raises:
+            FileNotFoundError: If prompts file does not exist (fail fast, no fallback)
         """
         prompts_file = self.config.prompts_file
 
@@ -124,29 +127,10 @@ class BaseDocumentAgent(ABC, Generic[TOutput]):
         if not prompts_file.is_absolute():
             prompts_file = Path(settings.agent_prompts_dir) / prompts_file
 
-        try:
-            with open(prompts_file) as f:
-                prompts = yaml.safe_load(f)
-                logger.debug(f"Agent {self.name}: Loaded prompts from {prompts_file}")
-                return dict(prompts)
-        except FileNotFoundError:
-            logger.warning(
-                f"Agent {self.name}: Prompts file not found at {prompts_file}, "
-                "using default prompts"
-            )
-            return self._default_prompts()
-
-    @abstractmethod
-    def _default_prompts(self) -> dict[str, Any]:
-        """Provide fallback prompts when YAML file is not found.
-
-        Subclasses must implement this to provide default prompts.
-
-        Returns:
-            Dictionary with at minimum 'system_prompt' key, and optionally
-            'user_prompt_template' for formatting with input data.
-        """
-        pass
+        with open(prompts_file) as f:
+            prompts = yaml.safe_load(f)
+            logger.debug(f"Agent {self.name}: Loaded prompts from {prompts_file}")
+            return dict(prompts)
 
     def _get_agent(self) -> Agent[None, TOutput]:
         """Get or create the PydanticAI agent (lazy initialization).
@@ -249,8 +233,7 @@ class BaseDocumentAgent(ABC, Generic[TOutput]):
             messages.append(BinaryContent(data=image_bytes, media_type="image/png"))
 
         logger.debug(
-            f"Agent {self.name}: Running with message length {len(user_message)}, "
-            f"image: {image_bytes is not None}"
+            f"Agent {self.name}: Running with message length {len(user_message)}, image: {image_bytes is not None}"
         )
 
         # Get agent (lazy initialization) and execute
@@ -263,10 +246,10 @@ class BaseDocumentAgent(ABC, Generic[TOutput]):
             },
         )
 
-        # Extract usage metrics
+        # Extract usage metrics (PydanticAI uses request_tokens/response_tokens)
         usage = result.usage()
-        input_tokens = usage.input_tokens or 0
-        output_tokens = usage.output_tokens or 0
+        input_tokens = usage.request_tokens or 0
+        output_tokens = usage.response_tokens or 0
         total_tokens = input_tokens + output_tokens
         estimated_cost_cents = self._calculate_estimated_cost(input_tokens, output_tokens)
 
@@ -279,7 +262,7 @@ class BaseDocumentAgent(ABC, Generic[TOutput]):
 
         logger.debug(
             f"Agent {self.name}: Completed "
-            f"(tokens: {input_tokens}/{output_tokens}, est. cost: ${estimated_cost_cents/100:.6f})"
+            f"(tokens: {input_tokens}/{output_tokens}, est. cost: ${estimated_cost_cents / 100:.6f})"
         )
 
         return result.output, llm_usage

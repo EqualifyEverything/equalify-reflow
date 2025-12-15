@@ -18,6 +18,7 @@ from uuid import uuid4
 from src.agents.base_agent import AgentConfig, BaseDocumentAgent
 from src.agents.model_tiers import ModelTier
 from src.agents.specialized_models import TypographyAnalysisOutput, TypographyIssue
+from src.config import settings
 from src.services.pdf_converter import PageData
 from src.shared.models.observation import Observation, ObservationLocation
 from src.shared.models.processing import LLMUsage
@@ -53,42 +54,6 @@ class TypographyAgent(BaseDocumentAgent[TypographyAnalysisOutput]):
             model_tier=ModelTier.REASONING,
         )
         super().__init__(config)
-
-    def _default_prompts(self) -> dict[str, Any]:
-        """Provide fallback prompts if YAML file not found."""
-        return {
-            "system_prompt": """You are a typography semantics expert analyzing PDF documents.
-Identify visual styling that conveys meaning and should be preserved in markup.
-
-SEMANTIC PATTERNS:
-- Bold often indicates emphasis or importance (**strong**)
-- Italic may indicate terms, titles, foreign words (*em*)
-- Color-coding may indicate categories or status
-- Size changes may suggest heading hierarchy
-
-ISSUE TYPES:
-- emphasis_unmarked: Bold/italic conveying emphasis not in markdown
-- definition_unmarked: Terms being defined not marked
-- semantic_color: Color conveys meaning without text alternative
-- visual_heading: Font size/weight suggests heading not captured
-
-AVOID FALSE POSITIVES:
-- Decorative styling vs semantic styling
-- Brand fonts, design elements
-- Consistent styling that doesn't convey meaning""",
-            "user_prompt_template": """Analyze typography on page {page_num}.
-Document: {document_title}
-Complexity score: {complexity_score}
-Factors: {complexity_factors}
-
-Current markdown:
-```
-{page_markdown}
-```
-
-Identify semantic typography not captured in markup.
-Focus on HIGH-CONFIDENCE findings only.""",
-        }
 
     async def analyze(
         self,
@@ -136,10 +101,7 @@ Focus on HIGH-CONFIDENCE findings only.""",
                 complexity_factors = "none"
 
             # Build user message
-            user_message = self.prompts.get(
-                "user_prompt_template",
-                self._default_prompts()["user_prompt_template"]
-            ).format(
+            user_message = self.prompts["user_prompt_template"].format(
                 page_num=page.page_num,
                 document_title=manifest.document_title,
                 complexity_score=page_features.complexity_score,
@@ -237,7 +199,7 @@ Focus on HIGH-CONFIDENCE findings only.""",
                 severity = "minor"  # Emphasis/definition are nice-to-have
 
             # Determine routing
-            route = "auto" if issue.confidence >= 0.7 else "manual"
+            route = "auto" if issue.confidence >= settings.min_confidence_for_auto_approval else "manual"
             manual_reason = None
             if route == "manual":
                 manual_reason = "Low confidence in typography semantic analysis"

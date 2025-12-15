@@ -18,6 +18,7 @@ from uuid import uuid4
 from src.agents.base_agent import AgentConfig, BaseDocumentAgent
 from src.agents.model_tiers import ModelTier
 from src.agents.specialized_models import TableAnalysis, TablesAnalysisOutput
+from src.config import settings
 from src.services.pdf_converter import PageData
 from src.shared.models.observation import Observation, ObservationLocation
 from src.shared.models.processing import LLMUsage
@@ -50,48 +51,6 @@ class TablesAgent(BaseDocumentAgent[TablesAnalysisOutput]):
             model_tier=ModelTier.REASONING,
         )
         super().__init__(config)
-
-    def _default_prompts(self) -> dict[str, Any]:
-        """Provide fallback prompts if YAML file not found."""
-        return {
-            "system_prompt": """You are a table accessibility expert analyzing PDF documents.
-Evaluate table structure and data accuracy for accessibility compliance.
-
-HEADER STRUCTURE:
-- single_row: Simple header row at top
-- multi_row: Multiple header rows (complex)
-- column_headers: Headers in first column
-- none: No identifiable headers
-
-COMPLEXITY:
-- simple: Regular grid, single header row
-- merged_cells: Has spanning cells
-- nested: Tables within tables
-- irregular: Varying column counts
-
-DATA ACCURACY:
-- accurate: Markdown matches visual exactly
-- partial: Some data missing/misaligned
-- missing_data: Significant data loss
-- structural_loss: Structure fundamentally changed
-
-ACTIONS:
-- add_headers: Needs header identification
-- restructure: Needs significant changes
-- verify_data: Needs human verification
-- add_caption: Would benefit from caption
-- none: Structure is appropriate""",
-            "user_prompt_template": """Analyze tables on page {page_num}.
-Document: {document_title}
-Expected tables: {expected_table_count}
-
-Current markdown:
-```
-{page_markdown}
-```
-
-Analyze each table for structure and accuracy.""",
-        }
 
     async def analyze(
         self,
@@ -130,10 +89,7 @@ Analyze each table for structure and accuracy.""",
             page_markdown = self._extract_page_markdown(markdown, page.page_num)
 
             # Build user message
-            user_message = self.prompts.get(
-                "user_prompt_template",
-                self._default_prompts()["user_prompt_template"]
-            ).format(
+            user_message = self.prompts["user_prompt_template"].format(
                 page_num=page.page_num,
                 document_title=manifest.document_title,
                 expected_table_count=page_features.table_count,
@@ -240,7 +196,7 @@ Analyze each table for structure and accuracy.""",
             route: str
             manual_reason: str | None = None
 
-            if analysis.confidence < 0.7:
+            if analysis.confidence < settings.min_confidence_for_auto_approval:
                 route = "manual"
                 manual_reason = "Low confidence in table analysis"
             elif analysis.complexity in ["merged_cells", "nested", "irregular"]:

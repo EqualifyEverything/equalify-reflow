@@ -84,40 +84,15 @@ class AccessibilityAgent:
 
         Returns:
             Dictionary with system_prompt and user_prompt_template
+
+        Raises:
+            FileNotFoundError: If prompts file does not exist (fail fast, no fallback)
         """
         prompts_file = Path(settings.agent_prompts_dir) / "accessibility.yaml"
 
-        try:
-            with open(prompts_file) as f:
-                prompts: dict[str, Any] = yaml.safe_load(f)
-                return prompts
-        except FileNotFoundError:
-            logger.warning(
-                f"Prompts file not found: {prompts_file}, using default prompts"
-            )
-            return self._default_prompts()
-
-    def _default_prompts(self) -> dict[str, Any]:
-        """Fallback default prompts if YAML file is not found."""
-        return {
-            "system_prompt": """You are an expert accessibility specialist who improves PDF-to-markdown conversions.
-
-You will receive extracted markdown text and a visual image of the PDF page.
-
-Your task:
-1. Fix heading hierarchy to match visual structure
-2. Add descriptive alt text for images
-3. Ensure proper semantic markup
-4. Preserve all original content
-
-Return improved markdown with a confidence score (0-1).""",
-            "user_prompt_template": """Improve this PDF page conversion:
-
-**Extracted Markdown:**
-{page_markdown}
-
-Fix heading hierarchy, add alt text, ensure semantic markup.""",
-        }
+        with open(prompts_file) as f:
+            prompts: dict[str, Any] = yaml.safe_load(f)
+            return prompts
 
     async def process_page(
         self,

@@ -365,9 +365,9 @@ class ProcessingService:
             # Use extraction confidence (analysis confidence is stored in manifest)
             avg_confidence = extraction_confidence
 
-            if avg_confidence >= 0.9:
+            if avg_confidence >= settings.confidence_threshold_high:
                 confidence_level = "high"
-            elif avg_confidence >= 0.7:
+            elif avg_confidence >= settings.confidence_threshold_medium:
                 confidence_level = "medium"
             else:
                 confidence_level = "low"
@@ -649,9 +649,9 @@ class ProcessingService:
         heading_tree = HeadingTree.model_validate_json(manifest.heading_tree_json)
 
         # Calculate confidence level
-        if avg_confidence >= 0.9:
+        if avg_confidence >= settings.confidence_threshold_high:
             confidence_level = "high"
-        elif avg_confidence >= 0.7:
+        elif avg_confidence >= settings.confidence_threshold_medium:
             confidence_level = "medium"
         else:
             confidence_level = "low"

@@ -1,4 +1,4 @@
-"""Tests for AnalysisAgent (PRD-012).
+"""Tests for AnalysisAgent.
 
 Tests cover:
 - Model tier selection and cost calculation
@@ -32,7 +32,62 @@ from src.shared.llm_cost import (
 )
 from src.shared.models.observation import Observation
 from src.shared.models.processing import LLMUsage
+from src.shared.models.reasoned import Reasoned
 from src.shared.models.remediation import DocumentManifest
+
+# =============================================================================
+# Test Helpers
+# =============================================================================
+
+
+def make_page_features(
+    page_num: int,
+    layout_type: str = "single_column",
+    complexity_score: float = 0.5,
+    **kwargs
+) -> AnalysisPageFeatures:
+    """Helper to create AnalysisPageFeatures with Reasoned[T] wrappers."""
+    return AnalysisPageFeatures(
+        page_num=page_num,
+        layout_type=Reasoned(
+            reasoning=f"Test reasoning for layout on page {page_num}.",
+            value=layout_type,
+        ),
+        complexity_score=Reasoned(
+            reasoning=f"Test reasoning for complexity on page {page_num}.",
+            value=complexity_score,
+        ),
+        **kwargs
+    )
+
+
+def make_analysis_output(
+    document_title: str = "Test Document",
+    document_type: str = "other",
+    page_features: list | None = None,
+    **kwargs
+) -> AnalysisOutput:
+    """Helper to create AnalysisOutput with Reasoned[T] wrappers."""
+    if page_features is None:
+        page_features = [make_page_features(1)]
+    return AnalysisOutput(
+        document_title=document_title,
+        document_type=Reasoned(
+            reasoning="Test reasoning for document type classification.",
+            value=document_type,
+        ),
+        heading_tree=kwargs.pop("heading_tree", HeadingTree(document_title=document_title)),
+        page_features=page_features,
+        agent_routing_reasoning=kwargs.pop(
+            "agent_routing_reasoning",
+            "Test reasoning for agent routing decisions."
+        ),
+        heading_order_verification=kwargs.pop(
+            "heading_order_verification",
+            "Verified heading order is correct for single-column layout."
+        ),
+        **kwargs
+    )
 
 # =============================================================================
 # Model Tier Tests
@@ -191,37 +246,38 @@ class TestAnalysisPageFeatures:
     """Tests for AnalysisPageFeatures model."""
 
     def test_valid_page_features(self):
-        """Test creating valid page features."""
-        features = AnalysisPageFeatures(
+        """Test creating valid page features with Reasoned[T] wrappers."""
+        features = make_page_features(
             page_num=1,
+            layout_type="two_column",
+            complexity_score=0.8,
             has_images=True,
             image_count=2,
             has_tables=True,
             table_count=1,
             has_lists=True,
-            layout_type="two_column",
-            complexity_score=0.8,
             complexity_factors=["dense tables", "images"]
         )
         assert features.page_num == 1
         assert features.has_images is True
         assert features.image_count == 2
-        assert features.complexity_score == 0.8
+        assert features.layout_type.value == "two_column"
+        assert features.complexity_score.value == 0.8
 
     def test_page_features_defaults(self):
-        """Test default values for page features."""
-        features = AnalysisPageFeatures(page_num=1)
+        """Test default boolean values for page features."""
+        features = make_page_features(page_num=1)
         assert features.has_images is False
         assert features.image_count == 0
         assert features.has_tables is False
-        assert features.layout_type == "single_column"
-        assert features.complexity_score == 0.5
+        assert features.layout_type.value == "single_column"
+        assert features.complexity_score.value == 0.5
         assert features.complexity_factors == []
 
     def test_page_num_validation(self):
         """Test page_num must be >= 1."""
         with pytest.raises(ValidationError):
-            AnalysisPageFeatures(page_num=0)
+            make_page_features(page_num=0)
 
 
 @pytest.mark.unit
@@ -267,29 +323,27 @@ class TestAnalysisOutput:
     """Tests for AnalysisOutput model."""
 
     def test_valid_analysis_output(self):
-        """Test creating a valid analysis output."""
-        output = AnalysisOutput(
+        """Test creating a valid analysis output with Reasoned[T] wrappers."""
+        output = make_analysis_output(
             document_title="CS 101 Syllabus",
             document_type="syllabus",
-            heading_tree=HeadingTree(document_title="CS 101 Syllabus"),
-            page_features=[AnalysisPageFeatures(page_num=1)],
+            page_features=[make_page_features(1)],
             required_agents=["figures", "tables"],
             observations=[],
             confidence=0.9,
             notes="Clear structure"
         )
         assert output.document_title == "CS 101 Syllabus"
-        assert output.document_type == "syllabus"
+        assert output.document_type.value == "syllabus"
         assert len(output.required_agents) == 2
 
     def test_analysis_output_defaults(self):
         """Test default values for analysis output."""
-        output = AnalysisOutput(
-            heading_tree=HeadingTree(document_title="Test"),
+        output = make_analysis_output(
             page_features=[]
         )
-        assert output.document_title == "Untitled"
-        assert output.document_type == "unknown"
+        assert output.document_title == "Test Document"
+        assert output.document_type.value == "other"
         assert output.required_agents == []
         assert output.observations == []
         assert output.confidence == 0.8
@@ -423,10 +477,10 @@ class TestAnalysisAgentManifestCreation:
     """Tests for manifest creation from analysis output."""
 
     def test_create_manifest_basic(self):
-        """Test basic manifest creation."""
+        """Test basic manifest creation with Reasoned[T] extraction."""
         agent = AnalysisAgent()
 
-        output = AnalysisOutput(
+        output = make_analysis_output(
             document_title="Test Document",
             document_type="lecture_notes",
             heading_tree=HeadingTree(
@@ -435,8 +489,8 @@ class TestAnalysisAgentManifestCreation:
                 confidence=0.9
             ),
             page_features=[
-                AnalysisPageFeatures(page_num=1, has_images=True, image_count=2),
-                AnalysisPageFeatures(page_num=2, has_tables=True, table_count=1),
+                make_page_features(page_num=1, has_images=True, image_count=2),
+                make_page_features(page_num=2, has_tables=True, table_count=1),
             ],
             required_agents=["figures", "tables"],
             confidence=0.85,
@@ -461,10 +515,9 @@ class TestAnalysisAgentManifestCreation:
         agent = AnalysisAgent()
 
         # Only provide features for page 2
-        output = AnalysisOutput(
-            heading_tree=HeadingTree(document_title="Test"),
+        output = make_analysis_output(
             page_features=[
-                AnalysisPageFeatures(page_num=2, has_images=True)
+                make_page_features(page_num=2, has_images=True)
             ]
         )
 
@@ -557,14 +610,13 @@ class TestAnalysisAgentAnalyze:
 
     @pytest.mark.asyncio
     async def test_analyze_returns_correct_types(self):
-        """Test analyze returns correct types."""
+        """Test analyze returns correct types with Reasoned[T] extraction."""
         # Create mock agent with run method
         mock_pydantic_agent = MagicMock()
         mock_result = MagicMock()
-        mock_result.output = AnalysisOutput(
+        mock_result.output = make_analysis_output(
             document_title="Test",
-            heading_tree=HeadingTree(document_title="Test"),
-            page_features=[AnalysisPageFeatures(page_num=1)],
+            page_features=[make_page_features(page_num=1)],
             required_agents=["figures"],
             observations=[
                 AnalysisObservation(

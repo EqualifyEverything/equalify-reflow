@@ -20,6 +20,7 @@ from src.agents.model_tiers import ModelTier
 from src.agents.specialized_models import FiguresAnalysisOutput, ImageAnalysis
 from src.config import settings
 from src.services.pdf_converter import PageData
+from src.services.reasoning_corpus_service import get_reasoning_corpus_service
 from src.shared.models.observation import Observation, ObservationLocation
 from src.shared.models.processing import LLMUsage
 from src.shared.models.remediation import DocumentManifest, PageFeatures
@@ -118,6 +119,16 @@ class FiguresAgent(BaseDocumentAgent[FiguresAnalysisOutput]):
                     f"cost: ${usage.estimated_cost_cents/100:.4f}"
                 )
 
+                # Log reasoning corpus for each analysis
+                corpus_service = get_reasoning_corpus_service()
+                for analysis in output.analyses:
+                    corpus = analysis.extract_reasoning_corpus()
+                    await corpus_service.log_corpus_batch(
+                        job_id=job_id,
+                        agent_name="figures",
+                        corpus=corpus,
+                    )
+
                 # Convert analyses to observations
                 page_observations = self._analyses_to_observations(
                     output.analyses,
@@ -190,15 +201,16 @@ class FiguresAgent(BaseDocumentAgent[FiguresAnalysisOutput]):
         observations: list[Observation] = []
 
         for analysis in analyses:
-            # Skip if no action needed
-            if analysis.recommended_action == "none":
+            # Skip if no action needed (access .value for Reasoned[T] fields)
+            if analysis.recommended_action.value == "none":
                 continue
 
-            # Determine severity based on image type
+            # Determine severity based on image type (access .value for Reasoned[T] fields)
+            image_type_value = analysis.image_type.value
             severity: str
-            if analysis.image_type in ["informative", "complex"]:
+            if image_type_value in ["informative", "complex"]:
                 severity = "major"
-            elif analysis.image_type == "text":
+            elif image_type_value == "text":
                 severity = "major"  # Text images are important for accessibility
             else:
                 severity = "minor"

@@ -20,6 +20,7 @@ from src.agents.model_tiers import ModelTier
 from src.agents.specialized_models import TypographyAnalysisOutput, TypographyIssue
 from src.config import settings
 from src.services.pdf_converter import PageData
+from src.services.reasoning_corpus_service import get_reasoning_corpus_service
 from src.shared.models.observation import Observation, ObservationLocation
 from src.shared.models.processing import LLMUsage
 from src.shared.models.remediation import DocumentManifest, PageFeatures
@@ -130,6 +131,16 @@ class TypographyAgent(BaseDocumentAgent[TypographyAnalysisOutput]):
                     f"cost: ${usage.estimated_cost_cents/100:.4f}"
                 )
 
+                # Log reasoning corpus for each issue
+                corpus_service = get_reasoning_corpus_service()
+                for issue in output.issues:
+                    corpus = issue.extract_reasoning_corpus()
+                    await corpus_service.log_corpus_batch(
+                        job_id=job_id,
+                        agent_name="typography",
+                        corpus=corpus,
+                    )
+
                 # Convert issues to observations
                 page_observations = self._issues_to_observations(
                     output.issues,
@@ -189,11 +200,14 @@ class TypographyAgent(BaseDocumentAgent[TypographyAnalysisOutput]):
         observations: list[Observation] = []
 
         for issue in issues:
+            # Access .value for Reasoned[T] field
+            issue_type_value = issue.issue_type.value
+
             # Typography issues are typically minor unless semantic
             severity: str
-            if issue.issue_type == "semantic_color":
+            if issue_type_value == "semantic_color":
                 severity = "major"  # Color conveying meaning without alternative
-            elif issue.issue_type == "visual_heading":
+            elif issue_type_value == "visual_heading":
                 severity = "major"  # Missing heading is structural
             else:
                 severity = "minor"  # Emphasis/definition are nice-to-have

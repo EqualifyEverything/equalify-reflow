@@ -21,6 +21,7 @@ from src.agents.model_tiers import ModelTier
 from src.agents.specialized_models import StructureAnalysisOutput, StructureIssue
 from src.config import settings
 from src.services.pdf_converter import PageData
+from src.services.reasoning_corpus_service import get_reasoning_corpus_service
 from src.shared.models.observation import Observation, ObservationLocation
 from src.shared.models.processing import LLMUsage
 from src.shared.models.remediation import DocumentManifest
@@ -132,6 +133,16 @@ class StructureAgent(BaseDocumentAgent[StructureAnalysisOutput]):
                     f"cost: ${usage.estimated_cost_cents/100:.4f}"
                 )
 
+                # Log reasoning corpus for each issue
+                corpus_service = get_reasoning_corpus_service()
+                for issue in output.issues:
+                    corpus = issue.extract_reasoning_corpus()
+                    await corpus_service.log_corpus_batch(
+                        job_id=job_id,
+                        agent_name="structure",
+                        corpus=corpus,
+                    )
+
                 # Convert issues to observations
                 page_observations = self._issues_to_observations(
                     output.issues,
@@ -215,8 +226,12 @@ class StructureAgent(BaseDocumentAgent[StructureAnalysisOutput]):
         observations: list[Observation] = []
 
         for issue in issues:
+            # Access .value for Reasoned[T] fields
+            severity_value = issue.severity.value
+            issue_type_value = issue.issue_type.value
+
             # Map severity string to valid values
-            severity = issue.severity
+            severity = severity_value
             if severity not in ["critical", "major", "minor"]:
                 severity = "major"
 
@@ -228,7 +243,7 @@ class StructureAgent(BaseDocumentAgent[StructureAnalysisOutput]):
 
             # Build location based on issue type
             location_type = "region"
-            if issue.issue_type in ["heading_skip", "heading_mismatch"]:
+            if issue_type_value in ["heading_skip", "heading_mismatch"]:
                 location_type = "element"
 
             obs = Observation(

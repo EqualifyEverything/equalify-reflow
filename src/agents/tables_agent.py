@@ -20,6 +20,7 @@ from src.agents.model_tiers import ModelTier
 from src.agents.specialized_models import TableAnalysis, TablesAnalysisOutput
 from src.config import settings
 from src.services.pdf_converter import PageData
+from src.services.reasoning_corpus_service import get_reasoning_corpus_service
 from src.shared.models.observation import Observation, ObservationLocation
 from src.shared.models.processing import LLMUsage
 from src.shared.models.remediation import DocumentManifest, PageFeatures
@@ -118,6 +119,16 @@ class TablesAgent(BaseDocumentAgent[TablesAnalysisOutput]):
                     f"cost: ${usage.estimated_cost_cents/100:.4f}"
                 )
 
+                # Log reasoning corpus for each analysis
+                corpus_service = get_reasoning_corpus_service()
+                for analysis in output.analyses:
+                    corpus = analysis.extract_reasoning_corpus()
+                    await corpus_service.log_corpus_batch(
+                        job_id=job_id,
+                        agent_name="tables",
+                        corpus=corpus,
+                    )
+
                 # Convert analyses to observations
                 page_observations = self._analyses_to_observations(
                     output.analyses,
@@ -181,11 +192,14 @@ class TablesAgent(BaseDocumentAgent[TablesAnalysisOutput]):
             if analysis.recommended_action == "none":
                 continue
 
+            # Access .value for Reasoned[T] field
+            complexity_value = analysis.complexity.value
+
             # Determine severity based on complexity and data accuracy
             severity: str
             if analysis.data_accuracy in ["missing_data", "structural_loss"]:
                 severity = "critical"
-            elif analysis.complexity in ["merged_cells", "nested", "irregular"]:
+            elif complexity_value in ["merged_cells", "nested", "irregular"]:
                 severity = "major"
             elif not analysis.has_headers:
                 severity = "major"
@@ -199,10 +213,10 @@ class TablesAgent(BaseDocumentAgent[TablesAnalysisOutput]):
             if analysis.confidence < settings.min_confidence_for_auto_approval:
                 route = "manual"
                 manual_reason = "Low confidence in table analysis"
-            elif analysis.complexity in ["merged_cells", "nested", "irregular"]:
+            elif complexity_value in ["merged_cells", "nested", "irregular"]:
                 route = "manual"
                 manual_reason = (
-                    f"Complex table structure ({analysis.complexity}) "
+                    f"Complex table structure ({complexity_value}) "
                     "requires human judgment on best representation"
                 )
             else:
@@ -216,7 +230,7 @@ class TablesAgent(BaseDocumentAgent[TablesAnalysisOutput]):
             markup_desc = (
                 f"Table {analysis.table_index}: "
                 f"headers={analysis.header_structure}, "
-                f"complexity={analysis.complexity}, "
+                f"complexity={complexity_value}, "
                 f"accuracy={analysis.data_accuracy}"
             )
 

@@ -167,7 +167,7 @@ class TestAnalysisToObservation:
                 visual_description="Chart showing data",
                 current_alt_status="empty",
                 recommended_action="add_alt",
-                confidence=0.9,
+                confidence=0.99,  # Use 0.99 to exceed any reasonable threshold
             )
         ]
 
@@ -177,7 +177,7 @@ class TestAnalysisToObservation:
         obs = observations[0]
         assert obs.agent == "figures"
         assert obs.severity == "major"
-        assert obs.route == "auto"  # High confidence
+        assert obs.route == "auto"  # Confidence 0.99 exceeds threshold
         assert obs.location.page_num == 1
 
     def test_decorative_image_creates_minor_observation(self):

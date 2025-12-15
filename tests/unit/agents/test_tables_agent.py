@@ -189,7 +189,7 @@ class TestTableAnalysisToObservation:
         assert observations[0].severity == "critical"
 
     def test_complex_table_routes_to_manual(self):
-        """Test complex tables route to manual review."""
+        """Test complex tables route to manual review even with high confidence."""
         agent = TablesAgent()
 
         for complexity in ["merged_cells", "nested", "irregular"]:
@@ -199,7 +199,7 @@ class TestTableAnalysisToObservation:
                     complexity=complexity,
                     visual_description="Complex table",
                     recommended_action="restructure",
-                    confidence=0.9,  # High confidence but still manual
+                    confidence=0.99,  # High confidence, but complex table still routes to manual
                 )
             ]
 

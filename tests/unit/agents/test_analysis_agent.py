@@ -343,13 +343,12 @@ class TestAnalysisAgentInitialization:
         assert "sonnet" in agent.model_id.lower()
         assert agent.prompts is not None
 
-    def test_agent_uses_default_prompts_when_file_not_found(self):
-        """Test agent uses default prompts when file not found."""
+    def test_agent_raises_when_prompts_file_not_found(self):
+        """Test agent raises FileNotFoundError when prompts file not found (fail fast)."""
         config = AnalysisAgentConfig(prompts_file=Path("nonexistent.yaml"))
-        agent = AnalysisAgent(config)
 
-        assert "system_prompt" in agent.prompts
-        assert "user_prompt" in agent.prompts
+        with pytest.raises(FileNotFoundError):
+            AnalysisAgent(config)
 
     def test_all_agents_constant(self):
         """Test ALL_AGENTS constant contains expected agents."""
@@ -363,7 +362,7 @@ class TestAnalysisAgentHelperMethods:
 
     def test_determine_skip_agents_all_required(self):
         """Test skip agents when all are required."""
-        config = AnalysisAgentConfig(prompts_file=Path("nonexistent.yaml"))
+        config = AnalysisAgentConfig(prompts_file=Path("analysis.yaml"))
         agent = AnalysisAgent(config)
 
         required = ["figures", "tables", "structure", "typography"]
@@ -373,7 +372,7 @@ class TestAnalysisAgentHelperMethods:
 
     def test_determine_skip_agents_some_required(self):
         """Test skip agents when some are required."""
-        config = AnalysisAgentConfig(prompts_file=Path("nonexistent.yaml"))
+        config = AnalysisAgentConfig(prompts_file=Path("analysis.yaml"))
         agent = AnalysisAgent(config)
 
         required = ["figures", "tables"]
@@ -383,7 +382,7 @@ class TestAnalysisAgentHelperMethods:
 
     def test_determine_skip_agents_none_required(self):
         """Test skip agents when none are required."""
-        config = AnalysisAgentConfig(prompts_file=Path("nonexistent.yaml"))
+        config = AnalysisAgentConfig(prompts_file=Path("analysis.yaml"))
         agent = AnalysisAgent(config)
 
         required = []
@@ -393,7 +392,7 @@ class TestAnalysisAgentHelperMethods:
 
     def test_build_image_messages(self):
         """Test building image messages from pages."""
-        config = AnalysisAgentConfig(prompts_file=Path("nonexistent.yaml"))
+        config = AnalysisAgentConfig(prompts_file=Path("analysis.yaml"))
         agent = AnalysisAgent(config)
 
         # Create mock pages
@@ -416,7 +415,7 @@ class TestAnalysisAgentManifestCreation:
 
     def test_create_manifest_basic(self):
         """Test basic manifest creation."""
-        config = AnalysisAgentConfig(prompts_file=Path("nonexistent.yaml"))
+        config = AnalysisAgentConfig(prompts_file=Path("analysis.yaml"))
         agent = AnalysisAgent(config)
 
         output = AnalysisOutput(
@@ -451,7 +450,7 @@ class TestAnalysisAgentManifestCreation:
 
     def test_create_manifest_fills_missing_pages(self):
         """Test manifest creation fills missing page features."""
-        config = AnalysisAgentConfig(prompts_file=Path("nonexistent.yaml"))
+        config = AnalysisAgentConfig(prompts_file=Path("analysis.yaml"))
         agent = AnalysisAgent(config)
 
         # Only provide features for page 2
@@ -484,7 +483,7 @@ class TestAnalysisAgentObservationConversion:
 
     def test_convert_observations_basic(self):
         """Test basic observation conversion."""
-        config = AnalysisAgentConfig(prompts_file=Path("nonexistent.yaml"))
+        config = AnalysisAgentConfig(prompts_file=Path("analysis.yaml"))
         agent = AnalysisAgent(config)
 
         analysis_obs = [
@@ -493,7 +492,7 @@ class TestAnalysisAgentObservationConversion:
                 visual_description="Chart showing trends",
                 markup_issue="Empty alt text",
                 severity="major",
-                confidence=0.9
+                confidence=0.99  # Use 0.99 to exceed any reasonable threshold
             )
         ]
 
@@ -507,13 +506,13 @@ class TestAnalysisAgentObservationConversion:
         assert obs.visual_description == "Chart showing trends"
         assert obs.markup_description == "Empty alt text"
         assert obs.severity == "major"
-        assert obs.confidence == 0.9
+        assert obs.confidence == 0.99
         assert obs.location.page_num == 3
-        assert obs.route == "auto"  # confidence >= 0.7
+        assert obs.route == "auto"  # confidence 0.99 exceeds any threshold
 
     def test_convert_observations_low_confidence_routes_manual(self):
         """Test low confidence observations route to manual."""
-        config = AnalysisAgentConfig(prompts_file=Path("nonexistent.yaml"))
+        config = AnalysisAgentConfig(prompts_file=Path("analysis.yaml"))
         agent = AnalysisAgent(config)
 
         analysis_obs = [
@@ -521,7 +520,7 @@ class TestAnalysisAgentObservationConversion:
                 page_num=1,
                 visual_description="Unclear image",
                 markup_issue="May need description",
-                confidence=0.5  # Below 0.7 threshold
+                confidence=0.5  # Below any reasonable auto-approval threshold
             )
         ]
 
@@ -532,7 +531,7 @@ class TestAnalysisAgentObservationConversion:
 
     def test_convert_observations_empty_list(self):
         """Test converting empty observation list."""
-        config = AnalysisAgentConfig(prompts_file=Path("nonexistent.yaml"))
+        config = AnalysisAgentConfig(prompts_file=Path("analysis.yaml"))
         agent = AnalysisAgent(config)
 
         observations = agent._convert_observations([], "job-123")
@@ -547,7 +546,7 @@ class TestAnalysisAgentAnalyze:
     @pytest.mark.asyncio
     async def test_analyze_raises_on_empty_pages(self):
         """Test analyze raises ValueError on empty pages."""
-        config = AnalysisAgentConfig(prompts_file=Path("nonexistent.yaml"))
+        config = AnalysisAgentConfig(prompts_file=Path("analysis.yaml"))
         agent = AnalysisAgent(config)
 
         with pytest.raises(ValueError, match="No pages provided"):
@@ -579,7 +578,7 @@ class TestAnalysisAgentAnalyze:
         mock_pydantic_agent.run = AsyncMock(return_value=mock_result)
 
         # Create agent and replace _get_agent
-        config = AnalysisAgentConfig(prompts_file=Path("nonexistent.yaml"))
+        config = AnalysisAgentConfig(prompts_file=Path("analysis.yaml"))
         agent = AnalysisAgent(config)
         agent._get_agent = MagicMock(return_value=mock_pydantic_agent)
 

@@ -135,14 +135,11 @@ class TestExtractionAgentInit:
         assert agent.prompts["system_prompt"] == "custom system"
         assert agent.prompts["user_prompt"] == "custom user"
 
-    @patch("builtins.open", side_effect=FileNotFoundError)
-    def test_agent_uses_default_prompts_on_missing_file(self, mock_open):
-        """Test agent falls back to default prompts when file not found."""
-        agent = ExtractionAgent()
-        assert "system_prompt" in agent.prompts
-        assert "user_prompt" in agent.prompts
-        # Default prompts should mention key instructions
-        assert "heading" in agent.prompts["system_prompt"].lower()
+    def test_agent_raises_when_prompts_file_not_found(self):
+        """Test agent raises FileNotFoundError when prompts file not found (fail fast)."""
+        config = ExtractionAgentConfig(prompts_file=Path("nonexistent.yaml"))
+        with pytest.raises(FileNotFoundError):
+            ExtractionAgent(config)
 
 
 # =============================================================================
@@ -154,8 +151,9 @@ class TestExtractionAgentInit:
 class TestHeadingTreeFormatting:
     """Tests for heading tree formatting."""
 
-    @patch("builtins.open", side_effect=FileNotFoundError)
-    def test_format_heading_tree_basic(self, mock_open):
+    @patch("src.agents.extraction_agent.yaml.safe_load", return_value={"system_prompt": "test", "user_prompt": "test"})
+    @patch("builtins.open", create=True)
+    def test_format_heading_tree_basic(self, mock_open, mock_yaml):  # noqa: ARG002
         """Test basic heading tree formatting."""
         agent = ExtractionAgent()
         tree = HeadingTree(
@@ -177,8 +175,9 @@ class TestHeadingTreeFormatting:
         assert "# Introduction (page 1)" in result
         assert "## Background (page 2)" in result
 
-    @patch("builtins.open", side_effect=FileNotFoundError)
-    def test_format_heading_tree_with_section_numbers(self, mock_open):
+    @patch("src.agents.extraction_agent.yaml.safe_load", return_value={"system_prompt": "test", "user_prompt": "test"})
+    @patch("builtins.open", create=True)
+    def test_format_heading_tree_with_section_numbers(self, mock_open, mock_yaml):
         """Test heading tree formatting with section numbers."""
         agent = ExtractionAgent()
         tree = HeadingTree(
@@ -197,8 +196,9 @@ class TestHeadingTreeFormatting:
         assert "## 1.1 Objectives (page 1)" in result
         assert "## 1.2 Materials (page 2)" in result
 
-    @patch("builtins.open", side_effect=FileNotFoundError)
-    def test_format_heading_tree_nested_levels(self, mock_open):
+    @patch("src.agents.extraction_agent.yaml.safe_load", return_value={"system_prompt": "test", "user_prompt": "test"})
+    @patch("builtins.open", create=True)
+    def test_format_heading_tree_nested_levels(self, mock_open, mock_yaml):
         """Test heading tree formatting with nested levels."""
         agent = ExtractionAgent()
         tree = HeadingTree(
@@ -218,8 +218,9 @@ class TestHeadingTreeFormatting:
         assert "  ## Section 1.1" in result
         assert "    ### Subsection 1.1.1" in result
 
-    @patch("builtins.open", side_effect=FileNotFoundError)
-    def test_format_heading_tree_two_column(self, mock_open):
+    @patch("src.agents.extraction_agent.yaml.safe_load", return_value={"system_prompt": "test", "user_prompt": "test"})
+    @patch("builtins.open", create=True)
+    def test_format_heading_tree_two_column(self, mock_open, mock_yaml):
         """Test heading tree with two-column layout."""
         agent = ExtractionAgent()
         tree = HeadingTree(
@@ -242,8 +243,9 @@ class TestHeadingTreeFormatting:
 class TestPageFeaturesFormatting:
     """Tests for page features formatting."""
 
-    @patch("builtins.open", side_effect=FileNotFoundError)
-    def test_format_page_features_basic(self, mock_open):
+    @patch("src.agents.extraction_agent.yaml.safe_load", return_value={"system_prompt": "test", "user_prompt": "test"})
+    @patch("builtins.open", create=True)
+    def test_format_page_features_basic(self, mock_open, mock_yaml):
         """Test basic page features formatting."""
         agent = ExtractionAgent()
         features = [
@@ -257,8 +259,9 @@ class TestPageFeaturesFormatting:
         assert "Page 2:" in result
         assert "[single_column]" in result
 
-    @patch("builtins.open", side_effect=FileNotFoundError)
-    def test_format_page_features_with_images(self, mock_open):
+    @patch("src.agents.extraction_agent.yaml.safe_load", return_value={"system_prompt": "test", "user_prompt": "test"})
+    @patch("builtins.open", create=True)
+    def test_format_page_features_with_images(self, mock_open, mock_yaml):
         """Test page features formatting with images."""
         agent = ExtractionAgent()
         features = [
@@ -268,8 +271,9 @@ class TestPageFeaturesFormatting:
 
         assert "2 image(s)" in result
 
-    @patch("builtins.open", side_effect=FileNotFoundError)
-    def test_format_page_features_with_tables(self, mock_open):
+    @patch("src.agents.extraction_agent.yaml.safe_load", return_value={"system_prompt": "test", "user_prompt": "test"})
+    @patch("builtins.open", create=True)
+    def test_format_page_features_with_tables(self, mock_open, mock_yaml):
         """Test page features formatting with tables."""
         agent = ExtractionAgent()
         features = [
@@ -279,8 +283,9 @@ class TestPageFeaturesFormatting:
 
         assert "3 table(s)" in result
 
-    @patch("builtins.open", side_effect=FileNotFoundError)
-    def test_format_page_features_with_all_content(self, mock_open):
+    @patch("src.agents.extraction_agent.yaml.safe_load", return_value={"system_prompt": "test", "user_prompt": "test"})
+    @patch("builtins.open", create=True)
+    def test_format_page_features_with_all_content(self, mock_open, mock_yaml):
         """Test page features formatting with all content types."""
         agent = ExtractionAgent()
         features = [
@@ -315,15 +320,17 @@ class TestPageFeaturesFormatting:
 class TestImageMessageBuilding:
     """Tests for building image messages."""
 
-    @patch("builtins.open", side_effect=FileNotFoundError)
-    def test_build_image_messages_empty(self, mock_open):
+    @patch("src.agents.extraction_agent.yaml.safe_load", return_value={"system_prompt": "test", "user_prompt": "test"})
+    @patch("builtins.open", create=True)
+    def test_build_image_messages_empty(self, mock_open, mock_yaml):
         """Test building messages with no pages."""
         agent = ExtractionAgent()
         messages = agent._build_image_messages([])
         assert messages == []
 
-    @patch("builtins.open", side_effect=FileNotFoundError)
-    def test_build_image_messages_with_images(self, mock_open):
+    @patch("src.agents.extraction_agent.yaml.safe_load", return_value={"system_prompt": "test", "user_prompt": "test"})
+    @patch("builtins.open", create=True)
+    def test_build_image_messages_with_images(self, mock_open, mock_yaml):
         """Test building messages with page images."""
         import base64
 
@@ -340,8 +347,9 @@ class TestImageMessageBuilding:
         assert messages[0] == "[Page 1]"
         assert messages[2] == "[Page 2]"
 
-    @patch("builtins.open", side_effect=FileNotFoundError)
-    def test_build_image_messages_without_images(self, mock_open):
+    @patch("src.agents.extraction_agent.yaml.safe_load", return_value={"system_prompt": "test", "user_prompt": "test"})
+    @patch("builtins.open", create=True)
+    def test_build_image_messages_without_images(self, mock_open, mock_yaml):
         """Test building messages with pages but no images."""
         agent = ExtractionAgent()
         pages = [
@@ -413,8 +421,9 @@ class TestCostCalculation:
 class TestExtractMethod:
     """Tests for the extract method."""
 
-    @patch("builtins.open", side_effect=FileNotFoundError)
-    def test_extract_raises_on_empty_pages(self, mock_open):
+    @patch("src.agents.extraction_agent.yaml.safe_load", return_value={"system_prompt": "test", "user_prompt": "test"})
+    @patch("builtins.open", create=True)
+    def test_extract_raises_on_empty_pages(self, mock_open, mock_yaml):
         """Test extract raises ValueError with no pages."""
         agent = ExtractionAgent()
         manifest = DocumentManifest(
@@ -435,8 +444,9 @@ class TestExtractMethod:
             )
 
     @pytest.mark.asyncio
-    @patch("builtins.open", side_effect=FileNotFoundError)
-    async def test_extract_parses_manifest_heading_tree(self, mock_open):
+    @patch("src.agents.extraction_agent.yaml.safe_load", return_value={"system_prompt": "test", "user_prompt": "test"})
+    @patch("builtins.open", create=True)
+    async def test_extract_parses_manifest_heading_tree(self, mock_open, mock_yaml):
         """Test extract correctly parses heading tree from manifest."""
         agent = ExtractionAgent()
 
@@ -496,8 +506,9 @@ class TestExtractionAgentIntegration:
     """Integration tests with mocked Bedrock model."""
 
     @pytest.mark.asyncio
-    @patch("builtins.open", side_effect=FileNotFoundError)
-    async def test_full_extraction_flow(self, mock_open):
+    @patch("src.agents.extraction_agent.yaml.safe_load", return_value={"system_prompt": "test", "user_prompt": "test"})
+    @patch("builtins.open", create=True)
+    async def test_full_extraction_flow(self, mock_open, mock_yaml):
         """Test full extraction flow with mocked model."""
         agent = ExtractionAgent()
 
@@ -588,8 +599,9 @@ Office: 123 Science Hall
             assert usage.estimated_cost_cents == pytest.approx(expected_cost, rel=0.01)
 
     @pytest.mark.asyncio
-    @patch("builtins.open", side_effect=FileNotFoundError)
-    async def test_extraction_with_image_placeholders(self, mock_open):
+    @patch("src.agents.extraction_agent.yaml.safe_load", return_value={"system_prompt": "test", "user_prompt": "test"})
+    @patch("builtins.open", create=True)
+    async def test_extraction_with_image_placeholders(self, mock_open, mock_yaml):
         """Test extraction produces correct image placeholder format."""
         agent = ExtractionAgent()
 

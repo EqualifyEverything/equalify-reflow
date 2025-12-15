@@ -156,7 +156,7 @@ class TestIssueToObservation:
                 markup_state="Plain text",
                 semantic_meaning="Important emphasis",
                 recommended_markup="**text**",
-                confidence=0.85,
+                confidence=0.99,  # Use 0.99 to exceed any reasonable threshold
             )
         ]
 
@@ -166,7 +166,7 @@ class TestIssueToObservation:
         obs = observations[0]
         assert obs.agent == "typography"
         assert obs.severity == "minor"
-        assert obs.route == "auto"
+        assert obs.route == "auto"  # Confidence 0.99 exceeds threshold
 
     def test_semantic_color_creates_major_observation(self):
         """Test semantic color issues create major observations."""

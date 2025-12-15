@@ -230,7 +230,7 @@ class TestIssueToObservation:
                 markup_state="Marked as H3",
                 severity="critical",
                 recommended_fix="Change to H2",
-                confidence=0.9,
+                confidence=0.99,  # Use 0.99 to exceed any reasonable threshold
             )
         ]
 
@@ -240,7 +240,7 @@ class TestIssueToObservation:
         obs = observations[0]
         assert obs.agent == "structure"
         assert obs.severity == "critical"
-        assert obs.route == "auto"
+        assert obs.route == "auto"  # Confidence 0.99 exceeds threshold
         assert obs.location.location_type == "element"
 
     def test_reading_order_issue_creates_observation(self):

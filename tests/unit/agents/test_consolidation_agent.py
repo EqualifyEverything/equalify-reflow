@@ -153,10 +153,11 @@ class TestConsolidationAgentInit:
         # _agent should be None until first use
         assert agent._agent is None
 
-    def test_auto_route_threshold(self):
-        """Test agent has correct auto route threshold."""
-        agent = ConsolidationAgent()
-        assert agent.AUTO_ROUTE_THRESHOLD == 0.7
+    def test_auto_route_threshold_in_settings(self):
+        """Test confidence threshold is available via settings."""
+        from src.config import settings
+        # Threshold is centralized in settings, not a class constant
+        assert 0.0 <= settings.min_confidence_for_auto_approval <= 1.0
 
     def test_max_markdown_length(self):
         """Test agent has max markdown length constant."""
@@ -307,7 +308,7 @@ class TestProposalValidation:
                 replace_text="Hi There",
                 justification="Test change",
                 page_nums=[1],
-                confidence=0.9,
+                confidence=0.99,  # Use 0.99 to exceed any reasonable threshold
             )
         ]
 
@@ -322,7 +323,7 @@ class TestProposalValidation:
         assert proposals[0].resolves == ["obs-1"]
         assert proposals[0].diff.search == "Hello World"
         assert proposals[0].diff.replace == "Hi There"
-        assert proposals[0].route == "auto"  # High confidence
+        assert proposals[0].route == "auto"  # Confidence 0.99 exceeds threshold
         assert proposals[0].status == "pending"
 
     def test_invalid_search_text_skipped(self):
@@ -397,6 +398,7 @@ class TestProposalValidation:
 
     def test_boundary_confidence_routes_auto(self):
         """Test confidence exactly at threshold routes to auto."""
+        from src.config import settings
         agent = ConsolidationAgent()
         markdown = "# Hello World"
 
@@ -406,7 +408,7 @@ class TestProposalValidation:
                 search_text="Hello World",
                 replace_text="Hi There",
                 justification="Test",
-                confidence=0.7,  # Exactly at threshold
+                confidence=settings.min_confidence_for_auto_approval,  # Exactly at threshold
             )
         ]
 
@@ -521,8 +523,8 @@ class TestConsolidationAgentConsolidate:
         mock_result = MagicMock()
         mock_result.output = mock_output
         mock_usage = MagicMock()
-        mock_usage.input_tokens = 1000
-        mock_usage.output_tokens = 200
+        mock_usage.request_tokens = 1000
+        mock_usage.response_tokens = 200
         mock_result.usage.return_value = mock_usage
 
         # Mock agent creation and run
@@ -556,8 +558,8 @@ class TestConsolidationAgentConsolidate:
         mock_result = MagicMock()
         mock_result.output = mock_output
         mock_usage = MagicMock()
-        mock_usage.input_tokens = 500
-        mock_usage.output_tokens = 100
+        mock_usage.request_tokens = 500
+        mock_usage.response_tokens = 100
         mock_result.usage.return_value = mock_usage
 
         mock_agent = AsyncMock()
@@ -590,8 +592,8 @@ class TestConsolidationAgentConsolidate:
         mock_result = MagicMock()
         mock_result.output = mock_output
         mock_usage = MagicMock()
-        mock_usage.input_tokens = 100
-        mock_usage.output_tokens = 50
+        mock_usage.request_tokens = 100
+        mock_usage.response_tokens = 50
         mock_result.usage.return_value = mock_usage
 
         mock_agent = AsyncMock()

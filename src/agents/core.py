@@ -5,12 +5,16 @@ model initialization, and token usage tracking across all agents.
 
 Eliminates duplication of init, prompt loading, and cost calculation code
 that was previously repeated in every agent.
+
+Features:
+- deps_type support for dynamic instruction injection
+- AgentDependencies integration for runtime context
 """
 
 import logging
 from dataclasses import dataclass, field
 from pathlib import Path
-from typing import Any, TypeVar
+from typing import TYPE_CHECKING, Any, TypeVar
 
 import yaml
 from pydantic import BaseModel
@@ -20,6 +24,9 @@ from src.agents.model_tiers import MODEL_TIER_MAP, ModelTier
 from src.config import settings
 from src.shared.llm_cost import calculate_estimated_cost, get_pricing_for_tier
 from src.shared.models.processing import LLMUsage
+
+if TYPE_CHECKING:
+    from src.agents.dependencies import AgentDependencies
 
 logger = logging.getLogger(__name__)
 
@@ -39,6 +46,7 @@ class AgentConfig:
         temperature: LLM temperature setting (0.0-2.0)
         model_tier: Model tier for cost/capability tradeoff (default: EFFICIENT)
         max_tokens: Maximum tokens for LLM response (default: 16000)
+        use_deps: Enable AgentDependencies for dynamic instructions (default: False)
     """
 
     name: str
@@ -49,6 +57,7 @@ class AgentConfig:
     temperature: float = 0.2
     model_tier: ModelTier = ModelTier.EFFICIENT
     max_tokens: int = 16000
+    use_deps: bool = False
 
 
 class AgentCore:
@@ -86,12 +95,13 @@ class AgentCore:
         self.model_tier = config.model_tier
         self.model_id = MODEL_TIER_MAP[config.model_tier]
         self.prompts = self._load_prompts(config.prompts_file)
-        # Use Any for agent generic type since output_type varies by configuration
-        # and is provided at runtime via get_agent(output_type)
-        self._agent: Agent[None, Any] | None = None
+        # Use Any for agent generic types since they vary by configuration
+        # Deps type is AgentDependencies when use_deps=True, else None
+        self._agent: Agent[Any, Any] | None = None
 
         logger.debug(
-            f"AgentCore initialized with tier {config.model_tier.value} ({self.model_id})"
+            f"AgentCore initialized with tier {config.model_tier.value} ({self.model_id}), "
+            f"deps={'AgentDependencies' if config.use_deps else 'None'}"
         )
 
     def _load_prompts(self, prompts_file: Path) -> dict[str, Any]:
@@ -181,20 +191,28 @@ class AgentCore:
             estimated_cost_cents=cost,
         )
 
-    def get_agent(self, output_type: type[TOutput] | None = None) -> Agent[None, TOutput]:
+    def get_agent(
+        self, output_type: type[TOutput] | None = None
+    ) -> Agent["AgentDependencies | None", TOutput]:
         """Get or create the PydanticAI agent (lazy initialization).
 
         Creates the agent on first call, reuses on subsequent calls.
         This allows agent instantiation without AWS connections for testing.
 
+        When config.use_deps=True, the agent is created with deps_type=AgentDependencies,
+        enabling dynamic instruction injection via @agent.instructions decorators.
+
         Args:
             output_type: Optional output type override (uses config.output_type if not provided)
 
         Returns:
-            Configured PydanticAI Agent instance
+            Configured PydanticAI Agent instance. If use_deps=True, the agent
+            expects AgentDependencies to be passed via deps= parameter when running.
         """
         if self._agent is None:
             from pydantic_ai.models.bedrock import BedrockConverseModel
+
+            from src.agents.dependencies import AgentDependencies
 
             logger.debug(
                 f"AgentCore: Creating BedrockConverseModel "
@@ -203,14 +221,26 @@ class AgentCore:
 
             model = BedrockConverseModel(model_name=self.model_id)
 
-            self._agent = Agent(
-                model,
-                output_type=output_type or self.config.output_type,
-                system_prompt=self.prompts["system_prompt"],
-                retries=self.config.max_retries,
-            )
-
-            logger.debug("AgentCore: PydanticAI Agent created successfully")
+            # Create agent with or without deps_type based on config
+            if self.config.use_deps:
+                self._agent = Agent(
+                    model,
+                    deps_type=AgentDependencies,
+                    output_type=output_type or self.config.output_type,
+                    system_prompt=self.prompts["system_prompt"],
+                    retries=self.config.max_retries,
+                )
+                logger.debug(
+                    "AgentCore: PydanticAI Agent created with AgentDependencies"
+                )
+            else:
+                self._agent = Agent(
+                    model,
+                    output_type=output_type or self.config.output_type,
+                    system_prompt=self.prompts["system_prompt"],
+                    retries=self.config.max_retries,
+                )
+                logger.debug("AgentCore: PydanticAI Agent created (no deps)")
 
         return self._agent
 

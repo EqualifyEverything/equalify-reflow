@@ -1,11 +1,13 @@
-"""Base agent framework for multi-agent document processing (PRD-011, PRD-012).
+"""Base agent framework for multi-agent document processing.
 
 This module provides the abstract base class and configuration for all
 specialist agents in the multi-agent PDF correction system.
 
-Supports model tier selection (PRD-012) for cost/capability tradeoffs:
+Supports model tier selection for cost/capability tradeoffs:
 - REASONING tier: Claude Sonnet 4.5 for analysis, consolidation
 - EFFICIENT tier: Claude Haiku 4.5 for transcription, bulk work
+
+Supports dynamic instructions via AgentDependencies for runtime context injection.
 """
 
 import logging
@@ -22,6 +24,7 @@ from src.agents.core import AgentConfig, AgentCore
 from src.shared.models.agent_models import AgentInput, LLMUsage
 
 if TYPE_CHECKING:
+    from src.agents.dependencies import AgentDependencies
     from src.agents.model_tiers import ModelTier
 
 logger = logging.getLogger(__name__)
@@ -31,16 +34,11 @@ TOutput = TypeVar("TOutput", bound=BaseModel)
 
 @dataclass
 class BatchResult(Generic[TOutput]):
-    """Result of batch processing with error tracking (PRD-018).
+    """Result of batch processing with error tracking.
 
     This dataclass provides infrastructure for agents to report partial failures
     during batch processing. Callers can detect which specific items failed and
     handle them appropriately.
-
-    Note:
-        This is foundational infrastructure added in PRD-018. Individual agents
-        can adopt BatchResult as return type when batch error reporting is needed.
-        Currently available for use; adoption tracked separately per agent.
 
     Attributes:
         outputs: List of successful outputs from batch processing
@@ -243,6 +241,70 @@ class BaseDocumentAgent(ABC, Generic[TOutput]):
 
         logger.debug(
             f"Agent {self.name}: Completed "
+            f"(tokens: {llm_usage.input_tokens}/{llm_usage.output_tokens}, "
+            f"est. cost: ${llm_usage.estimated_cost_cents / 100:.6f})"
+        )
+
+        return result.output, llm_usage
+
+    async def _run_with_deps(
+        self,
+        user_message: str,
+        deps: "AgentDependencies",
+        image_bytes: bytes | None = None,
+    ) -> tuple[TOutput, LLMUsage]:
+        """Execute the PydanticAI agent with dependencies for dynamic instructions.
+
+        Similar to _run_agent() but passes AgentDependencies to enable
+        dynamic instruction injection via @agent.instructions decorators.
+
+        Requires config.use_deps=True to be set when creating the agent.
+
+        Args:
+            user_message: Formatted prompt for the LLM
+            deps: Runtime dependencies for dynamic instruction generation
+            image_bytes: Optional PNG image bytes for multimodal input
+
+        Returns:
+            Tuple of (typed output, LLMUsage with token counts and cost)
+
+        Raises:
+            Exception: If agent execution fails after all retries
+            ValueError: If called on an agent created without use_deps=True
+        """
+        if not self.config.use_deps:
+            raise ValueError(
+                f"Agent {self.name} was not created with use_deps=True. "
+                "Cannot use _run_with_deps() without dependency injection enabled."
+            )
+
+        # Build message list
+        messages: list[str | BinaryContent] = [user_message]
+        if image_bytes:
+            messages.append(BinaryContent(data=image_bytes, media_type="image/png"))
+
+        logger.debug(
+            f"Agent {self.name}: Running with deps (job_id={deps.job_id}, "
+            f"attempt={deps.attempt_number}, message_len={len(user_message)}, "
+            f"image={image_bytes is not None})"
+        )
+
+        # Get agent (lazy initialization) and execute with deps
+        agent = self._get_agent()
+        result = await agent.run(  # type: ignore[call-overload]
+            user_prompt=messages,
+            deps=deps,
+            model_settings={
+                "max_tokens": self.config.max_tokens,
+                "temperature": self.config.temperature,
+            },
+        )
+
+        # Use core for usage extraction
+        llm_usage = self._core.create_llm_usage(result)
+
+        logger.debug(
+            f"Agent {self.name}: Completed with deps "
             f"(tokens: {llm_usage.input_tokens}/{llm_usage.output_tokens}, "
             f"est. cost: ${llm_usage.estimated_cost_cents / 100:.6f})"
         )

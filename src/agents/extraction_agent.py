@@ -1,4 +1,4 @@
-"""Extraction Agent for guided markdown extraction (PRD-013).
+"""Extraction Agent for guided markdown extraction.
 
 This agent performs manifest-guided markdown extraction using Claude Haiku 4.5
 (EFFICIENT tier) to transcribe PDF documents to accessible markdown.
@@ -11,6 +11,10 @@ The Extraction Agent:
 
 Uses Claude Haiku 4.5 for cost-efficient transcription.
 The hard analytical work was done by the Analysis agent (Sonnet).
+
+Supports dynamic instructions via AgentDependencies for:
+- Document type hints (syllabus, exam, lecture_notes)
+- Retry guidance based on previous failures
 """
 
 from __future__ import annotations
@@ -18,17 +22,22 @@ from __future__ import annotations
 import base64
 import logging
 from pathlib import Path
-from typing import Any
+from typing import TYPE_CHECKING, Any
 
 from pydantic import BaseModel, Field
+from pydantic_ai import Agent, RunContext
 from pydantic_ai.messages import BinaryContent
 
 from src.agents.base_agent import AgentConfig, BaseDocumentAgent
+from src.agents.dependencies import AgentDependencies
 from src.agents.model_tiers import ModelTier
 from src.services.pdf_converter import PageData
 from src.shared.models.processing import LLMUsage
 from src.shared.models.remediation import DocumentManifest, HeadingTree, PageFeatures
 from src.utils.prompt_sanitizer import sanitize_for_prompt
+
+if TYPE_CHECKING:
+    pass
 
 logger = logging.getLogger(__name__)
 
@@ -72,11 +81,43 @@ class ExtractionAgent(BaseDocumentAgent[ExtractionOutput]):
     Uses Claude Haiku 4.5 for cost-efficient transcription.
     The hard analytical work was done by the Analysis agent (Sonnet).
 
+    Supports dynamic instructions for:
+    - Document type hints (syllabus, exam, lecture_notes)
+    - Retry guidance based on previous failures
+
     Example:
         >>> agent = ExtractionAgent()
         >>> markdown, confidence, usage = await agent.extract(pages, manifest, job_id)
         >>> print(f"Extracted {len(markdown)} chars")
     """
+
+    # Document type hints for dynamic instructions
+    DOCUMENT_TYPE_HINTS: dict[str, str] = {
+        "syllabus": (
+            "This is a course syllabus. Pay attention to:\n"
+            "- Course schedule tables\n"
+            "- Grading policy sections\n"
+            "- Assignment due dates\n"
+        ),
+        "exam": (
+            "This is an exam document. Pay attention to:\n"
+            "- Question numbering\n"
+            "- Point values\n"
+            "- Answer spaces (preserve blanks)\n"
+        ),
+        "lecture_notes": (
+            "These are lecture notes. Pay attention to:\n"
+            "- Slide numbers/titles\n"
+            "- Bullet point hierarchies\n"
+            "- Diagrams and figures\n"
+        ),
+        "assignment": (
+            "This is an assignment. Pay attention to:\n"
+            "- Question/problem numbering\n"
+            "- Point values and rubric info\n"
+            "- Submission requirements\n"
+        ),
+    }
 
     def __init__(self, config: AgentConfig | None = None) -> None:
         """Initialize the extraction agent.
@@ -93,12 +134,69 @@ class ExtractionAgent(BaseDocumentAgent[ExtractionOutput]):
                 max_retries=2,
                 temperature=0.2,
                 max_tokens=16384,
+                use_deps=True,  # Enable dynamic instructions
             )
         super().__init__(config)
+        self._instructions_registered = False
         logger.info(
             f"ExtractionAgent initialized with model tier {self.model_tier.value} "
-            f"({self.model_id})"
+            f"({self.model_id}), dynamic instructions enabled"
         )
+
+    def _get_agent(self) -> Agent[AgentDependencies, ExtractionOutput]:  # type: ignore[override]
+        """Get or create agent with dynamic instructions registered.
+
+        Overrides base class to register dynamic instructions after agent creation.
+        """
+        agent = super()._get_agent()
+
+        # Register dynamic instructions only once
+        if not self._instructions_registered:
+            self._register_dynamic_instructions(agent)  # type: ignore[arg-type]
+            self._instructions_registered = True
+
+        return agent  # type: ignore[return-value]
+
+    def _register_dynamic_instructions(
+        self, agent: Agent[AgentDependencies, ExtractionOutput]
+    ) -> None:
+        """Register dynamic instruction generators on the agent.
+
+        These instructions are evaluated at runtime and can access
+        AgentDependencies via ctx.deps to provide context-aware guidance.
+        """
+
+        @agent.instructions
+        def document_type_guidance(ctx: RunContext[AgentDependencies]) -> str:
+            """Provide document-type-specific extraction tips."""
+            doc_type = ctx.deps.document_type
+            if doc_type and doc_type in self.DOCUMENT_TYPE_HINTS:
+                hint = self.DOCUMENT_TYPE_HINTS[doc_type]
+                return f"""
+<document_type type="{doc_type.upper()}">
+{hint}
+</document_type>"""
+            return ""
+
+        @agent.instructions
+        def retry_guidance(ctx: RunContext[AgentDependencies]) -> str:
+            """Provide guidance for retry attempts."""
+            if not ctx.deps.is_retry:
+                return ""
+
+            # Show last 3 failures
+            failures = "\n".join(
+                f"- {f}" for f in ctx.deps.previous_failures[-3:]
+            )
+            return f"""
+<retry_attempt number="{ctx.deps.attempt_number}">
+Previous attempts encountered issues:
+{failures}
+
+Adjust your approach to avoid these issues.
+</retry_attempt>"""
+
+        logger.debug("ExtractionAgent: Dynamic instructions registered")
 
     async def process(self, input_data: Any) -> ExtractionOutput:
         """Process method required by BaseDocumentAgent.
@@ -112,6 +210,7 @@ class ExtractionAgent(BaseDocumentAgent[ExtractionOutput]):
         pages: list[PageData],
         manifest: DocumentManifest,
         job_id: str,
+        deps: AgentDependencies | None = None,
     ) -> tuple[str, float, LLMUsage]:
         """Extract markdown guided by manifest.
 
@@ -119,6 +218,8 @@ class ExtractionAgent(BaseDocumentAgent[ExtractionOutput]):
             pages: List of page images from PDF conversion
             manifest: DocumentManifest from analysis phase
             job_id: Job identifier
+            deps: Optional AgentDependencies for dynamic instructions.
+                  If not provided, creates default deps from manifest.
 
         Returns:
             Tuple of (markdown_content, confidence, LLMUsage)
@@ -135,7 +236,16 @@ class ExtractionAgent(BaseDocumentAgent[ExtractionOutput]):
             f"{len(pages)} pages, manifest title='{manifest.document_title}'"
         )
 
-        agent = self._get_agent()
+        # Create or use provided deps
+        if deps is None:
+            deps = AgentDependencies(
+                job_id=job_id,
+                manifest=manifest,
+                document_type=manifest.document_type,
+            )
+
+        # Ensure agent is created (triggers instruction registration)
+        self._get_agent()
 
         # Parse heading tree from manifest
         heading_tree = HeadingTree.model_validate_json(manifest.heading_tree_json)
@@ -149,7 +259,7 @@ class ExtractionAgent(BaseDocumentAgent[ExtractionOutput]):
         # Format page features for prompt
         page_features_text = self._format_page_features(manifest.page_features)
 
-        # Add user prompt with manifest context
+        # Build user prompt with manifest context
         # SECURITY: Sanitize user-influenced fields to prevent prompt injection
         # document_title and document_type come from PDF metadata (attacker-controlled)
         # layout_notes may contain extracted text content
@@ -175,9 +285,11 @@ class ExtractionAgent(BaseDocumentAgent[ExtractionOutput]):
         )
         messages.append(user_prompt)
 
-        # Run agent
+        # Run agent with deps for dynamic instructions
+        agent = self._get_agent()
         result = await agent.run(
             messages,
+            deps=deps,
             model_settings={
                 "max_tokens": self.config.max_tokens,
                 "temperature": self.config.temperature,

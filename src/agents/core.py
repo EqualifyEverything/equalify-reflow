@@ -95,7 +95,7 @@ class AgentCore:
         )
 
     def _load_prompts(self, prompts_file: Path) -> dict[str, Any]:
-        """Load prompts from YAML file.
+        """Load prompts from YAML file with security validation.
 
         Args:
             prompts_file: Path to YAML file (relative or absolute)
@@ -105,18 +105,42 @@ class AgentCore:
 
         Raises:
             FileNotFoundError: If prompts file does not exist (fail fast, no fallback)
-            ValueError: If prompts file path is outside agent_prompts_dir (path traversal)
-                       or if YAML file contains invalid syntax
+            ValueError: If prompts file path is outside agent_prompts_dir (path traversal),
+                       if file extension is not .yaml/.yml, or if YAML syntax is invalid
         """
         if not prompts_file.is_absolute():
             base_dir = Path(settings.agent_prompts_dir).resolve()
             prompts_file = (base_dir / prompts_file).resolve()
 
-            # Security: Prevent path traversal attacks
+            # SECURITY: Prevent path traversal attacks
             # Use path comparison instead of string prefix to avoid edge cases
             # (e.g., "agents_evil" would pass string check for "agents" directory)
             if base_dir not in prompts_file.parents and prompts_file != base_dir:
-                raise ValueError(f"Invalid prompts file path: {prompts_file}")
+                logger.error(
+                    f"Path traversal attempt blocked: {prompts_file}",
+                    extra={
+                        "security_event": "path_traversal_blocked",
+                        "attempted_path": str(prompts_file),
+                        "base_dir": str(base_dir),
+                    },
+                )
+                raise ValueError(
+                    f"Invalid prompts file path: must be within {base_dir}"
+                )
+
+        # SECURITY: Validate file extension
+        if prompts_file.suffix.lower() not in (".yaml", ".yml"):
+            logger.error(
+                f"Invalid file extension blocked: {prompts_file.suffix}",
+                extra={
+                    "security_event": "invalid_extension_blocked",
+                    "file_path": str(prompts_file),
+                    "extension": prompts_file.suffix,
+                },
+            )
+            raise ValueError(
+                f"Invalid file type: {prompts_file.suffix} (must be .yaml or .yml)"
+            )
 
         # No try/except for FileNotFoundError - let it propagate (fail fast)
         # But catch YAML parse errors to provide better context
@@ -210,16 +234,27 @@ class AgentCore:
         )
 
     def log_usage(self, agent_name: str, usage: LLMUsage) -> None:
-        """Log token usage for an agent run.
+        """Log token usage using structured metrics.
+
+        Uses structured logging to enable metrics aggregation without
+        exposing raw cost data in text logs. Sensitive usage data is
+        included in the 'extra' dict for log processors that need it.
 
         Args:
             agent_name: Name of the agent for logging
             usage: LLMUsage with token counts and cost
         """
+        # Use structured logging - sensitive metrics in extra dict only
         logger.debug(
-            f"Agent {agent_name}: Completed "
-            f"(tokens: {usage.input_tokens}/{usage.output_tokens}, "
-            f"est. cost: ${usage.estimated_cost_cents/100:.6f})"
+            "Agent completed",
+            extra={
+                "agent": agent_name,
+                "metrics": {
+                    "tokens_in": usage.input_tokens,
+                    "tokens_out": usage.output_tokens,
+                    "cost_cents": usage.estimated_cost_cents,
+                },
+            },
         )
 
 

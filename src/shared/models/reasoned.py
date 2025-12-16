@@ -126,11 +126,11 @@ class ReasonedOutputMixin:
         """
         corpus: list[dict[str, Any]] = []
 
-        # Access model_fields from the Pydantic model
-        if not hasattr(self, "model_fields"):
+        # Access model_fields from the Pydantic model class (not instance)
+        if not hasattr(self.__class__, "model_fields"):
             return corpus
 
-        for field_name in self.model_fields.keys():  # type: ignore[attr-defined]
+        for field_name in self.__class__.model_fields.keys():
             value = getattr(self, field_name)
 
             if isinstance(value, Reasoned):

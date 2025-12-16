@@ -666,8 +666,8 @@ class TestAnalysisAgentAnalyze:
             ]
         )
         mock_result.usage.return_value = MagicMock(
-            request_tokens=1000,
-            response_tokens=500
+            input_tokens=1000,
+            output_tokens=500
         )
         mock_pydantic_agent.run = AsyncMock(return_value=mock_result)
         mock_pydantic_agent.model.model_id = "us.anthropic.claude-sonnet-4-20250514-v1:0"

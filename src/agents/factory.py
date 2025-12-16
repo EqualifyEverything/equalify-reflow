@@ -103,8 +103,8 @@ def extract_usage(result: Any, model_tier: ModelTier) -> LLMUsage:
         LLMUsage with token counts and cost
     """
     usage = result.usage()
-    input_tokens = usage.request_tokens or 0
-    output_tokens = usage.response_tokens or 0
+    input_tokens = usage.input_tokens or 0
+    output_tokens = usage.output_tokens or 0
 
     pricing = get_pricing_for_tier(model_tier)
     cost = calculate_estimated_cost(input_tokens, output_tokens, pricing)
@@ -222,8 +222,8 @@ async def run_agent(
 
             # Add usage metrics to span
             usage = result.usage()
-            input_tokens = usage.request_tokens or 0
-            output_tokens = usage.response_tokens or 0
+            input_tokens = usage.input_tokens or 0
+            output_tokens = usage.output_tokens or 0
 
             span.set_attribute("tokens.input", input_tokens)
             span.set_attribute("tokens.output", output_tokens)

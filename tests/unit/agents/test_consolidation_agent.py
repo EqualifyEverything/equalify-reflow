@@ -711,8 +711,8 @@ class TestConsolidationAgentConsolidate:
         mock_result = MagicMock()
         mock_result.output = mock_output
         mock_usage = MagicMock()
-        mock_usage.request_tokens = 1000
-        mock_usage.response_tokens = 200
+        mock_usage.input_tokens = 1000
+        mock_usage.output_tokens = 200
         mock_result.usage.return_value = mock_usage
 
         # Mock agent creation and run
@@ -746,8 +746,8 @@ class TestConsolidationAgentConsolidate:
         mock_result = MagicMock()
         mock_result.output = mock_output
         mock_usage = MagicMock()
-        mock_usage.request_tokens = 500
-        mock_usage.response_tokens = 100
+        mock_usage.input_tokens = 500
+        mock_usage.output_tokens = 100
         mock_result.usage.return_value = mock_usage
 
         mock_agent = AsyncMock()
@@ -780,8 +780,8 @@ class TestConsolidationAgentConsolidate:
         mock_result = MagicMock()
         mock_result.output = mock_output
         mock_usage = MagicMock()
-        mock_usage.request_tokens = 100
-        mock_usage.response_tokens = 50
+        mock_usage.input_tokens = 100
+        mock_usage.output_tokens = 50
         mock_result.usage.return_value = mock_usage
 
         mock_agent = AsyncMock()

@@ -165,8 +165,8 @@ class AgentCore:
     def create_llm_usage(self, result: Any) -> LLMUsage:
         """Extract token usage and calculate cost from agent result.
 
-        Standardizes on PydanticAI's request_tokens/response_tokens naming,
-        then maps to our LLMUsage model's input_tokens/output_tokens fields.
+        Extracts token counts from PydanticAI's Usage object and maps to our
+        LLMUsage model's input_tokens/output_tokens fields.
 
         Args:
             result: PydanticAI agent run result (has .usage() method)
@@ -176,9 +176,8 @@ class AgentCore:
         """
         usage = result.usage()
 
-        # PydanticAI uses request_tokens/response_tokens
-        input_tokens = usage.request_tokens or 0
-        output_tokens = usage.response_tokens or 0
+        input_tokens = usage.input_tokens or 0
+        output_tokens = usage.output_tokens or 0
         total_tokens = input_tokens + output_tokens
 
         pricing = get_pricing_for_tier(self.model_tier)

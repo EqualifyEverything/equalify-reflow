@@ -579,7 +579,7 @@ class TestExtractMethod:
             transcription_notes="",
         )
         mock_result.usage.return_value = MagicMock(
-            request_tokens=1000, response_tokens=500
+            input_tokens=1000, output_tokens=500
         )
 
         with (
@@ -679,7 +679,7 @@ Office: 123 Science Hall
             transcription_notes="Table on page 2 transcribed successfully.",
         )
         mock_result.usage.return_value = MagicMock(
-            request_tokens=15000, response_tokens=2000
+            input_tokens=15000, output_tokens=2000
         )
 
         with (
@@ -765,7 +765,7 @@ Page 2 content.
             pages_transcribed=[1, 2],
         )
         mock_result.usage.return_value = MagicMock(
-            request_tokens=10000, response_tokens=500
+            input_tokens=10000, output_tokens=500
         )
 
         with (

@@ -11,7 +11,6 @@ Supports dynamic instructions via AgentDependencies for runtime context injectio
 """
 
 import logging
-import time
 import warnings
 from abc import ABC
 from typing import TYPE_CHECKING, Any, Generic, TypeVar
@@ -21,8 +20,6 @@ from pydantic_ai import Agent
 from pydantic_ai.messages import BinaryContent
 
 from src.agents.core import AgentConfig, AgentCore
-from src.config import settings
-from src.services.debug_logging_service import debug_logger
 from src.shared.models.agent_models import LLMUsage
 
 if TYPE_CHECKING:
@@ -141,10 +138,13 @@ class BaseDocumentAgent(ABC, Generic[TOutput]):
         self,
         user_message: str,
         image_bytes: bytes | None = None,
-        job_id: str | None = None,
-        page_num: int | None = None,
     ) -> tuple[TOutput, LLMUsage]:
         """Execute the PydanticAI agent and return output with usage metrics.
+
+        .. deprecated::
+            This method is part of the deprecated class-based agent architecture.
+            New agents should use module-level functions with run_agent_with_debug()
+            from factory.py instead.
 
         Sends the user message (and optional image) to the LLM and returns
         both the structured output and token usage information.
@@ -152,8 +152,6 @@ class BaseDocumentAgent(ABC, Generic[TOutput]):
         Args:
             user_message: Formatted prompt for the LLM
             image_bytes: Optional PNG image bytes for multimodal input
-            job_id: Optional job ID for debug logging correlation
-            page_num: Optional page number for debug image naming
 
         Returns:
             Tuple of (typed output, LLMUsage with token counts and cost)
@@ -170,70 +168,18 @@ class BaseDocumentAgent(ABC, Generic[TOutput]):
             f"Agent {self.name}: Running with message length {len(user_message)}, image: {image_bytes is not None}"
         )
 
-        # Save debug image if enabled
-        if image_bytes and job_id:
-            debug_logger.save_debug_image(
-                job_id=job_id,
-                agent_name=self.name,
-                image_bytes=image_bytes,
-                page_num=page_num,
-            )
-
-        # Debug log: prompt being sent
-        image_info = None
-        if image_bytes and settings.debug_log_images:
-            image_info = {
-                "size_bytes": len(image_bytes),
-                "format": "png",
-            }
-
-        debug_logger.log_prompt(
-            job_id=job_id or "unknown",
-            agent_name=self.name,
-            system_prompt=self.prompts.get("system_prompt"),
-            user_message=user_message,
-            image_info=image_info,
-            model_id=self.model_id,
-            model_tier=self.model_tier.value,
-            temperature=self.config.temperature,
-            max_tokens=settings.claude_max_tokens,
-        )
-
         # Get agent (lazy initialization) and execute
-        start_time = time.time()
         agent = self._get_agent()
         result = await agent.run(
             messages,
             model_settings={
-                "max_tokens": self.config.max_tokens,  # Use config, not settings
+                "max_tokens": self.config.max_tokens,
                 "temperature": self.config.temperature,
             },
         )
-        duration_ms = (time.time() - start_time) * 1000
 
         # Use core for usage extraction
         llm_usage = self._core.create_llm_usage(result)
-
-        # Debug log: response received
-        # Get raw response text if available
-        raw_response_text = None
-        if result.all_messages():
-            last_message = result.all_messages()[-1]
-            if hasattr(last_message, "content"):
-                raw_response_text = str(last_message.content)
-
-        debug_logger.log_response(
-            job_id=job_id or "unknown",
-            agent_name=self.name,
-            response_text=raw_response_text,
-            parsed_output=result.output,
-            input_tokens=llm_usage.input_tokens,
-            output_tokens=llm_usage.output_tokens,
-            total_tokens=llm_usage.total_tokens,
-            estimated_cost_cents=llm_usage.estimated_cost_cents,
-            duration_ms=duration_ms,
-            model_id=self.model_id,
-        )
 
         logger.debug(
             f"Agent {self.name}: Completed "
@@ -250,6 +196,11 @@ class BaseDocumentAgent(ABC, Generic[TOutput]):
         image_bytes: bytes | None = None,
     ) -> tuple[TOutput, LLMUsage]:
         """Execute the PydanticAI agent with dependencies for dynamic instructions.
+
+        .. deprecated::
+            This method is part of the deprecated class-based agent architecture.
+            New agents should use module-level functions with run_agent_with_debug()
+            from factory.py instead.
 
         Similar to _run_agent() but passes AgentDependencies to enable
         dynamic instruction injection via @agent.instructions decorators.
@@ -285,37 +236,7 @@ class BaseDocumentAgent(ABC, Generic[TOutput]):
             f"image={image_bytes is not None})"
         )
 
-        # Save debug image if enabled
-        if image_bytes and deps.job_id:
-            debug_logger.save_debug_image(
-                job_id=deps.job_id,
-                agent_name=self.name,
-                image_bytes=image_bytes,
-                page_num=deps.page_num if hasattr(deps, "page_num") else None,
-            )
-
-        # Debug log: prompt being sent
-        image_info = None
-        if image_bytes and settings.debug_log_images:
-            image_info = {
-                "size_bytes": len(image_bytes),
-                "format": "png",
-            }
-
-        debug_logger.log_prompt(
-            job_id=deps.job_id or "unknown",
-            agent_name=self.name,
-            system_prompt=self.prompts.get("system_prompt"),
-            user_message=user_message,
-            image_info=image_info,
-            model_id=self.model_id,
-            model_tier=self.model_tier.value,
-            temperature=self.config.temperature,
-            max_tokens=self.config.max_tokens,
-        )
-
         # Get agent (lazy initialization) and execute with deps
-        start_time = time.time()
         agent = self._get_agent()
         result = await agent.run(  # type: ignore[call-overload]
             user_prompt=messages,
@@ -325,30 +246,9 @@ class BaseDocumentAgent(ABC, Generic[TOutput]):
                 "temperature": self.config.temperature,
             },
         )
-        duration_ms = (time.time() - start_time) * 1000
 
         # Use core for usage extraction
         llm_usage = self._core.create_llm_usage(result)
-
-        # Debug log: response received
-        raw_response_text = None
-        if result.all_messages():
-            last_message = result.all_messages()[-1]
-            if hasattr(last_message, "content"):
-                raw_response_text = str(last_message.content)
-
-        debug_logger.log_response(
-            job_id=deps.job_id or "unknown",
-            agent_name=self.name,
-            response_text=raw_response_text,
-            parsed_output=result.output,
-            input_tokens=llm_usage.input_tokens,
-            output_tokens=llm_usage.output_tokens,
-            total_tokens=llm_usage.total_tokens,
-            estimated_cost_cents=llm_usage.estimated_cost_cents,
-            duration_ms=duration_ms,
-            model_id=self.model_id,
-        )
 
         logger.debug(
             f"Agent {self.name}: Completed with deps "

@@ -12,7 +12,7 @@ from typing import TYPE_CHECKING
 from opentelemetry import trace
 from opentelemetry.sdk.resources import SERVICE_NAME, Resource
 from opentelemetry.sdk.trace import TracerProvider
-from opentelemetry.sdk.trace.export import BatchSpanProcessor, ConsoleSpanExporter
+from opentelemetry.sdk.trace.export import BatchSpanProcessor, ConsoleSpanExporter, SimpleSpanProcessor
 
 if TYPE_CHECKING:
     from fastapi import FastAPI
@@ -65,12 +65,12 @@ def init_telemetry(app: "FastAPI | None" = None) -> None:
     # Set up trace provider
     provider = TracerProvider(resource=resource)
 
-    # Add console exporter for development
+    # Add console exporter for development (uses SimpleSpanProcessor for immediate output)
     if settings.telemetry_console_export:
         provider.add_span_processor(
-            BatchSpanProcessor(ConsoleSpanExporter())
+            SimpleSpanProcessor(ConsoleSpanExporter())
         )
-        logger.info("OpenTelemetry console exporter enabled")
+        logger.info("OpenTelemetry console exporter enabled (immediate export)")
 
     # Add OTLP exporter if configured (for Jaeger, etc.)
     if settings.telemetry_otlp_endpoint:
@@ -80,7 +80,10 @@ def init_telemetry(app: "FastAPI | None" = None) -> None:
             )
             provider.add_span_processor(
                 BatchSpanProcessor(
-                    OTLPSpanExporter(endpoint=settings.telemetry_otlp_endpoint)
+                    OTLPSpanExporter(
+                        endpoint=settings.telemetry_otlp_endpoint,
+                        insecure=True,  # Required for Docker networking without TLS
+                    )
                 )
             )
             logger.info(f"OpenTelemetry OTLP exporter enabled: {settings.telemetry_otlp_endpoint}")
@@ -96,8 +99,13 @@ def init_telemetry(app: "FastAPI | None" = None) -> None:
     if app:
         try:
             from opentelemetry.instrumentation.fastapi import FastAPIInstrumentor
-            FastAPIInstrumentor.instrument_app(app)
-            logger.info("FastAPI instrumented with OpenTelemetry")
+            # Check if already instrumented (e.g., from hot reload)
+            if not getattr(app, "_otel_instrumented", False):
+                FastAPIInstrumentor.instrument_app(app)
+                app._otel_instrumented = True  # type: ignore[attr-defined]
+                logger.info("FastAPI instrumented with OpenTelemetry")
+            else:
+                logger.info("FastAPI already instrumented, skipping")
         except ImportError:
             logger.warning(
                 "FastAPI instrumentation not available. Install "

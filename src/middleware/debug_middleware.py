@@ -8,7 +8,6 @@ import json
 import logging
 import time
 from collections.abc import Awaitable, Callable
-from io import BytesIO
 from typing import Any
 
 from fastapi import Request, Response

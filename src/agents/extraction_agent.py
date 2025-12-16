@@ -25,7 +25,6 @@ from __future__ import annotations
 
 import base64
 import logging
-import time
 from typing import Any
 
 from pydantic import BaseModel, Field, field_validator
@@ -367,7 +366,7 @@ async def extract(
     # Extract usage with model tier
     usage = extract_usage(result, _MODEL_TIER)
 
-    output = result.data  # type: ignore[attr-defined]
+    output = result.data
 
     # Log reasoning corpus for analysis and debugging
     await _log_reasoning_corpus(output, job_id)
@@ -505,7 +504,7 @@ class ExtractionAgent:
         """
         from pathlib import Path
 
-        from src.agents.base_agent import AgentConfig
+        from src.agents.core import AgentConfig
 
         # Store custom config or create default
         if config is not None:
@@ -692,7 +691,7 @@ class ExtractionAgent:
         usage = extract_usage(result, _MODEL_TIER)
 
         # Support both .output (old) and .data (new) for backward compatibility
-        output = getattr(result, "output", None) or result.data  # type: ignore[attr-defined]
+        output = getattr(result, "output", None) or result.data
 
         # Log reasoning corpus for analysis and debugging
         await _log_reasoning_corpus(output, job_id)

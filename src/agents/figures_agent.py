@@ -211,7 +211,7 @@ async def analyze(
                     image_info=image_info,
                     deps=page_deps,
                     message_history=[
-                        {  # type: ignore[list-item]
+                        {
                             "role": "user",
                             "content": [
                                 {"type": "text", "text": user_message},
@@ -234,7 +234,7 @@ async def analyze(
                     deps=page_deps,
                 )
 
-            output = result.data  # type: ignore[attr-defined]
+            output = result.data
             usage = extract_usage(result, _MODEL_TIER)
 
             # Accumulate usage

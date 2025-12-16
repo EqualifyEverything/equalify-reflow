@@ -17,7 +17,7 @@ from unittest.mock import AsyncMock, MagicMock, patch
 
 import pytest
 from pydantic import ValidationError
-from src.agents.base_agent import AgentConfig
+from src.agents.core import AgentConfig
 from src.agents.extraction_agent import (
     ExtractionAgent,
     ExtractionOutput,

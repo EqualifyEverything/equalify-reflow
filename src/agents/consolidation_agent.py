@@ -277,7 +277,7 @@ async def consolidate(
         },
     )
 
-    output = result.data  # type: ignore[attr-defined]
+    output = result.data
 
     # Extract usage with model tier
     llm_usage = extract_usage(result, _MODEL_TIER)

@@ -17,7 +17,6 @@ from __future__ import annotations
 
 import base64
 import logging
-import time
 import uuid
 from pathlib import Path
 from typing import Any, Literal
@@ -368,7 +367,7 @@ async def analyze(
     usage = extract_usage(result, _MODEL_TIER)
 
     # Convert output to DocumentManifest
-    output = result.data  # type: ignore[attr-defined]
+    output = result.data
     manifest = _create_manifest(output, job_id, total_pages)
 
     # Convert observations to full Observation model

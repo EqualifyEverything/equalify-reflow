@@ -12,8 +12,7 @@ Supports dynamic instructions via AgentDependencies for runtime context injectio
 
 import logging
 import warnings
-from abc import ABC, abstractmethod
-from dataclasses import dataclass, field
+from abc import ABC
 from typing import TYPE_CHECKING, Any, Generic, TypeVar
 
 from pydantic import BaseModel
@@ -21,7 +20,7 @@ from pydantic_ai import Agent
 from pydantic_ai.messages import BinaryContent
 
 from src.agents.core import AgentConfig, AgentCore
-from src.shared.models.agent_models import AgentInput, LLMUsage
+from src.shared.models.agent_models import LLMUsage
 
 if TYPE_CHECKING:
     from src.agents.dependencies import AgentDependencies
@@ -32,54 +31,9 @@ logger = logging.getLogger(__name__)
 TOutput = TypeVar("TOutput", bound=BaseModel)
 
 
-@dataclass
-class BatchResult(Generic[TOutput]):
-    """Result of batch processing with error tracking.
-
-    This dataclass provides infrastructure for agents to report partial failures
-    during batch processing. Callers can detect which specific items failed and
-    handle them appropriately.
-
-    Attributes:
-        outputs: List of successful outputs from batch processing
-        usage: Aggregated LLM usage across all calls
-        errors: List of (page_num, error_msg) tuples for failed items
-
-    Example:
-        >>> result = BatchResult(
-        ...     outputs=[output1, output2],
-        ...     usage=LLMUsage(...),
-        ...     errors=[(3, "Failed to process page 3")]
-        ... )
-        >>> print(f"Success: {result.success_count}, Errors: {result.error_count}")
-        >>> if result.has_errors:
-        ...     for page_num, error in result.errors:
-        ...         logger.warning(f"Page {page_num} failed: {error}")
-    """
-
-    outputs: list[TOutput] = field(default_factory=list)
-    usage: LLMUsage | None = None
-    errors: list[tuple[int, str]] = field(default_factory=list)
-
-    @property
-    def has_errors(self) -> bool:
-        """Check if any errors occurred during batch processing."""
-        return len(self.errors) > 0
-
-    @property
-    def success_count(self) -> int:
-        """Get count of successful outputs."""
-        return len(self.outputs)
-
-    @property
-    def error_count(self) -> int:
-        """Get count of failed items."""
-        return len(self.errors)
-
-
 # Re-export AgentConfig from core for backward compatibility
 # (existing code imports from base_agent.py)
-__all__ = ["AgentConfig", "BaseDocumentAgent", "BatchResult"]
+__all__ = ["AgentConfig", "BaseDocumentAgent"]
 
 
 class BaseDocumentAgent(ABC, Generic[TOutput]):
@@ -98,10 +52,10 @@ class BaseDocumentAgent(ABC, Generic[TOutput]):
 
     Example:
         >>> class StructureAgent(BaseDocumentAgent[StructureOutput]):
-        ...     async def process(self, input_data: AgentInput) -> StructureOutput:
+        ...     async def analyze(self, pages: list[PageData], ...) -> tuple[list[Observation], LLMUsage]:
         ...         user_message = self.prompts["user_prompt_template"].format(...)
         ...         output, usage = await self._run_agent(user_message, image_bytes)
-        ...         return output
+        ...         return self._convert_to_observations(output), usage
     """
 
     def __init__(self, config: AgentConfig) -> None:
@@ -179,23 +133,6 @@ class BaseDocumentAgent(ABC, Generic[TOutput]):
 
         pricing = get_pricing_for_tier(self.model_tier)
         return calculate_estimated_cost(input_tokens, output_tokens, pricing)
-
-    @abstractmethod
-    async def process(self, input_data: AgentInput) -> TOutput:
-        """Process page input and return structured output.
-
-        Note: This abstract method ensures all agents have a common interface.
-        Subclasses typically implement domain-specific methods (analyze(), extract(),
-        consolidate()) that internally use _run_agent(). The process() method
-        provides a unified entry point for generic agent invocation.
-
-        Args:
-            input_data: Unified input containing page markdown, image, context, and hints
-
-        Returns:
-            Typed output matching the agent's output_type configuration
-        """
-        pass
 
     async def _run_agent(
         self,

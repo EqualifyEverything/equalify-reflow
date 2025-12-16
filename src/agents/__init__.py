@@ -21,17 +21,6 @@ from .base_agent import AgentConfig, BaseDocumentAgent
 from .consolidation_agent import ConsolidationAgent, ConsolidationOutput, ProposalDraft
 from .extraction_agent import ExtractionAgent
 from .figures_agent import FiguresAgent
-from .registry import (
-    clear_registry,
-    get_agent,
-    get_agents_for_correction_type,
-    get_all_agents,
-    get_registered_agent_names,
-    is_agent_registered,
-    register_agent,
-    register_instance,
-    unregister_agent,
-)
 from .specialized_models import (
     FiguresAnalysisOutput,
     ImageAnalysis,
@@ -50,16 +39,6 @@ __all__ = [
     # Base agent framework
     "BaseDocumentAgent",
     "AgentConfig",
-    # Registry functions
-    "register_agent",
-    "register_instance",
-    "unregister_agent",
-    "get_agent",
-    "get_all_agents",
-    "get_agents_for_correction_type",
-    "get_registered_agent_names",
-    "is_agent_registered",
-    "clear_registry",
     # Analysis and extraction agents
     "AnalysisAgent",
     "ExtractionAgent",

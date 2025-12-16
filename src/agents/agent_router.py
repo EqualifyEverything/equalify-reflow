@@ -9,6 +9,7 @@ from __future__ import annotations
 import asyncio
 import logging
 from dataclasses import dataclass
+from types import ModuleType
 from typing import TYPE_CHECKING, Any, Protocol
 
 from src.config import settings
@@ -72,6 +73,13 @@ class SpecializedAgent(Protocol):
 
     All specialized agents must implement the analyze method that takes
     page data and document context to produce observations.
+
+    Supports both patterns:
+    - Class-based agents: instances with analyze() method
+    - Module-based agents: modules with analyze() function
+
+    Both patterns work because Python's attribute access (agent.analyze)
+    works identically for bound methods and module functions.
     """
 
     async def analyze(
@@ -95,6 +103,10 @@ class SpecializedAgent(Protocol):
         ...
 
 
+# Type alias for agent registration - supports both class instances and modules
+AgentType = SpecializedAgent | ModuleType
+
+
 class AgentRouter:
     """Routes specialized agents based on document manifest.
 
@@ -109,24 +121,28 @@ class AgentRouter:
         self._agents: dict[str, Any] = {}
         logger.debug("AgentRouter initialized")
 
-    def register_agent(self, name: str, agent: SpecializedAgent) -> None:
+    def register_agent(self, name: str, agent: AgentType) -> None:
         """Register an agent by name.
+
+        Supports both agent patterns:
+        - Class instance: router.register_agent("typography", TypographyAgent())
+        - Module reference: router.register_agent("typography", typography_agent)
 
         Args:
             name: Agent identifier (figures, tables, structure, typography)
-            agent: Agent instance implementing SpecializedAgent protocol
+            agent: Agent instance or module implementing SpecializedAgent protocol
         """
         self._agents[name] = agent
         logger.debug(f"Registered agent: {name}")
 
-    def get_agent(self, name: str) -> SpecializedAgent | None:
+    def get_agent(self, name: str) -> AgentType | None:
         """Get a registered agent by name.
 
         Args:
             name: Agent identifier
 
         Returns:
-            Agent instance or None if not registered
+            Agent instance, module, or None if not registered
         """
         return self._agents.get(name)
 
@@ -245,7 +261,7 @@ class AgentRouter:
         self,
         semaphore: asyncio.Semaphore,
         agent_name: str,
-        agent: SpecializedAgent,
+        agent: AgentType,
         relevant_pages: list[PageData],
         manifest: DocumentManifest,
         markdown: str,
@@ -253,10 +269,14 @@ class AgentRouter:
     ) -> AgentRunResult:
         """Run a single agent with semaphore-based concurrency control.
 
+        Handles both class-based agents (with analyze method) and module-based
+        agents (with analyze function). Python's attribute access works the same
+        for both patterns.
+
         Args:
             semaphore: Semaphore for limiting concurrent agents
             agent_name: Name of the agent
-            agent: Agent instance
+            agent: Agent instance or module
             relevant_pages: Pages for this agent to process
             manifest: Document manifest
             markdown: Current markdown
@@ -368,4 +388,5 @@ class AgentRouter:
 __all__ = [
     "AgentRouter",
     "SpecializedAgent",
+    "AgentType",
 ]

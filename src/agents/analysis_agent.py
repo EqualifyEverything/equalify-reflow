@@ -439,7 +439,7 @@ class AnalysisAgent(BaseDocumentAgent[AnalysisOutput]):
         Extracts .value from Reasoned[T] fields for downstream compatibility.
         """
         # Convert AnalysisPageFeatures to PageFeatures
-        # Extract .value from Reasoned[T] fields (layout_type, complexity_score)
+        # Extract .value and .reasoning from Reasoned[T] fields
         page_features = [
             PageFeatures(
                 page_num=pf.page_num,
@@ -450,9 +450,11 @@ class AnalysisAgent(BaseDocumentAgent[AnalysisOutput]):
                 has_lists=pf.has_lists,
                 has_code_blocks=pf.has_code_blocks,
                 has_math=pf.has_math,
-                layout_type=pf.layout_type.value,  # Extract from Reasoned[T]
+                layout_type=pf.layout_type.value,  # Extract value from Reasoned[T]
+                layout_type_reasoning=pf.layout_type.reasoning,  # Extract reasoning
                 has_headers_footers=pf.has_headers_footers,
-                complexity_score=pf.complexity_score.value,  # Extract from Reasoned[T]
+                complexity_score=pf.complexity_score.value,  # Extract value from Reasoned[T]
+                complexity_score_reasoning=pf.complexity_score.reasoning,  # Extract reasoning
                 complexity_factors=pf.complexity_factors,
             )
             for pf in output.page_features
@@ -473,7 +475,8 @@ class AnalysisAgent(BaseDocumentAgent[AnalysisOutput]):
         return DocumentManifest(
             job_id=job_id,
             document_title=output.document_title,
-            document_type=output.document_type.value,  # Extract from Reasoned[T]
+            document_type=output.document_type.value,  # Extract value from Reasoned[T]
+            document_type_reasoning=output.document_type.reasoning,  # Extract reasoning
             total_pages=total_pages,
             heading_tree_json=output.heading_tree.model_dump_json(),
             page_features=page_features,
@@ -481,6 +484,8 @@ class AnalysisAgent(BaseDocumentAgent[AnalysisOutput]):
             skip_agents=skip_agents,
             analysis_confidence=output.confidence,
             analysis_notes=output.notes,
+            heading_order_verification=output.heading_order_verification,
+            agent_routing_reasoning=output.agent_routing_reasoning,
             analysis_model=self.model_id,
         )
 

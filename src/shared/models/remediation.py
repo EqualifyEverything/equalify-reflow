@@ -252,6 +252,22 @@ class PageFeatures(BaseModel):
         ),
     )
 
+    # Reasoning transparency (from Reasoned[T] fields)
+    layout_type_reasoning: str | None = Field(
+        default=None,
+        description=(
+            "LLM reasoning for layout_type determination. "
+            "Cites visual evidence: gutter presence, text block width, column structure."
+        ),
+    )
+    complexity_score_reasoning: str | None = Field(
+        default=None,
+        description=(
+            "LLM reasoning for complexity_score determination. "
+            "Cites factors: table density, nesting depth, image count."
+        ),
+    )
+
     @model_validator(mode="after")
     def validate_image_consistency(self) -> "PageFeatures":
         """Ensure has_images and image_count are consistent."""
@@ -380,6 +396,30 @@ class DocumentManifest(BaseModel):
     analysis_notes: str = Field(
         default="",
         description="Notes about analysis decisions or observations"
+    )
+
+    # Reasoning transparency (from Reasoned[T] and verification fields)
+    document_type_reasoning: str | None = Field(
+        default=None,
+        description=(
+            "LLM reasoning for document_type classification. "
+            "Cites visual evidence: title patterns, structure indicators."
+        ),
+    )
+    heading_order_verification: str | None = Field(
+        default=None,
+        description=(
+            "LLM verification that heading tree respects reading order. "
+            "For two-column: confirms down-left-then-right reading. "
+            "Validates subsections follow parents (5.1 after 5)."
+        ),
+    )
+    agent_routing_reasoning: str | None = Field(
+        default=None,
+        description=(
+            "LLM reasoning for agent routing decisions. "
+            "Explains which agents were included/excluded and why."
+        ),
     )
 
     # Metadata

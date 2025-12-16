@@ -23,9 +23,10 @@ from pathlib import Path
 from typing import Any, Literal
 
 from pydantic import BaseModel, Field, field_validator
+from pydantic_ai import Agent
 from pydantic_ai.messages import BinaryContent
 
-from src.agents.base_agent import AgentConfig, BaseDocumentAgent
+from src.agents.factory import create_agent, extract_usage, load_prompts
 from src.agents.model_tiers import ModelTier
 from src.config import settings
 from src.services.debug_logging_service import debug_logger
@@ -46,6 +47,14 @@ LayoutType = Literal["single_column", "two_column", "mixed"]
 DocumentType = Literal["syllabus", "lecture_notes", "exam", "handout", "research_paper", "other"]
 
 logger = logging.getLogger(__name__)
+
+# All possible specialized agents
+ALL_AGENTS = {"figures", "tables", "structure", "typography"}
+
+# Module-level state for lazy initialization
+_agent: Agent[None, AnalysisOutput] | None = None
+_prompts: dict[str, Any] | None = None
+_MODEL_TIER = ModelTier.REASONING
 
 
 # =============================================================================
@@ -253,21 +262,319 @@ class AnalysisOutput(BaseModel, ReasonedOutputMixin):
 
 
 # =============================================================================
-# Analysis Agent
+# Module-level Functions
 # =============================================================================
 
 
-class AnalysisAgent(BaseDocumentAgent[AnalysisOutput]):
-    """Agent that performs deep document analysis using Sonnet.
+def get_agent() -> Agent[None, AnalysisOutput]:
+    """Get or create the analysis agent (lazy initialization)."""
+    global _agent, _prompts
 
-    This agent:
-    1. Analyzes document structure and layout
-    2. Detects features on each page (images, tables, lists, etc.)
-    3. Determines which specialized agents need to run
-    4. Generates initial accessibility observations
-    5. Produces a DocumentManifest to guide extraction
+    if _agent is None:
+        _prompts = load_prompts("analysis.yaml")
+        _agent = create_agent(
+            "analysis.yaml",
+            AnalysisOutput,
+            model_tier=_MODEL_TIER,
+            use_deps=False,  # Analysis agent doesn't use dynamic instructions
+            max_retries=2,
+        )
+        logger.info(f"AnalysisAgent initialized with model tier {_MODEL_TIER.value}")
 
-    Uses Claude Sonnet 4.5 for superior reasoning capabilities.
+    return _agent
+
+
+def reset_agent() -> None:
+    """Reset the agent singleton for testing."""
+    global _agent, _prompts
+    _agent = None
+    _prompts = None
+
+
+async def analyze(
+    pages: list[PageData],
+    job_id: str,
+) -> tuple[DocumentManifest, list[Observation], LLMUsage]:
+    """Analyze document and produce manifest + initial observations.
+
+    Args:
+        pages: List of page images from PDF conversion
+        job_id: Job identifier for observation tracking
+
+    Returns:
+        Tuple of (DocumentManifest, list[Observation], LLMUsage)
+
+    Raises:
+        ValueError: If no pages provided
+        RuntimeError: If analysis fails after retries
+    """
+    if not pages:
+        raise ValueError("No pages provided for analysis")
+
+    total_pages = len(pages)
+    logger.info(f"Starting analysis of {total_pages}-page document for job {job_id}")
+
+    # Get prompts and agent
+    global _prompts
+    if _prompts is None:
+        _prompts = load_prompts("analysis.yaml")
+
+    agent = get_agent()
+
+    # Build messages with all page images
+    messages = _build_image_messages(pages)
+
+    # Save debug images if enabled
+    images_to_save = [
+        (base64.b64decode(p.image_base64), p.page_num)
+        for p in pages if p.image_base64
+    ]
+    if images_to_save:
+        debug_logger.save_debug_images_batch(
+            job_id=job_id,
+            agent_name="analysis_agent",
+            images=images_to_save,
+        )
+
+    # Add user prompt
+    user_prompt = _prompts["user_prompt"].format(total_pages=total_pages)
+    messages.append(user_prompt)
+
+    # Debug log: prompt being sent
+    image_info = None
+    if settings.debug_log_images:
+        image_info = {
+            "page_count": len(pages),
+            "pages_with_images": sum(1 for p in pages if p.image_base64),
+        }
+
+    from src.agents.model_tiers import MODEL_TIER_MAP
+    debug_logger.log_prompt(
+        job_id=job_id,
+        agent_name="analysis_agent",
+        system_prompt=_prompts.get("system_prompt") if _prompts else None,
+        user_message=user_prompt,
+        image_info=image_info,
+        model_id=MODEL_TIER_MAP[_MODEL_TIER],
+        model_tier=_MODEL_TIER.value,
+        temperature=0.3,
+        max_tokens=4096,
+    )
+
+    # Run agent
+    start_time = time.time()
+    result = await agent.run(
+        messages,
+        model_settings={
+            "max_tokens": 4096,
+            "temperature": 0.3,
+        },
+    )
+    duration_ms = (time.time() - start_time) * 1000
+
+    # Extract usage with model_tier parameter
+    usage = extract_usage(result, _MODEL_TIER)
+
+    # Debug log: response received
+    debug_logger.log_response(
+        job_id=job_id,
+        agent_name="analysis_agent",
+        response_text=None,  # Structured output, not raw text
+        parsed_output=result.data,  # type: ignore[attr-defined]
+        input_tokens=usage.input_tokens,
+        output_tokens=usage.output_tokens,
+        total_tokens=usage.total_tokens,
+        estimated_cost_cents=usage.estimated_cost_cents,
+        duration_ms=duration_ms,
+        model_id=MODEL_TIER_MAP[_MODEL_TIER],
+    )
+
+    # Convert output to DocumentManifest
+    output = result.data  # type: ignore[attr-defined]
+    manifest = _create_manifest(output, job_id, total_pages)
+
+    # Convert observations to full Observation model
+    observations = _convert_observations(output.observations, job_id)
+
+    # Log reasoning corpus for analysis and debugging
+    await _log_reasoning_corpus(output, job_id)
+
+    logger.info(
+        f"Analysis complete for job {job_id}: "
+        f"{len(manifest.page_features)} pages analyzed, "
+        f"{len(manifest.required_agents)} agents needed, "
+        f"{len(observations)} initial observations, "
+        f"cost: ${usage.estimated_cost_cents/100:.4f}"
+    )
+
+    return manifest, observations, usage
+
+
+async def _log_reasoning_corpus(
+    output: AnalysisOutput,
+    job_id: str,
+) -> None:
+    """Log reasoning corpus from Reasoned[T] fields for analysis.
+
+    Extracts reasoning from:
+    - AnalysisOutput.document_type
+    - AnalysisPageFeatures.layout_type (per page)
+    - AnalysisPageFeatures.complexity_score (per page)
+    """
+    try:
+        corpus_service = get_reasoning_corpus_service()
+
+        # Extract from page features (layout_type, complexity_score per page)
+        for pf in output.page_features:
+            corpus = pf.extract_reasoning_corpus()
+            if corpus:
+                await corpus_service.log_corpus_batch(
+                    job_id=job_id,
+                    agent_name="analysis",
+                    corpus=corpus,
+                )
+
+        # Extract from output level (document_type)
+        output_corpus = output.extract_reasoning_corpus()
+        if output_corpus:
+            await corpus_service.log_corpus_batch(
+                job_id=job_id,
+                agent_name="analysis",
+                corpus=output_corpus,
+            )
+
+        logger.debug(
+            f"Logged reasoning corpus for job {job_id}: "
+            f"{len(output.page_features)} page analyses, 1 document analysis"
+        )
+    except Exception as e:
+        # Don't fail analysis if corpus logging fails
+        logger.warning(f"Failed to log reasoning corpus for job {job_id}: {e}")
+
+
+def _build_image_messages(
+    pages: list[PageData],
+) -> list[str | BinaryContent]:
+    """Build message list with all page images."""
+    messages: list[str | BinaryContent] = []
+
+    for page in pages:
+        messages.append(f"[Page {page.page_num}]")
+        if page.image_base64:
+            image_bytes = base64.b64decode(page.image_base64)
+            messages.append(
+                BinaryContent(data=image_bytes, media_type="image/png")
+            )
+
+    return messages
+
+
+def _create_manifest(
+    output: AnalysisOutput,
+    job_id: str,
+    total_pages: int,
+) -> DocumentManifest:
+    """Convert analysis output to DocumentManifest.
+
+    Extracts .value from Reasoned[T] fields for downstream compatibility.
+    """
+    # Convert AnalysisPageFeatures to PageFeatures
+    # Extract .value and .reasoning from Reasoned[T] fields
+    page_features = [
+        PageFeatures(
+            page_num=pf.page_num,
+            has_images=pf.has_images,
+            image_count=pf.image_count,
+            has_tables=pf.has_tables,
+            table_count=pf.table_count,
+            has_lists=pf.has_lists,
+            has_code_blocks=pf.has_code_blocks,
+            has_math=pf.has_math,
+            layout_type=pf.layout_type.value,  # Extract value from Reasoned[T]
+            layout_type_reasoning=pf.layout_type.reasoning,  # Extract reasoning
+            has_headers_footers=pf.has_headers_footers,
+            complexity_score=pf.complexity_score.value,  # Extract value from Reasoned[T]
+            complexity_score_reasoning=pf.complexity_score.reasoning,  # Extract reasoning
+            complexity_factors=pf.complexity_factors,
+        )
+        for pf in output.page_features
+    ]
+
+    # Ensure we have features for all pages (fill in missing ones)
+    existing_page_nums = {pf.page_num for pf in page_features}
+    for page_num in range(1, total_pages + 1):
+        if page_num not in existing_page_nums:
+            page_features.append(PageFeatures(page_num=page_num))
+
+    # Sort by page number
+    page_features.sort(key=lambda pf: pf.page_num)
+
+    # Compute skip agents
+    skip_agents = _determine_skip_agents(output.required_agents)
+
+    # Get model_id from the agent
+    agent = get_agent()
+    model_id = agent.model.model_id if hasattr(agent.model, "model_id") else "unknown"  # type: ignore[union-attr]
+
+    return DocumentManifest(
+        job_id=job_id,
+        document_title=output.document_title,
+        document_type=output.document_type.value,  # Extract value from Reasoned[T]
+        document_type_reasoning=output.document_type.reasoning,  # Extract reasoning
+        total_pages=total_pages,
+        heading_tree_json=output.heading_tree.model_dump_json(),
+        page_features=page_features,
+        required_agents=output.required_agents,
+        skip_agents=skip_agents,
+        analysis_confidence=output.confidence,
+        analysis_notes=output.notes,
+        heading_order_verification=output.heading_order_verification,
+        agent_routing_reasoning=output.agent_routing_reasoning,
+        analysis_model=model_id,
+    )
+
+
+def _convert_observations(
+    analysis_observations: list[AnalysisObservation],
+    job_id: str,
+) -> list[Observation]:
+    """Convert analysis observations to full Observation model."""
+    return [
+        Observation(
+            id=str(uuid.uuid4()),
+            job_id=job_id,
+            agent="analysis",
+            source="agent",
+            visual_description=obs.visual_description,
+            markup_description=obs.markup_issue,
+            location=ObservationLocation(
+                location_type="region",
+                value=f"Page {obs.page_num}",
+                page_num=obs.page_num,
+            ),
+            confidence=obs.confidence,
+            severity=obs.severity,
+            route="auto" if obs.confidence >= settings.min_confidence_for_auto_approval else "manual",
+        )
+        for obs in analysis_observations
+    ]
+
+
+def _determine_skip_agents(required: list[str]) -> list[str]:
+    """Determine which agents can be skipped."""
+    return list(ALL_AGENTS - set(required))
+
+
+# =============================================================================
+# Wrapper Class for Backward Compatibility
+# =============================================================================
+
+
+class AnalysisAgent:
+    """Wrapper class for backward compatibility.
+
+    This thin wrapper allows the module to be used with existing code
+    that expects a class with an analyze() method.
 
     Example:
         >>> agent = AnalysisAgent()
@@ -275,37 +582,61 @@ class AnalysisAgent(BaseDocumentAgent[AnalysisOutput]):
         >>> print(f"Found {len(manifest.required_agents)} agents needed")
     """
 
-    # All possible specialized agents
-    ALL_AGENTS = {"figures", "tables", "structure", "typography"}
+    ALL_AGENTS = ALL_AGENTS  # Class-level constant for compatibility
 
-    def __init__(self, config: AgentConfig | None = None) -> None:
-        """Initialize the analysis agent.
+    def __init__(self, config: Any | None = None) -> None:
+        """Initialize the agent wrapper.
 
         Args:
-            config: Optional configuration (uses defaults if not provided)
+            config: Optional AgentConfig. If provided, validates prompts_file exists.
+
+        Raises:
+            FileNotFoundError: If config.prompts_file does not exist.
         """
-        if config is None:
-            config = AgentConfig(
-                name="analysis_agent",
+        from src.agents.core import AgentConfig
+
+        if config is not None:
+            # Validate prompts file exists (fail fast)
+            try:
+                load_prompts(str(config.prompts_file))
+            except FileNotFoundError:
+                # Re-raise to maintain expected behavior
+                raise
+            self._config = config
+        else:
+            self._config = AgentConfig(
+                name="analysis",
                 prompts_file=Path("analysis.yaml"),
                 output_type=AnalysisOutput,
-                model_tier=ModelTier.REASONING,
                 max_retries=2,
                 temperature=0.3,
                 max_tokens=4096,
+                model_tier=_MODEL_TIER,
             )
-        super().__init__(config)
-        logger.info(
-            f"AnalysisAgent initialized with model tier {self.model_tier.value} "
-            f"({self.model_id})"
-        )
 
-    async def process(self, input_data: Any) -> AnalysisOutput:
-        """Process method required by BaseDocumentAgent.
+    @property
+    def config(self) -> Any:
+        """Return config for backward compatibility."""
+        return self._config
 
-        For AnalysisAgent, use analyze() method instead.
-        """
-        raise NotImplementedError("AnalysisAgent uses analyze() method, not process()")
+    @property
+    def model_tier(self) -> ModelTier:
+        """Return model tier for backward compatibility."""
+        return _MODEL_TIER
+
+    @property
+    def model_id(self) -> str:
+        """Return model ID for backward compatibility."""
+        agent = get_agent()
+        return agent.model.model_id if hasattr(agent.model, "model_id") else "unknown"  # type: ignore[union-attr]
+
+    @property
+    def prompts(self) -> dict[str, Any]:
+        """Return prompts for backward compatibility."""
+        global _prompts
+        if _prompts is None:
+            _prompts = load_prompts("analysis.yaml")
+        return _prompts
 
     async def analyze(
         self,
@@ -325,249 +656,32 @@ class AnalysisAgent(BaseDocumentAgent[AnalysisOutput]):
             ValueError: If no pages provided
             RuntimeError: If analysis fails after retries
         """
-        if not pages:
-            raise ValueError("No pages provided for analysis")
+        return await analyze(pages, job_id)
 
-        total_pages = len(pages)
-        logger.info(f"Starting analysis of {total_pages}-page document for job {job_id}")
-
-        agent = self._get_agent()
-
-        # Build messages with all page images
-        messages = self._build_image_messages(pages)
-
-        # Save debug images if enabled
-        images_to_save = [
-            (base64.b64decode(p.image_base64), p.page_num)
-            for p in pages if p.image_base64
-        ]
-        if images_to_save:
-            debug_logger.save_debug_images_batch(
-                job_id=job_id,
-                agent_name="analysis_agent",
-                images=images_to_save,
-            )
-
-        # Add user prompt
-        user_prompt = self.prompts["user_prompt"].format(total_pages=total_pages)
-        messages.append(user_prompt)
-
-        # Debug log: prompt being sent
-        image_info = None
-        if settings.debug_log_images:
-            image_info = {
-                "page_count": len(pages),
-                "pages_with_images": sum(1 for p in pages if p.image_base64),
-            }
-
-        debug_logger.log_prompt(
-            job_id=job_id,
-            agent_name="analysis_agent",
-            system_prompt=self.prompts.get("system_prompt"),
-            user_message=user_prompt,
-            image_info=image_info,
-            model_id=self.model_id,
-            model_tier=self.model_tier.value,
-            temperature=self.config.temperature,
-            max_tokens=self.config.max_tokens,
-        )
-
-        # Run agent
-        start_time = time.time()
-        result = await agent.run(
-            messages,
-            model_settings={
-                "max_tokens": self.config.max_tokens,
-                "temperature": self.config.temperature,
-            },
-        )
-        duration_ms = (time.time() - start_time) * 1000
-
-        # Use inherited usage tracking
-        usage = self._core.create_llm_usage(result)
-
-        # Debug log: response received
-        debug_logger.log_response(
-            job_id=job_id,
-            agent_name="analysis_agent",
-            response_text=None,  # Structured output, not raw text
-            parsed_output=result.output,
-            input_tokens=input_tokens,
-            output_tokens=output_tokens,
-            total_tokens=total_tokens,
-            estimated_cost_cents=estimated_cost_cents,
-            duration_ms=duration_ms,
-            model_id=self.model_id,
-        )
-
-        # Convert output to DocumentManifest
-        output = result.output
-        manifest = self._create_manifest(output, job_id, total_pages)
-
-        # Convert observations to full Observation model
-        observations = self._convert_observations(output.observations, job_id)
-
-        # Log reasoning corpus for analysis and debugging
-        await self._log_reasoning_corpus(output, job_id)
-
-        logger.info(
-            f"Analysis complete for job {job_id}: "
-            f"{len(manifest.page_features)} pages analyzed, "
-            f"{len(manifest.required_agents)} agents needed, "
-            f"{len(observations)} initial observations, "
-            f"cost: ${usage.estimated_cost_cents/100:.4f}"
-        )
-
-        return manifest, observations, usage
-
-    async def _log_reasoning_corpus(
-        self,
-        output: AnalysisOutput,
-        job_id: str,
-    ) -> None:
-        """Log reasoning corpus from Reasoned[T] fields for analysis.
-
-        Extracts reasoning from:
-        - AnalysisOutput.document_type
-        - AnalysisPageFeatures.layout_type (per page)
-        - AnalysisPageFeatures.complexity_score (per page)
-        """
-        try:
-            corpus_service = get_reasoning_corpus_service()
-
-            # Extract from page features (layout_type, complexity_score per page)
-            for pf in output.page_features:
-                corpus = pf.extract_reasoning_corpus()
-                if corpus:
-                    await corpus_service.log_corpus_batch(
-                        job_id=job_id,
-                        agent_name="analysis",
-                        corpus=corpus,
-                    )
-
-            # Extract from output level (document_type)
-            output_corpus = output.extract_reasoning_corpus()
-            if output_corpus:
-                await corpus_service.log_corpus_batch(
-                    job_id=job_id,
-                    agent_name="analysis",
-                    corpus=output_corpus,
-                )
-
-            logger.debug(
-                f"Logged reasoning corpus for job {job_id}: "
-                f"{len(output.page_features)} page analyses, 1 document analysis"
-            )
-        except Exception as e:
-            # Don't fail analysis if corpus logging fails
-            logger.warning(f"Failed to log reasoning corpus for job {job_id}: {e}")
-
-    def _build_image_messages(
-        self, pages: list[PageData]
-    ) -> list[str | BinaryContent]:
-        """Build message list with all page images."""
-        messages: list[str | BinaryContent] = []
-
-        for page in pages:
-            messages.append(f"[Page {page.page_num}]")
-            if page.image_base64:
-                image_bytes = base64.b64decode(page.image_base64)
-                messages.append(
-                    BinaryContent(data=image_bytes, media_type="image/png")
-                )
-
-        return messages
-
-    def _create_manifest(
-        self,
-        output: AnalysisOutput,
-        job_id: str,
-        total_pages: int,
-    ) -> DocumentManifest:
-        """Convert analysis output to DocumentManifest.
-
-        Extracts .value from Reasoned[T] fields for downstream compatibility.
-        """
-        # Convert AnalysisPageFeatures to PageFeatures
-        # Extract .value and .reasoning from Reasoned[T] fields
-        page_features = [
-            PageFeatures(
-                page_num=pf.page_num,
-                has_images=pf.has_images,
-                image_count=pf.image_count,
-                has_tables=pf.has_tables,
-                table_count=pf.table_count,
-                has_lists=pf.has_lists,
-                has_code_blocks=pf.has_code_blocks,
-                has_math=pf.has_math,
-                layout_type=pf.layout_type.value,  # Extract value from Reasoned[T]
-                layout_type_reasoning=pf.layout_type.reasoning,  # Extract reasoning
-                has_headers_footers=pf.has_headers_footers,
-                complexity_score=pf.complexity_score.value,  # Extract value from Reasoned[T]
-                complexity_score_reasoning=pf.complexity_score.reasoning,  # Extract reasoning
-                complexity_factors=pf.complexity_factors,
-            )
-            for pf in output.page_features
-        ]
-
-        # Ensure we have features for all pages (fill in missing ones)
-        existing_page_nums = {pf.page_num for pf in page_features}
-        for page_num in range(1, total_pages + 1):
-            if page_num not in existing_page_nums:
-                page_features.append(PageFeatures(page_num=page_num))
-
-        # Sort by page number
-        page_features.sort(key=lambda pf: pf.page_num)
-
-        # Compute skip agents
-        skip_agents = self._determine_skip_agents(output.required_agents)
-
-        return DocumentManifest(
-            job_id=job_id,
-            document_title=output.document_title,
-            document_type=output.document_type.value,  # Extract value from Reasoned[T]
-            document_type_reasoning=output.document_type.reasoning,  # Extract reasoning
-            total_pages=total_pages,
-            heading_tree_json=output.heading_tree.model_dump_json(),
-            page_features=page_features,
-            required_agents=output.required_agents,
-            skip_agents=skip_agents,
-            analysis_confidence=output.confidence,
-            analysis_notes=output.notes,
-            heading_order_verification=output.heading_order_verification,
-            agent_routing_reasoning=output.agent_routing_reasoning,
-            analysis_model=self.model_id,
-        )
-
-    def _convert_observations(
-        self,
-        analysis_observations: list[AnalysisObservation],
-        job_id: str,
-    ) -> list[Observation]:
-        """Convert analysis observations to full Observation model."""
-        return [
-            Observation(
-                id=str(uuid.uuid4()),
-                job_id=job_id,
-                agent="analysis",
-                source="agent",
-                visual_description=obs.visual_description,
-                markup_description=obs.markup_issue,
-                location=ObservationLocation(
-                    location_type="region",
-                    value=f"Page {obs.page_num}",
-                    page_num=obs.page_num,
-                ),
-                confidence=obs.confidence,
-                severity=obs.severity,
-                route="auto" if obs.confidence >= settings.min_confidence_for_auto_approval else "manual",
-            )
-            for obs in analysis_observations
-        ]
-
+    # Expose internal methods for backward compatibility with tests
     def _determine_skip_agents(self, required: list[str]) -> list[str]:
         """Determine which agents can be skipped."""
-        return list(self.ALL_AGENTS - set(required))
+        return _determine_skip_agents(required)
+
+    def _build_image_messages(self, pages: list[PageData]) -> list[str | BinaryContent]:
+        """Build message list with all page images."""
+        return _build_image_messages(pages)
+
+    def _create_manifest(
+        self, output: AnalysisOutput, job_id: str, total_pages: int
+    ) -> DocumentManifest:
+        """Convert analysis output to DocumentManifest."""
+        return _create_manifest(output, job_id, total_pages)
+
+    def _convert_observations(
+        self, analysis_observations: list[AnalysisObservation], job_id: str
+    ) -> list[Observation]:
+        """Convert analysis observations to full Observation model."""
+        return _convert_observations(analysis_observations, job_id)
+
+    def _get_agent(self) -> Agent[None, AnalysisOutput]:
+        """Get the underlying agent (for test mocking)."""
+        return get_agent()
 
 
 __all__ = [
@@ -577,4 +691,7 @@ __all__ = [
     "AnalysisPageFeatures",
     "HeadingNode",
     "HeadingTree",
+    "analyze",
+    "get_agent",
+    "reset_agent",
 ]

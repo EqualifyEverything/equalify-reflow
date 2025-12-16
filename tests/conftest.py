@@ -80,6 +80,50 @@ def sample_pdf():
     return pdf_content
 
 
+@pytest.fixture(autouse=True)
+def reset_agent_singletons():
+    """Reset all agent module singletons before and after each test.
+
+    This ensures test isolation by clearing cached agent instances.
+    Each test starts with a fresh agent state, preventing test pollution.
+    """
+    # Import agent modules that use singleton pattern
+    from src.agents import (
+        consolidation_agent,
+        extraction_agent,
+        figures_agent,
+        structure_agent,
+        tables_agent,
+        typography_agent,
+    )
+
+    # Reset before test
+    for agent_module in [
+        consolidation_agent,
+        extraction_agent,
+        figures_agent,
+        structure_agent,
+        tables_agent,
+        typography_agent,
+    ]:
+        if hasattr(agent_module, "reset_agent"):
+            agent_module.reset_agent()
+
+    yield
+
+    # Reset after test (cleanup)
+    for agent_module in [
+        consolidation_agent,
+        extraction_agent,
+        figures_agent,
+        structure_agent,
+        tables_agent,
+        typography_agent,
+    ]:
+        if hasattr(agent_module, "reset_agent"):
+            agent_module.reset_agent()
+
+
 # ============================================================================
 # Core Pipeline Test Fixtures
 # ============================================================================

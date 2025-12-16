@@ -19,12 +19,12 @@ from __future__ import annotations
 import logging
 import time
 import uuid
-from pathlib import Path
 from typing import Any, Literal
 
 from pydantic import BaseModel, Field
+from pydantic_ai import Agent
 
-from src.agents.base_agent import AgentConfig, BaseDocumentAgent
+from src.agents.factory import create_agent, extract_usage, load_prompts
 from src.agents.model_tiers import ModelTier
 from src.config import settings
 from src.services.debug_logging_service import debug_logger
@@ -35,6 +35,15 @@ from src.shared.models.remediation import DocumentManifest
 from src.utils.diff_utils import validate_search_replace
 
 logger = logging.getLogger(__name__)
+
+# Module-level state for lazy initialization
+
+_agent: Agent[None, Any] | None = None
+_prompts: dict[str, Any] | None = None
+_MODEL_TIER = ModelTier.REASONING
+
+# Maximum markdown length to include in prompt (to manage tokens)
+MAX_MARKDOWN_LENGTH = 8000
 
 
 class ProposalDraft(BaseModel):
@@ -167,57 +176,299 @@ class ConsolidationOutput(BaseModel):
     )
 
 
-class ConsolidationAgent(BaseDocumentAgent[ConsolidationOutput]):
-    """Agent that consolidates observations into proposals.
+def get_agent() -> Agent[None, ConsolidationOutput]:
+    """Get or create the consolidation agent (lazy initialization)."""
+    global _agent, _prompts
 
-    This agent:
-    1. Groups related observations by location and type
-    2. Generates minimal search-replace diffs
-    3. Writes justifications for human reviewers
-    4. Identifies conflicts and manual items
+    if _agent is None:
+        _prompts = load_prompts("consolidation.yaml")
+        _agent = create_agent(
+            "consolidation.yaml",
+            ConsolidationOutput,
+            model_tier=_MODEL_TIER,
+            use_deps=False,
+            max_retries=2,
+        )
+        logger.info(f"ConsolidationAgent initialized with model tier {_MODEL_TIER.value}")
 
-    Uses Sonnet 4.5 (REASONING tier) for complex reasoning about
-    groupings and edit generation.
+    return _agent
 
-    Example:
-        >>> agent = ConsolidationAgent()
-        >>> proposals, manual_ids = await agent.consolidate(
-        ...     observations=observations,
-        ...     markdown=markdown,
-        ...     job_id="job-123",
-        ... )
+
+def reset_agent() -> None:
+    """Reset the agent singleton for testing."""
+    global _agent, _prompts
+    _agent = None
+    _prompts = None
+
+
+async def consolidate(
+    observations: list[Observation],
+    markdown: str,
+    job_id: str,
+    manifest: DocumentManifest | None = None,
+) -> tuple[list[Proposal], list[str], LLMUsage]:
+    """Consolidate observations into proposals.
+
+    Args:
+        observations: List of observations from all agents
+        markdown: Current markdown content
+        job_id: Job identifier
+        manifest: Optional document manifest for context (title, type, pages)
+
+    Returns:
+        Tuple of (proposals, manual_observation_ids, llm_usage)
+    """
+    # Filter to open observations only
+    open_observations = [o for o in observations if o.status == "open"]
+
+    if not open_observations:
+        logger.info(f"Job {job_id}: No open observations to consolidate")
+        return [], [], LLMUsage(
+            input_tokens=0, output_tokens=0, total_tokens=0, estimated_cost_cents=0.0
+        )
+
+    logger.info(
+        f"Job {job_id}: Consolidating {len(open_observations)} open observations"
+    )
+
+    # Get prompts and agent
+    global _prompts
+    if _prompts is None:
+        _prompts = load_prompts("consolidation.yaml")
+
+    agent = get_agent()
+
+    # Build user message using YAML template
+    obs_summary = _format_observations(open_observations)
+    markdown_excerpt = _truncate_markdown(markdown)
+
+    # Use YAML user_prompt template with placeholders
+    user_prompt_template = _prompts.get("user_prompt", "")
+    if user_prompt_template:
+        user_message = user_prompt_template.format(
+            observation_count=len(open_observations),
+            document_title=manifest.document_title if manifest else "Unknown",
+            document_type=manifest.document_type if manifest else "unknown",
+            total_pages=manifest.total_pages if manifest else 0,
+            observations_summary=obs_summary,
+            markdown_length=len(markdown),
+            markdown_content=markdown_excerpt,
+        )
+    else:
+        # Fallback if user_prompt not in YAML (backwards compatibility)
+        user_message = (
+            f"Consolidate these {len(open_observations)} observations into proposals:\n\n"
+            f"{obs_summary}\n\n"
+            f"Current markdown ({len(markdown)} chars):\n```markdown\n{markdown_excerpt}\n```\n\n"
+            f"Generate proposals with exact search-replace diffs."
+        )
+
+    # Execute agent
+    result = await agent.run(
+        user_message,
+        model_settings={
+            "max_tokens": 16000,
+            "temperature": 0.3,
+        },
+    )
+
+    output = result.data  # type: ignore[attr-defined]
+
+    # Extract usage with model tier
+    llm_usage = extract_usage(result, _MODEL_TIER)
+
+    logger.debug(
+        f"Job {job_id}: Consolidation agent returned {len(output.proposals)} drafts, "
+        f"{len(output.manual_observations)} manual, {len(output.conflicts)} conflicts"
+    )
+
+    # Convert drafts to validated Proposal objects
+    proposals = _validate_and_convert_proposals(
+        drafts=output.proposals,
+        markdown=markdown,
+        job_id=job_id,
+    )
+
+    # Collect manual observation IDs
+    manual_ids = list(output.manual_observations)
+
+    logger.info(
+        f"Job {job_id}: Consolidation complete - "
+        f"{len(proposals)} valid proposals, {len(manual_ids)} manual, "
+        f"cost: ${llm_usage.estimated_cost_cents/100:.4f}"
+    )
+
+    return proposals, manual_ids, llm_usage
+
+
+def _format_observations(observations: list[Observation]) -> str:
+    """Format observations for the consolidation prompt.
+
+    Groups observations by page using XML structure for clearer context.
+    Format matches the examples in consolidation.yaml.
+    """
+    lines: list[str] = []
+
+    # Group by page for organization
+    obs_by_page: dict[int, list[Observation]] = {}
+    for obs in observations:
+        page = obs.location.page_num
+        if page not in obs_by_page:
+            obs_by_page[page] = []
+        obs_by_page[page].append(obs)
+
+    for page_num in sorted(obs_by_page.keys()):
+        page_obs = obs_by_page[page_num]
+        lines.append(f"<page number=\"{page_num}\" observation_count=\"{len(page_obs)}\">")
+
+        for obs in page_obs:
+            # Format matches the examples in consolidation.yaml
+            lines.append(f"""
+OBSERVATION {obs.id}:
+  Agent: {obs.agent}
+  Location: {obs.location.value}
+  Visual: {obs.visual_description}
+  Markup: {obs.markup_description}
+  Severity: {obs.severity}
+  Confidence: {obs.confidence}
+  Route: {obs.route}""")
+            if obs.manual_reason:
+                lines.append(f"  Manual Reason: {obs.manual_reason}")
+
+        lines.append("</page>")
+        lines.append("")
+
+    return "\n".join(lines)
+
+
+def _truncate_markdown(markdown: str) -> str:
+    """Truncate markdown if too long for prompt."""
+    if len(markdown) <= MAX_MARKDOWN_LENGTH:
+        return markdown
+
+    # Truncate with indicator
+    return markdown[:MAX_MARKDOWN_LENGTH] + "\n\n[... TRUNCATED ...]"
+
+
+def _validate_and_convert_proposals(
+    drafts: list[ProposalDraft],
+    markdown: str,
+    job_id: str,
+) -> list[Proposal]:
+    """Validate draft proposals and convert to full Proposal objects.
+
+    Filters out drafts with invalid search text (not found or not unique).
+    Uses the route from the draft (agent-determined) with confidence override.
+    """
+    proposals: list[Proposal] = []
+
+    for draft in drafts:
+        # Validate search text exists and is unique
+        valid, error = validate_search_replace(
+            markdown, draft.search_text, draft.replace_text
+        )
+
+        if not valid:
+            logger.warning(
+                f"Job {job_id}: Skipping invalid proposal - {error} "
+                f"(search: {draft.search_text[:50]}...)"
+            )
+            continue
+
+        # Use route from draft, but override to manual if confidence is below threshold
+        # This ensures the LLM's routing decision is respected, but we enforce minimums
+        route: Literal["auto", "manual"] = draft.route
+        if draft.confidence < settings.min_confidence_for_auto_approval and route == "auto":
+            logger.info(
+                f"Job {job_id}: Overriding route to manual (confidence {draft.confidence} "
+                f"< threshold {settings.min_confidence_for_auto_approval})"
+            )
+            route = "manual"
+
+        # Build enhanced justification including grouping rationale and route reasoning
+        full_justification = draft.justification
+        if draft.grouping_rationale and draft.grouping_rationale != "Single observation, no grouping needed.":
+            full_justification = f"{draft.justification}\n\nGrouping: {draft.grouping_rationale}"
+
+        proposal = Proposal(
+            id=str(uuid.uuid4()),
+            job_id=job_id,
+            resolves=draft.observation_ids,
+            diff=SearchReplaceDiff(
+                search=draft.search_text,
+                replace=draft.replace_text,
+            ),
+            justification=full_justification,
+            page_nums=draft.page_nums,
+            estimated_impact=draft.estimated_impact,
+            route=route,
+            status="pending",
+        )
+        proposals.append(proposal)
+
+    return proposals
+
+
+# Wrapper class for backward compatibility
+class ConsolidationAgent:
+    """Wrapper class for backward compatibility.
+
+    This thin wrapper allows the module to be used with existing code
+    that expects a class with a consolidate() method.
     """
 
-    # Maximum markdown length to include in prompt (to manage tokens)
-    MAX_MARKDOWN_LENGTH = 8000
+    # Expose constants for tests
+    MAX_MARKDOWN_LENGTH = MAX_MARKDOWN_LENGTH
 
-    def __init__(self, prompts_file: Path | None = None) -> None:
-        """Initialize ConsolidationAgent.
+    @property
+    def model_tier(self) -> ModelTier:
+        """Return the model tier for backward compatibility."""
+        return _MODEL_TIER
 
-        Args:
-            prompts_file: Optional path to YAML prompts file (uses default if not provided)
-        """
-        config = AgentConfig(
-            name="consolidation_agent",
-            prompts_file=prompts_file or Path("consolidation.yaml"),
-            output_type=ConsolidationOutput,
-            model_tier=ModelTier.REASONING,
-            max_retries=2,
-            temperature=0.3,
-            max_tokens=16000,
-        )
-        super().__init__(config)
-        logger.info(
-            f"ConsolidationAgent initialized with model tier {self.model_tier.value} "
-            f"({self.model_id})"
-        )
+    @property
+    def model_id(self) -> str:
+        """Return the model ID for backward compatibility."""
+        from src.agents.model_tiers import MODEL_TIER_MAP
+        return MODEL_TIER_MAP[_MODEL_TIER]
 
-    async def process(self, input_data: Any) -> ConsolidationOutput:
-        """Process method required by BaseDocumentAgent.
+    @property
+    def prompts(self) -> dict[str, Any]:
+        """Return prompts for backward compatibility."""
+        global _prompts
+        if _prompts is None:
+            _prompts = load_prompts("consolidation.yaml")
+        return _prompts
 
-        For ConsolidationAgent, use consolidate() method instead.
-        """
-        raise NotImplementedError("ConsolidationAgent uses consolidate() method, not process()")
+    @property
+    def _core(self) -> Any:
+        """Mock _core property for test compatibility."""
+        # Create a mock object with _agent attribute
+        class MockCore:
+            def __init__(self) -> None:
+                self._agent = None
+
+        return MockCore()
+
+    def _get_agent(self) -> Agent[None, ConsolidationOutput]:
+        """Get the agent instance (delegates to module function)."""
+        return get_agent()
+
+    def _format_observations(self, observations: list[Observation]) -> str:
+        """Format observations (delegates to module function)."""
+        return _format_observations(observations)
+
+    def _truncate_markdown(self, markdown: str) -> str:
+        """Truncate markdown (delegates to module function)."""
+        return _truncate_markdown(markdown)
+
+    def _validate_and_convert_proposals(
+        self,
+        drafts: list[ProposalDraft],
+        markdown: str,
+        job_id: str,
+    ) -> list[Proposal]:
+        """Validate and convert proposals (delegates to module function)."""
+        return _validate_and_convert_proposals(drafts, markdown, job_id)
 
     async def consolidate(
         self,
@@ -226,16 +477,10 @@ class ConsolidationAgent(BaseDocumentAgent[ConsolidationOutput]):
         job_id: str,
         manifest: DocumentManifest | None = None,
     ) -> tuple[list[Proposal], list[str], LLMUsage]:
-        """Consolidate observations into proposals.
+        """Consolidate observations into proposals (wrapper delegates to module function).
 
-        Args:
-            observations: List of observations from all agents
-            markdown: Current markdown content
-            job_id: Job identifier
-            manifest: Optional document manifest for context (title, type, pages)
-
-        Returns:
-            Tuple of (proposals, manual_observation_ids, llm_usage)
+        This method uses self._get_agent() to allow test mocking while delegating
+        the actual work to the module-level consolidate function.
         """
         # Filter to open observations only
         open_observations = [o for o in observations if o.status == "open"]
@@ -250,12 +495,19 @@ class ConsolidationAgent(BaseDocumentAgent[ConsolidationOutput]):
             f"Job {job_id}: Consolidating {len(open_observations)} open observations"
         )
 
+        # Get prompts and agent (using self._get_agent for test mocking)
+        global _prompts
+        if _prompts is None:
+            _prompts = load_prompts("consolidation.yaml")
+
+        agent = self._get_agent()
+
         # Build user message using YAML template
-        obs_summary = self._format_observations(open_observations)
-        markdown_excerpt = self._truncate_markdown(markdown)
+        obs_summary = _format_observations(open_observations)
+        markdown_excerpt = _truncate_markdown(markdown)
 
         # Use YAML user_prompt template with placeholders
-        user_prompt_template = self.prompts.get("user_prompt", "")
+        user_prompt_template = _prompts.get("user_prompt", "")
         if user_prompt_template:
             user_message = user_prompt_template.format(
                 observation_count=len(open_observations),
@@ -275,36 +527,36 @@ class ConsolidationAgent(BaseDocumentAgent[ConsolidationOutput]):
                 f"Generate proposals with exact search-replace diffs."
             )
 
-        # Execute agent (using inherited _get_agent)
-        agent = self._get_agent()
-
         # Debug log: prompt being sent
+        from src.agents.model_tiers import MODEL_TIER_MAP
         debug_logger.log_prompt(
             job_id=job_id,
             agent_name="consolidation_agent",
-            system_prompt=self.prompts.get("system_prompt", CONSOLIDATION_SYSTEM_PROMPT),
+            system_prompt=_prompts.get("system_prompt") if _prompts else None,
             user_message=user_message,
             image_info=None,
-            model_id=self.model_id,
-            model_tier=self.model_tier.value,
+            model_id=MODEL_TIER_MAP[_MODEL_TIER],
+            model_tier=_MODEL_TIER.value,
             temperature=0.3,
-            max_tokens=settings.claude_max_tokens,
+            max_tokens=16000,
         )
 
+        # Execute agent
         start_time = time.time()
         result = await agent.run(
             user_message,
             model_settings={
-                "max_tokens": self.config.max_tokens,
-                "temperature": self.config.temperature,
+                "max_tokens": 16000,
+                "temperature": 0.3,
             },
         )
         duration_ms = (time.time() - start_time) * 1000
 
-        output = result.output
+        # Support both .output (old) and .data (new) for backward compatibility
+        output = getattr(result, "output", None) or result.data  # type: ignore[attr-defined]
 
-        # Use inherited usage tracking
-        llm_usage = self._core.create_llm_usage(result)
+        # Extract usage with model tier
+        llm_usage = extract_usage(result, _MODEL_TIER)
 
         # Debug log: response received
         debug_logger.log_response(
@@ -312,12 +564,12 @@ class ConsolidationAgent(BaseDocumentAgent[ConsolidationOutput]):
             agent_name="consolidation_agent",
             response_text=None,  # Structured output
             parsed_output=output,
-            input_tokens=input_tokens,
-            output_tokens=output_tokens,
-            total_tokens=total_tokens,
-            estimated_cost_cents=cost_cents,
+            input_tokens=llm_usage.input_tokens,
+            output_tokens=llm_usage.output_tokens,
+            total_tokens=llm_usage.total_tokens,
+            estimated_cost_cents=llm_usage.estimated_cost_cents,
             duration_ms=duration_ms,
-            model_id=self.model_id,
+            model_id=MODEL_TIER_MAP[_MODEL_TIER],
         )
 
         logger.debug(
@@ -326,7 +578,7 @@ class ConsolidationAgent(BaseDocumentAgent[ConsolidationOutput]):
         )
 
         # Convert drafts to validated Proposal objects
-        proposals = self._validate_and_convert_proposals(
+        proposals = _validate_and_convert_proposals(
             drafts=output.proposals,
             markdown=markdown,
             job_id=job_id,
@@ -343,116 +595,13 @@ class ConsolidationAgent(BaseDocumentAgent[ConsolidationOutput]):
 
         return proposals, manual_ids, llm_usage
 
-    def _format_observations(self, observations: list[Observation]) -> str:
-        """Format observations for the consolidation prompt.
-
-        Groups observations by page using XML structure for clearer context.
-        Format matches the examples in consolidation.yaml.
-        """
-        lines: list[str] = []
-
-        # Group by page for organization
-        obs_by_page: dict[int, list[Observation]] = {}
-        for obs in observations:
-            page = obs.location.page_num
-            if page not in obs_by_page:
-                obs_by_page[page] = []
-            obs_by_page[page].append(obs)
-
-        for page_num in sorted(obs_by_page.keys()):
-            page_obs = obs_by_page[page_num]
-            lines.append(f"<page number=\"{page_num}\" observation_count=\"{len(page_obs)}\">")
-
-            for obs in page_obs:
-                # Format matches the examples in consolidation.yaml
-                lines.append(f"""
-OBSERVATION {obs.id}:
-  Agent: {obs.agent}
-  Location: {obs.location.value}
-  Visual: {obs.visual_description}
-  Markup: {obs.markup_description}
-  Severity: {obs.severity}
-  Confidence: {obs.confidence}
-  Route: {obs.route}""")
-                if obs.manual_reason:
-                    lines.append(f"  Manual Reason: {obs.manual_reason}")
-
-            lines.append("</page>")
-            lines.append("")
-
-        return "\n".join(lines)
-
-    def _truncate_markdown(self, markdown: str) -> str:
-        """Truncate markdown if too long for prompt."""
-        if len(markdown) <= self.MAX_MARKDOWN_LENGTH:
-            return markdown
-
-        # Truncate with indicator
-        return markdown[: self.MAX_MARKDOWN_LENGTH] + "\n\n[... TRUNCATED ...]"
-
-    def _validate_and_convert_proposals(
-        self,
-        drafts: list[ProposalDraft],
-        markdown: str,
-        job_id: str,
-    ) -> list[Proposal]:
-        """Validate draft proposals and convert to full Proposal objects.
-
-        Filters out drafts with invalid search text (not found or not unique).
-        Uses the route from the draft (agent-determined) with confidence override.
-        """
-        proposals: list[Proposal] = []
-
-        for draft in drafts:
-            # Validate search text exists and is unique
-            valid, error = validate_search_replace(
-                markdown, draft.search_text, draft.replace_text
-            )
-
-            if not valid:
-                logger.warning(
-                    f"Job {job_id}: Skipping invalid proposal - {error} "
-                    f"(search: {draft.search_text[:50]}...)"
-                )
-                continue
-
-            # Use route from draft, but override to manual if confidence is below threshold
-            # This ensures the LLM's routing decision is respected, but we enforce minimums
-            route: Literal["auto", "manual"] = draft.route
-            if draft.confidence < settings.min_confidence_for_auto_approval and route == "auto":
-                logger.info(
-                    f"Job {job_id}: Overriding route to manual (confidence {draft.confidence} "
-                    f"< threshold {settings.min_confidence_for_auto_approval})"
-                )
-                route = "manual"
-
-            # Build enhanced justification including grouping rationale and route reasoning
-            full_justification = draft.justification
-            if draft.grouping_rationale and draft.grouping_rationale != "Single observation, no grouping needed.":
-                full_justification = f"{draft.justification}\n\nGrouping: {draft.grouping_rationale}"
-
-            proposal = Proposal(
-                id=str(uuid.uuid4()),
-                job_id=job_id,
-                resolves=draft.observation_ids,
-                diff=SearchReplaceDiff(
-                    search=draft.search_text,
-                    replace=draft.replace_text,
-                ),
-                justification=full_justification,
-                page_nums=draft.page_nums,
-                estimated_impact=draft.estimated_impact,
-                route=route,
-                status="pending",
-            )
-            proposals.append(proposal)
-
-        return proposals
-
 
 __all__ = [
     "ConsolidationAgent",
     "ConsolidationOutput",
     "ConflictRecord",
     "ProposalDraft",
+    "consolidate",
+    "get_agent",
+    "reset_agent",
 ]

@@ -362,7 +362,8 @@ class TestAnalysisOutput:
 class TestAnalysisAgentConfig:
     """Tests for AnalysisAgent configuration."""
 
-    def test_default_config(self) -> None:
+    @patch("src.agents.analysis_agent.get_agent")
+    def test_default_config(self, mock_get_agent: MagicMock) -> None:
         """Test default configuration values."""
         agent = AnalysisAgent()
         assert agent.config.prompts_file == Path("analysis.yaml")
@@ -370,9 +371,10 @@ class TestAnalysisAgentConfig:
         assert agent.config.temperature == 0.3
         assert agent.config.max_tokens == 4096
 
+    @patch("src.agents.analysis_agent.get_agent")
     @patch("src.agents.core.yaml.safe_load")
     @patch("builtins.open", create=True)
-    def test_custom_config(self, mock_open: MagicMock, mock_yaml: MagicMock) -> None:
+    def test_custom_config(self, mock_open: MagicMock, mock_yaml: MagicMock, mock_get_agent: MagicMock) -> None:
         """Test custom configuration values."""
         mock_yaml.return_value = {
             "system_prompt": "test prompt",
@@ -395,14 +397,21 @@ class TestAnalysisAgentConfig:
 class TestAnalysisAgentInitialization:
     """Tests for AnalysisAgent initialization."""
 
+    @patch("src.agents.analysis_agent.get_agent")
     @patch("src.agents.core.yaml.safe_load")
     @patch("builtins.open", create=True)
-    def test_agent_initialization(self, mock_open: MagicMock, mock_yaml: MagicMock) -> None:
+    def test_agent_initialization(self, mock_open: MagicMock, mock_yaml: MagicMock, mock_get_agent: MagicMock) -> None:
         """Test agent initializes correctly."""
         mock_yaml.return_value = {
             "system_prompt": "Test system prompt",
             "user_prompt": "Test user prompt"
         }
+
+        # Mock the agent to avoid AWS Bedrock connection
+        mock_bedrock_agent = MagicMock()
+        mock_bedrock_agent.model.model_id = "us.anthropic.claude-sonnet-4-20250514-v1:0"
+        mock_get_agent.return_value = mock_bedrock_agent
+
         agent = AnalysisAgent()
 
         assert agent.model_tier == ModelTier.REASONING
@@ -430,7 +439,8 @@ class TestAnalysisAgentInitialization:
 class TestAnalysisAgentHelperMethods:
     """Tests for AnalysisAgent helper methods."""
 
-    def test_determine_skip_agents_all_required(self) -> None:
+    @patch("src.agents.analysis_agent.get_agent")
+    def test_determine_skip_agents_all_required(self, mock_get_agent: MagicMock) -> None:
         """Test skip agents when all are required."""
         agent = AnalysisAgent()
 
@@ -439,7 +449,8 @@ class TestAnalysisAgentHelperMethods:
 
         assert skip == []
 
-    def test_determine_skip_agents_some_required(self) -> None:
+    @patch("src.agents.analysis_agent.get_agent")
+    def test_determine_skip_agents_some_required(self, mock_get_agent: MagicMock) -> None:
         """Test skip agents when some are required."""
         agent = AnalysisAgent()
 
@@ -448,7 +459,8 @@ class TestAnalysisAgentHelperMethods:
 
         assert set(skip) == {"structure", "typography"}
 
-    def test_determine_skip_agents_none_required(self) -> None:
+    @patch("src.agents.analysis_agent.get_agent")
+    def test_determine_skip_agents_none_required(self, mock_get_agent: MagicMock) -> None:
         """Test skip agents when none are required."""
         agent = AnalysisAgent()
 
@@ -457,7 +469,8 @@ class TestAnalysisAgentHelperMethods:
 
         assert set(skip) == {"figures", "tables", "structure", "typography"}
 
-    def test_build_image_messages(self) -> None:
+    @patch("src.agents.analysis_agent.get_agent")
+    def test_build_image_messages(self, mock_get_agent: MagicMock) -> None:
         """Test building image messages from pages."""
         agent = AnalysisAgent()
 
@@ -479,8 +492,14 @@ class TestAnalysisAgentHelperMethods:
 class TestAnalysisAgentManifestCreation:
     """Tests for manifest creation from analysis output."""
 
-    def test_create_manifest_basic(self) -> None:
+    @patch("src.agents.analysis_agent.get_agent")
+    def test_create_manifest_basic(self, mock_get_agent: MagicMock) -> None:
         """Test basic manifest creation with Reasoned[T] extraction."""
+        # Mock the agent to avoid AWS Bedrock connection
+        mock_bedrock_agent = MagicMock()
+        mock_bedrock_agent.model.model_id = "us.anthropic.claude-sonnet-4-20250514-v1:0"
+        mock_get_agent.return_value = mock_bedrock_agent
+
         agent = AnalysisAgent()
 
         output = make_analysis_output(
@@ -513,8 +532,14 @@ class TestAnalysisAgentManifestCreation:
         assert manifest.analysis_notes == "Test notes"
         assert "sonnet" in manifest.analysis_model.lower()
 
-    def test_create_manifest_fills_missing_pages(self) -> None:
+    @patch("src.agents.analysis_agent.get_agent")
+    def test_create_manifest_fills_missing_pages(self, mock_get_agent: MagicMock) -> None:
         """Test manifest creation fills missing page features."""
+        # Mock the agent to avoid AWS Bedrock connection
+        mock_bedrock_agent = MagicMock()
+        mock_bedrock_agent.model.model_id = "us.anthropic.claude-sonnet-4-20250514-v1:0"
+        mock_get_agent.return_value = mock_bedrock_agent
+
         agent = AnalysisAgent()
 
         # Only provide features for page 2
@@ -544,7 +569,8 @@ class TestAnalysisAgentManifestCreation:
 class TestAnalysisAgentObservationConversion:
     """Tests for observation conversion."""
 
-    def test_convert_observations_basic(self) -> None:
+    @patch("src.agents.analysis_agent.get_agent")
+    def test_convert_observations_basic(self, mock_get_agent: MagicMock) -> None:
         """Test basic observation conversion."""
         agent = AnalysisAgent()
 
@@ -572,7 +598,8 @@ class TestAnalysisAgentObservationConversion:
         assert obs.location.page_num == 3
         assert obs.route == "auto"  # confidence 0.99 exceeds any threshold
 
-    def test_convert_observations_low_confidence_routes_manual(self) -> None:
+    @patch("src.agents.analysis_agent.get_agent")
+    def test_convert_observations_low_confidence_routes_manual(self, mock_get_agent: MagicMock) -> None:
         """Test low confidence observations route to manual."""
         agent = AnalysisAgent()
 
@@ -590,7 +617,8 @@ class TestAnalysisAgentObservationConversion:
         assert len(observations) == 1
         assert observations[0].route == "manual"
 
-    def test_convert_observations_empty_list(self) -> None:
+    @patch("src.agents.analysis_agent.get_agent")
+    def test_convert_observations_empty_list(self, mock_get_agent: MagicMock) -> None:
         """Test converting empty observation list."""
         agent = AnalysisAgent()
 
@@ -604,20 +632,28 @@ class TestAnalysisAgentAnalyze:
     """Tests for the analyze method."""
 
     @pytest.mark.asyncio
-    async def test_analyze_raises_on_empty_pages(self) -> None:
+    @patch("src.agents.analysis_agent.get_agent")
+    async def test_analyze_raises_on_empty_pages(self, mock_get_agent: MagicMock) -> None:
         """Test analyze raises ValueError on empty pages."""
+        # Mock the agent to avoid AWS Bedrock connection
+        mock_bedrock_agent = MagicMock()
+        mock_bedrock_agent.model.model_id = "us.anthropic.claude-sonnet-4-20250514-v1:0"
+        mock_get_agent.return_value = mock_bedrock_agent
+
         agent = AnalysisAgent()
 
         with pytest.raises(ValueError, match="No pages provided"):
             await agent.analyze([], "job-123")
 
     @pytest.mark.asyncio
-    async def test_analyze_returns_correct_types(self) -> None:
+    @patch("src.agents.analysis_agent._log_reasoning_corpus")
+    @patch("src.agents.analysis_agent.get_agent")
+    async def test_analyze_returns_correct_types(self, mock_get_agent: MagicMock, mock_log_corpus: MagicMock) -> None:
         """Test analyze returns correct types with Reasoned[T] extraction."""
         # Create mock agent with run method
         mock_pydantic_agent = MagicMock()
         mock_result = MagicMock()
-        mock_result.output = make_analysis_output(
+        mock_result.data = make_analysis_output(
             document_title="Test",
             page_features=[make_page_features(page_num=1)],
             required_agents=["figures"],
@@ -634,10 +670,13 @@ class TestAnalysisAgentAnalyze:
             response_tokens=500
         )
         mock_pydantic_agent.run = AsyncMock(return_value=mock_result)
+        mock_pydantic_agent.model.model_id = "us.anthropic.claude-sonnet-4-20250514-v1:0"
 
-        # Create agent and replace _get_agent
+        # Mock get_agent to return our mock
+        mock_get_agent.return_value = mock_pydantic_agent
+
+        # Create agent
         agent = AnalysisAgent()
-        agent._get_agent = MagicMock(return_value=mock_pydantic_agent)  # type: ignore[method-assign]
 
         pages = [PageData(page_num=1, image_base64="dGVzdA==")]
         manifest, observations, usage = await agent.analyze(pages, "job-123")

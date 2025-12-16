@@ -7,7 +7,7 @@ import pytest
 from pydantic import BaseModel, Field
 from src.agents.base_agent import AgentConfig, BaseDocumentAgent
 from src.shared.llm_cost import DEFAULT_PRICING
-from src.shared.models.agent_models import AgentInput, LLMUsage
+from src.shared.models.agent_models import LLMUsage
 
 
 # Test output model for concrete agent implementation
@@ -27,10 +27,6 @@ class ConcreteTestAgent(BaseDocumentAgent[_TestOutput]):
             "system_prompt": "You are a test agent.",
             "user_prompt_template": "Process this: {content}"
         }
-
-    async def process(self, input_data: AgentInput) -> _TestOutput:
-        """Simple implementation that returns mock output."""
-        return _TestOutput(message="Test result", confidence=0.9)
 
 
 @pytest.mark.unit
@@ -383,39 +379,3 @@ class TestRunAgent:
         call_args = mock_agent.run.call_args
         messages = call_args[0][0]
         assert len(messages) == 2  # Text message + BinaryContent
-
-
-@pytest.mark.unit
-class TestAbstractMethods:
-    """Test that abstract methods must be implemented."""
-
-    def test_cannot_instantiate_base_class(self):
-        """Test that BaseDocumentAgent cannot be instantiated directly."""
-        with pytest.raises(TypeError) as exc_info:
-            config = AgentConfig(
-                name="test",
-                prompts_file=Path("test.yaml"),
-                output_type=_TestOutput,
-                correction_types=[]
-            )
-            BaseDocumentAgent(config)
-
-        assert "abstract" in str(exc_info.value).lower()
-
-    def test_subclass_must_implement_process(self):
-        """Test that subclass must implement process."""
-
-        class IncompleteAgent(BaseDocumentAgent[_TestOutput]):
-            def _default_prompts(self) -> dict:
-                return {"system_prompt": "test"}
-
-        with pytest.raises(TypeError) as exc_info:
-            config = AgentConfig(
-                name="incomplete",
-                prompts_file=Path("test.yaml"),
-                output_type=_TestOutput,
-                correction_types=[]
-            )
-            IncompleteAgent(config)
-
-        assert "abstract" in str(exc_info.value).lower()

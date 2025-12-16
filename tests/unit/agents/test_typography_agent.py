@@ -6,14 +6,15 @@ Tests cover:
 - Output model validation
 - Typography issue to observation conversion
 - Complexity-based page filtering
+- Module function pattern (get_agent, reset_agent, analyze)
 """
 
-from pathlib import Path
-from unittest.mock import AsyncMock, patch
+from unittest.mock import AsyncMock, MagicMock, patch
 
 import pytest
 from pydantic import ValidationError
-from src.agents.model_tiers import MODEL_TIER_MAP, ModelTier
+from src.agents import typography_agent
+from src.agents.model_tiers import ModelTier
 from src.agents.specialized_models import (
     TypographyAnalysisOutput,
     TypographyIssue,
@@ -127,28 +128,67 @@ class TestTypographyAnalysisOutput:
 
 @pytest.mark.unit
 class TestTypographyAgentInit:
-    """Tests for TypographyAgent initialization."""
+    """Tests for TypographyAgent initialization and module functions."""
 
-    def test_agent_uses_reasoning_tier(self):
-        """Test agent uses REASONING (Sonnet) model tier."""
-        agent = TypographyAgent()
-        assert agent.model_tier == ModelTier.REASONING
-        assert agent.model_id == MODEL_TIER_MAP[ModelTier.REASONING]
-        assert "sonnet" in agent.model_id.lower()
+    def teardown_method(self):
+        """Reset agent state after each test."""
+        typography_agent.reset_agent()
 
-    def test_agent_has_correct_config(self):
-        """Test agent configuration values."""
-        agent = TypographyAgent()
-        assert agent.config.name == "typography_agent"
-        assert agent.config.prompts_file == Path("typography.yaml")
-        assert "emphasis" in agent.config.correction_types
+    @patch("src.agents.typography_agent.load_prompts")
+    @patch("src.agents.typography_agent.create_agent")
+    def test_get_agent_creates_agent(self, mock_create, mock_load):
+        """Test get_agent creates and returns agent."""
+        mock_load.return_value = {"system_prompt": "test", "user_prompt_template": "test"}
+        mock_agent = MagicMock()
+        mock_create.return_value = mock_agent
 
-    def test_agent_has_prompts(self):
-        """Test agent has prompts (from file or defaults)."""
-        agent = TypographyAgent()
-        assert "system_prompt" in agent.prompts
-        # Should have typography-related content
-        assert "bold" in agent.prompts["system_prompt"].lower() or "emphasis" in agent.prompts["system_prompt"].lower()
+        agent = typography_agent.get_agent()
+
+        assert agent is mock_agent
+        mock_load.assert_called_once_with("typography.yaml")
+        mock_create.assert_called_once()
+        # Verify create_agent was called with correct parameters
+        call_args = mock_create.call_args
+        assert call_args[0][0] == "typography.yaml"
+        assert call_args[0][1] == TypographyAnalysisOutput
+        assert call_args[1]["model_tier"] == ModelTier.REASONING
+        assert call_args[1]["use_deps"] is True
+
+    @patch("src.agents.typography_agent.load_prompts")
+    @patch("src.agents.typography_agent.create_agent")
+    def test_get_agent_returns_singleton(self, mock_create, mock_load):
+        """Test get_agent returns same instance on multiple calls."""
+        mock_load.return_value = {"system_prompt": "test", "user_prompt_template": "test"}
+        mock_agent = MagicMock()
+        mock_create.return_value = mock_agent
+
+        agent1 = typography_agent.get_agent()
+        agent2 = typography_agent.get_agent()
+
+        assert agent1 is agent2
+        # Should only create once
+        assert mock_create.call_count == 1
+
+    @patch("src.agents.typography_agent.load_prompts")
+    @patch("src.agents.typography_agent.create_agent")
+    def test_reset_agent_clears_singleton(self, mock_create, mock_load):
+        """Test reset_agent clears cached agent."""
+        mock_load.return_value = {"system_prompt": "test", "user_prompt_template": "test"}
+        mock_agent = MagicMock()
+        mock_create.return_value = mock_agent
+
+        typography_agent.get_agent()
+        typography_agent.reset_agent()
+        typography_agent.get_agent()
+
+        # Should create new instance after reset
+        assert mock_create.call_count == 2
+
+    def test_wrapper_class_exists(self):
+        """Test TypographyAgent wrapper class can be instantiated."""
+        wrapper = TypographyAgent()
+        assert hasattr(wrapper, "analyze")
+        assert callable(wrapper.analyze)
 
 
 # =============================================================================
@@ -162,8 +202,6 @@ class TestIssueToObservation:
 
     def test_emphasis_issue_creates_minor_observation(self):
         """Test emphasis issues create observations with model-determined severity."""
-        agent = TypographyAgent()
-
         issues = [
             TypographyIssue(
                 issue_type=make_reasoned("emphasis_unmarked", "Bold text not marked as strong."),
@@ -176,7 +214,7 @@ class TestIssueToObservation:
             )
         ]
 
-        observations = agent._issues_to_observations(issues, page_num=1, job_id="test-job")
+        observations = typography_agent._issues_to_observations(issues, page_num=1, job_id="test-job")
 
         assert len(observations) == 1
         obs = observations[0]
@@ -186,8 +224,6 @@ class TestIssueToObservation:
 
     def test_semantic_color_creates_major_observation(self):
         """Test semantic color issues create observations with model-determined severity."""
-        agent = TypographyAgent()
-
         issues = [
             TypographyIssue(
                 issue_type=make_reasoned("semantic_color", "Red text indicates error without text alternative."),
@@ -200,15 +236,13 @@ class TestIssueToObservation:
             )
         ]
 
-        observations = agent._issues_to_observations(issues, page_num=1, job_id="test-job")
+        observations = typography_agent._issues_to_observations(issues, page_num=1, job_id="test-job")
 
         assert len(observations) == 1
         assert observations[0].severity == "major"  # From Reasoned[Severity]
 
     def test_visual_heading_creates_major_observation(self):
         """Test visual heading issues create observations with model-determined severity."""
-        agent = TypographyAgent()
-
         issues = [
             TypographyIssue(
                 issue_type=make_reasoned("visual_heading", "Large bold text functions as section header."),
@@ -221,15 +255,13 @@ class TestIssueToObservation:
             )
         ]
 
-        observations = agent._issues_to_observations(issues, page_num=1, job_id="test-job")
+        observations = typography_agent._issues_to_observations(issues, page_num=1, job_id="test-job")
 
         assert len(observations) == 1
         assert observations[0].severity == "major"  # From Reasoned[Severity]
 
     def test_definition_issue_creates_minor_observation(self):
         """Test definition issues create observations with model-determined severity."""
-        agent = TypographyAgent()
-
         issues = [
             TypographyIssue(
                 issue_type=make_reasoned("definition_unmarked", "Italic text is a term definition."),
@@ -242,15 +274,13 @@ class TestIssueToObservation:
             )
         ]
 
-        observations = agent._issues_to_observations(issues, page_num=1, job_id="test-job")
+        observations = typography_agent._issues_to_observations(issues, page_num=1, job_id="test-job")
 
         assert len(observations) == 1
         assert observations[0].severity == "minor"  # From Reasoned[Severity]
 
     def test_low_confidence_routes_to_manual(self):
         """Test low confidence issues route to manual review."""
-        agent = TypographyAgent()
-
         issues = [
             TypographyIssue(
                 issue_type=make_reasoned("emphasis_unmarked", "Unclear if this is intentional emphasis."),
@@ -267,7 +297,7 @@ class TestIssueToObservation:
             )
         ]
 
-        observations = agent._issues_to_observations(issues, page_num=1, job_id="test-job")
+        observations = typography_agent._issues_to_observations(issues, page_num=1, job_id="test-job")
 
         assert len(observations) == 1
         assert observations[0].route == "manual"
@@ -282,6 +312,10 @@ class TestIssueToObservation:
 @pytest.mark.unit
 class TestTypographyAgentAnalysis:
     """Tests for full analysis workflow."""
+
+    def teardown_method(self):
+        """Reset agent state after each test."""
+        typography_agent.reset_agent()
 
     @pytest.fixture
     def sample_manifest(self) -> DocumentManifest:
@@ -328,8 +362,10 @@ class TestTypographyAgentAnalysis:
         ]
 
     @pytest.mark.asyncio
+    @patch("src.agents.factory.load_prompts")
     async def test_analyze_processes_all_provided_pages(
         self,
+        mock_load_prompts,
         sample_manifest: DocumentManifest,
         sample_pages: list[PageData],
     ):
@@ -338,7 +374,11 @@ class TestTypographyAgentAnalysis:
         Note: Page filtering by complexity is done by AgentRouter, not the agent.
         The TypographyAgent processes ALL pages it receives.
         """
-        agent = TypographyAgent()
+        # Setup mock prompts
+        mock_load_prompts.return_value = {
+            "system_prompt": "test",
+            "user_prompt_template": "{page_num}{document_title}{complexity_score}{complexity_factors}{page_markdown}"
+        }
 
         mock_output = TypographyAnalysisOutput(
             page_num=2,
@@ -348,27 +388,42 @@ class TestTypographyAgentAnalysis:
         from src.shared.models.processing import LLMUsage
         mock_usage = LLMUsage(input_tokens=100, output_tokens=50, total_tokens=150, estimated_cost_cents=1.0)
 
-        with patch.object(agent, '_run_with_deps', new_callable=AsyncMock) as mock_run:
-            mock_run.return_value = (mock_output, mock_usage)
+        # Mock the agent's run method
+        mock_result = MagicMock()
+        mock_result.data = mock_output
+        mock_result.usage.return_value.total_tokens = mock_usage.total_tokens
 
-            await agent.analyze(
-                pages=sample_pages,
-                manifest=sample_manifest,
-                markdown="# Test",
-                job_id="test-job",
-            )
+        with patch.object(typography_agent, "get_agent") as mock_get_agent:
+            mock_agent = AsyncMock()
+            mock_agent.run = AsyncMock(return_value=mock_result)
+            mock_get_agent.return_value = mock_agent
+
+            # Mock extract_usage to return our mock usage
+            with patch("src.agents.typography_agent.extract_usage", return_value=mock_usage):
+                observations, usage = await typography_agent.analyze(
+                    pages=sample_pages,
+                    manifest=sample_manifest,
+                    markdown="# Test",
+                    job_id="test-job",
+                )
 
             # Agent processes ALL provided pages - router is responsible for filtering
-            assert mock_run.call_count == len(sample_pages)
+            assert mock_agent.run.call_count == len(sample_pages)
 
     @pytest.mark.asyncio
+    @patch("src.agents.factory.load_prompts")
     async def test_analyze_returns_observations(
         self,
+        mock_load_prompts,
         sample_manifest: DocumentManifest,
         sample_pages: list[PageData],
     ):
         """Test analysis returns observations from agent output."""
-        agent = TypographyAgent()
+        # Setup mock prompts
+        mock_load_prompts.return_value = {
+            "system_prompt": "test",
+            "user_prompt_template": "{page_num}{document_title}{complexity_score}{complexity_factors}{page_markdown}"
+        }
 
         mock_output = TypographyAnalysisOutput(
             page_num=2,
@@ -391,29 +446,44 @@ class TestTypographyAgentAnalysis:
         # Only provide pages that would be processed (complexity > 0.5)
         complex_pages = [p for p in sample_pages if p.page_num in [2, 4]]
 
-        with patch.object(agent, '_run_with_deps', new_callable=AsyncMock) as mock_run:
-            mock_run.return_value = (mock_output, mock_usage)
+        # Mock the agent's run method
+        mock_result = MagicMock()
+        mock_result.data = mock_output
+        mock_result.usage.return_value.total_tokens = mock_usage.total_tokens
 
-            observations, usage = await agent.analyze(
-                pages=complex_pages[:1],
-                manifest=sample_manifest,
-                markdown="# Test",
-                job_id="test-job",
-            )
+        with patch.object(typography_agent, "get_agent") as mock_get_agent:
+            mock_agent = AsyncMock()
+            mock_agent.run = AsyncMock(return_value=mock_result)
+            mock_get_agent.return_value = mock_agent
 
-            assert len(observations) == 1
-            assert observations[0].agent == "typography"
-            assert observations[0].job_id == "test-job"
-            assert usage is not None  # Usage should be returned
+            # Mock extract_usage to return our mock usage
+            with patch("src.agents.typography_agent.extract_usage", return_value=mock_usage):
+                observations, usage = await typography_agent.analyze(
+                    pages=complex_pages[:1],
+                    manifest=sample_manifest,
+                    markdown="# Test",
+                    job_id="test-job",
+                )
+
+        assert len(observations) == 1
+        assert observations[0].agent == "typography"
+        assert observations[0].job_id == "test-job"
+        assert usage is not None  # Usage should be returned
 
     @pytest.mark.asyncio
+    @patch("src.agents.factory.load_prompts")
     async def test_analyze_formats_complexity_factors(
         self,
+        mock_load_prompts,
         sample_manifest: DocumentManifest,
         sample_pages: list[PageData],
     ):
         """Test analysis includes complexity factors in prompt."""
-        agent = TypographyAgent()
+        # Setup mock prompts
+        mock_load_prompts.return_value = {
+            "system_prompt": "test",
+            "user_prompt_template": "{page_num}{document_title}{complexity_score}{complexity_factors}{page_markdown}"
+        }
 
         mock_output = TypographyAnalysisOutput(page_num=2, issues=[])
 
@@ -423,18 +493,72 @@ class TestTypographyAgentAnalysis:
         # Only provide page 2 which has complexity factors
         pages = [p for p in sample_pages if p.page_num == 2]
 
-        with patch.object(agent, '_run_with_deps', new_callable=AsyncMock) as mock_run:
-            mock_run.return_value = (mock_output, mock_usage)
+        # Mock the agent's run method
+        mock_result = MagicMock()
+        mock_result.data = mock_output
+        mock_result.usage.return_value.total_tokens = mock_usage.total_tokens
 
-            observations, usage = await agent.analyze(
-                pages=pages,
-                manifest=sample_manifest,
-                markdown="# Test",
-                job_id="test-job",
-            )
+        with patch.object(typography_agent, "get_agent") as mock_get_agent:
+            mock_agent = AsyncMock()
+            mock_agent.run = AsyncMock(return_value=mock_result)
+            mock_get_agent.return_value = mock_agent
 
-            # Check that the prompt included complexity factors
-            call_args = mock_run.call_args
-            user_message = call_args[0][0]
-            assert "dense text" in user_message or "multiple fonts" in user_message
-            assert usage is not None  # Usage should be returned
+            # Mock extract_usage to return our mock usage
+            with patch("src.agents.typography_agent.extract_usage", return_value=mock_usage):
+                observations, usage = await typography_agent.analyze(
+                    pages=pages,
+                    manifest=sample_manifest,
+                    markdown="# Test",
+                    job_id="test-job",
+                )
+
+        # Check that the agent.run was called (format checking happens in actual implementation)
+        assert mock_agent.run.call_count == 1
+        call_args = mock_agent.run.call_args
+        user_message = call_args[0][0]
+        # Check that complexity factors were included in the message
+        assert "dense text" in user_message or "multiple fonts" in user_message
+        assert usage is not None  # Usage should be returned
+
+    @pytest.mark.asyncio
+    @patch("src.agents.factory.load_prompts")
+    async def test_wrapper_class_delegates_to_module_function(
+        self,
+        mock_load_prompts,
+        sample_manifest: DocumentManifest,
+        sample_pages: list[PageData],
+    ):
+        """Test TypographyAgent wrapper class delegates to module analyze function."""
+        # Setup mock prompts
+        mock_load_prompts.return_value = {
+            "system_prompt": "test",
+            "user_prompt_template": "{page_num}{document_title}{complexity_score}{complexity_factors}{page_markdown}"
+        }
+
+        mock_output = TypographyAnalysisOutput(page_num=1, issues=[])
+
+        from src.shared.models.processing import LLMUsage
+        mock_usage = LLMUsage(input_tokens=100, output_tokens=50, total_tokens=150, estimated_cost_cents=1.0)
+
+        # Mock the agent's run method
+        mock_result = MagicMock()
+        mock_result.data = mock_output
+        mock_result.usage.return_value.total_tokens = mock_usage.total_tokens
+
+        with patch.object(typography_agent, "get_agent") as mock_get_agent:
+            mock_agent = AsyncMock()
+            mock_agent.run = AsyncMock(return_value=mock_result)
+            mock_get_agent.return_value = mock_agent
+
+            # Mock extract_usage to return our mock usage
+            with patch("src.agents.typography_agent.extract_usage", return_value=mock_usage):
+                wrapper = TypographyAgent()
+                observations, usage = await wrapper.analyze(
+                    pages=sample_pages[:1],
+                    manifest=sample_manifest,
+                    markdown="# Test",
+                    job_id="test-job",
+                )
+
+        # Should have called the module function
+        assert usage is not None

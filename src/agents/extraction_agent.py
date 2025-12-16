@@ -354,7 +354,7 @@ async def extract(
     # Extract usage with model tier
     usage = extract_usage(result, _MODEL_TIER)
 
-    output = result.data
+    output = result.output
 
     # Log reasoning corpus for analysis and debugging
     await _log_reasoning_corpus(output, job_id)
@@ -572,7 +572,7 @@ class ExtractionAgent:
         agent = self._get_agent()
         result = await agent.run(messages, deps=deps)
         usage = extract_usage(result, _MODEL_TIER)
-        return result.data, usage  # type: ignore[attr-defined]
+        return result.output, usage
 
     async def extract(
         self,
@@ -657,7 +657,7 @@ class ExtractionAgent:
         usage = extract_usage(result, _MODEL_TIER)
 
         # Support both .output (old) and .data (new) for backward compatibility
-        output = getattr(result, "output", None) or result.data
+        output = result.output
 
         # Log reasoning corpus for analysis and debugging
         await _log_reasoning_corpus(output, job_id)

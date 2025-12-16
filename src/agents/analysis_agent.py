@@ -27,6 +27,7 @@ from pydantic_ai.messages import BinaryContent
 
 from src.agents.factory import create_agent, extract_usage, load_prompts, run_agent
 from src.agents.model_tiers import ModelTier
+from src.config import settings
 from src.services.pdf_converter import PageData
 from src.services.reasoning_corpus_service import get_reasoning_corpus_service
 from src.shared.models.observation import Observation, ObservationLocation
@@ -342,7 +343,7 @@ async def analyze(
     usage = extract_usage(result, _MODEL_TIER)
 
     # Convert output to DocumentManifest
-    output = result.data
+    output = result.output
     manifest = _create_manifest(output, job_id, total_pages)
 
     # Convert observations to full Observation model

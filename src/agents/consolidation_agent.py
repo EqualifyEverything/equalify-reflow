@@ -274,7 +274,7 @@ async def consolidate(
         },
     )
 
-    output = result.data
+    output = result.output
 
     # Extract usage with model tier
     llm_usage = extract_usage(result, _MODEL_TIER)
@@ -543,7 +543,7 @@ class ConsolidationAgent:
         )
 
         # Support both .output (old) and .data (new) for backward compatibility
-        output = getattr(result, "output", None) or result.data  # type: ignore[attr-defined]
+        output = result.output
 
         # Extract usage with model tier
         llm_usage = extract_usage(result, _MODEL_TIER)

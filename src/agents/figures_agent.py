@@ -226,7 +226,7 @@ async def analyze(
                     deps=page_deps,
                 )
 
-            output = result.data
+            output = result.output
             usage = extract_usage(result, _MODEL_TIER)
 
             # Accumulate usage

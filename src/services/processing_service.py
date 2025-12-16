@@ -182,13 +182,15 @@ class ProcessingService:
             extraction_agent = ExtractionAgent()
 
             # Extract markdown guided by the manifest from analysis phase
-            full_markdown, extraction_confidence, extraction_usage = (
-                await extraction_agent.extract(
-                    pages=pages,
-                    manifest=manifest,
-                    job_id=job.job_id,
-                )
+            extraction_output, extraction_usage = await extraction_agent.extract(
+                pages=pages,
+                manifest=manifest,
+                job_id=job.job_id,
             )
+
+            # Extract values from Reasoned[T] fields
+            full_markdown = extraction_output.markdown
+            extraction_confidence = extraction_output.confidence.value
 
             # Save v0 markdown (original extraction, never modified)
             await self.storage.upload_result(
@@ -202,6 +204,8 @@ class ProcessingService:
                 f"Job {job.job_id}: Extraction complete - "
                 f"{len(full_markdown)} chars, "
                 f"confidence: {extraction_confidence:.2f}, "
+                f"reading_order_followed: {extraction_output.reading_order_followed.value}, "
+                f"pages: {extraction_output.pages_transcribed}, "
                 f"extraction cost: ${extraction_usage.estimated_cost_cents/100:.4f}"
             )
 

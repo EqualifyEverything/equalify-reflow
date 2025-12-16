@@ -5,6 +5,7 @@ This service provides centralized debug logging capabilities including:
 - LLM prompt and response logging
 - Processing phase transitions
 - System event logging
+- Latency tracking and analysis
 
 All debug logs are structured with correlation IDs (job_id) for traceability.
 Enable debug mode by setting DEBUG_MODE=true in environment.
@@ -13,6 +14,8 @@ Enable debug mode by setting DEBUG_MODE=true in environment.
 import json
 import logging
 import threading
+import time
+from dataclasses import dataclass, field
 from datetime import UTC, datetime
 from enum import Enum
 from pathlib import Path
@@ -21,6 +24,312 @@ from typing import Any
 from ..config import settings
 
 logger = logging.getLogger(__name__)
+
+
+# =============================================================================
+# Latency Tracking
+# =============================================================================
+
+
+@dataclass
+class LLMLatencyMetrics:
+    """Latency metrics for a single LLM call.
+
+    Captures timing and throughput for understanding LLM performance.
+    """
+
+    agent_name: str
+    duration_ms: float
+    input_tokens: int
+    output_tokens: int
+
+    @property
+    def total_tokens(self) -> int:
+        return self.input_tokens + self.output_tokens
+
+    @property
+    def output_tokens_per_second(self) -> float:
+        """Model generation speed - key throughput metric."""
+        if self.duration_ms <= 0:
+            return 0.0
+        return (self.output_tokens / self.duration_ms) * 1000
+
+    @property
+    def total_tokens_per_second(self) -> float:
+        """Total throughput including input processing."""
+        if self.duration_ms <= 0:
+            return 0.0
+        return (self.total_tokens / self.duration_ms) * 1000
+
+    def to_dict(self) -> dict[str, Any]:
+        return {
+            "agent_name": self.agent_name,
+            "duration_ms": round(self.duration_ms, 2),
+            "input_tokens": self.input_tokens,
+            "output_tokens": self.output_tokens,
+            "total_tokens": self.total_tokens,
+            "output_tokens_per_second": round(self.output_tokens_per_second, 1),
+            "total_tokens_per_second": round(self.total_tokens_per_second, 1),
+        }
+
+
+@dataclass
+class PhaseLatencyMetrics:
+    """Latency metrics for a processing phase."""
+
+    phase_name: str
+    phase_number: int
+    duration_ms: float
+    llm_calls: list[LLMLatencyMetrics] = field(default_factory=list)
+
+    @property
+    def llm_time_ms(self) -> float:
+        """Total time spent in LLM calls."""
+        return sum(call.duration_ms for call in self.llm_calls)
+
+    @property
+    def overhead_ms(self) -> float:
+        """Time spent outside LLM calls (data prep, parsing, etc)."""
+        return max(0, self.duration_ms - self.llm_time_ms)
+
+    @property
+    def llm_efficiency(self) -> float:
+        """Percentage of phase time spent in LLM calls."""
+        if self.duration_ms <= 0:
+            return 0.0
+        return (self.llm_time_ms / self.duration_ms) * 100
+
+    @property
+    def total_input_tokens(self) -> int:
+        return sum(call.input_tokens for call in self.llm_calls)
+
+    @property
+    def total_output_tokens(self) -> int:
+        return sum(call.output_tokens for call in self.llm_calls)
+
+    def to_dict(self) -> dict[str, Any]:
+        return {
+            "phase_name": self.phase_name,
+            "phase_number": self.phase_number,
+            "duration_ms": round(self.duration_ms, 2),
+            "llm_time_ms": round(self.llm_time_ms, 2),
+            "overhead_ms": round(self.overhead_ms, 2),
+            "llm_efficiency_pct": round(self.llm_efficiency, 1),
+            "llm_call_count": len(self.llm_calls),
+            "total_input_tokens": self.total_input_tokens,
+            "total_output_tokens": self.total_output_tokens,
+        }
+
+
+@dataclass
+class JobLatencyTracker:
+    """Tracks latency metrics across an entire job's lifecycle.
+
+    Use this to understand where time is spent in document processing.
+
+    Example:
+        tracker = JobLatencyTracker(job_id="abc123")
+        tracker.start_phase("analysis", 1)
+        tracker.record_llm_call("analysis_agent", 1500.0, 1000, 500)
+        tracker.end_phase()
+        summary = tracker.get_summary()
+    """
+
+    job_id: str
+    start_time: float = field(default_factory=time.time)
+    end_time: float | None = None
+    phases: list[PhaseLatencyMetrics] = field(default_factory=list)
+    _current_phase: PhaseLatencyMetrics | None = field(default=None, repr=False)
+    _phase_start_time: float | None = field(default=None, repr=False)
+
+    def start_phase(self, phase_name: str, phase_number: int) -> None:
+        """Mark the start of a processing phase."""
+        self._phase_start_time = time.time()
+        self._current_phase = PhaseLatencyMetrics(
+            phase_name=phase_name,
+            phase_number=phase_number,
+            duration_ms=0,
+        )
+
+    def record_llm_call(
+        self,
+        agent_name: str,
+        duration_ms: float,
+        input_tokens: int,
+        output_tokens: int,
+    ) -> LLMLatencyMetrics:
+        """Record an LLM call within the current phase."""
+        metrics = LLMLatencyMetrics(
+            agent_name=agent_name,
+            duration_ms=duration_ms,
+            input_tokens=input_tokens,
+            output_tokens=output_tokens,
+        )
+        if self._current_phase is not None:
+            self._current_phase.llm_calls.append(metrics)
+        return metrics
+
+    def end_phase(self) -> PhaseLatencyMetrics | None:
+        """Mark the end of the current phase and return its metrics."""
+        if self._current_phase is None or self._phase_start_time is None:
+            return None
+
+        duration_ms = (time.time() - self._phase_start_time) * 1000
+        self._current_phase.duration_ms = duration_ms
+        self.phases.append(self._current_phase)
+
+        result = self._current_phase
+        self._current_phase = None
+        self._phase_start_time = None
+        return result
+
+    def finish(self) -> None:
+        """Mark the job as complete."""
+        self.end_time = time.time()
+
+    @property
+    def total_duration_ms(self) -> float:
+        """Total job duration in milliseconds."""
+        end = self.end_time or time.time()
+        return (end - self.start_time) * 1000
+
+    @property
+    def total_llm_time_ms(self) -> float:
+        """Total time spent in LLM calls across all phases."""
+        return sum(phase.llm_time_ms for phase in self.phases)
+
+    @property
+    def total_overhead_ms(self) -> float:
+        """Total time spent outside LLM calls."""
+        return self.total_duration_ms - self.total_llm_time_ms
+
+    @property
+    def llm_efficiency(self) -> float:
+        """Percentage of total time spent in LLM calls."""
+        if self.total_duration_ms <= 0:
+            return 0.0
+        return (self.total_llm_time_ms / self.total_duration_ms) * 100
+
+    @property
+    def total_llm_calls(self) -> int:
+        """Total number of LLM calls across all phases."""
+        return sum(len(phase.llm_calls) for phase in self.phases)
+
+    @property
+    def total_input_tokens(self) -> int:
+        """Total input tokens across all LLM calls."""
+        return sum(phase.total_input_tokens for phase in self.phases)
+
+    @property
+    def total_output_tokens(self) -> int:
+        """Total output tokens across all LLM calls."""
+        return sum(phase.total_output_tokens for phase in self.phases)
+
+    @property
+    def average_output_tokens_per_second(self) -> float:
+        """Average model generation speed across all calls."""
+        if self.total_llm_time_ms <= 0:
+            return 0.0
+        return (self.total_output_tokens / self.total_llm_time_ms) * 1000
+
+    def get_summary(self) -> dict[str, Any]:
+        """Get a comprehensive latency summary for the job."""
+        return {
+            "job_id": self.job_id,
+            "timing": {
+                "total_duration_ms": round(self.total_duration_ms, 2),
+                "total_duration_seconds": round(self.total_duration_ms / 1000, 2),
+                "llm_time_ms": round(self.total_llm_time_ms, 2),
+                "overhead_ms": round(self.total_overhead_ms, 2),
+                "llm_efficiency_pct": round(self.llm_efficiency, 1),
+            },
+            "throughput": {
+                "total_llm_calls": self.total_llm_calls,
+                "total_input_tokens": self.total_input_tokens,
+                "total_output_tokens": self.total_output_tokens,
+                "total_tokens": self.total_input_tokens + self.total_output_tokens,
+                "avg_output_tokens_per_second": round(
+                    self.average_output_tokens_per_second, 1
+                ),
+            },
+            "phases": [phase.to_dict() for phase in self.phases],
+            "slowest_phase": self._get_slowest_phase(),
+            "slowest_llm_call": self._get_slowest_llm_call(),
+        }
+
+    def _get_slowest_phase(self) -> dict[str, Any] | None:
+        """Identify the slowest phase."""
+        if not self.phases:
+            return None
+        slowest = max(self.phases, key=lambda p: p.duration_ms)
+        return {
+            "phase_name": slowest.phase_name,
+            "duration_ms": round(slowest.duration_ms, 2),
+            "pct_of_total": round(
+                (slowest.duration_ms / self.total_duration_ms) * 100, 1
+            )
+            if self.total_duration_ms > 0
+            else 0,
+        }
+
+    def _get_slowest_llm_call(self) -> dict[str, Any] | None:
+        """Identify the slowest individual LLM call."""
+        all_calls = [call for phase in self.phases for call in phase.llm_calls]
+        if not all_calls:
+            return None
+        slowest = max(all_calls, key=lambda c: c.duration_ms)
+        return {
+            "agent_name": slowest.agent_name,
+            "duration_ms": round(slowest.duration_ms, 2),
+            "output_tokens": slowest.output_tokens,
+            "tokens_per_second": round(slowest.output_tokens_per_second, 1),
+        }
+
+
+# Global registry of active job trackers
+_job_trackers: dict[str, JobLatencyTracker] = {}
+_trackers_lock = threading.Lock()
+
+
+def get_job_tracker(job_id: str) -> JobLatencyTracker | None:
+    """Get an existing job latency tracker.
+
+    Args:
+        job_id: Job ID to look up
+
+    Returns:
+        JobLatencyTracker if found, None otherwise
+    """
+    with _trackers_lock:
+        return _job_trackers.get(job_id)
+
+
+def create_job_tracker(job_id: str) -> JobLatencyTracker:
+    """Create a new job latency tracker.
+
+    Args:
+        job_id: Job ID to track
+
+    Returns:
+        New JobLatencyTracker instance
+    """
+    with _trackers_lock:
+        tracker = JobLatencyTracker(job_id=job_id)
+        _job_trackers[job_id] = tracker
+        return tracker
+
+
+def remove_job_tracker(job_id: str) -> JobLatencyTracker | None:
+    """Remove and return a job tracker.
+
+    Args:
+        job_id: Job ID to remove
+
+    Returns:
+        Removed tracker if found, None otherwise
+    """
+    with _trackers_lock:
+        return _job_trackers.pop(job_id, None)
 
 
 class DebugEventType(str, Enum):
@@ -452,6 +761,9 @@ class DebugLoggingService:
     ) -> None:
         """Log an LLM response received.
 
+        Also automatically records the LLM call for latency tracking if
+        duration_ms and token counts are provided.
+
         Args:
             job_id: Job ID for correlation
             agent_name: Name of the agent that received the response
@@ -464,6 +776,20 @@ class DebugLoggingService:
             duration_ms: Response time in milliseconds
             model_id: Model identifier
         """
+        # Auto-record LLM call for latency tracking when we have the data
+        if (
+            duration_ms is not None
+            and input_tokens is not None
+            and output_tokens is not None
+        ):
+            self.record_llm_call(
+                job_id=job_id,
+                agent_name=agent_name,
+                duration_ms=duration_ms,
+                input_tokens=input_tokens,
+                output_tokens=output_tokens,
+            )
+
         data: dict[str, Any] = {
             "agent_name": agent_name,
             "model_id": model_id,
@@ -714,6 +1040,154 @@ class DebugLoggingService:
                 **(details or {}),
             },
         )
+
+    # =========================================================================
+    # Latency Tracking Methods
+    # =========================================================================
+
+    def start_job_tracking(self, job_id: str) -> JobLatencyTracker | None:
+        """Start latency tracking for a job.
+
+        Creates a new JobLatencyTracker if debug mode is enabled.
+
+        Args:
+            job_id: Job ID to track
+
+        Returns:
+            JobLatencyTracker if debug mode enabled, None otherwise
+        """
+        if not self.enabled:
+            return None
+        return create_job_tracker(job_id)
+
+    def start_phase_tracking(
+        self,
+        job_id: str,
+        phase_name: str,
+        phase_number: int,
+    ) -> None:
+        """Start tracking a processing phase.
+
+        Args:
+            job_id: Job ID
+            phase_name: Name of the phase
+            phase_number: Phase number (1-4)
+        """
+        if not self.enabled:
+            return
+
+        tracker = get_job_tracker(job_id)
+        if tracker:
+            tracker.start_phase(phase_name, phase_number)
+
+    def end_phase_tracking(self, job_id: str) -> PhaseLatencyMetrics | None:
+        """End tracking for the current phase.
+
+        Args:
+            job_id: Job ID
+
+        Returns:
+            PhaseLatencyMetrics for the completed phase, or None
+        """
+        if not self.enabled:
+            return None
+
+        tracker = get_job_tracker(job_id)
+        if tracker:
+            return tracker.end_phase()
+        return None
+
+    def record_llm_call(
+        self,
+        job_id: str,
+        agent_name: str,
+        duration_ms: float,
+        input_tokens: int,
+        output_tokens: int,
+    ) -> LLMLatencyMetrics | None:
+        """Record an LLM call within the current phase.
+
+        Args:
+            job_id: Job ID
+            agent_name: Name of the agent that made the call
+            duration_ms: Call duration in milliseconds
+            input_tokens: Number of input tokens
+            output_tokens: Number of output tokens
+
+        Returns:
+            LLMLatencyMetrics for the call, or None if tracking disabled
+        """
+        if not self.enabled:
+            return None
+
+        tracker = get_job_tracker(job_id)
+        if tracker:
+            return tracker.record_llm_call(
+                agent_name=agent_name,
+                duration_ms=duration_ms,
+                input_tokens=input_tokens,
+                output_tokens=output_tokens,
+            )
+        return None
+
+    def finish_job_tracking(self, job_id: str) -> dict[str, Any] | None:
+        """Finish tracking and get the latency summary.
+
+        This marks the job as complete, retrieves the summary,
+        and removes the tracker from the registry.
+
+        Args:
+            job_id: Job ID
+
+        Returns:
+            Latency summary dict, or None if tracking disabled
+        """
+        if not self.enabled:
+            return None
+
+        tracker = remove_job_tracker(job_id)
+        if tracker:
+            tracker.finish()
+            return tracker.get_summary()
+        return None
+
+    def log_latency_summary(
+        self,
+        job_id: str,
+        summary: dict[str, Any] | None = None,
+    ) -> None:
+        """Log the latency summary for a completed job.
+
+        Args:
+            job_id: Job ID
+            summary: Pre-computed summary (if None, will finish and get summary)
+        """
+        if not self.enabled:
+            return
+
+        if summary is None:
+            summary = self.finish_job_tracking(job_id)
+
+        if summary:
+            self._log(
+                DebugEventType.JOB_COMPLETED,
+                job_id,
+                {
+                    "latency_summary": summary,
+                    "timing_total_seconds": summary.get("timing", {}).get(
+                        "total_duration_seconds"
+                    ),
+                    "llm_efficiency_pct": summary.get("timing", {}).get(
+                        "llm_efficiency_pct"
+                    ),
+                    "total_llm_calls": summary.get("throughput", {}).get(
+                        "total_llm_calls"
+                    ),
+                    "avg_tokens_per_second": summary.get("throughput", {}).get(
+                        "avg_output_tokens_per_second"
+                    ),
+                },
+            )
 
 
 # Global singleton instance

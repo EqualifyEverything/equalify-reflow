@@ -104,6 +104,9 @@ class ProcessingService:
         start_time = time.time()
         logger.info(f"Starting processing for job {job.job_id}")
 
+        # Start latency tracking for this job
+        debug_logger.start_job_tracking(job.job_id)
+
         try:
             # Step 1: Update job status to processing with "analyzing" substatus
             await retry_with_backoff(
@@ -144,7 +147,7 @@ class ProcessingService:
                 f"Job {job.job_id}: Starting analysis phase (Sonnet)..."
             )
 
-            # Debug log: phase start
+            # Debug log: phase start + latency tracking
             phase_start_time = time.time()
             debug_logger.log_phase_start(
                 job_id=job.job_id,
@@ -152,14 +155,16 @@ class ProcessingService:
                 phase_number=1,
                 details={"total_pages": conversion_result.total_pages},
             )
+            debug_logger.start_phase_tracking(job.job_id, "analysis", 1)
 
             analysis_agent = AnalysisAgent()
             manifest, initial_observations, analysis_usage = await analysis_agent.analyze(
                 pages, job.job_id
             )
 
-            # Debug log: phase end
+            # Debug log: phase end + latency tracking
             phase_duration_ms = (time.time() - phase_start_time) * 1000
+            debug_logger.end_phase_tracking(job.job_id)
             debug_logger.log_phase_end(
                 job_id=job.job_id,
                 phase_name="analysis",
@@ -207,7 +212,7 @@ class ProcessingService:
                 f"Job {job.job_id}: Starting extraction phase (Haiku)..."
             )
 
-            # Debug log: phase start
+            # Debug log: phase start + latency tracking
             phase_start_time = time.time()
             debug_logger.log_phase_start(
                 job_id=job.job_id,
@@ -215,6 +220,7 @@ class ProcessingService:
                 phase_number=2,
                 details={"document_title": manifest.document_title},
             )
+            debug_logger.start_phase_tracking(job.job_id, "extraction", 2)
 
             extraction_agent = ExtractionAgent()
 
@@ -227,8 +233,9 @@ class ProcessingService:
                 )
             )
 
-            # Debug log: phase end
+            # Debug log: phase end + latency tracking
             phase_duration_ms = (time.time() - phase_start_time) * 1000
+            debug_logger.end_phase_tracking(job.job_id)
             debug_logger.log_phase_end(
                 job_id=job.job_id,
                 phase_name="extraction",
@@ -270,7 +277,7 @@ class ProcessingService:
                     f"Job {job.job_id}: Starting specialized analysis phase (Sonnet)..."
                 )
 
-                # Debug log: phase start
+                # Debug log: phase start + latency tracking
                 phase_start_time = time.time()
                 debug_logger.log_phase_start(
                     job_id=job.job_id,
@@ -278,6 +285,7 @@ class ProcessingService:
                     phase_number=3,
                     details={"required_agents": manifest.required_agents},
                 )
+                debug_logger.start_phase_tracking(job.job_id, "specialized_agents", 3)
 
                 # Update substatus to "analyzing_specialized"
                 await retry_with_backoff(
@@ -308,8 +316,9 @@ class ProcessingService:
                 # Convert combined usage to LLMUsage for consistent tracking
                 specialized_usage = combined_agent_usage.to_llm_usage()
 
-                # Debug log: phase end
+                # Debug log: phase end + latency tracking
                 phase_duration_ms = (time.time() - phase_start_time) * 1000
+                debug_logger.end_phase_tracking(job.job_id)
                 debug_logger.log_phase_end(
                     job_id=job.job_id,
                     phase_name="specialized_agents",
@@ -358,7 +367,7 @@ class ProcessingService:
                     f"Job {job.job_id}: Starting consolidation phase (Sonnet)..."
                 )
 
-                # Debug log: phase start
+                # Debug log: phase start + latency tracking
                 phase_start_time = time.time()
                 debug_logger.log_phase_start(
                     job_id=job.job_id,
@@ -366,6 +375,7 @@ class ProcessingService:
                     phase_number=4,
                     details={"total_observations": len(all_observations)},
                 )
+                debug_logger.start_phase_tracking(job.job_id, "consolidation", 4)
 
                 # Update substatus to "consolidating"
                 await retry_with_backoff(
@@ -389,8 +399,9 @@ class ProcessingService:
 
                 proposal_count = len(proposals)
 
-                # Debug log: phase end
+                # Debug log: phase end + latency tracking
                 phase_duration_ms = (time.time() - phase_start_time) * 1000
+                debug_logger.end_phase_tracking(job.job_id)
                 debug_logger.log_phase_end(
                     job_id=job.job_id,
                     phase_name="consolidation",
@@ -528,6 +539,9 @@ class ProcessingService:
                 f"est. cost: ${total_usage.estimated_cost_cents/100:.4f})"
             )
 
+            # Log latency summary for debug mode
+            debug_logger.log_latency_summary(job.job_id)
+
             return ProcessingResult(
                 job_id=job.job_id,
                 markdown_url=result_url,
@@ -540,6 +554,9 @@ class ProcessingService:
             # Handle validation errors (e.g., no pages provided)
             error_msg = f"Processing failed: {str(e)}"
             logger.error(f"Job {job.job_id} failed: {error_msg}")
+
+            # Clean up latency tracker on failure
+            debug_logger.finish_job_tracking(job.job_id)
 
             await retry_with_backoff(
                 lambda: self.job.update_job_status(
@@ -560,6 +577,9 @@ class ProcessingService:
         except Exception as e:
             error_msg = f"Processing failed: {str(e)}"
             logger.error(f"Job {job.job_id} failed: {error_msg}", exc_info=True)
+
+            # Clean up latency tracker on failure
+            debug_logger.finish_job_tracking(job.job_id)
 
             await retry_with_backoff(
                 lambda: self.job.update_job_status(
@@ -798,6 +818,9 @@ class ProcessingService:
             f"Job {job.job_id} routed to correction review "
             f"(processing: {processing_time}s, confidence: {avg_confidence:.2f})"
         )
+
+        # Log latency summary for debug mode
+        debug_logger.log_latency_summary(job.job_id)
 
         return ProcessingResult(
             job_id=job.job_id,

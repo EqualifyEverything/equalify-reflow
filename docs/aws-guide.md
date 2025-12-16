@@ -19,7 +19,8 @@ Complete guide for deploying and managing the Equalify PDF Converter on AWS.
 4. [Testing Your Deployment](#testing-your-deployment)
 5. [Daily Operations](#daily-operations)
 6. [Monitoring & Debugging](#monitoring--debugging)
-7. [Troubleshooting](#troubleshooting)
+7. [Cost Protection & Alerting](#cost-protection--alerting)
+8. [Troubleshooting](#troubleshooting)
 
 ---
 
@@ -409,6 +410,99 @@ AWS_PROFILE=<your-profile> aws cloudwatch get-metric-statistics \
 
 ---
 
+## Cost Protection & Alerting
+
+The deployment includes multi-layer protection against unexpected costs and abuse.
+
+### Budget Alerts
+
+AWS Budget alerts notify you when spending approaches or exceeds thresholds:
+
+| Budget | Limit | Alerts At | Purpose |
+|--------|-------|-----------|---------|
+| Bedrock Daily | $50/day | 50%, 80%, 100% | AI processing cost control |
+| Monthly Total | $500/month | 50%, 80%, 100% + forecast | Overall AWS spend limit |
+
+**Configuration** (`terraform/terraform.tfvars`):
+```hcl
+alarm_email                = "your-email@example.com"
+bedrock_daily_budget_limit = "50"   # Adjust based on expected usage
+monthly_budget_limit       = "500"  # Adjust based on budget
+```
+
+### Rate Limiting
+
+Application-level rate limiting (Redis-based sliding window):
+
+| Endpoint | Limit | Window | Purpose |
+|----------|-------|--------|---------|
+| POST /api/documents/submit | 25/IP | 1 hour | Prevent individual abuse |
+| GET /api/documents/*/status | 100/IP | 1 hour | Prevent polling storms |
+| Global submissions | 1000 | 24 hours | System-wide cost control |
+
+At ~$0.20/document, the 1000/day global limit caps Bedrock spend at ~$200/day.
+
+### CloudWatch Alarms
+
+Infrastructure alarms with SNS email notifications:
+
+| Alarm | Threshold | Action |
+|-------|-----------|--------|
+| ECS High CPU | >80% for 10 min | Email alert |
+| ECS High Memory | >85% for 10 min | Email alert |
+| ALB 5xx Errors | >10 in 5 min | Email alert |
+| Unhealthy Tasks | <1 healthy | Email alert |
+| Bedrock Throttling | >10 errors in 5 min | Email alert |
+
+### Authentication Layers
+
+| Layer | Protection |
+|-------|------------|
+| API Key | Required for all API endpoints (constant-time comparison) |
+| HTTP Basic Auth | Swagger UI / Demo UI access |
+| CORS | Restricts cross-origin requests |
+
+### Monitoring Cost Spend
+
+```bash
+# Check current month AWS costs
+aws ce get-cost-and-usage \
+    --time-period Start=$(date +%Y-%m-01),End=$(date +%Y-%m-%d) \
+    --granularity MONTHLY \
+    --metrics BlendedCost \
+    --group-by Type=DIMENSION,Key=SERVICE \
+    --region us-east-1
+
+# Check Bedrock-specific costs
+aws ce get-cost-and-usage \
+    --time-period Start=$(date +%Y-%m-01),End=$(date +%Y-%m-%d) \
+    --granularity DAILY \
+    --metrics BlendedCost \
+    --filter '{"Dimensions":{"Key":"SERVICE","Values":["Amazon Bedrock"]}}' \
+    --region us-east-1
+```
+
+### Adjusting Limits
+
+**Rate limits** - Edit `src/services/rate_limit_service.py`:
+```python
+self.SUBMIT_PER_IP_LIMIT = 25      # Per-IP submissions/hour
+self.GLOBAL_SUBMIT_LIMIT = 1000    # Global submissions/day
+```
+
+**Budget alerts** - Edit `terraform/terraform.tfvars` and run `terraform apply`:
+```hcl
+bedrock_daily_budget_limit = "100"  # Increase daily limit
+monthly_budget_limit       = "1000" # Increase monthly limit
+```
+
+**ECS scaling ceiling** - Edit `terraform/terraform.tfvars`:
+```hcl
+ecs_max_capacity = 5  # Maximum concurrent tasks
+```
+
+---
+
 ## Troubleshooting
 
 ### Issue: Tasks Not Starting
@@ -561,4 +655,4 @@ curl -s http://equalify-pdf-alb-633052607.us-east-1.elb.amazonaws.com/metrics | 
 
 ---
 
-**Last Updated:** 2025-10-15
+**Last Updated:** 2025-12-16

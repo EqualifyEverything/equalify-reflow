@@ -12,6 +12,8 @@ from dataclasses import dataclass
 from types import ModuleType
 from typing import TYPE_CHECKING, Any, Protocol
 
+from opentelemetry import context as otel_context
+
 from src.config import settings
 from src.services.pdf_converter import PageData
 from src.shared.models.observation import Observation
@@ -183,6 +185,10 @@ class AgentRouter:
         # Create semaphore for concurrency control
         semaphore = asyncio.Semaphore(settings.max_concurrent_agents)
 
+        # Capture current OpenTelemetry context for propagation to async tasks
+        # This ensures spans created in parallel tasks are linked to the parent span
+        current_context = otel_context.get_current()
+
         # Build tasks for all required agents
         tasks = []
         for agent_name in manifest.required_agents:
@@ -205,7 +211,7 @@ class AgentRouter:
                 f"Job {job_id}: Agent '{agent_name}' queued to process {len(relevant_pages)} pages"
             )
 
-            # Create task for this agent
+            # Create task for this agent with context propagation
             task = self._run_single_agent_with_semaphore(
                 semaphore=semaphore,
                 agent_name=agent_name,
@@ -214,6 +220,7 @@ class AgentRouter:
                 manifest=manifest,
                 markdown=markdown,
                 job_id=job_id,
+                parent_context=current_context,
             )
             tasks.append(task)
 
@@ -266,6 +273,7 @@ class AgentRouter:
         manifest: DocumentManifest,
         markdown: str,
         job_id: str,
+        parent_context: otel_context.Context | None = None,
     ) -> AgentRunResult:
         """Run a single agent with semaphore-based concurrency control.
 
@@ -281,15 +289,22 @@ class AgentRouter:
             manifest: Document manifest
             markdown: Current markdown
             job_id: Job identifier
+            parent_context: OpenTelemetry context to propagate for tracing
 
         Returns:
             AgentRunResult with observations and usage or error
         """
         async with semaphore:
-            logger.info(
-                f"Job {job_id}: Agent '{agent_name}' starting (processing {len(relevant_pages)} pages)"
-            )
+            # Attach parent context to ensure spans are linked correctly
+            # This is required because asyncio.gather() doesn't propagate context
+            token = None
+            if parent_context is not None:
+                token = otel_context.attach(parent_context)
+
             try:
+                logger.info(
+                    f"Job {job_id}: Agent '{agent_name}' starting (processing {len(relevant_pages)} pages)"
+                )
                 observations, usage = await agent.analyze(
                     pages=relevant_pages,
                     manifest=manifest,
@@ -317,6 +332,10 @@ class AgentRouter:
                     error=e,
                     pages_processed=len(relevant_pages),
                 )
+            finally:
+                # Detach context to avoid leaking
+                if token is not None:
+                    otel_context.detach(token)
 
     def _get_relevant_pages(
         self,

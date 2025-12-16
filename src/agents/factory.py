@@ -174,9 +174,48 @@ async def run_agent(
         span.set_attribute("agent.model_tier", model_tier.value)
         span.set_attribute("agent.model_id", MODEL_TIER_MAP[model_tier])
 
-        # Log prompt length (not full content for security)
-        prompt_str = prompt if isinstance(prompt, str) else str(prompt)
-        span.set_attribute("prompt.length", len(prompt_str))
+        # Log system prompt if available and enabled
+        if settings.telemetry_log_prompts:
+            system_prompts = getattr(agent, "_system_prompts", None)
+            if system_prompts:
+                if isinstance(system_prompts, (list, tuple)):
+                    system_prompt_text = "\n".join(str(p) for p in system_prompts)
+                else:
+                    system_prompt_text = str(system_prompts)
+                max_len = 32000
+                span.set_attribute(
+                    "system_prompt.content",
+                    system_prompt_text[:max_len] + ("..." if len(system_prompt_text) > max_len else "")
+                )
+                span.set_attribute("system_prompt.length", len(system_prompt_text))
+
+        # Log prompt (full content if enabled, otherwise just length)
+        # For multimodal prompts, extract text portions only (skip binary image data)
+        if isinstance(prompt, str):
+            prompt_text = prompt
+        elif isinstance(prompt, list):
+            text_parts = []
+            image_count = 0
+            for item in prompt:
+                if isinstance(item, str):
+                    text_parts.append(item)
+                elif hasattr(item, "data"):  # BinaryContent (image)
+                    image_count += 1
+                    text_parts.append(f"[IMAGE {image_count}]")
+                else:
+                    text_parts.append(str(item))
+            prompt_text = "\n".join(text_parts)
+        else:
+            prompt_text = str(prompt)
+
+        span.set_attribute("prompt.length", len(prompt_text))
+        if settings.telemetry_log_prompts:
+            # Truncate very long prompts to avoid span size limits (64KB typical)
+            max_len = 32000
+            span.set_attribute(
+                "prompt.content",
+                prompt_text[:max_len] + ("..." if len(prompt_text) > max_len else "")
+            )
 
         try:
             result = await agent.run(prompt, **run_kwargs)
@@ -194,6 +233,16 @@ async def run_agent(
             pricing = get_pricing_for_tier(model_tier)
             cost = calculate_estimated_cost(input_tokens, output_tokens, pricing)
             span.set_attribute("cost.cents", cost)
+
+            # Log output if enabled
+            if settings.telemetry_log_prompts:
+                output_str = str(result.output)
+                max_len = 32000
+                span.set_attribute(
+                    "output.content",
+                    output_str[:max_len] + ("..." if len(output_str) > max_len else "")
+                )
+                span.set_attribute("output.length", len(output_str))
 
             span.set_status(trace.Status(trace.StatusCode.OK))
             return result

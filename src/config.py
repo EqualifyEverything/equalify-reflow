@@ -238,6 +238,10 @@ class Settings(BaseSettings):
         default=None,
         description="OTLP endpoint for trace export (e.g., 'localhost:4317' for Jaeger)"
     )
+    telemetry_log_prompts: bool = Field(
+        default=False,
+        description="Log full LLM prompts and outputs in traces (WARNING: may contain document content)"
+    )
 
 
 settings = Settings()

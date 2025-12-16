@@ -1,12 +1,11 @@
 """Unit tests for RemediationStorageService."""
 
 import json
-from datetime import datetime, UTC
-from unittest.mock import AsyncMock, MagicMock, patch
+from datetime import UTC, datetime
+from unittest.mock import MagicMock
 
 import pytest
 from botocore.exceptions import ClientError
-
 from src.services.remediation_storage_service import RemediationStorageService
 from src.services.storage_service import StorageService
 from src.shared.models.observation import Observation, ObservationLocation

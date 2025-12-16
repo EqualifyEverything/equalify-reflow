@@ -268,6 +268,7 @@ async def consolidate(
         job_id=job_id,
         agent_name="consolidation_agent",
         model_tier=_MODEL_TIER,
+        system_prompt=_prompts["system_prompt"],
         model_settings={
             "max_tokens": 16000,
             "temperature": 0.3,
@@ -536,6 +537,7 @@ class ConsolidationAgent:
             job_id=job_id,
             agent_name="consolidation_agent",
             model_tier=_MODEL_TIER,
+            system_prompt=_prompts["system_prompt"],
             model_settings={
                 "max_tokens": 16000,
                 "temperature": 0.3,

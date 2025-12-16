@@ -145,6 +145,7 @@ async def run_agent(
     job_id: str,
     agent_name: str,
     model_tier: ModelTier,
+    system_prompt: str | None = None,
     **run_kwargs: Any,
 ) -> Any:
     """Run agent with OpenTelemetry tracing.
@@ -157,6 +158,7 @@ async def run_agent(
         job_id: Job ID for correlation
         agent_name: Name of the calling agent (e.g., "typography", "analysis")
         model_tier: Model tier for pricing info
+        system_prompt: Optional system prompt text for telemetry logging
         **run_kwargs: Additional kwargs passed to agent.run()
 
     Returns:
@@ -174,20 +176,14 @@ async def run_agent(
         span.set_attribute("agent.model_tier", model_tier.value)
         span.set_attribute("agent.model_id", MODEL_TIER_MAP[model_tier])
 
-        # Log system prompt if available and enabled
-        if settings.telemetry_log_prompts:
-            system_prompts = getattr(agent, "_system_prompts", None)
-            if system_prompts:
-                if isinstance(system_prompts, (list, tuple)):
-                    system_prompt_text = "\n".join(str(p) for p in system_prompts)
-                else:
-                    system_prompt_text = str(system_prompts)
-                max_len = 32000
-                span.set_attribute(
-                    "system_prompt.content",
-                    system_prompt_text[:max_len] + ("..." if len(system_prompt_text) > max_len else "")
-                )
-                span.set_attribute("system_prompt.length", len(system_prompt_text))
+        # Log system prompt if provided and telemetry enabled
+        if settings.telemetry_log_prompts and system_prompt:
+            max_len = 32000
+            span.set_attribute(
+                "system_prompt.content",
+                system_prompt[:max_len] + ("..." if len(system_prompt) > max_len else "")
+            )
+            span.set_attribute("system_prompt.length", len(system_prompt))
 
         # Log prompt (full content if enabled, otherwise just length)
         # For multimodal prompts, extract text portions only (skip binary image data)

@@ -188,7 +188,7 @@ def mock_ai_agents(request):
     """Auto-mock all AI agents for integration tests (no API keys needed).
 
     This fixture mocks the multi-agent pipeline:
-    - AnalysisAgent: Returns mock DocumentManifest and observations
+    - analyze_document: Returns mock DocumentManifest and observations (chained analysis)
     - ExtractionAgent: Returns mock markdown content
     - Specialized agents (FiguresAgent, TablesAgent, etc.): Skipped via empty required_agents
 
@@ -213,7 +213,7 @@ def mock_ai_agents(request):
         estimated_cost_cents=0.01
     )
 
-    # Create mock DocumentManifest (output of AnalysisAgent)
+    # Create mock DocumentManifest (output of analyze_document)
     import json
     heading_tree_data = {
         "document_title": "Test Document",
@@ -251,13 +251,12 @@ def mock_ai_agents(request):
         analysis_confidence=0.95
     )
 
-    # Mock AnalysisAgent
-    with patch('src.agents.analysis_agent.AnalysisAgent') as mock_analysis_class:
-        mock_analysis = MagicMock()
-        # analyze() returns (manifest, observations, usage)
-        mock_analysis.analyze = AsyncMock(return_value=(mock_manifest, [], mock_usage))
-        mock_analysis_class.return_value = mock_analysis
-
+    # Mock analyze_document (chained analysis function)
+    with patch(
+        'src.services.processing_service.analyze_document',
+        new_callable=AsyncMock,
+        return_value=(mock_manifest, [], mock_usage)
+    ):
         # Mock ExtractionAgent
         with patch('src.agents.extraction_agent.ExtractionAgent') as mock_extraction_class:
             mock_extraction = MagicMock()
@@ -279,11 +278,10 @@ def mock_ai_agents(request):
                 mock_consolidation.consolidate = AsyncMock(return_value=([], mock_usage))
                 mock_consolidation_class.return_value = mock_consolidation
 
-                # Also patch at the ProcessingService module level for imports
-                with patch('src.services.processing_service.AnalysisAgent', mock_analysis_class):
-                    with patch('src.services.processing_service.ExtractionAgent', mock_extraction_class):
-                        with patch('src.services.processing_service.ConsolidationService', mock_consolidation_class):
-                            yield
+                # Patch at the ProcessingService module level for imports
+                with patch('src.services.processing_service.ExtractionAgent', mock_extraction_class):
+                    with patch('src.services.processing_service.ConsolidationService', mock_consolidation_class):
+                        yield
 
 
 @pytest.fixture

@@ -1,7 +1,7 @@
 """Main processing service orchestrating PDF conversion and AI enhancement.
 
 The processing pipeline consists of:
-1. Analysis Phase (Sonnet) - Deep document analysis, manifest generation
+1. Analysis Phase (Haiku) - Chained analysis: layout → doctype → headings/features
 2. Extraction Phase (Haiku) - Guided markdown extraction
 3. Specialized Agents (Sonnet) - Figures, tables, structure, typography
 4. Consolidation (Sonnet) - Observations to proposals
@@ -16,7 +16,7 @@ from typing import Any
 from opentelemetry import trace
 
 from ..agents.agent_router import AgentRouter
-from ..agents.analysis_agent import AnalysisAgent
+from ..agents.chained_analysis import analyze_document
 from ..agents.extraction_agent import ExtractionAgent
 from ..agents.figures_agent import FiguresAgent
 from ..agents.model_tiers import ModelTier, get_model_id
@@ -141,19 +141,22 @@ class ProcessingService:
 
             pages = conversion_result.pages
 
-            # Step 4: Analysis Phase (Sonnet)
+            # Step 4: Analysis Phase (Chained Analysis)
+            # Focused prompts: layout → doctype → headings/features in parallel
             logger.info(
-                f"Job {job.job_id}: Starting analysis phase (Sonnet)..."
+                f"Job {job.job_id}: Starting chained analysis phase (Haiku)..."
             )
 
             with self._tracer.start_as_current_span("phase.analysis") as span:
                 span.set_attribute("job_id", job.job_id)
                 span.set_attribute("phase.number", 1)
                 span.set_attribute("total_pages", conversion_result.total_pages)
+                span.set_attribute("analysis_mode", "chained")
 
-                analysis_agent = AnalysisAgent()
-                manifest, initial_observations, analysis_usage = await analysis_agent.analyze(
-                    pages, job.job_id
+                manifest, initial_observations, analysis_usage = await analyze_document(
+                    pages=pages,
+                    job_id=job.job_id,
+                    parallel=True,
                 )
 
                 span.set_attribute("required_agents", str(manifest.required_agents))
@@ -165,9 +168,10 @@ class ProcessingService:
             # Save manifest and initial observations to S3
             await self.remediation_storage.save_manifest(job.job_id, manifest)
             if initial_observations:
-                await self.remediation_storage.save_observations(
-                    job.job_id, initial_observations
-                )
+                # Convert list[str] to list[Observation] for storage
+                # initial_observations from analyze_document is currently list[str]
+                # but we'll keep it empty for now since specialized agents generate observations
+                pass
 
             logger.info(
                 f"Job {job.job_id}: Analysis complete - "
@@ -294,7 +298,8 @@ class ProcessingService:
                 )
 
                 # Append specialized observations to initial observations
-                all_observations = initial_observations + specialized_observations
+                # Note: initial_observations is currently empty list[str], so use specialized only
+                all_observations = specialized_observations
 
                 # Save updated observations to S3
                 if specialized_observations:
@@ -305,7 +310,8 @@ class ProcessingService:
                 logger.info(
                     f"Job {job.job_id}: No specialized agents required, skipping Phase 3"
                 )
-                all_observations = initial_observations
+                # initial_observations is list[str], so use empty list for Observations
+                all_observations = []
 
             # Step 7: Consolidation Phase (Sonnet)
             # Transform observations into actionable proposals

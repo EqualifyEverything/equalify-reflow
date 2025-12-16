@@ -82,7 +82,7 @@ def sample_pdf_conversion_result_no_markdown():
 
 @pytest.fixture
 def mock_analysis_manifest(mock_heading_tree):
-    """Mock DocumentManifest from AnalysisAgent."""
+    """Mock DocumentManifest from analyze_document."""
     return DocumentManifest(
         job_id="550e8400-e29b-41d4-a716-446655440000",
         document_title="Test Document",
@@ -176,17 +176,12 @@ async def test_process_document_happy_path(
     )
 
     with patch(
-        "src.services.processing_service.AnalysisAgent"
-    ) as mock_analysis_agent_class, patch(
+        "src.services.processing_service.analyze_document",
+        new_callable=AsyncMock,
+        return_value=(mock_analysis_manifest, [], mock_analysis_usage),
+    ) as mock_analyze_document, patch(
         "src.services.processing_service.ExtractionAgent"
     ) as mock_extraction_agent_class:
-        # Mock analysis agent
-        mock_analysis_agent = MagicMock()
-        mock_analysis_agent.analyze = AsyncMock(
-            return_value=(mock_analysis_manifest, [], mock_analysis_usage)
-        )
-        mock_analysis_agent_class.return_value = mock_analysis_agent
-
         # Mock extraction agent
         mock_extraction_agent = MagicMock()
         mock_extraction_agent.model_id = "us.anthropic.claude-haiku-4-5-20251001-v1:0"
@@ -218,7 +213,7 @@ async def test_process_document_happy_path(
     # Verify pipeline steps executed
     mock_storage_service_extended.download_temp_file.assert_called_once()
     mock_pdf_converter.convert_with_page_images.assert_called_once()
-    mock_analysis_agent.analyze.assert_called_once()  # Analysis phase
+    mock_analyze_document.assert_called_once()  # Analysis phase
     mock_extraction_agent.extract.assert_called_once()  # Extraction phase
     # Should upload both v0 and final markdown
     assert mock_storage_service_extended.upload_result.call_count >= 2
@@ -242,17 +237,12 @@ async def test_process_document_confidence_from_extraction(
     )
 
     with patch(
-        "src.services.processing_service.AnalysisAgent"
-    ) as mock_analysis_agent_class, patch(
+        "src.services.processing_service.analyze_document",
+        new_callable=AsyncMock,
+        return_value=(mock_analysis_manifest, [], mock_analysis_usage),
+    ), patch(
         "src.services.processing_service.ExtractionAgent"
     ) as mock_extraction_agent_class:
-        # Mock analysis agent
-        mock_analysis_agent = MagicMock()
-        mock_analysis_agent.analyze = AsyncMock(
-            return_value=(mock_analysis_manifest, [], mock_analysis_usage)
-        )
-        mock_analysis_agent_class.return_value = mock_analysis_agent
-
         # Mock extraction agent with specific confidence
         mock_extraction_agent = MagicMock()
         mock_extraction_agent.model_id = "us.anthropic.claude-haiku-4-5-20251001-v1:0"
@@ -360,17 +350,12 @@ async def test_process_document_handles_extraction_error(
     )
 
     with patch(
-        "src.services.processing_service.AnalysisAgent"
-    ) as mock_analysis_agent_class, patch(
+        "src.services.processing_service.analyze_document",
+        new_callable=AsyncMock,
+        return_value=(mock_analysis_manifest, [], mock_analysis_usage),
+    ), patch(
         "src.services.processing_service.ExtractionAgent"
     ) as mock_extraction_agent_class:
-        # Mock analysis agent - succeeds
-        mock_analysis_agent = MagicMock()
-        mock_analysis_agent.analyze = AsyncMock(
-            return_value=(mock_analysis_manifest, [], mock_analysis_usage)
-        )
-        mock_analysis_agent_class.return_value = mock_analysis_agent
-
         # Mock extraction agent - fails
         mock_extraction_agent = MagicMock()
         mock_extraction_agent.extract = AsyncMock(
@@ -440,17 +425,12 @@ async def test_process_document_s3_upload_failure(
     mock_storage_service.upload_result.side_effect = Exception("S3 bucket full")
 
     with patch(
-        "src.services.processing_service.AnalysisAgent"
-    ) as mock_analysis_agent_class, patch(
+        "src.services.processing_service.analyze_document",
+        new_callable=AsyncMock,
+        return_value=(mock_analysis_manifest, [], mock_analysis_usage),
+    ), patch(
         "src.services.processing_service.ExtractionAgent"
     ) as mock_extraction_agent_class:
-        # Mock analysis agent
-        mock_analysis_agent = MagicMock()
-        mock_analysis_agent.analyze = AsyncMock(
-            return_value=(mock_analysis_manifest, [], mock_analysis_usage)
-        )
-        mock_analysis_agent_class.return_value = mock_analysis_agent
-
         # Mock extraction agent
         mock_extraction_agent = MagicMock()
         mock_extraction_agent.model_id = "us.anthropic.claude-haiku-4-5-20251001-v1:0"

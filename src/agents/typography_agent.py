@@ -267,6 +267,7 @@ async def analyze(
                     job_id=job_id,
                     agent_name="typography_agent",
                     model_tier=_MODEL_TIER,
+                    system_prompt=_prompts["system_prompt"],
                     deps=page_deps,
                     message_history=[
                         {
@@ -288,6 +289,7 @@ async def analyze(
                     job_id=job_id,
                     agent_name="typography_agent",
                     model_tier=_MODEL_TIER,
+                    system_prompt=_prompts["system_prompt"],
                     deps=page_deps,
                 )
 

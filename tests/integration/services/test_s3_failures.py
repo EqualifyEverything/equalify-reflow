@@ -299,7 +299,7 @@ class TestProcessingServiceS3Failures:
         mock_converter.convert_with_page_images = AsyncMock(return_value=mock_result)
         processing_service.pdf_converter = mock_converter
 
-        # Mock AnalysisAgent
+        # Mock analyze_document (chained analysis)
         mock_heading_tree = HeadingTree(
             document_title="Test Document",
             title_page=1,
@@ -324,14 +324,11 @@ class TestProcessingServiceS3Failures:
         mock_analysis_usage = LLMUsage(
             input_tokens=100, output_tokens=50, total_tokens=150, estimated_cost_cents=0.01
         )
-        mock_analysis_agent_class = mocker.patch(
-            "src.services.processing_service.AnalysisAgent"
+        mocker.patch(
+            "src.services.processing_service.analyze_document",
+            new_callable=AsyncMock,
+            return_value=(mock_analysis_manifest, [], mock_analysis_usage),
         )
-        mock_analysis_agent = mocker.Mock()
-        mock_analysis_agent.analyze = AsyncMock(
-            return_value=(mock_analysis_manifest, [], mock_analysis_usage)
-        )
-        mock_analysis_agent_class.return_value = mock_analysis_agent
 
         # Mock ExtractionAgent
         mock_extraction_usage = LLMUsage(
@@ -392,7 +389,7 @@ class TestProcessingServiceS3Failures:
         mock_converter.convert_with_page_images = AsyncMock(return_value=mock_result)
         processing_service.pdf_converter = mock_converter
 
-        # Mock AnalysisAgent
+        # Mock analyze_document (chained analysis)
         mock_heading_tree = HeadingTree(
             document_title="Test Document",
             title_page=1,
@@ -417,14 +414,11 @@ class TestProcessingServiceS3Failures:
         mock_analysis_usage = LLMUsage(
             input_tokens=100, output_tokens=50, total_tokens=150, estimated_cost_cents=0.01
         )
-        mock_analysis_agent_class = mocker.patch(
-            "src.services.processing_service.AnalysisAgent"
+        mocker.patch(
+            "src.services.processing_service.analyze_document",
+            new_callable=AsyncMock,
+            return_value=(mock_analysis_manifest, [], mock_analysis_usage),
         )
-        mock_analysis_agent = mocker.Mock()
-        mock_analysis_agent.analyze = AsyncMock(
-            return_value=(mock_analysis_manifest, [], mock_analysis_usage)
-        )
-        mock_analysis_agent_class.return_value = mock_analysis_agent
 
         # Mock ExtractionAgent
         mock_extraction_usage = LLMUsage(

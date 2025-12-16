@@ -2,7 +2,7 @@
 
 This module provides the multi-agent framework including:
 - AgentConfig: Configuration dataclass for agent initialization
-- AnalysisAgent: Document analysis agent
+- Chained analysis pipeline (layout → doctype → headings/features)
 - ExtractionAgent: Manifest-guided extraction agent
 - Specialized agents for accessibility analysis:
   - FiguresAgent: Image accessibility
@@ -14,7 +14,7 @@ This module provides the multi-agent framework including:
 """
 
 from .agent_router import AgentRouter
-from .analysis_agent import AnalysisAgent
+from .chained_analysis import analyze_document
 from .consolidation_agent import ConsolidationAgent, ConsolidationOutput, ProposalDraft
 from .core import AgentConfig
 from .extraction_agent import ExtractionAgent
@@ -36,8 +36,8 @@ from .typography_agent import TypographyAgent
 __all__ = [
     # Agent configuration
     "AgentConfig",
-    # Analysis and extraction agents
-    "AnalysisAgent",
+    # Chained analysis and extraction
+    "analyze_document",
     "ExtractionAgent",
     # Specialized agents
     "AgentRouter",

@@ -1,12 +1,11 @@
 """Unit tests for remediation progress models."""
 
 import json
-from datetime import datetime, UTC
+from datetime import UTC, datetime
 from unittest.mock import MagicMock
 
 import pytest
 from pydantic import ValidationError
-
 from src.shared.models.remediation_progress import (
     VALID_SUBSTATUSES,
     RemediationProgress,

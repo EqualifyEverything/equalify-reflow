@@ -24,8 +24,8 @@ from .middleware import (
     add_cors_middleware,
 )
 from .middleware.metrics import setup_metrics
-from .telemetry import init_telemetry, shutdown_telemetry
 from .services.rate_limit_service import RateLimitService
+from .telemetry import init_telemetry, shutdown_telemetry
 from .workers.pii_worker import start_pii_worker
 from .workers.processing_worker import start_processing_worker
 from .workers.timeout_worker import start_timeout_worker

@@ -230,6 +230,7 @@ class BaseDocumentAgent(ABC, Generic[TOutput]):
         user_message: str,
         image_bytes: bytes | None = None,
         job_id: str | None = None,
+        page_num: int | None = None,
     ) -> tuple[TOutput, LLMUsage]:
         """Execute the PydanticAI agent and return output with usage metrics.
 
@@ -240,6 +241,7 @@ class BaseDocumentAgent(ABC, Generic[TOutput]):
             user_message: Formatted prompt for the LLM
             image_bytes: Optional PNG image bytes for multimodal input
             job_id: Optional job ID for debug logging correlation
+            page_num: Optional page number for debug image naming
 
         Returns:
             Tuple of (typed output, LLMUsage with token counts and cost)
@@ -256,6 +258,15 @@ class BaseDocumentAgent(ABC, Generic[TOutput]):
             f"Agent {self.name}: Running with message length {len(user_message)}, "
             f"image: {image_bytes is not None}"
         )
+
+        # Save debug image if enabled
+        if image_bytes and job_id:
+            debug_logger.save_debug_image(
+                job_id=job_id,
+                agent_name=self.name,
+                image_bytes=image_bytes,
+                page_num=page_num,
+            )
 
         # Debug log: prompt being sent
         image_info = None

@@ -256,6 +256,16 @@ class Settings(BaseSettings):
         description="Maximum character length for prompt/response content in debug logs. "
                     "Set higher for full content, lower to reduce log size."
     )
+    debug_save_images: bool = Field(
+        default=False,
+        description="Save image binaries to disk when debug mode is enabled. "
+                    "Images are saved to debug_images_dir with consistent naming."
+    )
+    debug_images_dir: str = Field(
+        default="/tmp/equalify-debug-images",
+        description="Directory to save debug images. "
+                    "Structure: {dir}/{job_id}/{agent_name}/page_{N}.png"
+    )
 
 
 settings = Settings()

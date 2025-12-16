@@ -155,7 +155,9 @@ Identify structural issues.""",
 
             try:
                 # Run analysis
-                output, usage = await self._run_agent(user_message, image_bytes, job_id=job_id)
+                output, usage = await self._run_agent(
+                    user_message, image_bytes, job_id=job_id, page_num=page.page_num
+                )
 
                 # Accumulate usage
                 combined_usage.input_tokens += usage.input_tokens

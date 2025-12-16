@@ -188,6 +188,18 @@ class ExtractionAgent:
         # Build messages with all page images
         messages = self._build_image_messages(pages)
 
+        # Save debug images if enabled
+        images_to_save = [
+            (base64.b64decode(p.image_base64), p.page_num)
+            for p in pages if p.image_base64
+        ]
+        if images_to_save:
+            debug_logger.save_debug_images_batch(
+                job_id=job_id,
+                agent_name="extraction_agent",
+                images=images_to_save,
+            )
+
         # Format heading tree for prompt
         heading_tree_text = self._format_heading_tree(heading_tree)
 

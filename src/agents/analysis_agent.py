@@ -237,6 +237,18 @@ class AnalysisAgent:
         # Build messages with all page images
         messages = self._build_image_messages(pages)
 
+        # Save debug images if enabled
+        images_to_save = [
+            (base64.b64decode(p.image_base64), p.page_num)
+            for p in pages if p.image_base64
+        ]
+        if images_to_save:
+            debug_logger.save_debug_images_batch(
+                job_id=job_id,
+                agent_name="analysis_agent",
+                images=images_to_save,
+            )
+
         # Add user prompt
         user_prompt = self.prompts["user_prompt"].format(total_pages=total_pages)
         messages.append(user_prompt)

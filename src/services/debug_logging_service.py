@@ -133,6 +133,105 @@ class DebugLoggingService:
         """Check if debug mode is enabled."""
         return settings.debug_mode
 
+    @property
+    def images_enabled(self) -> bool:
+        """Check if image saving is enabled."""
+        return settings.debug_mode and settings.debug_save_images
+
+    def save_debug_image(
+        self,
+        job_id: str,
+        agent_name: str,
+        image_bytes: bytes,
+        page_num: int | None = None,
+        image_index: int | None = None,
+        suffix: str = "",
+    ) -> str | None:
+        """Save an image to the debug output directory.
+
+        Images are saved with consistent naming:
+        {debug_images_dir}/{job_id}/{agent_name}/page_{page_num}_{image_index}{suffix}.png
+
+        Args:
+            job_id: Job ID for directory organization
+            agent_name: Agent name for subdirectory
+            image_bytes: Raw PNG image bytes
+            page_num: Page number (1-indexed)
+            image_index: Image index on the page (for multiple images per page)
+            suffix: Optional suffix for the filename
+
+        Returns:
+            Path to saved image, or None if saving is disabled/failed
+        """
+        if not self.images_enabled:
+            return None
+
+        try:
+            # Build directory path: {base}/{job_id}/{agent_name}/
+            images_dir = Path(settings.debug_images_dir)
+            job_dir = images_dir / job_id / agent_name
+            job_dir.mkdir(parents=True, exist_ok=True)
+
+            # Build filename with consistent naming
+            parts = ["page"]
+            if page_num is not None:
+                parts.append(str(page_num))
+            if image_index is not None:
+                parts.append(f"img{image_index}")
+            if suffix:
+                parts.append(suffix)
+
+            filename = "_".join(parts) + ".png"
+            file_path = job_dir / filename
+
+            # Write image bytes
+            file_path.write_bytes(image_bytes)
+
+            logger.debug(f"Saved debug image: {file_path} ({len(image_bytes)} bytes)")
+
+            return str(file_path)
+
+        except Exception as e:
+            logger.error(f"Failed to save debug image: {e}")
+            return None
+
+    def save_debug_images_batch(
+        self,
+        job_id: str,
+        agent_name: str,
+        images: list[tuple[bytes, int]],
+    ) -> list[str]:
+        """Save multiple page images to the debug output directory.
+
+        Args:
+            job_id: Job ID for directory organization
+            agent_name: Agent name for subdirectory
+            images: List of (image_bytes, page_num) tuples
+
+        Returns:
+            List of paths to saved images
+        """
+        if not self.images_enabled:
+            return []
+
+        saved_paths = []
+        for image_bytes, page_num in images:
+            path = self.save_debug_image(
+                job_id=job_id,
+                agent_name=agent_name,
+                image_bytes=image_bytes,
+                page_num=page_num,
+            )
+            if path:
+                saved_paths.append(path)
+
+        if saved_paths:
+            logger.info(
+                f"Saved {len(saved_paths)} debug images for job {job_id}/{agent_name}"
+            )
+
+        return saved_paths
+
     def _truncate(self, text: str | None, max_length: int | None = None) -> str | None:
         """Truncate text to configured maximum length.
 

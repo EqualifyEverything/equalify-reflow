@@ -653,7 +653,7 @@ class TestAnalysisAgentAnalyze:
         # Create mock agent with run method
         mock_pydantic_agent = MagicMock()
         mock_result = MagicMock()
-        mock_result.data = make_analysis_output(
+        mock_result.output = make_analysis_output(
             document_title="Test",
             page_features=[make_page_features(page_num=1)],
             required_agents=["figures"],

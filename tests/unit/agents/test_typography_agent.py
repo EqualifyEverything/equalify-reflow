@@ -390,7 +390,7 @@ class TestTypographyAgentAnalysis:
 
         # Mock the agent's run method
         mock_result = MagicMock()
-        mock_result.data = mock_output
+        mock_result.output = mock_output
         mock_result.usage.return_value.total_tokens = mock_usage.total_tokens
 
         with patch.object(typography_agent, "get_agent") as mock_get_agent:
@@ -448,7 +448,7 @@ class TestTypographyAgentAnalysis:
 
         # Mock the agent's run method
         mock_result = MagicMock()
-        mock_result.data = mock_output
+        mock_result.output = mock_output
         mock_result.usage.return_value.total_tokens = mock_usage.total_tokens
 
         with patch.object(typography_agent, "get_agent") as mock_get_agent:
@@ -495,7 +495,7 @@ class TestTypographyAgentAnalysis:
 
         # Mock the agent's run method
         mock_result = MagicMock()
-        mock_result.data = mock_output
+        mock_result.output = mock_output
         mock_result.usage.return_value.total_tokens = mock_usage.total_tokens
 
         with patch.object(typography_agent, "get_agent") as mock_get_agent:
@@ -542,7 +542,7 @@ class TestTypographyAgentAnalysis:
 
         # Mock the agent's run method
         mock_result = MagicMock()
-        mock_result.data = mock_output
+        mock_result.output = mock_output
         mock_result.usage.return_value.total_tokens = mock_usage.total_tokens
 
         with patch.object(typography_agent, "get_agent") as mock_get_agent:

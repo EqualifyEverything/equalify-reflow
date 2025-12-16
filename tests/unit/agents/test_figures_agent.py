@@ -368,7 +368,7 @@ class TestFiguresAgentAnalysis:
         mock_usage = LLMUsage(input_tokens=100, output_tokens=50, total_tokens=150, estimated_cost_cents=1.0)
 
         mock_result = MagicMock()
-        mock_result.data = mock_output
+        mock_result.output = mock_output
         mock_result.usage.return_value.total_tokens = mock_usage.total_tokens
 
         mock_agent = AsyncMock()
@@ -417,7 +417,7 @@ class TestFiguresAgentAnalysis:
                 raise Exception("LLM error")
             # Second call succeeds
             mock_result = MagicMock()
-            mock_result.data = FiguresAnalysisOutput(page_num=3, images_found=0, analyses=[])
+            mock_result.output = FiguresAnalysisOutput(page_num=3, images_found=0, analyses=[])
             mock_result.usage.return_value.total_tokens = 150
             return mock_result
 
@@ -486,7 +486,7 @@ class TestFiguresAgentAnalysis:
         mock_usage = LLMUsage(input_tokens=200, output_tokens=100, total_tokens=300, estimated_cost_cents=5.0)
 
         mock_result = MagicMock()
-        mock_result.data = mock_output
+        mock_result.output = mock_output
         mock_result.usage.return_value.total_tokens = mock_usage.total_tokens
 
         mock_agent = AsyncMock()

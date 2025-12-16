@@ -99,6 +99,60 @@ Total pages: {ctx.deps.manifest.total_pages}
             return ""
 
         @agent.instructions
+        def document_type_guidance(ctx: RunContext[AgentDependencies]) -> str:
+            """Provide document-type-specific typography guidance."""
+            doc_type = ctx.deps.document_type
+            if doc_type == "research_paper":
+                return """
+<document_type_guidance>
+Research papers commonly use:
+- Italics for Latin terms (p < 0.05, in vitro, et al.) - DECORATIVE (discipline convention)
+- Bold for statistical significance markers - potentially SEMANTIC if not standard
+- Italics for journal/book titles in citations - DECORATIVE (citation convention)
+- Bold section headers - DECORATIVE (structural, should be headings)
+
+Be conservative: most academic styling follows discipline conventions, not semantic emphasis.
+Only flag styling that conveys meaning BEYOND standard academic formatting.
+</document_type_guidance>"""
+            elif doc_type == "syllabus":
+                return """
+<document_type_guidance>
+Syllabi commonly use:
+- Bold for important dates/deadlines - SEMANTIC (flag if not in markdown)
+- Color-coding for assignment types (required vs optional) - SEMANTIC (flag)
+- Bold for policy headers like "Late Work:" - potentially SEMANTIC
+- Italics for course/textbook titles - DECORATIVE (title convention)
+
+Flag: Bold dates, color-coded categories without text labels, emphasized warnings.
+Skip: Standard title formatting, consistent header styling.
+</document_type_guidance>"""
+            elif doc_type == "exam":
+                return """
+<document_type_guidance>
+Exams commonly use:
+- Bold for point values - DECORATIVE (structural convention)
+- Bold for question numbers - DECORATIVE (structural)
+- Italics for instructions - potentially SEMANTIC if emphasis
+- Color for correct answers (in answer keys) - SEMANTIC (flag)
+
+Flag: Color-only answer indicators, emphasized warnings about time limits.
+Skip: Standard question formatting, point value styling.
+</document_type_guidance>"""
+            elif doc_type == "lecture_notes":
+                return """
+<document_type_guidance>
+Lecture notes commonly use:
+- Bold for key terms being introduced - SEMANTIC (flag if first occurrence)
+- Color for emphasis or categorization - potentially SEMANTIC
+- Italics for examples or asides - DECORATIVE typically
+- Bold headers - DECORATIVE (should be headings)
+
+Flag: Bold key terms not captured, color-coded categories.
+Skip: Slide formatting conventions, consistent styling patterns.
+</document_type_guidance>"""
+            return ""
+
+        @agent.instructions
         def page_context(ctx: RunContext[AgentDependencies]) -> str:
             """Provide page-specific context from manifest."""
             page_features = ctx.deps.custom_context.get("current_page_features")
@@ -295,19 +349,10 @@ Adjust your approach to avoid these issues.
         observations: list[Observation] = []
 
         for issue in issues:
-            # Access .value for Reasoned[T] field
-            issue_type_value = issue.issue_type.value
+            # Access .value for Reasoned[T] fields
+            severity_value = issue.severity.value
 
-            # Typography issues are typically minor unless semantic
-            severity: str
-            if issue_type_value == "semantic_color":
-                severity = "major"  # Color conveying meaning without alternative
-            elif issue_type_value == "visual_heading":
-                severity = "major"  # Missing heading is structural
-            else:
-                severity = "minor"  # Emphasis/definition are nice-to-have
-
-            # Determine routing
+            # Determine routing based on hybrid confidence
             route = "auto" if issue.confidence >= settings.min_confidence_for_auto_approval else "manual"
             manual_reason = None
             if route == "manual":
@@ -326,7 +371,7 @@ Adjust your approach to avoid these issues.
                     page_num=page_num,
                 ),
                 confidence=issue.confidence,
-                severity=cast(Literal["critical", "major", "minor"], severity),
+                severity=cast(Literal["critical", "major", "minor"], severity_value),
                 route=cast(Literal["auto", "manual"], route),
                 manual_reason=manual_reason,
             )

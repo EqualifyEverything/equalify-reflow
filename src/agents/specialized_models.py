@@ -12,17 +12,21 @@ Reasoning enhancements:
 - ReasonedOutputMixin for reasoning corpus extraction
 """
 
+import logging
 from typing import Literal
 
-from pydantic import BaseModel, Field, computed_field
+from pydantic import BaseModel, Field, computed_field, field_validator
 
 from src.shared.models.quality_signals import QualitySignals
 from src.shared.models.reasoned import Reasoned, ReasonedOutputMixin
+
+logger = logging.getLogger(__name__)
 
 # Type aliases for Literal types
 ImageType = Literal["decorative", "informative", "complex", "text"]
 ImageAction = Literal["add_alt", "improve_alt", "mark_decorative", "add_long_desc", "none"]
 TableComplexity = Literal["simple", "merged_cells", "nested", "irregular"]
+TableAction = Literal["add_headers", "restructure", "verify_data", "add_caption", "none"]
 StructureIssueType = Literal["heading_skip", "heading_mismatch", "reading_order", "missing_landmark"]
 Severity = Literal["critical", "major", "minor"]
 TypographyIssueType = Literal["emphasis_unmarked", "definition_unmarked", "semantic_color", "visual_heading"]
@@ -50,41 +54,21 @@ class ImageAnalysis(BaseModel, ReasonedOutputMixin):
         model_confidence: Model's self-reported confidence (0.0-1.0)
     """
 
-    image_index: int = Field(
-        ...,
-        ge=1,
-        description="Image number on this page (1-indexed)"
-    )
+    image_index: int = Field(..., ge=1, description="Image number on this page (1-indexed)")
     image_type: Reasoned[ImageType] = Field(
-        ...,
-        description="Classification with reasoning: decorative, informative, complex, or text"
+        ..., description="Classification with reasoning: decorative, informative, complex, or text"
     )
-    visual_description: str = Field(
-        ...,
-        min_length=1,
-        description="What the image visually depicts"
-    )
-    current_alt_status: str = Field(
-        ...,
-        description="TODO placeholder, empty, or has description"
-    )
+    visual_description: str = Field(..., min_length=1, description="What the image visually depicts")
+    current_alt_status: str = Field(..., description="TODO placeholder, empty, or has description")
     recommended_action: Reasoned[ImageAction] = Field(
-        ...,
-        description="Action with reasoning: add_alt, improve_alt, mark_decorative, add_long_desc, none"
+        ..., description="Action with reasoning: add_alt, improve_alt, mark_decorative, add_long_desc, none"
     )
-    suggested_alt: str | None = Field(
-        default=None,
-        description="Suggested alt text if applicable"
-    )
+    suggested_alt: str | None = Field(default=None, description="Suggested alt text if applicable")
     quality_signals: QualitySignals = Field(
-        default_factory=QualitySignals,
-        description="Observable quality signals for confidence calculation"
+        default_factory=QualitySignals, description="Observable quality signals for confidence calculation"
     )
     model_confidence: float = Field(
-        default=0.8,
-        ge=0.0,
-        le=1.0,
-        description="Model's self-reported confidence (used in hybrid calculation)"
+        default=0.8, ge=0.0, le=1.0, description="Model's self-reported confidence (used in hybrid calculation)"
     )
 
     @computed_field  # type: ignore[prop-decorator]
@@ -92,6 +76,7 @@ class ImageAnalysis(BaseModel, ReasonedOutputMixin):
     def confidence(self) -> float:
         """Calculate hybrid confidence from quality signals + model assessment."""
         from src.utils.confidence import calculate_confidence
+
         return calculate_confidence(self.quality_signals, self.model_confidence)
 
 
@@ -112,15 +97,15 @@ class FiguresAnalysisOutput(BaseModel):
 
 
 # =============================================================================
-# TablesAgent Models (#24)
+# TablesAgent Models
 # =============================================================================
 
 
 class TableAnalysis(BaseModel, ReasonedOutputMixin):
     """Analysis of a single table on a page with glass-box reasoning.
 
-    Complex determination (complexity) uses Reasoned[T] wrapper to capture
-    chain-of-thought reasoning before the value.
+    Complex determinations (complexity, recommended_action) use Reasoned[T] wrapper
+    to capture chain-of-thought reasoning before the value.
 
     Attributes:
         table_index: Table number on this page (1-indexed)
@@ -130,54 +115,32 @@ class TableAnalysis(BaseModel, ReasonedOutputMixin):
         data_accuracy: Assessment of markdown accuracy vs visual
         visual_description: What the table shows
         markdown_issues: List of specific issues found
-        recommended_action: What should be done
+        recommended_action: Action with reasoning connecting complexity to action
         quality_signals: Observable signals for confidence calculation
         model_confidence: Model's self-reported confidence (0.0-1.0)
     """
 
-    table_index: int = Field(
-        ...,
-        ge=1,
-        description="Table number on this page (1-indexed)"
-    )
-    has_headers: bool = Field(
-        default=True,
-        description="Whether table has identifiable headers"
-    )
-    header_structure: str = Field(
-        default="single_row",
-        description="single_row, multi_row, column_headers, none"
-    )
+    table_index: int = Field(..., ge=1, description="Table number on this page (1-indexed)")
+    has_headers: bool = Field(default=True, description="Whether table has identifiable headers")
+    header_structure: str = Field(default="single_row", description="single_row, multi_row, column_headers, none")
     complexity: Reasoned[TableComplexity] = Field(
+        ..., description="Complexity assessment with reasoning: simple, merged_cells, nested, irregular"
+    )
+    data_accuracy: str = Field(default="accurate", description="accurate, partial, missing_data, structural_loss")
+    visual_description: str = Field(..., min_length=1, description="What the table visually shows")
+    markdown_issues: list[str] = Field(default_factory=list, description="List of specific issues found in markdown")
+    recommended_action: Reasoned[TableAction] = Field(
         ...,
-        description="Complexity assessment with reasoning: simple, merged_cells, nested, irregular"
-    )
-    data_accuracy: str = Field(
-        default="accurate",
-        description="accurate, partial, missing_data, structural_loss"
-    )
-    visual_description: str = Field(
-        ...,
-        min_length=1,
-        description="What the table visually shows"
-    )
-    markdown_issues: list[str] = Field(
-        default_factory=list,
-        description="List of specific issues found in markdown"
-    )
-    recommended_action: str = Field(
-        default="none",
-        description="add_headers, restructure, verify_data, add_caption, none"
+        description=(
+            "Action with reasoning: add_headers, restructure, verify_data, add_caption, none. "
+            "Reasoning should connect header_structure and complexity to the chosen action."
+        ),
     )
     quality_signals: QualitySignals = Field(
-        default_factory=QualitySignals,
-        description="Observable quality signals for confidence calculation"
+        default_factory=QualitySignals, description="Observable quality signals for confidence calculation"
     )
     model_confidence: float = Field(
-        default=0.8,
-        ge=0.0,
-        le=1.0,
-        description="Model's self-reported confidence (used in hybrid calculation)"
+        default=0.8, ge=0.0, le=1.0, description="Model's self-reported confidence (used in hybrid calculation)"
     )
 
     @computed_field  # type: ignore[prop-decorator]
@@ -185,6 +148,7 @@ class TableAnalysis(BaseModel, ReasonedOutputMixin):
     def confidence(self) -> float:
         """Calculate hybrid confidence from quality signals + model assessment."""
         from src.utils.confidence import calculate_confidence
+
         return calculate_confidence(self.quality_signals, self.model_confidence)
 
 
@@ -205,7 +169,7 @@ class TablesAnalysisOutput(BaseModel):
 
 
 # =============================================================================
-# StructureAgent Models (#23)
+# StructureAgent Models
 # =============================================================================
 
 
@@ -230,46 +194,40 @@ class StructureIssue(BaseModel, ReasonedOutputMixin):
         ...,
         description="Issue classification with reasoning",
     )
-    location_description: str = Field(
-        ...,
-        min_length=1,
-        description="Where the issue occurs in the document"
-    )
-    visual_evidence: str = Field(
-        ...,
-        min_length=1,
-        description="What is visually presented"
-    )
-    markup_state: str = Field(
-        ...,
-        min_length=1,
-        description="Current state in the markup"
-    )
-    severity: Reasoned[Severity] = Field(
-        ...,
-        description="Severity assessment with reasoning: critical, major, minor"
-    )
-    recommended_fix: str = Field(
-        ...,
-        min_length=1,
-        description="Suggested fix for the issue"
-    )
+    location_description: str = Field(..., min_length=1, description="Where the issue occurs in the document")
+    visual_evidence: str = Field(..., min_length=1, description="What is visually presented")
+    markup_state: str = Field(..., min_length=1, description="Current state in the markup")
+    severity: Reasoned[Severity] = Field(..., description="Severity assessment with reasoning: critical, major, minor")
+    recommended_fix: str = Field(..., min_length=1, description="Suggested fix for the issue")
     quality_signals: QualitySignals = Field(
-        default_factory=QualitySignals,
-        description="Observable quality signals for confidence calculation"
+        default_factory=QualitySignals, description="Observable quality signals for confidence calculation"
     )
     model_confidence: float = Field(
-        default=0.8,
-        ge=0.0,
-        le=1.0,
-        description="Model's self-reported confidence (used in hybrid calculation)"
+        default=0.8, ge=0.0, le=1.0, description="Model's self-reported confidence (used in hybrid calculation)"
     )
+
+    @field_validator("model_confidence")
+    @classmethod
+    def warn_if_default_confidence(cls, v: float) -> float:
+        """Warn if confidence appears uncalibrated (exactly 0.8).
+
+        The prompt instructs the model to calibrate confidence based on
+        quality signals, not use a default value. This validator logs a
+        warning when the suspiciously common default of 0.8 is used.
+        """
+        if v == 0.8:
+            logger.warning(
+                "StructureIssue model_confidence is exactly 0.8 - "
+                "ensure this is calibrated from quality signals, not a default"
+            )
+        return v
 
     @computed_field  # type: ignore[prop-decorator]
     @property
     def confidence(self) -> float:
         """Calculate hybrid confidence from quality signals + model assessment."""
         from src.utils.confidence import calculate_confidence
+
         return calculate_confidence(self.quality_signals, self.model_confidence)
 
 
@@ -290,21 +248,22 @@ class StructureAnalysisOutput(BaseModel):
 
 
 # =============================================================================
-# TypographyAgent Models (#23)
+# TypographyAgent Models
 # =============================================================================
 
 
 class TypographyIssue(BaseModel, ReasonedOutputMixin):
     """A typography-based semantic issue with glass-box reasoning.
 
-    Complex determination (issue_type) uses Reasoned[T] wrapper to capture
-    chain-of-thought reasoning before the value.
+    Complex determinations (issue_type, severity) use Reasoned[T] wrapper to
+    capture chain-of-thought reasoning before the value.
 
     Attributes:
         issue_type: Issue classification with reasoning
         visual_description: What is visually presented
         markup_state: Current state in markup
         semantic_meaning: What the styling conveys
+        severity: Severity assessment with reasoning (critical, major, minor)
         recommended_markup: Suggested markup fix
         quality_signals: Observable signals for confidence calculation
         model_confidence: Model's self-reported confidence (0.0-1.0)
@@ -312,44 +271,48 @@ class TypographyIssue(BaseModel, ReasonedOutputMixin):
 
     issue_type: Reasoned[TypographyIssueType] = Field(
         ...,
-        description="Issue classification with reasoning",
+        description="Issue classification with reasoning citing visual evidence",
     )
-    visual_description: str = Field(
+    visual_description: str = Field(..., min_length=1, description="What is visually presented")
+    markup_state: str = Field(..., min_length=1, description="Current state in the markup")
+    semantic_meaning: str = Field(..., min_length=1, description="What the styling conveys semantically")
+    severity: Reasoned[Severity] = Field(
         ...,
-        min_length=1,
-        description="What is visually presented"
+        description=(
+            "Severity assessment with reasoning: critical (blocks access), "
+            "major (significant barrier), minor (inconvenience)"
+        ),
     )
-    markup_state: str = Field(
-        ...,
-        min_length=1,
-        description="Current state in the markup"
-    )
-    semantic_meaning: str = Field(
-        ...,
-        min_length=1,
-        description="What the styling conveys semantically"
-    )
-    recommended_markup: str = Field(
-        ...,
-        min_length=1,
-        description="Suggested markup to apply"
-    )
+    recommended_markup: str = Field(..., min_length=1, description="Suggested markup to apply")
     quality_signals: QualitySignals = Field(
-        default_factory=QualitySignals,
-        description="Observable quality signals for confidence calculation"
+        default_factory=QualitySignals, description="Observable quality signals for confidence calculation"
     )
     model_confidence: float = Field(
-        default=0.8,
-        ge=0.0,
-        le=1.0,
-        description="Model's self-reported confidence (used in hybrid calculation)"
+        default=0.8, ge=0.0, le=1.0, description="Model's self-reported confidence (used in hybrid calculation)"
     )
+
+    @field_validator("model_confidence")
+    @classmethod
+    def warn_if_default_confidence(cls, v: float) -> float:
+        """Warn if confidence appears uncalibrated (exactly 0.8).
+
+        The prompt instructs the model to calibrate confidence based on
+        quality signals, not use a default value. This validator logs a
+        warning when the suspiciously common default of 0.8 is used.
+        """
+        if v == 0.8:
+            logger.warning(
+                "TypographyIssue model_confidence is exactly 0.8 - "
+                "ensure this is calibrated from quality signals, not a default"
+            )
+        return v
 
     @computed_field  # type: ignore[prop-decorator]
     @property
     def confidence(self) -> float:
         """Calculate hybrid confidence from quality signals + model assessment."""
         from src.utils.confidence import calculate_confidence
+
         return calculate_confidence(self.quality_signals, self.model_confidence)
 
 
@@ -384,6 +347,7 @@ __all__ = [
     "ImageType",
     "ImageAction",
     "TableComplexity",
+    "TableAction",
     "StructureIssueType",
     "Severity",
     "TypographyIssueType",

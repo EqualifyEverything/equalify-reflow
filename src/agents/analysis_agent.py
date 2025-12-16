@@ -17,6 +17,7 @@ from __future__ import annotations
 
 import base64
 import logging
+import time
 import uuid
 from dataclasses import dataclass, field
 from pathlib import Path
@@ -29,6 +30,7 @@ from pydantic_ai.messages import BinaryContent
 
 from src.agents.model_tiers import MODEL_TIER_MAP, ModelTier
 from src.config import settings
+from src.services.debug_logging_service import debug_logger
 from src.services.pdf_converter import PageData
 from src.shared.llm_cost import calculate_estimated_cost, get_pricing_for_tier
 from src.shared.models.observation import Observation, ObservationLocation
@@ -239,7 +241,28 @@ class AnalysisAgent:
         user_prompt = self.prompts["user_prompt"].format(total_pages=total_pages)
         messages.append(user_prompt)
 
+        # Debug log: prompt being sent
+        image_info = None
+        if settings.debug_log_images:
+            image_info = {
+                "page_count": len(pages),
+                "pages_with_images": sum(1 for p in pages if p.image_base64),
+            }
+
+        debug_logger.log_prompt(
+            job_id=job_id,
+            agent_name="analysis_agent",
+            system_prompt=self.prompts.get("system_prompt"),
+            user_message=user_prompt,
+            image_info=image_info,
+            model_id=self.model_id,
+            model_tier=self.model_tier.value,
+            temperature=self.config.temperature,
+            max_tokens=self.config.max_tokens,
+        )
+
         # Run agent
+        start_time = time.time()
         result = await agent.run(
             messages,
             model_settings={
@@ -247,6 +270,7 @@ class AnalysisAgent:
                 "temperature": self.config.temperature,
             },
         )
+        duration_ms = (time.time() - start_time) * 1000
 
         # Extract usage
         usage_data = result.usage()
@@ -264,6 +288,20 @@ class AnalysisAgent:
             output_tokens=output_tokens,
             total_tokens=total_tokens,
             estimated_cost_cents=estimated_cost_cents,
+        )
+
+        # Debug log: response received
+        debug_logger.log_response(
+            job_id=job_id,
+            agent_name="analysis_agent",
+            response_text=None,  # Structured output, not raw text
+            parsed_output=result.output,
+            input_tokens=input_tokens,
+            output_tokens=output_tokens,
+            total_tokens=total_tokens,
+            estimated_cost_cents=estimated_cost_cents,
+            duration_ms=duration_ms,
+            model_id=self.model_id,
         )
 
         # Convert output to DocumentManifest

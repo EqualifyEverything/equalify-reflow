@@ -23,6 +23,7 @@ from .middleware import (
     RateLimitMiddleware,
     add_cors_middleware,
 )
+from .middleware.debug_middleware import DebugMiddleware
 from .middleware.metrics import setup_metrics
 from .services.rate_limit_service import RateLimitService
 from .workers.pii_worker import start_pii_worker
@@ -125,6 +126,13 @@ app.add_middleware(ErrorHandlerMiddleware)  # Catch all errors
 app.add_middleware(RateLimitMiddleware)     # Rate limit before processing
 app.add_middleware(LoggingMiddleware)       # Log all requests
 add_cors_middleware(app)                     # CORS headers
+
+# Debug middleware (only active when DEBUG_MODE=true)
+if settings.debug_mode:
+    app.add_middleware(DebugMiddleware)
+    logger.info("🔍 Debug mode enabled - capturing all request/response bodies")
+    logger.info(f"   Debug log file: {settings.debug_log_file or 'console only'}")
+    logger.info(f"   Debug log format: {settings.debug_log_format}")
 
 # Include routers
 app.include_router(health.router)

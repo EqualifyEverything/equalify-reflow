@@ -17,6 +17,7 @@ from __future__ import annotations
 
 import base64
 import logging
+import time
 from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Any
@@ -28,6 +29,7 @@ from pydantic_ai.messages import BinaryContent
 
 from src.agents.model_tiers import MODEL_TIER_MAP, ModelTier
 from src.config import settings
+from src.services.debug_logging_service import debug_logger
 from src.services.pdf_converter import PageData
 from src.shared.llm_cost import HAIKU_PRICING, calculate_estimated_cost
 from src.shared.models.processing import LLMUsage
@@ -203,7 +205,28 @@ class ExtractionAgent:
         )
         messages.append(user_prompt)
 
+        # Debug log: prompt being sent
+        image_info = None
+        if settings.debug_log_images:
+            image_info = {
+                "page_count": len(pages),
+                "pages_with_images": sum(1 for p in pages if p.image_base64),
+            }
+
+        debug_logger.log_prompt(
+            job_id=job_id,
+            agent_name="extraction_agent",
+            system_prompt=self.prompts.get("system_prompt"),
+            user_message=user_prompt,
+            image_info=image_info,
+            model_id=self.model_id,
+            model_tier=self.model_tier.value,
+            temperature=self.config.temperature,
+            max_tokens=self.config.max_tokens,
+        )
+
         # Run agent
+        start_time = time.time()
         result = await agent.run(
             messages,
             model_settings={
@@ -211,6 +234,7 @@ class ExtractionAgent:
                 "temperature": self.config.temperature,
             },
         )
+        duration_ms = (time.time() - start_time) * 1000
 
         # Extract usage
         usage_data = result.usage()
@@ -230,6 +254,20 @@ class ExtractionAgent:
         )
 
         output = result.output
+
+        # Debug log: response received
+        debug_logger.log_response(
+            job_id=job_id,
+            agent_name="extraction_agent",
+            response_text=output.markdown[:1000] if output.markdown else None,  # Log start of markdown
+            parsed_output={"confidence": output.confidence, "notes": output.notes},
+            input_tokens=input_tokens,
+            output_tokens=output_tokens,
+            total_tokens=total_tokens,
+            estimated_cost_cents=estimated_cost_cents,
+            duration_ms=duration_ms,
+            model_id=self.model_id,
+        )
 
         logger.info(
             f"Extraction complete for job {job_id}: "

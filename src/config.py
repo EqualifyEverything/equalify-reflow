@@ -223,5 +223,39 @@ class Settings(BaseSettings):
     # Testing Configuration
     disable_workers: bool = False  # Set to True to disable background workers (for testing)
 
+    # Debug Mode Configuration
+    debug_mode: bool = Field(
+        default=False,
+        description="Enable comprehensive debug logging of inputs, prompts, responses, and system events"
+    )
+    debug_log_prompts: bool = Field(
+        default=True,
+        description="Include full prompt text in debug logs (requires debug_mode=True)"
+    )
+    debug_log_responses: bool = Field(
+        default=True,
+        description="Include full LLM response text in debug logs (requires debug_mode=True)"
+    )
+    debug_log_images: bool = Field(
+        default=False,
+        description="Include image metadata in debug logs - not actual binary data (requires debug_mode=True)"
+    )
+    debug_log_file: str | None = Field(
+        default=None,
+        description="Optional file path for debug log output (in addition to console). "
+                    "If not set, debug logs only go to console."
+    )
+    debug_log_format: str = Field(
+        default="json",
+        description="Debug log format: 'json' for structured output, 'text' for human-readable"
+    )
+    debug_truncate_length: int = Field(
+        default=10000,
+        ge=100,
+        le=100000,
+        description="Maximum character length for prompt/response content in debug logs. "
+                    "Set higher for full content, lower to reduce log size."
+    )
+
 
 settings = Settings()

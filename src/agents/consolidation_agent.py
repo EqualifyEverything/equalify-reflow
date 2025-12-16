@@ -10,6 +10,7 @@ The consolidation phase is the bridge between AI analysis and human review:
 from __future__ import annotations
 
 import logging
+import time
 import uuid
 from pathlib import Path
 from typing import Any, Literal
@@ -20,6 +21,7 @@ from pydantic_ai.models.bedrock import BedrockConverseModel
 
 from src.agents.model_tiers import MODEL_TIER_MAP, ModelTier
 from src.config import settings
+from src.services.debug_logging_service import debug_logger
 from src.shared.llm_cost import calculate_estimated_cost, get_pricing_for_tier
 from src.shared.models.agent_models import LLMUsage
 from src.shared.models.observation import Observation
@@ -280,6 +282,20 @@ class ConsolidationAgent:
         # Execute agent
         agent = self._get_agent()
 
+        # Debug log: prompt being sent
+        debug_logger.log_prompt(
+            job_id=job_id,
+            agent_name="consolidation_agent",
+            system_prompt=self.prompts.get("system_prompt", CONSOLIDATION_SYSTEM_PROMPT),
+            user_message=user_message,
+            image_info=None,
+            model_id=self.model_id,
+            model_tier=self.model_tier.value,
+            temperature=0.3,
+            max_tokens=settings.claude_max_tokens,
+        )
+
+        start_time = time.time()
         result = await agent.run(
             user_message,
             model_settings={
@@ -287,6 +303,7 @@ class ConsolidationAgent:
                 "temperature": 0.3,  # Lower temperature for more consistent diffs
             },
         )
+        duration_ms = (time.time() - start_time) * 1000
 
         output = result.output
 
@@ -303,6 +320,20 @@ class ConsolidationAgent:
             output_tokens=output_tokens,
             total_tokens=total_tokens,
             estimated_cost_cents=cost_cents,
+        )
+
+        # Debug log: response received
+        debug_logger.log_response(
+            job_id=job_id,
+            agent_name="consolidation_agent",
+            response_text=None,  # Structured output
+            parsed_output=output,
+            input_tokens=input_tokens,
+            output_tokens=output_tokens,
+            total_tokens=total_tokens,
+            estimated_cost_cents=cost_cents,
+            duration_ms=duration_ms,
+            model_id=self.model_id,
         )
 
         logger.debug(

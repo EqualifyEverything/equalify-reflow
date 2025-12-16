@@ -9,6 +9,7 @@ Supports model tier selection (PRD-012) for cost/capability tradeoffs:
 """
 
 import logging
+import time
 from abc import ABC, abstractmethod
 from dataclasses import dataclass, field
 from pathlib import Path
@@ -21,6 +22,7 @@ from pydantic_ai.messages import BinaryContent
 
 from src.agents.model_tiers import MODEL_TIER_MAP, ModelTier
 from src.config import settings
+from src.services.debug_logging_service import debug_logger
 from src.shared.llm_cost import calculate_estimated_cost, get_pricing_for_tier
 from src.shared.models.agent_models import AgentInput, LLMUsage
 
@@ -227,6 +229,7 @@ class BaseDocumentAgent(ABC, Generic[TOutput]):
         self,
         user_message: str,
         image_bytes: bytes | None = None,
+        job_id: str | None = None,
     ) -> tuple[TOutput, LLMUsage]:
         """Execute the PydanticAI agent and return output with usage metrics.
 
@@ -236,6 +239,7 @@ class BaseDocumentAgent(ABC, Generic[TOutput]):
         Args:
             user_message: Formatted prompt for the LLM
             image_bytes: Optional PNG image bytes for multimodal input
+            job_id: Optional job ID for debug logging correlation
 
         Returns:
             Tuple of (typed output, LLMUsage with token counts and cost)
@@ -253,7 +257,28 @@ class BaseDocumentAgent(ABC, Generic[TOutput]):
             f"image: {image_bytes is not None}"
         )
 
+        # Debug log: prompt being sent
+        image_info = None
+        if image_bytes and settings.debug_log_images:
+            image_info = {
+                "size_bytes": len(image_bytes),
+                "format": "png",
+            }
+
+        debug_logger.log_prompt(
+            job_id=job_id or "unknown",
+            agent_name=self.name,
+            system_prompt=self.prompts.get("system_prompt"),
+            user_message=user_message,
+            image_info=image_info,
+            model_id=self.model_id,
+            model_tier=self.model_tier.value,
+            temperature=self.config.temperature,
+            max_tokens=settings.claude_max_tokens,
+        )
+
         # Get agent (lazy initialization) and execute
+        start_time = time.time()
         agent = self._get_agent()
         result = await agent.run(
             messages,
@@ -262,6 +287,7 @@ class BaseDocumentAgent(ABC, Generic[TOutput]):
                 "temperature": self.config.temperature,
             },
         )
+        duration_ms = (time.time() - start_time) * 1000
 
         # Extract usage metrics
         usage = result.usage()
@@ -275,6 +301,27 @@ class BaseDocumentAgent(ABC, Generic[TOutput]):
             output_tokens=output_tokens,
             total_tokens=total_tokens,
             estimated_cost_cents=estimated_cost_cents,
+        )
+
+        # Debug log: response received
+        # Get raw response text if available
+        raw_response_text = None
+        if result.all_messages():
+            last_message = result.all_messages()[-1]
+            if hasattr(last_message, "content"):
+                raw_response_text = str(last_message.content)
+
+        debug_logger.log_response(
+            job_id=job_id or "unknown",
+            agent_name=self.name,
+            response_text=raw_response_text,
+            parsed_output=result.output,
+            input_tokens=input_tokens,
+            output_tokens=output_tokens,
+            total_tokens=total_tokens,
+            estimated_cost_cents=estimated_cost_cents,
+            duration_ms=duration_ms,
+            model_id=self.model_id,
         )
 
         logger.debug(

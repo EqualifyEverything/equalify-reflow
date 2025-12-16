@@ -147,7 +147,7 @@ Analyze each table for structure and accuracy.""",
 
             try:
                 # Run analysis
-                output, usage = await self._run_agent(user_message, image_bytes)
+                output, usage = await self._run_agent(user_message, image_bytes, job_id=job_id)
 
                 # Accumulate usage
                 combined_usage.input_tokens += usage.input_tokens

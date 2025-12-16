@@ -22,6 +22,7 @@ from ..agents.structure_agent import StructureAgent
 from ..agents.tables_agent import TablesAgent
 from ..agents.typography_agent import TypographyAgent
 from ..config import settings
+from ..services.debug_logging_service import debug_logger
 from ..services.application_service import ApplicationService
 from ..services.consolidation_service import ConsolidationService
 from ..services.correction_approval_service import CorrectionApprovalService
@@ -142,9 +143,35 @@ class ProcessingService:
             logger.info(
                 f"Job {job.job_id}: Starting analysis phase (Sonnet)..."
             )
+
+            # Debug log: phase start
+            phase_start_time = time.time()
+            debug_logger.log_phase_start(
+                job_id=job.job_id,
+                phase_name="analysis",
+                phase_number=1,
+                details={"total_pages": conversion_result.total_pages},
+            )
+
             analysis_agent = AnalysisAgent()
             manifest, initial_observations, analysis_usage = await analysis_agent.analyze(
                 pages, job.job_id
+            )
+
+            # Debug log: phase end
+            phase_duration_ms = (time.time() - phase_start_time) * 1000
+            debug_logger.log_phase_end(
+                job_id=job.job_id,
+                phase_name="analysis",
+                phase_number=1,
+                duration_ms=phase_duration_ms,
+                result_summary={
+                    "required_agents": manifest.required_agents,
+                    "initial_observations": len(initial_observations),
+                    "input_tokens": analysis_usage.input_tokens,
+                    "output_tokens": analysis_usage.output_tokens,
+                    "cost_cents": analysis_usage.estimated_cost_cents,
+                },
             )
 
             # Save manifest and initial observations to S3
@@ -179,6 +206,16 @@ class ProcessingService:
             logger.info(
                 f"Job {job.job_id}: Starting extraction phase (Haiku)..."
             )
+
+            # Debug log: phase start
+            phase_start_time = time.time()
+            debug_logger.log_phase_start(
+                job_id=job.job_id,
+                phase_name="extraction",
+                phase_number=2,
+                details={"document_title": manifest.document_title},
+            )
+
             extraction_agent = ExtractionAgent()
 
             # Extract markdown guided by the manifest from analysis phase
@@ -188,6 +225,22 @@ class ProcessingService:
                     manifest=manifest,
                     job_id=job.job_id,
                 )
+            )
+
+            # Debug log: phase end
+            phase_duration_ms = (time.time() - phase_start_time) * 1000
+            debug_logger.log_phase_end(
+                job_id=job.job_id,
+                phase_name="extraction",
+                phase_number=2,
+                duration_ms=phase_duration_ms,
+                result_summary={
+                    "markdown_length": len(full_markdown),
+                    "confidence": extraction_confidence,
+                    "input_tokens": extraction_usage.input_tokens,
+                    "output_tokens": extraction_usage.output_tokens,
+                    "cost_cents": extraction_usage.estimated_cost_cents,
+                },
             )
 
             # Save v0 markdown (original extraction, never modified)
@@ -215,6 +268,15 @@ class ProcessingService:
             if manifest.required_agents:
                 logger.info(
                     f"Job {job.job_id}: Starting specialized analysis phase (Sonnet)..."
+                )
+
+                # Debug log: phase start
+                phase_start_time = time.time()
+                debug_logger.log_phase_start(
+                    job_id=job.job_id,
+                    phase_name="specialized_agents",
+                    phase_number=3,
+                    details={"required_agents": manifest.required_agents},
                 )
 
                 # Update substatus to "analyzing_specialized"
@@ -245,6 +307,22 @@ class ProcessingService:
 
                 # Convert combined usage to LLMUsage for consistent tracking
                 specialized_usage = combined_agent_usage.to_llm_usage()
+
+                # Debug log: phase end
+                phase_duration_ms = (time.time() - phase_start_time) * 1000
+                debug_logger.log_phase_end(
+                    job_id=job.job_id,
+                    phase_name="specialized_agents",
+                    phase_number=3,
+                    duration_ms=phase_duration_ms,
+                    result_summary={
+                        "observations_found": len(specialized_observations),
+                        "agents_run": manifest.required_agents,
+                        "input_tokens": specialized_usage.input_tokens,
+                        "output_tokens": specialized_usage.output_tokens,
+                        "cost_cents": specialized_usage.estimated_cost_cents,
+                    },
+                )
 
                 logger.info(
                     f"Job {job.job_id}: Specialized analysis complete - "
@@ -280,6 +358,15 @@ class ProcessingService:
                     f"Job {job.job_id}: Starting consolidation phase (Sonnet)..."
                 )
 
+                # Debug log: phase start
+                phase_start_time = time.time()
+                debug_logger.log_phase_start(
+                    job_id=job.job_id,
+                    phase_name="consolidation",
+                    phase_number=4,
+                    details={"total_observations": len(all_observations)},
+                )
+
                 # Update substatus to "consolidating"
                 await retry_with_backoff(
                     lambda: self.job.update_job_status(
@@ -301,6 +388,23 @@ class ProcessingService:
                 )
 
                 proposal_count = len(proposals)
+
+                # Debug log: phase end
+                phase_duration_ms = (time.time() - phase_start_time) * 1000
+                debug_logger.log_phase_end(
+                    job_id=job.job_id,
+                    phase_name="consolidation",
+                    phase_number=4,
+                    duration_ms=phase_duration_ms,
+                    result_summary={
+                        "proposal_count": proposal_count,
+                        "auto_proposals": auto_proposal_count,
+                        "manual_proposals": manual_proposal_count,
+                        "input_tokens": consolidation_usage.input_tokens,
+                        "output_tokens": consolidation_usage.output_tokens,
+                        "cost_cents": consolidation_usage.estimated_cost_cents,
+                    },
+                )
 
                 logger.info(
                     f"Job {job.job_id}: Consolidation complete - "

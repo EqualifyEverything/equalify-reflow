@@ -2,6 +2,7 @@
 
 import asyncio
 import logging
+import time
 
 from redis.asyncio import Redis
 
@@ -9,6 +10,7 @@ from ..config import settings
 from ..dependencies import get_redis_client, get_s3_client
 from ..services.application_service import ApplicationService
 from ..services.correction_approval_service import CorrectionApprovalService
+from ..services.debug_logging_service import DebugEventType, debug_logger
 from ..services.job_service import JobService
 from ..services.metrics_service import (
     worker_active_gauge,
@@ -74,6 +76,13 @@ class ProcessingWorker:
         self.running = True
         logger.info("Processing worker started")
 
+        # Debug log: worker started
+        debug_logger.log_worker_event(
+            event=DebugEventType.WORKER_STARTED,
+            worker_type="processing",
+            details={"queue": PROCESSING_QUEUE},
+        )
+
         # Mark worker as active in Prometheus
         worker_active_gauge.labels(worker_name="processing").set(1)
 
@@ -97,8 +106,29 @@ class ProcessingWorker:
                             break
                         logger.info(f"Received processing job: {job.job_id}")
 
+                        # Debug log: job started
+                        job_start_time = time.time()
+                        debug_logger.log_job_started(
+                            job_id=job.job_id,
+                            worker_type="processing",
+                            details={"s3_key": job.s3_key, "queue": PROCESSING_QUEUE},
+                        )
+
                         # Process job
-                        await self.processing_service.process_document(job)
+                        result = await self.processing_service.process_document(job)
+
+                        # Debug log: job completed
+                        job_duration_ms = (time.time() - job_start_time) * 1000
+                        debug_logger.log_job_completed(
+                            job_id=job.job_id,
+                            worker_type="processing",
+                            duration_ms=job_duration_ms,
+                            result_summary={
+                                "markdown_url": result.markdown_url,
+                                "confidence_score": result.confidence_score,
+                                "error_message": result.error_message,
+                            },
+                        )
 
                         # Track successful processing
                         worker_jobs_processed_total.labels(
@@ -111,6 +141,18 @@ class ProcessingWorker:
 
                 except Exception as e:
                     logger.error(f"Processing worker error: {e}", exc_info=True)
+
+                    # Debug log: job failed (if we had a job context)
+                    if "job" in dir() and job is not None:
+                        job_duration_ms = (time.time() - job_start_time) * 1000 if "job_start_time" in dir() else None
+                        debug_logger.log_job_failed(
+                            job_id=job.job_id,
+                            worker_type="processing",
+                            error=str(e),
+                            error_type=type(e).__name__,
+                            duration_ms=job_duration_ms,
+                        )
+
                     # Track error
                     worker_errors_total.labels(
                         worker_name="processing", error_type=type(e).__name__
@@ -124,6 +166,13 @@ class ProcessingWorker:
         finally:
             # Mark worker as inactive when shutting down
             worker_active_gauge.labels(worker_name="processing").set(0)
+
+            # Debug log: worker stopped
+            debug_logger.log_worker_event(
+                event=DebugEventType.WORKER_STOPPED,
+                worker_type="processing",
+            )
+
             logger.info("Processing worker shutting down gracefully")
 
     def stop(self) -> None:

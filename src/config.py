@@ -225,5 +225,23 @@ class Settings(BaseSettings):
     # Testing Configuration
     disable_workers: bool = False  # Set to True to disable background workers (for testing)
 
+    # Telemetry Configuration (OpenTelemetry)
+    telemetry_enabled: bool = Field(
+        default=False,
+        description="Enable OpenTelemetry tracing and metrics"
+    )
+    telemetry_console_export: bool = Field(
+        default=False,
+        description="Export spans to console (for development)"
+    )
+    telemetry_otlp_endpoint: str | None = Field(
+        default=None,
+        description="OTLP endpoint for trace export (e.g., 'localhost:4317' for Jaeger)"
+    )
+    telemetry_log_prompts: bool = Field(
+        default=False,
+        description="Log full LLM prompts and outputs in traces (WARNING: may contain document content)"
+    )
+
 
 settings = Settings()

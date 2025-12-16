@@ -32,7 +32,7 @@ from pydantic_ai import Agent, RunContext
 from pydantic_ai.messages import BinaryContent
 
 from src.agents.dependencies import AgentDependencies
-from src.agents.factory import create_agent, extract_usage, load_prompts
+from src.agents.factory import create_agent, extract_usage, load_prompts, run_agent
 from src.agents.model_tiers import ModelTier
 from src.services.pdf_converter import PageData
 from src.services.reasoning_corpus_service import get_reasoning_corpus_service
@@ -341,16 +341,20 @@ async def extract(
     )
     messages.append(user_prompt)
 
-    # Run agent with deps for dynamic instructions
-    result = await agent.run(
-        messages,
+    # Run agent with tracing
+    result = await run_agent(
+        agent=agent,
+        prompt=messages,
+        job_id=job_id,
+        agent_name="extraction_agent",
+        model_tier=_MODEL_TIER,
         deps=deps,
     )
 
     # Extract usage with model tier
     usage = extract_usage(result, _MODEL_TIER)
 
-    output = result.data  # type: ignore[attr-defined]
+    output = result.output
 
     # Log reasoning corpus for analysis and debugging
     await _log_reasoning_corpus(output, job_id)
@@ -488,7 +492,7 @@ class ExtractionAgent:
         """
         from pathlib import Path
 
-        from src.agents.base_agent import AgentConfig
+        from src.agents.core import AgentConfig
 
         # Store custom config or create default
         if config is not None:
@@ -568,7 +572,7 @@ class ExtractionAgent:
         agent = self._get_agent()
         result = await agent.run(messages, deps=deps)
         usage = extract_usage(result, _MODEL_TIER)
-        return result.data, usage  # type: ignore[attr-defined]
+        return result.output, usage
 
     async def extract(
         self,
@@ -639,14 +643,21 @@ class ExtractionAgent:
         )
         messages.append(user_prompt)
 
-        # Run agent with deps for dynamic instructions
-        result = await agent.run(messages, deps=deps)
+        # Run agent with tracing
+        result = await run_agent(
+            agent=agent,
+            prompt=messages,
+            job_id=job_id,
+            agent_name="extraction_agent",
+            model_tier=_MODEL_TIER,
+            deps=deps,
+        )
 
         # Extract usage with model tier
         usage = extract_usage(result, _MODEL_TIER)
 
         # Support both .output (old) and .data (new) for backward compatibility
-        output = getattr(result, "output", None) or result.data  # type: ignore[attr-defined]
+        output = result.output
 
         # Log reasoning corpus for analysis and debugging
         await _log_reasoning_corpus(output, job_id)

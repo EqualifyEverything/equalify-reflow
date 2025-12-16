@@ -24,6 +24,7 @@ from .middleware import (
     add_cors_middleware,
 )
 from .middleware.metrics import setup_metrics
+from .telemetry import init_telemetry, shutdown_telemetry
 from .services.rate_limit_service import RateLimitService
 from .workers.pii_worker import start_pii_worker
 from .workers.processing_worker import start_processing_worker
@@ -45,6 +46,12 @@ async def lifespan(app: FastAPI) -> AsyncIterator[None]:
     Starts background workers when the application starts
     and ensures cleanup on shutdown.
     """
+    # Initialize OpenTelemetry (if enabled)
+    if settings.telemetry_enabled:
+        logger.info("Initializing OpenTelemetry...")
+        init_telemetry(app)
+        logger.info("✅ OpenTelemetry initialized")
+
     # Startup: Initialize shared services
     logger.info("Initializing shared services...")
     redis_gen = get_redis_client()
@@ -96,6 +103,12 @@ async def lifespan(app: FastAPI) -> AsyncIterator[None]:
                 await asyncio.gather(*worker_tasks, return_exceptions=True)
             except Exception as e:
                 logger.error(f"Error during forced shutdown: {e}")
+
+    # Shutdown OpenTelemetry (if enabled)
+    if settings.telemetry_enabled:
+        logger.info("Shutting down OpenTelemetry...")
+        shutdown_telemetry()
+        logger.info("✅ OpenTelemetry shutdown complete")
 
 
 # Create FastAPI app with lifespan

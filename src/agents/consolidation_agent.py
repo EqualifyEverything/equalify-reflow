@@ -23,7 +23,7 @@ from typing import Any, Literal
 from pydantic import BaseModel, Field
 from pydantic_ai import Agent
 
-from src.agents.factory import create_agent, extract_usage, load_prompts
+from src.agents.factory import create_agent, extract_usage, load_prompts, run_agent
 from src.agents.model_tiers import ModelTier
 from src.config import settings
 from src.shared.models.observation import Observation
@@ -261,16 +261,20 @@ async def consolidate(
             f"Generate proposals with exact search-replace diffs."
         )
 
-    # Execute agent
-    result = await agent.run(
-        user_message,
+    # Execute agent with tracing
+    result = await run_agent(
+        agent=agent,
+        prompt=user_message,
+        job_id=job_id,
+        agent_name="consolidation_agent",
+        model_tier=_MODEL_TIER,
         model_settings={
             "max_tokens": 16000,
             "temperature": 0.3,
         },
     )
 
-    output = result.data  # type: ignore[attr-defined]
+    output = result.output
 
     # Extract usage with model tier
     llm_usage = extract_usage(result, _MODEL_TIER)
@@ -525,9 +529,13 @@ class ConsolidationAgent:
                 f"Generate proposals with exact search-replace diffs."
             )
 
-        # Execute agent
-        result = await agent.run(
-            user_message,
+        # Execute agent with tracing
+        result = await run_agent(
+            agent=agent,
+            prompt=user_message,
+            job_id=job_id,
+            agent_name="consolidation_agent",
+            model_tier=_MODEL_TIER,
             model_settings={
                 "max_tokens": 16000,
                 "temperature": 0.3,
@@ -535,7 +543,7 @@ class ConsolidationAgent:
         )
 
         # Support both .output (old) and .data (new) for backward compatibility
-        output = getattr(result, "output", None) or result.data  # type: ignore[attr-defined]
+        output = result.output
 
         # Extract usage with model tier
         llm_usage = extract_usage(result, _MODEL_TIER)

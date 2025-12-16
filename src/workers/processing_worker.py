@@ -2,7 +2,9 @@
 
 import asyncio
 import logging
+import time
 
+from opentelemetry import trace
 from redis.asyncio import Redis
 
 from ..config import settings
@@ -74,6 +76,8 @@ class ProcessingWorker:
         self.running = True
         logger.info("Processing worker started")
 
+        tracer = trace.get_tracer("equalify.workers")
+
         # Mark worker as active in Prometheus
         worker_active_gauge.labels(worker_name="processing").set(1)
 
@@ -97,8 +101,25 @@ class ProcessingWorker:
                             break
                         logger.info(f"Received processing job: {job.job_id}")
 
-                        # Process job
-                        await self.processing_service.process_document(job)
+                        # Process job with OTel span
+                        job_start_time = time.time()
+                        with tracer.start_as_current_span(
+                            "worker.processing.job",
+                            kind=trace.SpanKind.CONSUMER,
+                        ) as span:
+                            span.set_attribute("job_id", job.job_id)
+                            span.set_attribute("worker.type", "processing")
+                            span.set_attribute("s3_key", job.s3_key)
+                            span.set_attribute("queue", PROCESSING_QUEUE)
+
+                            result = await self.processing_service.process_document(job)
+
+                            job_duration_ms = (time.time() - job_start_time) * 1000
+                            span.set_attribute("duration_ms", job_duration_ms)
+                            span.set_attribute("result.markdown_url", result.markdown_url or "")
+                            span.set_attribute("result.confidence_score", result.confidence_score or 0.0)
+                            if result.error_message:
+                                span.set_attribute("result.error", result.error_message)
 
                         # Track successful processing
                         worker_jobs_processed_total.labels(
@@ -111,6 +132,7 @@ class ProcessingWorker:
 
                 except Exception as e:
                     logger.error(f"Processing worker error: {e}", exc_info=True)
+
                     # Track error
                     worker_errors_total.labels(
                         worker_name="processing", error_type=type(e).__name__
@@ -124,6 +146,7 @@ class ProcessingWorker:
         finally:
             # Mark worker as inactive when shutting down
             worker_active_gauge.labels(worker_name="processing").set(0)
+
             logger.info("Processing worker shutting down gracefully")
 
     def stop(self) -> None:

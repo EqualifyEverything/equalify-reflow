@@ -24,6 +24,7 @@ dependencies = [
     "opentelemetry-sdk>=1.20.0",
     "opentelemetry-instrumentation-fastapi>=0.41b0",
     "opentelemetry-exporter-prometheus>=0.41b0",
+    "opentelemetry-exporter-otlp>=1.20.0",
     "mdformat>=1.0.0",
     "pyspellchecker>=0.8.4",
     "mdformat-gfm>=1.0.0",

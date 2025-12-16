@@ -2,6 +2,9 @@
 
 import asyncio
 import logging
+import time
+
+from opentelemetry import trace
 
 from ..config import settings
 from ..services.job_service import JobService
@@ -59,6 +62,8 @@ class PIIWorker:
         self.running = True
         logger.info("PII worker started")
 
+        tracer = trace.get_tracer("equalify.workers")
+
         # Mark worker as active in Prometheus
         worker_active_gauge.labels(worker_name="pii").set(1)
 
@@ -80,8 +85,21 @@ class PIIWorker:
                             break
                         logger.info(f"Received PII job: {job.job_id}")
 
-                        # Process job
-                        await self.pii_service.process_pii_job(job)
+                        # Process job with OTel span
+                        job_start_time = time.time()
+                        with tracer.start_as_current_span(
+                            "worker.pii.job",
+                            kind=trace.SpanKind.CONSUMER,
+                        ) as span:
+                            span.set_attribute("job_id", job.job_id)
+                            span.set_attribute("worker.type", "pii")
+                            span.set_attribute("s3_key", job.s3_key)
+                            span.set_attribute("queue", PII_QUEUE)
+
+                            await self.pii_service.process_pii_job(job)
+
+                            job_duration_ms = (time.time() - job_start_time) * 1000
+                            span.set_attribute("duration_ms", job_duration_ms)
 
                         # Track successful processing
                         worker_jobs_processed_total.labels(
@@ -94,6 +112,7 @@ class PIIWorker:
 
                 except Exception as e:
                     logger.error(f"PII worker error: {e}", exc_info=True)
+
                     # Track error
                     worker_errors_total.labels(
                         worker_name="pii", error_type=type(e).__name__
@@ -107,6 +126,7 @@ class PIIWorker:
         finally:
             # Mark worker as inactive when shutting down
             worker_active_gauge.labels(worker_name="pii").set(0)
+
             logger.info("PII worker shutting down gracefully")
 
     def stop(self) -> None:

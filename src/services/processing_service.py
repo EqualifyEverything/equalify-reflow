@@ -13,6 +13,8 @@ import time
 from datetime import UTC, datetime, timedelta
 from typing import Any
 
+from opentelemetry import trace
+
 from ..agents.agent_router import AgentRouter
 from ..agents.analysis_agent import AnalysisAgent
 from ..agents.extraction_agent import ExtractionAgent
@@ -81,6 +83,7 @@ class ProcessingService:
         self.correction_approval = correction_approval_service
         self.application = application_service
 
+        self._tracer = trace.get_tracer("equalify.processing")
         logger.info("Processing service initialized")
 
     async def process_document(
@@ -142,10 +145,22 @@ class ProcessingService:
             logger.info(
                 f"Job {job.job_id}: Starting analysis phase (Sonnet)..."
             )
-            analysis_agent = AnalysisAgent()
-            manifest, initial_observations, analysis_usage = await analysis_agent.analyze(
-                pages, job.job_id
-            )
+
+            with self._tracer.start_as_current_span("phase.analysis") as span:
+                span.set_attribute("job_id", job.job_id)
+                span.set_attribute("phase.number", 1)
+                span.set_attribute("total_pages", conversion_result.total_pages)
+
+                analysis_agent = AnalysisAgent()
+                manifest, initial_observations, analysis_usage = await analysis_agent.analyze(
+                    pages, job.job_id
+                )
+
+                span.set_attribute("required_agents", str(manifest.required_agents))
+                span.set_attribute("initial_observations", len(initial_observations))
+                span.set_attribute("tokens.input", analysis_usage.input_tokens)
+                span.set_attribute("tokens.output", analysis_usage.output_tokens)
+                span.set_attribute("cost.cents", analysis_usage.estimated_cost_cents)
 
             # Save manifest and initial observations to S3
             await self.remediation_storage.save_manifest(job.job_id, manifest)
@@ -179,18 +194,30 @@ class ProcessingService:
             logger.info(
                 f"Job {job.job_id}: Starting extraction phase (Haiku)..."
             )
-            extraction_agent = ExtractionAgent()
 
-            # Extract markdown guided by the manifest from analysis phase
-            extraction_output, extraction_usage = await extraction_agent.extract(
-                pages=pages,
-                manifest=manifest,
-                job_id=job.job_id,
-            )
+            with self._tracer.start_as_current_span("phase.extraction") as span:
+                span.set_attribute("job_id", job.job_id)
+                span.set_attribute("phase.number", 2)
+                span.set_attribute("document_title", manifest.document_title)
 
-            # Extract values from Reasoned[T] fields
-            full_markdown = extraction_output.markdown
-            extraction_confidence = extraction_output.confidence.value
+                extraction_agent = ExtractionAgent()
+
+                # Extract markdown guided by the manifest from analysis phase
+                extraction_output, extraction_usage = await extraction_agent.extract(
+                    pages=pages,
+                    manifest=manifest,
+                    job_id=job.job_id,
+                )
+
+                # Extract values from Reasoned[T] fields
+                full_markdown = extraction_output.markdown
+                extraction_confidence = extraction_output.confidence.value
+
+                span.set_attribute("markdown_length", len(full_markdown))
+                span.set_attribute("confidence", extraction_confidence)
+                span.set_attribute("tokens.input", extraction_usage.input_tokens)
+                span.set_attribute("tokens.output", extraction_usage.output_tokens)
+                span.set_attribute("cost.cents", extraction_usage.estimated_cost_cents)
 
             # Save v0 markdown (original extraction, never modified)
             await self.storage.upload_result(
@@ -221,34 +248,44 @@ class ProcessingService:
                     f"Job {job.job_id}: Starting specialized analysis phase (Sonnet)..."
                 )
 
-                # Update substatus to "analyzing_specialized"
-                await retry_with_backoff(
-                    lambda: self.job.update_job_status(
-                        job.job_id,
-                        "processing",
-                        substatus="analyzing_specialized",
-                    ),
-                    max_attempts=3,
-                    operation_name=f"Update job {job.job_id} substatus to analyzing_specialized",
-                )
+                with self._tracer.start_as_current_span("phase.specialized_agents") as span:
+                    span.set_attribute("job_id", job.job_id)
+                    span.set_attribute("phase.number", 3)
+                    span.set_attribute("required_agents", str(manifest.required_agents))
 
-                # Create and configure agent router with all specialized agents
-                router = AgentRouter()
-                router.register_agent("figures", FiguresAgent())
-                router.register_agent("tables", TablesAgent())
-                router.register_agent("structure", StructureAgent())
-                router.register_agent("typography", TypographyAgent())
+                    # Update substatus to "analyzing_specialized"
+                    await retry_with_backoff(
+                        lambda: self.job.update_job_status(
+                            job.job_id,
+                            "processing",
+                            substatus="analyzing_specialized",
+                        ),
+                        max_attempts=3,
+                        operation_name=f"Update job {job.job_id} substatus to analyzing_specialized",
+                    )
 
-                # Run required agents and collect observations
-                specialized_observations, combined_agent_usage = await router.run_required_agents(
-                    manifest=manifest,
-                    pages=pages,
-                    markdown=full_markdown,
-                    job_id=job.job_id,
-                )
+                    # Create and configure agent router with all specialized agents
+                    router = AgentRouter()
+                    router.register_agent("figures", FiguresAgent())
+                    router.register_agent("tables", TablesAgent())
+                    router.register_agent("structure", StructureAgent())
+                    router.register_agent("typography", TypographyAgent())
 
-                # Convert combined usage to LLMUsage for consistent tracking
-                specialized_usage = combined_agent_usage.to_llm_usage()
+                    # Run required agents and collect observations
+                    specialized_observations, combined_agent_usage = await router.run_required_agents(
+                        manifest=manifest,
+                        pages=pages,
+                        markdown=full_markdown,
+                        job_id=job.job_id,
+                    )
+
+                    # Convert combined usage to LLMUsage for consistent tracking
+                    specialized_usage = combined_agent_usage.to_llm_usage()
+
+                    span.set_attribute("observations_found", len(specialized_observations))
+                    span.set_attribute("tokens.input", specialized_usage.input_tokens)
+                    span.set_attribute("tokens.output", specialized_usage.output_tokens)
+                    span.set_attribute("cost.cents", specialized_usage.estimated_cost_cents)
 
                 logger.info(
                     f"Job {job.job_id}: Specialized analysis complete - "
@@ -284,27 +321,39 @@ class ProcessingService:
                     f"Job {job.job_id}: Starting consolidation phase (Sonnet)..."
                 )
 
-                # Update substatus to "consolidating"
-                await retry_with_backoff(
-                    lambda: self.job.update_job_status(
-                        job.job_id,
-                        "processing",
-                        substatus="consolidating",
-                    ),
-                    max_attempts=3,
-                    operation_name=f"Update job {job.job_id} substatus to consolidating",
-                )
+                with self._tracer.start_as_current_span("phase.consolidation") as span:
+                    span.set_attribute("job_id", job.job_id)
+                    span.set_attribute("phase.number", 4)
+                    span.set_attribute("total_observations", len(all_observations))
 
-                # Run consolidation service
-                consolidation_service = ConsolidationService(self.remediation_storage)
-                proposals, auto_proposal_count, manual_proposal_count, consolidation_usage = (
-                    await consolidation_service.consolidate_observations(
-                        job_id=job.job_id,
-                        markdown=full_markdown,
+                    # Update substatus to "consolidating"
+                    await retry_with_backoff(
+                        lambda: self.job.update_job_status(
+                            job.job_id,
+                            "processing",
+                            substatus="consolidating",
+                        ),
+                        max_attempts=3,
+                        operation_name=f"Update job {job.job_id} substatus to consolidating",
                     )
-                )
 
-                proposal_count = len(proposals)
+                    # Run consolidation service
+                    consolidation_service = ConsolidationService(self.remediation_storage)
+                    proposals, auto_proposal_count, manual_proposal_count, consolidation_usage = (
+                        await consolidation_service.consolidate_observations(
+                            job_id=job.job_id,
+                            markdown=full_markdown,
+                        )
+                    )
+
+                    proposal_count = len(proposals)
+
+                    span.set_attribute("proposal_count", proposal_count)
+                    span.set_attribute("auto_proposals", auto_proposal_count)
+                    span.set_attribute("manual_proposals", manual_proposal_count)
+                    span.set_attribute("tokens.input", consolidation_usage.input_tokens)
+                    span.set_attribute("tokens.output", consolidation_usage.output_tokens)
+                    span.set_attribute("cost.cents", consolidation_usage.estimated_cost_cents)
 
                 logger.info(
                     f"Job {job.job_id}: Consolidation complete - "

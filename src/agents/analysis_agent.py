@@ -25,7 +25,7 @@ from pydantic import BaseModel, Field, field_validator
 from pydantic_ai import Agent
 from pydantic_ai.messages import BinaryContent
 
-from src.agents.factory import create_agent, extract_usage, load_prompts
+from src.agents.factory import create_agent, extract_usage, load_prompts, run_agent
 from src.agents.model_tiers import ModelTier
 from src.config import settings
 from src.services.pdf_converter import PageData
@@ -326,9 +326,13 @@ async def analyze(
     user_prompt = _prompts["user_prompt"].format(total_pages=total_pages)
     messages.append(user_prompt)
 
-    # Run agent
-    result = await agent.run(
-        messages,
+    # Run agent with tracing
+    result = await run_agent(
+        agent=agent,
+        prompt=messages,
+        job_id=job_id,
+        agent_name="analysis_agent",
+        model_tier=_MODEL_TIER,
         model_settings={
             "max_tokens": 4096,
             "temperature": 0.3,
@@ -339,7 +343,7 @@ async def analyze(
     usage = extract_usage(result, _MODEL_TIER)
 
     # Convert output to DocumentManifest
-    output = result.data  # type: ignore[attr-defined]
+    output = result.output
     manifest = _create_manifest(output, job_id, total_pages)
 
     # Convert observations to full Observation model

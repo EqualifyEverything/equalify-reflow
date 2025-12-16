@@ -45,9 +45,9 @@ system_prompt: |
      Specialized agents will add descriptions later. Your job is accurate placement.
 
      For every informative image in the document:
-     - Format: ![TODO: describe](image-page-{page}-{n}.png)
-     - {page} = page number where image appears
-     - {n} = sequential image number on that page (1, 2, 3...)
+     - Format: ![TODO: describe](image-page-{{page}}-{{n}}.png)
+     - {{page}} = page number where image appears
+     - {{n}} = sequential image number on that page (1, 2, 3...)
      - Place placeholder at the image's location in reading order
 
   4. TABLE TRANSCRIPTION
@@ -167,8 +167,8 @@ user_prompt: |
 
   2. IMAGES
      For every image, use this exact placeholder format:
-     ![TODO: describe](image-page-{page}-{n}.png)
-     where {page} = page number, {n} = image number on that page (1, 2, 3...)
+     ![TODO: describe](image-page-{{page}}-{{n}}.png)
+     where {{page}} = page number, {{n}} = image number on that page (1, 2, 3...)
 
   3. TABLES
      Use markdown table syntax with proper headers:

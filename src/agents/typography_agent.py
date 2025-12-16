@@ -25,7 +25,7 @@ from uuid import uuid4
 from pydantic_ai import Agent, RunContext
 
 from src.agents.dependencies import AgentDependencies
-from src.agents.factory import create_agent, extract_usage, load_prompts
+from src.agents.factory import create_agent, extract_usage, load_prompts, run_agent
 from src.agents.helpers import extract_page_markdown, get_page_features
 from src.agents.model_tiers import ModelTier
 from src.agents.specialized_models import TypographyAnalysisOutput, TypographyIssue
@@ -261,11 +261,15 @@ async def analyze(
         try:
             # Build message with image if available
             if image_bytes:
-                result = await agent.run(
-                    user_message,
+                result = await run_agent(
+                    agent=agent,
+                    prompt=user_message,
+                    job_id=job_id,
+                    agent_name="typography_agent",
+                    model_tier=_MODEL_TIER,
                     deps=page_deps,
                     message_history=[
-                        {  # type: ignore[list-item]
+                        {
                             "role": "user",
                             "content": [
                                 {"type": "text", "text": user_message},
@@ -278,9 +282,16 @@ async def analyze(
                     ],
                 )
             else:
-                result = await agent.run(user_message, deps=page_deps)
+                result = await run_agent(
+                    agent=agent,
+                    prompt=user_message,
+                    job_id=job_id,
+                    agent_name="typography_agent",
+                    model_tier=_MODEL_TIER,
+                    deps=page_deps,
+                )
 
-            output = result.data  # type: ignore[attr-defined]
+            output = result.output
             usage = extract_usage(result, _MODEL_TIER)
 
             # Accumulate usage

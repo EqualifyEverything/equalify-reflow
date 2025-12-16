@@ -24,7 +24,7 @@ from src.agents.analysis_agent import (
     HeadingTree,
     LayoutType,
 )
-from src.agents.base_agent import AgentConfig
+from src.agents.core import AgentConfig
 from src.agents.model_tiers import MODEL_TIER_MAP, ModelTier
 from src.services.pdf_converter import PageData
 from src.shared.llm_cost import (

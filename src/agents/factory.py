@@ -1,4 +1,4 @@
-"""Agent creation utilities.
+"""Agent creation utilities with OpenTelemetry instrumentation.
 
 Provides factory functions for creating PydanticAI agents with
 standard configuration (YAML prompts, model tiers, cost tracking).
@@ -9,6 +9,7 @@ from pathlib import Path
 from typing import Any, TypeVar
 
 import yaml
+from opentelemetry import trace
 from pydantic import BaseModel
 from pydantic_ai import Agent
 from pydantic_ai.models.bedrock import BedrockConverseModel
@@ -131,3 +132,122 @@ def aggregate_usage(usages: list[LLMUsage]) -> LLMUsage:
         total_tokens=sum(u.total_tokens for u in usages),
         estimated_cost_cents=sum(u.estimated_cost_cents for u in usages),
     )
+
+
+def get_tracer() -> trace.Tracer:
+    """Get the agents tracer."""
+    return trace.get_tracer("equalify.agents")
+
+
+async def run_agent(
+    agent: Agent[Any, Any],
+    prompt: str | list[Any],
+    job_id: str,
+    agent_name: str,
+    model_tier: ModelTier,
+    **run_kwargs: Any,
+) -> Any:
+    """Run agent with OpenTelemetry tracing.
+
+    Creates a span for the agent execution with relevant attributes.
+
+    Args:
+        agent: PydanticAI agent instance
+        prompt: User prompt (string or list with images)
+        job_id: Job ID for correlation
+        agent_name: Name of the calling agent (e.g., "typography", "analysis")
+        model_tier: Model tier for pricing info
+        **run_kwargs: Additional kwargs passed to agent.run()
+
+    Returns:
+        PydanticAI AgentRunResult
+    """
+    tracer = get_tracer()
+
+    with tracer.start_as_current_span(
+        f"agent.{agent_name}",
+        kind=trace.SpanKind.INTERNAL,
+    ) as span:
+        # Set span attributes
+        span.set_attribute("job_id", job_id)
+        span.set_attribute("agent.name", agent_name)
+        span.set_attribute("agent.model_tier", model_tier.value)
+        span.set_attribute("agent.model_id", MODEL_TIER_MAP[model_tier])
+
+        # Log system prompt if available and enabled
+        if settings.telemetry_log_prompts:
+            system_prompts = getattr(agent, "_system_prompts", None)
+            if system_prompts:
+                if isinstance(system_prompts, (list, tuple)):
+                    system_prompt_text = "\n".join(str(p) for p in system_prompts)
+                else:
+                    system_prompt_text = str(system_prompts)
+                max_len = 32000
+                span.set_attribute(
+                    "system_prompt.content",
+                    system_prompt_text[:max_len] + ("..." if len(system_prompt_text) > max_len else "")
+                )
+                span.set_attribute("system_prompt.length", len(system_prompt_text))
+
+        # Log prompt (full content if enabled, otherwise just length)
+        # For multimodal prompts, extract text portions only (skip binary image data)
+        if isinstance(prompt, str):
+            prompt_text = prompt
+        elif isinstance(prompt, list):
+            text_parts = []
+            image_count = 0
+            for item in prompt:
+                if isinstance(item, str):
+                    text_parts.append(item)
+                elif hasattr(item, "data"):  # BinaryContent (image)
+                    image_count += 1
+                    text_parts.append(f"[IMAGE {image_count}]")
+                else:
+                    text_parts.append(str(item))
+            prompt_text = "\n".join(text_parts)
+        else:
+            prompt_text = str(prompt)
+
+        span.set_attribute("prompt.length", len(prompt_text))
+        if settings.telemetry_log_prompts:
+            # Truncate very long prompts to avoid span size limits (64KB typical)
+            max_len = 32000
+            span.set_attribute(
+                "prompt.content",
+                prompt_text[:max_len] + ("..." if len(prompt_text) > max_len else "")
+            )
+
+        try:
+            result = await agent.run(prompt, **run_kwargs)
+
+            # Add usage metrics to span
+            usage = result.usage()
+            input_tokens = usage.request_tokens or 0
+            output_tokens = usage.response_tokens or 0
+
+            span.set_attribute("tokens.input", input_tokens)
+            span.set_attribute("tokens.output", output_tokens)
+            span.set_attribute("tokens.total", input_tokens + output_tokens)
+
+            # Calculate and record cost
+            pricing = get_pricing_for_tier(model_tier)
+            cost = calculate_estimated_cost(input_tokens, output_tokens, pricing)
+            span.set_attribute("cost.cents", cost)
+
+            # Log output if enabled
+            if settings.telemetry_log_prompts:
+                output_str = str(result.output)
+                max_len = 32000
+                span.set_attribute(
+                    "output.content",
+                    output_str[:max_len] + ("..." if len(output_str) > max_len else "")
+                )
+                span.set_attribute("output.length", len(output_str))
+
+            span.set_status(trace.Status(trace.StatusCode.OK))
+            return result
+
+        except Exception as e:
+            span.set_status(trace.Status(trace.StatusCode.ERROR, str(e)))
+            span.record_exception(e)
+            raise

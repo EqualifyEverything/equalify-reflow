@@ -5,6 +5,7 @@ standard configuration (YAML prompts, model tiers, cost tracking).
 """
 
 import logging
+import time
 from pathlib import Path
 from typing import Any, TypeVar
 
@@ -131,3 +132,83 @@ def aggregate_usage(usages: list[LLMUsage]) -> LLMUsage:
         total_tokens=sum(u.total_tokens for u in usages),
         estimated_cost_cents=sum(u.estimated_cost_cents for u in usages),
     )
+
+
+async def run_agent_with_debug(
+    agent: Agent[Any, Any],
+    prompt: str | list[Any],
+    job_id: str,
+    agent_name: str,
+    model_tier: ModelTier,
+    system_prompt: str | None = None,
+    image_info: dict[str, Any] | None = None,
+    **run_kwargs: Any,
+) -> Any:
+    """Run agent with optional debug logging.
+
+    Wraps agent.run() with debug logging when settings.debug_mode is enabled.
+    Use this instead of calling agent.run() directly in agents.
+
+    Args:
+        agent: PydanticAI agent instance
+        prompt: User prompt (string or list with images)
+        job_id: Job ID for correlation
+        agent_name: Name of the calling agent (e.g., "typography", "analysis")
+        model_tier: Model tier for pricing info
+        system_prompt: Optional system prompt for logging
+        image_info: Optional image metadata for logging
+        **run_kwargs: Additional kwargs passed to agent.run()
+
+    Returns:
+        PydanticAI AgentRunResult
+    """
+    # Only import debug logger if debug mode is enabled to avoid overhead
+    if settings.debug_mode:
+        from src.services.debug_logging_service import debug_logger
+
+        model_id = MODEL_TIER_MAP[model_tier]
+        model_settings = run_kwargs.get("model_settings", {})
+
+        debug_logger.log_prompt(
+            job_id=job_id,
+            agent_name=agent_name,
+            system_prompt=system_prompt,
+            user_message=prompt if isinstance(prompt, str) else str(prompt)[:2000],
+            image_info=image_info,
+            model_id=model_id,
+            model_tier=model_tier.value,
+            temperature=model_settings.get("temperature"),
+            max_tokens=model_settings.get("max_tokens"),
+        )
+
+    start_time = time.time()
+    result = await agent.run(prompt, **run_kwargs)
+    duration_ms = (time.time() - start_time) * 1000
+
+    if settings.debug_mode:
+        from src.services.debug_logging_service import debug_logger
+
+        usage = result.usage()
+        input_tokens = usage.request_tokens or 0
+        output_tokens = usage.response_tokens or 0
+
+        pricing = get_pricing_for_tier(model_tier)
+        cost = calculate_estimated_cost(input_tokens, output_tokens, pricing)
+
+        # Get output from result (supports both .output and .data)
+        output_data = getattr(result, "output", None) or getattr(result, "data", None)
+
+        debug_logger.log_response(
+            job_id=job_id,
+            agent_name=agent_name,
+            response_text=None,  # Structured output
+            parsed_output=output_data,
+            input_tokens=input_tokens,
+            output_tokens=output_tokens,
+            total_tokens=input_tokens + output_tokens,
+            estimated_cost_cents=cost,
+            duration_ms=duration_ms,
+            model_id=MODEL_TIER_MAP[model_tier],
+        )
+
+    return result

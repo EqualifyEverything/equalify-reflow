@@ -24,7 +24,7 @@ from typing import Any, Literal
 from pydantic import BaseModel, Field
 from pydantic_ai import Agent
 
-from src.agents.factory import create_agent, extract_usage, load_prompts
+from src.agents.factory import create_agent, extract_usage, load_prompts, run_agent_with_debug
 from src.agents.model_tiers import ModelTier
 from src.config import settings
 from src.services.debug_logging_service import debug_logger
@@ -263,9 +263,14 @@ async def consolidate(
             f"Generate proposals with exact search-replace diffs."
         )
 
-    # Execute agent
-    result = await agent.run(
-        user_message,
+    # Execute agent with debug logging
+    result = await run_agent_with_debug(
+        agent=agent,
+        prompt=user_message,
+        job_id=job_id,
+        agent_name="consolidation_agent",
+        model_tier=_MODEL_TIER,
+        system_prompt=_prompts.get("system_prompt") if _prompts else None,
         model_settings={
             "max_tokens": 16000,
             "temperature": 0.3,

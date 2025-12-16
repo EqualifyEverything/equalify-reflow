@@ -26,7 +26,7 @@ from pydantic import BaseModel, Field, field_validator
 from pydantic_ai import Agent
 from pydantic_ai.messages import BinaryContent
 
-from src.agents.factory import create_agent, extract_usage, load_prompts
+from src.agents.factory import create_agent, extract_usage, load_prompts, run_agent_with_debug
 from src.agents.model_tiers import ModelTier
 from src.config import settings
 from src.services.debug_logging_service import debug_logger
@@ -325,69 +325,47 @@ async def analyze(
     messages = _build_image_messages(pages)
 
     # Save debug images if enabled
-    images_to_save = [
-        (base64.b64decode(p.image_base64), p.page_num)
-        for p in pages if p.image_base64
-    ]
-    if images_to_save:
-        debug_logger.save_debug_images_batch(
-            job_id=job_id,
-            agent_name="analysis_agent",
-            images=images_to_save,
-        )
+    if settings.debug_mode:
+        images_to_save = [
+            (base64.b64decode(p.image_base64), p.page_num)
+            for p in pages if p.image_base64
+        ]
+        if images_to_save:
+            debug_logger.save_debug_images_batch(
+                job_id=job_id,
+                agent_name="analysis_agent",
+                images=images_to_save,
+            )
 
     # Add user prompt
     user_prompt = _prompts["user_prompt"].format(total_pages=total_pages)
     messages.append(user_prompt)
 
-    # Debug log: prompt being sent
+    # Build image info for debug logging
     image_info = None
-    if settings.debug_log_images:
+    if settings.debug_mode and settings.debug_log_images:
         image_info = {
             "page_count": len(pages),
             "pages_with_images": sum(1 for p in pages if p.image_base64),
         }
 
-    from src.agents.model_tiers import MODEL_TIER_MAP
-    debug_logger.log_prompt(
+    # Run agent with debug logging
+    result = await run_agent_with_debug(
+        agent=agent,
+        prompt=messages,
         job_id=job_id,
         agent_name="analysis_agent",
+        model_tier=_MODEL_TIER,
         system_prompt=_prompts.get("system_prompt") if _prompts else None,
-        user_message=user_prompt,
         image_info=image_info,
-        model_id=MODEL_TIER_MAP[_MODEL_TIER],
-        model_tier=_MODEL_TIER.value,
-        temperature=0.3,
-        max_tokens=4096,
-    )
-
-    # Run agent
-    start_time = time.time()
-    result = await agent.run(
-        messages,
         model_settings={
             "max_tokens": 4096,
             "temperature": 0.3,
         },
     )
-    duration_ms = (time.time() - start_time) * 1000
 
     # Extract usage with model_tier parameter
     usage = extract_usage(result, _MODEL_TIER)
-
-    # Debug log: response received
-    debug_logger.log_response(
-        job_id=job_id,
-        agent_name="analysis_agent",
-        response_text=None,  # Structured output, not raw text
-        parsed_output=result.data,  # type: ignore[attr-defined]
-        input_tokens=usage.input_tokens,
-        output_tokens=usage.output_tokens,
-        total_tokens=usage.total_tokens,
-        estimated_cost_cents=usage.estimated_cost_cents,
-        duration_ms=duration_ms,
-        model_id=MODEL_TIER_MAP[_MODEL_TIER],
-    )
 
     # Convert output to DocumentManifest
     output = result.data  # type: ignore[attr-defined]

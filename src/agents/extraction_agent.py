@@ -33,7 +33,7 @@ from pydantic_ai import Agent, RunContext
 from pydantic_ai.messages import BinaryContent
 
 from src.agents.dependencies import AgentDependencies
-from src.agents.factory import create_agent, extract_usage, load_prompts
+from src.agents.factory import create_agent, extract_usage, load_prompts, run_agent_with_debug
 from src.agents.model_tiers import ModelTier
 from src.config import settings
 from src.services.debug_logging_service import debug_logger
@@ -344,9 +344,23 @@ async def extract(
     )
     messages.append(user_prompt)
 
-    # Run agent with deps for dynamic instructions
-    result = await agent.run(
-        messages,
+    # Build image info for debug logging
+    image_info = None
+    if settings.debug_mode and settings.debug_log_images:
+        image_info = {
+            "page_count": len(pages),
+            "pages_with_images": sum(1 for p in pages if p.image_base64),
+        }
+
+    # Run agent with debug logging
+    result = await run_agent_with_debug(
+        agent=agent,
+        prompt=messages,
+        job_id=job_id,
+        agent_name="extraction_agent",
+        model_tier=_MODEL_TIER,
+        system_prompt=_prompts.get("system_prompt") if _prompts else None,
+        image_info=image_info,
         deps=deps,
     )
 
@@ -654,50 +668,31 @@ class ExtractionAgent:
         )
         messages.append(user_prompt)
 
-        # Debug log: prompt being sent
+        # Build image info for debug logging
         image_info = None
-        if settings.debug_log_images:
+        if settings.debug_mode and settings.debug_log_images:
             image_info = {
                 "page_count": len(pages),
                 "pages_with_images": sum(1 for p in pages if p.image_base64),
             }
 
-        debug_logger.log_prompt(
+        # Run agent with debug logging
+        result = await run_agent_with_debug(
+            agent=agent,
+            prompt=messages,
             job_id=job_id,
             agent_name="extraction_agent",
+            model_tier=_MODEL_TIER,
             system_prompt=self.prompts.get("system_prompt"),
-            user_message=user_prompt,
             image_info=image_info,
-            model_id=self.model_id,
-            model_tier=self.model_tier.value,
-            temperature=self.config.temperature,
-            max_tokens=self.config.max_tokens,
+            deps=deps,
         )
-
-        # Run agent with deps for dynamic instructions
-        start_time = time.time()
-        result = await agent.run(messages, deps=deps)
-        duration_ms = (time.time() - start_time) * 1000
 
         # Extract usage with model tier
         usage = extract_usage(result, _MODEL_TIER)
 
         # Support both .output (old) and .data (new) for backward compatibility
         output = getattr(result, "output", None) or result.data  # type: ignore[attr-defined]
-
-        # Debug log: response received
-        debug_logger.log_response(
-            job_id=job_id,
-            agent_name="extraction_agent",
-            response_text=output.markdown[:1000] if output.markdown else None,
-            parsed_output={"confidence": output.confidence.value, "notes": output.notes},
-            input_tokens=usage.input_tokens,
-            output_tokens=usage.output_tokens,
-            total_tokens=usage.total_tokens,
-            estimated_cost_cents=usage.estimated_cost_cents,
-            duration_ms=duration_ms,
-            model_id=self.model_id,
-        )
 
         # Log reasoning corpus for analysis and debugging
         await _log_reasoning_corpus(output, job_id)

@@ -225,48 +225,18 @@ class Settings(BaseSettings):
     # Testing Configuration
     disable_workers: bool = False  # Set to True to disable background workers (for testing)
 
-    # Debug Mode Configuration
-    debug_mode: bool = Field(
+    # Telemetry Configuration (OpenTelemetry)
+    telemetry_enabled: bool = Field(
         default=False,
-        description="Enable comprehensive debug logging of inputs, prompts, responses, and system events"
+        description="Enable OpenTelemetry tracing and metrics"
     )
-    debug_log_prompts: bool = Field(
-        default=True,
-        description="Include full prompt text in debug logs (requires debug_mode=True)"
-    )
-    debug_log_responses: bool = Field(
-        default=True,
-        description="Include full LLM response text in debug logs (requires debug_mode=True)"
-    )
-    debug_log_images: bool = Field(
+    telemetry_console_export: bool = Field(
         default=False,
-        description="Include image metadata in debug logs - not actual binary data (requires debug_mode=True)"
+        description="Export spans to console (for development)"
     )
-    debug_log_file: str | None = Field(
+    telemetry_otlp_endpoint: str | None = Field(
         default=None,
-        description="Optional file path for debug log output (in addition to console). "
-                    "If not set, debug logs only go to console."
-    )
-    debug_log_format: str = Field(
-        default="json",
-        description="Debug log format: 'json' for structured output, 'text' for human-readable"
-    )
-    debug_truncate_length: int = Field(
-        default=10000,
-        ge=100,
-        le=100000,
-        description="Maximum character length for prompt/response content in debug logs. "
-                    "Set higher for full content, lower to reduce log size."
-    )
-    debug_save_images: bool = Field(
-        default=False,
-        description="Save image binaries to disk when debug mode is enabled. "
-                    "Images are saved to debug_images_dir with consistent naming."
-    )
-    debug_images_dir: str = Field(
-        default="/tmp/equalify-debug-images",
-        description="Directory to save debug images. "
-                    "Structure: {dir}/{job_id}/{agent_name}/page_{N}.png"
+        description="OTLP endpoint for trace export (e.g., 'localhost:4317' for Jaeger)"
     )
 
 

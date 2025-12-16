@@ -25,7 +25,7 @@ from uuid import uuid4
 from pydantic_ai import Agent, RunContext
 
 from src.agents.dependencies import AgentDependencies
-from src.agents.factory import create_agent, extract_usage, load_prompts, run_agent_with_debug
+from src.agents.factory import create_agent, extract_usage, load_prompts, run_agent
 from src.agents.helpers import extract_page_markdown, get_page_features
 from src.agents.model_tiers import MODEL_TIER_MAP, ModelTier
 from src.agents.specialized_models import FiguresAnalysisOutput, ImageAnalysis
@@ -194,21 +194,14 @@ async def analyze(
             image_bytes = base64.b64decode(page.image_base64)
 
         try:
-            # Build image info for debug logging
-            image_info = None
-            if image_bytes and settings.debug_mode:
-                image_info = {"size_bytes": len(image_bytes), "format": "png", "page_num": page.page_num}
-
             # Build message with image if available
             if image_bytes:
-                result = await run_agent_with_debug(
+                result = await run_agent(
                     agent=agent,
                     prompt=user_message,
                     job_id=job_id,
                     agent_name="figures_agent",
                     model_tier=_MODEL_TIER,
-                    system_prompt=_prompts.get("system_prompt") if _prompts else None,
-                    image_info=image_info,
                     deps=page_deps,
                     message_history=[
                         {
@@ -224,13 +217,12 @@ async def analyze(
                     ],
                 )
             else:
-                result = await run_agent_with_debug(
+                result = await run_agent(
                     agent=agent,
                     prompt=user_message,
                     job_id=job_id,
                     agent_name="figures_agent",
                     model_tier=_MODEL_TIER,
-                    system_prompt=_prompts.get("system_prompt") if _prompts else None,
                     deps=page_deps,
                 )
 

@@ -17,17 +17,15 @@ NOTE: This agent uses enhanced prompts with:
 from __future__ import annotations
 
 import logging
-import time
 import uuid
 from typing import Any, Literal
 
 from pydantic import BaseModel, Field
 from pydantic_ai import Agent
 
-from src.agents.factory import create_agent, extract_usage, load_prompts, run_agent_with_debug
+from src.agents.factory import create_agent, extract_usage, load_prompts, run_agent
 from src.agents.model_tiers import ModelTier
 from src.config import settings
-from src.services.debug_logging_service import debug_logger
 from src.shared.models.observation import Observation
 from src.shared.models.processing import LLMUsage
 from src.shared.models.proposal import Proposal, SearchReplaceDiff
@@ -263,14 +261,13 @@ async def consolidate(
             f"Generate proposals with exact search-replace diffs."
         )
 
-    # Execute agent with debug logging
-    result = await run_agent_with_debug(
+    # Execute agent with tracing
+    result = await run_agent(
         agent=agent,
         prompt=user_message,
         job_id=job_id,
         agent_name="consolidation_agent",
         model_tier=_MODEL_TIER,
-        system_prompt=_prompts.get("system_prompt") if _prompts else None,
         model_settings={
             "max_tokens": 16000,
             "temperature": 0.3,
@@ -532,50 +529,24 @@ class ConsolidationAgent:
                 f"Generate proposals with exact search-replace diffs."
             )
 
-        # Debug log: prompt being sent
-        from src.agents.model_tiers import MODEL_TIER_MAP
-        debug_logger.log_prompt(
+        # Execute agent with tracing
+        result = await run_agent(
+            agent=agent,
+            prompt=user_message,
             job_id=job_id,
             agent_name="consolidation_agent",
-            system_prompt=_prompts.get("system_prompt") if _prompts else None,
-            user_message=user_message,
-            image_info=None,
-            model_id=MODEL_TIER_MAP[_MODEL_TIER],
-            model_tier=_MODEL_TIER.value,
-            temperature=0.3,
-            max_tokens=16000,
-        )
-
-        # Execute agent
-        start_time = time.time()
-        result = await agent.run(
-            user_message,
+            model_tier=_MODEL_TIER,
             model_settings={
                 "max_tokens": 16000,
                 "temperature": 0.3,
             },
         )
-        duration_ms = (time.time() - start_time) * 1000
 
         # Support both .output (old) and .data (new) for backward compatibility
         output = getattr(result, "output", None) or result.data  # type: ignore[attr-defined]
 
         # Extract usage with model tier
         llm_usage = extract_usage(result, _MODEL_TIER)
-
-        # Debug log: response received
-        debug_logger.log_response(
-            job_id=job_id,
-            agent_name="consolidation_agent",
-            response_text=None,  # Structured output
-            parsed_output=output,
-            input_tokens=llm_usage.input_tokens,
-            output_tokens=llm_usage.output_tokens,
-            total_tokens=llm_usage.total_tokens,
-            estimated_cost_cents=llm_usage.estimated_cost_cents,
-            duration_ms=duration_ms,
-            model_id=MODEL_TIER_MAP[_MODEL_TIER],
-        )
 
         logger.debug(
             f"Job {job_id}: Consolidation agent returned {len(output.proposals)} drafts, "

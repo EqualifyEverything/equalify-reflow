@@ -4,8 +4,9 @@ import asyncio
 import logging
 import time
 
+from opentelemetry import trace
+
 from ..config import settings
-from ..services.debug_logging_service import DebugEventType, debug_logger
 from ..services.job_service import JobService
 from ..services.metrics_service import (
     worker_active_gauge,
@@ -61,12 +62,7 @@ class PIIWorker:
         self.running = True
         logger.info("PII worker started")
 
-        # Debug log: worker started
-        debug_logger.log_worker_event(
-            event=DebugEventType.WORKER_STARTED,
-            worker_type="pii",
-            details={"queue": PII_QUEUE},
-        )
+        tracer = trace.get_tracer("equalify.workers")
 
         # Mark worker as active in Prometheus
         worker_active_gauge.labels(worker_name="pii").set(1)
@@ -89,24 +85,21 @@ class PIIWorker:
                             break
                         logger.info(f"Received PII job: {job.job_id}")
 
-                        # Debug log: job started
+                        # Process job with OTel span
                         job_start_time = time.time()
-                        debug_logger.log_job_started(
-                            job_id=job.job_id,
-                            worker_type="pii",
-                            details={"s3_key": job.s3_key, "queue": PII_QUEUE},
-                        )
+                        with tracer.start_as_current_span(
+                            "worker.pii.job",
+                            kind=trace.SpanKind.CONSUMER,
+                        ) as span:
+                            span.set_attribute("job_id", job.job_id)
+                            span.set_attribute("worker.type", "pii")
+                            span.set_attribute("s3_key", job.s3_key)
+                            span.set_attribute("queue", PII_QUEUE)
 
-                        # Process job
-                        await self.pii_service.process_pii_job(job)
+                            await self.pii_service.process_pii_job(job)
 
-                        # Debug log: job completed
-                        job_duration_ms = (time.time() - job_start_time) * 1000
-                        debug_logger.log_job_completed(
-                            job_id=job.job_id,
-                            worker_type="pii",
-                            duration_ms=job_duration_ms,
-                        )
+                            job_duration_ms = (time.time() - job_start_time) * 1000
+                            span.set_attribute("duration_ms", job_duration_ms)
 
                         # Track successful processing
                         worker_jobs_processed_total.labels(
@@ -119,17 +112,6 @@ class PIIWorker:
 
                 except Exception as e:
                     logger.error(f"PII worker error: {e}", exc_info=True)
-
-                    # Debug log: job failed (if we had a job context)
-                    if "job" in dir() and job is not None:
-                        job_duration_ms = (time.time() - job_start_time) * 1000 if "job_start_time" in dir() else None
-                        debug_logger.log_job_failed(
-                            job_id=job.job_id,
-                            worker_type="pii",
-                            error=str(e),
-                            error_type=type(e).__name__,
-                            duration_ms=job_duration_ms,
-                        )
 
                     # Track error
                     worker_errors_total.labels(
@@ -144,12 +126,6 @@ class PIIWorker:
         finally:
             # Mark worker as inactive when shutting down
             worker_active_gauge.labels(worker_name="pii").set(0)
-
-            # Debug log: worker stopped
-            debug_logger.log_worker_event(
-                event=DebugEventType.WORKER_STOPPED,
-                worker_type="pii",
-            )
 
             logger.info("PII worker shutting down gracefully")
 

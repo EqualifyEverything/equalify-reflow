@@ -1,15 +1,15 @@
-"""Agent creation utilities.
+"""Agent creation utilities with OpenTelemetry instrumentation.
 
 Provides factory functions for creating PydanticAI agents with
 standard configuration (YAML prompts, model tiers, cost tracking).
 """
 
 import logging
-import time
 from pathlib import Path
 from typing import Any, TypeVar
 
 import yaml
+from opentelemetry import trace
 from pydantic import BaseModel
 from pydantic_ai import Agent
 from pydantic_ai.models.bedrock import BedrockConverseModel
@@ -134,20 +134,22 @@ def aggregate_usage(usages: list[LLMUsage]) -> LLMUsage:
     )
 
 
-async def run_agent_with_debug(
+def get_tracer() -> trace.Tracer:
+    """Get the agents tracer."""
+    return trace.get_tracer("equalify.agents")
+
+
+async def run_agent(
     agent: Agent[Any, Any],
     prompt: str | list[Any],
     job_id: str,
     agent_name: str,
     model_tier: ModelTier,
-    system_prompt: str | None = None,
-    image_info: dict[str, Any] | None = None,
     **run_kwargs: Any,
 ) -> Any:
-    """Run agent with optional debug logging.
+    """Run agent with OpenTelemetry tracing.
 
-    Wraps agent.run() with debug logging when settings.debug_mode is enabled.
-    Use this instead of calling agent.run() directly in agents.
+    Creates a span for the agent execution with relevant attributes.
 
     Args:
         agent: PydanticAI agent instance
@@ -155,60 +157,48 @@ async def run_agent_with_debug(
         job_id: Job ID for correlation
         agent_name: Name of the calling agent (e.g., "typography", "analysis")
         model_tier: Model tier for pricing info
-        system_prompt: Optional system prompt for logging
-        image_info: Optional image metadata for logging
         **run_kwargs: Additional kwargs passed to agent.run()
 
     Returns:
         PydanticAI AgentRunResult
     """
-    # Only import debug logger if debug mode is enabled to avoid overhead
-    if settings.debug_mode:
-        from src.services.debug_logging_service import debug_logger
+    tracer = get_tracer()
 
-        model_id = MODEL_TIER_MAP[model_tier]
-        model_settings = run_kwargs.get("model_settings", {})
+    with tracer.start_as_current_span(
+        f"agent.{agent_name}",
+        kind=trace.SpanKind.INTERNAL,
+    ) as span:
+        # Set span attributes
+        span.set_attribute("job_id", job_id)
+        span.set_attribute("agent.name", agent_name)
+        span.set_attribute("agent.model_tier", model_tier.value)
+        span.set_attribute("agent.model_id", MODEL_TIER_MAP[model_tier])
 
-        debug_logger.log_prompt(
-            job_id=job_id,
-            agent_name=agent_name,
-            system_prompt=system_prompt,
-            user_message=prompt if isinstance(prompt, str) else str(prompt)[:2000],
-            image_info=image_info,
-            model_id=model_id,
-            model_tier=model_tier.value,
-            temperature=model_settings.get("temperature"),
-            max_tokens=model_settings.get("max_tokens"),
-        )
+        # Log prompt length (not full content for security)
+        prompt_str = prompt if isinstance(prompt, str) else str(prompt)
+        span.set_attribute("prompt.length", len(prompt_str))
 
-    start_time = time.time()
-    result = await agent.run(prompt, **run_kwargs)
-    duration_ms = (time.time() - start_time) * 1000
+        try:
+            result = await agent.run(prompt, **run_kwargs)
 
-    if settings.debug_mode:
-        from src.services.debug_logging_service import debug_logger
+            # Add usage metrics to span
+            usage = result.usage()
+            input_tokens = usage.request_tokens or 0
+            output_tokens = usage.response_tokens or 0
 
-        usage = result.usage()
-        input_tokens = usage.request_tokens or 0
-        output_tokens = usage.response_tokens or 0
+            span.set_attribute("tokens.input", input_tokens)
+            span.set_attribute("tokens.output", output_tokens)
+            span.set_attribute("tokens.total", input_tokens + output_tokens)
 
-        pricing = get_pricing_for_tier(model_tier)
-        cost = calculate_estimated_cost(input_tokens, output_tokens, pricing)
+            # Calculate and record cost
+            pricing = get_pricing_for_tier(model_tier)
+            cost = calculate_estimated_cost(input_tokens, output_tokens, pricing)
+            span.set_attribute("cost.cents", cost)
 
-        # Get output from result (supports both .output and .data)
-        output_data = getattr(result, "output", None) or getattr(result, "data", None)
+            span.set_status(trace.Status(trace.StatusCode.OK))
+            return result
 
-        debug_logger.log_response(
-            job_id=job_id,
-            agent_name=agent_name,
-            response_text=None,  # Structured output
-            parsed_output=output_data,
-            input_tokens=input_tokens,
-            output_tokens=output_tokens,
-            total_tokens=input_tokens + output_tokens,
-            estimated_cost_cents=cost,
-            duration_ms=duration_ms,
-            model_id=MODEL_TIER_MAP[model_tier],
-        )
-
-    return result
+        except Exception as e:
+            span.set_status(trace.Status(trace.StatusCode.ERROR, str(e)))
+            span.record_exception(e)
+            raise

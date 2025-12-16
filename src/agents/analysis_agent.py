@@ -25,10 +25,8 @@ from pydantic import BaseModel, Field, field_validator
 from pydantic_ai import Agent
 from pydantic_ai.messages import BinaryContent
 
-from src.agents.factory import create_agent, extract_usage, load_prompts, run_agent_with_debug
+from src.agents.factory import create_agent, extract_usage, load_prompts, run_agent
 from src.agents.model_tiers import ModelTier
-from src.config import settings
-from src.services.debug_logging_service import debug_logger
 from src.services.pdf_converter import PageData
 from src.services.reasoning_corpus_service import get_reasoning_corpus_service
 from src.shared.models.observation import Observation, ObservationLocation
@@ -323,40 +321,17 @@ async def analyze(
     # Build messages with all page images
     messages = _build_image_messages(pages)
 
-    # Save debug images if enabled
-    if settings.debug_mode:
-        images_to_save = [
-            (base64.b64decode(p.image_base64), p.page_num)
-            for p in pages if p.image_base64
-        ]
-        if images_to_save:
-            debug_logger.save_debug_images_batch(
-                job_id=job_id,
-                agent_name="analysis_agent",
-                images=images_to_save,
-            )
-
     # Add user prompt
     user_prompt = _prompts["user_prompt"].format(total_pages=total_pages)
     messages.append(user_prompt)
 
-    # Build image info for debug logging
-    image_info = None
-    if settings.debug_mode and settings.debug_log_images:
-        image_info = {
-            "page_count": len(pages),
-            "pages_with_images": sum(1 for p in pages if p.image_base64),
-        }
-
-    # Run agent with debug logging
-    result = await run_agent_with_debug(
+    # Run agent with tracing
+    result = await run_agent(
         agent=agent,
         prompt=messages,
         job_id=job_id,
         agent_name="analysis_agent",
         model_tier=_MODEL_TIER,
-        system_prompt=_prompts.get("system_prompt") if _prompts else None,
-        image_info=image_info,
         model_settings={
             "max_tokens": 4096,
             "temperature": 0.3,

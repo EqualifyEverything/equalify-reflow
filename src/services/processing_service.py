@@ -13,6 +13,8 @@ import time
 from datetime import UTC, datetime, timedelta
 from typing import Any
 
+from opentelemetry import trace
+
 from ..agents.agent_router import AgentRouter
 from ..agents.analysis_agent import AnalysisAgent
 from ..agents.extraction_agent import ExtractionAgent
@@ -22,7 +24,6 @@ from ..agents.structure_agent import StructureAgent
 from ..agents.tables_agent import TablesAgent
 from ..agents.typography_agent import TypographyAgent
 from ..config import settings
-from ..services.debug_logging_service import debug_logger
 from ..services.application_service import ApplicationService
 from ..services.consolidation_service import ConsolidationService
 from ..services.correction_approval_service import CorrectionApprovalService
@@ -82,6 +83,7 @@ class ProcessingService:
         self.correction_approval = correction_approval_service
         self.application = application_service
 
+        self._tracer = trace.get_tracer("equalify.processing")
         logger.info("Processing service initialized")
 
     async def process_document(
@@ -103,9 +105,6 @@ class ProcessingService:
         """
         start_time = time.time()
         logger.info(f"Starting processing for job {job.job_id}")
-
-        # Start latency tracking for this job
-        debug_logger.start_job_tracking(job.job_id)
 
         try:
             # Step 1: Update job status to processing with "analyzing" substatus
@@ -147,37 +146,21 @@ class ProcessingService:
                 f"Job {job.job_id}: Starting analysis phase (Sonnet)..."
             )
 
-            # Debug log: phase start + latency tracking
-            phase_start_time = time.time()
-            debug_logger.log_phase_start(
-                job_id=job.job_id,
-                phase_name="analysis",
-                phase_number=1,
-                details={"total_pages": conversion_result.total_pages},
-            )
-            debug_logger.start_phase_tracking(job.job_id, "analysis", 1)
+            with self._tracer.start_as_current_span("phase.analysis") as span:
+                span.set_attribute("job_id", job.job_id)
+                span.set_attribute("phase.number", 1)
+                span.set_attribute("total_pages", conversion_result.total_pages)
 
-            analysis_agent = AnalysisAgent()
-            manifest, initial_observations, analysis_usage = await analysis_agent.analyze(
-                pages, job.job_id
-            )
+                analysis_agent = AnalysisAgent()
+                manifest, initial_observations, analysis_usage = await analysis_agent.analyze(
+                    pages, job.job_id
+                )
 
-            # Debug log: phase end + latency tracking
-            phase_duration_ms = (time.time() - phase_start_time) * 1000
-            debug_logger.end_phase_tracking(job.job_id)
-            debug_logger.log_phase_end(
-                job_id=job.job_id,
-                phase_name="analysis",
-                phase_number=1,
-                duration_ms=phase_duration_ms,
-                result_summary={
-                    "required_agents": manifest.required_agents,
-                    "initial_observations": len(initial_observations),
-                    "input_tokens": analysis_usage.input_tokens,
-                    "output_tokens": analysis_usage.output_tokens,
-                    "cost_cents": analysis_usage.estimated_cost_cents,
-                },
-            )
+                span.set_attribute("required_agents", str(manifest.required_agents))
+                span.set_attribute("initial_observations", len(initial_observations))
+                span.set_attribute("tokens.input", analysis_usage.input_tokens)
+                span.set_attribute("tokens.output", analysis_usage.output_tokens)
+                span.set_attribute("cost.cents", analysis_usage.estimated_cost_cents)
 
             # Save manifest and initial observations to S3
             await self.remediation_storage.save_manifest(job.job_id, manifest)
@@ -212,45 +195,29 @@ class ProcessingService:
                 f"Job {job.job_id}: Starting extraction phase (Haiku)..."
             )
 
-            # Debug log: phase start + latency tracking
-            phase_start_time = time.time()
-            debug_logger.log_phase_start(
-                job_id=job.job_id,
-                phase_name="extraction",
-                phase_number=2,
-                details={"document_title": manifest.document_title},
-            )
-            debug_logger.start_phase_tracking(job.job_id, "extraction", 2)
+            with self._tracer.start_as_current_span("phase.extraction") as span:
+                span.set_attribute("job_id", job.job_id)
+                span.set_attribute("phase.number", 2)
+                span.set_attribute("document_title", manifest.document_title)
 
-            extraction_agent = ExtractionAgent()
+                extraction_agent = ExtractionAgent()
 
-            # Extract markdown guided by the manifest from analysis phase
-            extraction_output, extraction_usage = await extraction_agent.extract(
-                pages=pages,
-                manifest=manifest,
-                job_id=job.job_id,
-            )
+                # Extract markdown guided by the manifest from analysis phase
+                extraction_output, extraction_usage = await extraction_agent.extract(
+                    pages=pages,
+                    manifest=manifest,
+                    job_id=job.job_id,
+                )
 
-            # Extract values from Reasoned[T] fields
-            full_markdown = extraction_output.markdown
-            extraction_confidence = extraction_output.confidence.value
+                # Extract values from Reasoned[T] fields
+                full_markdown = extraction_output.markdown
+                extraction_confidence = extraction_output.confidence.value
 
-            # Debug log: phase end + latency tracking
-            phase_duration_ms = (time.time() - phase_start_time) * 1000
-            debug_logger.end_phase_tracking(job.job_id)
-            debug_logger.log_phase_end(
-                job_id=job.job_id,
-                phase_name="extraction",
-                phase_number=2,
-                duration_ms=phase_duration_ms,
-                result_summary={
-                    "markdown_length": len(full_markdown),
-                    "confidence": extraction_confidence,
-                    "input_tokens": extraction_usage.input_tokens,
-                    "output_tokens": extraction_usage.output_tokens,
-                    "cost_cents": extraction_usage.estimated_cost_cents,
-                },
-            )
+                span.set_attribute("markdown_length", len(full_markdown))
+                span.set_attribute("confidence", extraction_confidence)
+                span.set_attribute("tokens.input", extraction_usage.input_tokens)
+                span.set_attribute("tokens.output", extraction_usage.output_tokens)
+                span.set_attribute("cost.cents", extraction_usage.estimated_cost_cents)
 
             # Save v0 markdown (original extraction, never modified)
             await self.storage.upload_result(
@@ -281,61 +248,44 @@ class ProcessingService:
                     f"Job {job.job_id}: Starting specialized analysis phase (Sonnet)..."
                 )
 
-                # Debug log: phase start + latency tracking
-                phase_start_time = time.time()
-                debug_logger.log_phase_start(
-                    job_id=job.job_id,
-                    phase_name="specialized_agents",
-                    phase_number=3,
-                    details={"required_agents": manifest.required_agents},
-                )
-                debug_logger.start_phase_tracking(job.job_id, "specialized_agents", 3)
+                with self._tracer.start_as_current_span("phase.specialized_agents") as span:
+                    span.set_attribute("job_id", job.job_id)
+                    span.set_attribute("phase.number", 3)
+                    span.set_attribute("required_agents", str(manifest.required_agents))
 
-                # Update substatus to "analyzing_specialized"
-                await retry_with_backoff(
-                    lambda: self.job.update_job_status(
-                        job.job_id,
-                        "processing",
-                        substatus="analyzing_specialized",
-                    ),
-                    max_attempts=3,
-                    operation_name=f"Update job {job.job_id} substatus to analyzing_specialized",
-                )
+                    # Update substatus to "analyzing_specialized"
+                    await retry_with_backoff(
+                        lambda: self.job.update_job_status(
+                            job.job_id,
+                            "processing",
+                            substatus="analyzing_specialized",
+                        ),
+                        max_attempts=3,
+                        operation_name=f"Update job {job.job_id} substatus to analyzing_specialized",
+                    )
 
-                # Create and configure agent router with all specialized agents
-                router = AgentRouter()
-                router.register_agent("figures", FiguresAgent())
-                router.register_agent("tables", TablesAgent())
-                router.register_agent("structure", StructureAgent())
-                router.register_agent("typography", TypographyAgent())
+                    # Create and configure agent router with all specialized agents
+                    router = AgentRouter()
+                    router.register_agent("figures", FiguresAgent())
+                    router.register_agent("tables", TablesAgent())
+                    router.register_agent("structure", StructureAgent())
+                    router.register_agent("typography", TypographyAgent())
 
-                # Run required agents and collect observations
-                specialized_observations, combined_agent_usage = await router.run_required_agents(
-                    manifest=manifest,
-                    pages=pages,
-                    markdown=full_markdown,
-                    job_id=job.job_id,
-                )
+                    # Run required agents and collect observations
+                    specialized_observations, combined_agent_usage = await router.run_required_agents(
+                        manifest=manifest,
+                        pages=pages,
+                        markdown=full_markdown,
+                        job_id=job.job_id,
+                    )
 
-                # Convert combined usage to LLMUsage for consistent tracking
-                specialized_usage = combined_agent_usage.to_llm_usage()
+                    # Convert combined usage to LLMUsage for consistent tracking
+                    specialized_usage = combined_agent_usage.to_llm_usage()
 
-                # Debug log: phase end + latency tracking
-                phase_duration_ms = (time.time() - phase_start_time) * 1000
-                debug_logger.end_phase_tracking(job.job_id)
-                debug_logger.log_phase_end(
-                    job_id=job.job_id,
-                    phase_name="specialized_agents",
-                    phase_number=3,
-                    duration_ms=phase_duration_ms,
-                    result_summary={
-                        "observations_found": len(specialized_observations),
-                        "agents_run": manifest.required_agents,
-                        "input_tokens": specialized_usage.input_tokens,
-                        "output_tokens": specialized_usage.output_tokens,
-                        "cost_cents": specialized_usage.estimated_cost_cents,
-                    },
-                )
+                    span.set_attribute("observations_found", len(specialized_observations))
+                    span.set_attribute("tokens.input", specialized_usage.input_tokens)
+                    span.set_attribute("tokens.output", specialized_usage.output_tokens)
+                    span.set_attribute("cost.cents", specialized_usage.estimated_cost_cents)
 
                 logger.info(
                     f"Job {job.job_id}: Specialized analysis complete - "
@@ -371,55 +321,39 @@ class ProcessingService:
                     f"Job {job.job_id}: Starting consolidation phase (Sonnet)..."
                 )
 
-                # Debug log: phase start + latency tracking
-                phase_start_time = time.time()
-                debug_logger.log_phase_start(
-                    job_id=job.job_id,
-                    phase_name="consolidation",
-                    phase_number=4,
-                    details={"total_observations": len(all_observations)},
-                )
-                debug_logger.start_phase_tracking(job.job_id, "consolidation", 4)
+                with self._tracer.start_as_current_span("phase.consolidation") as span:
+                    span.set_attribute("job_id", job.job_id)
+                    span.set_attribute("phase.number", 4)
+                    span.set_attribute("total_observations", len(all_observations))
 
-                # Update substatus to "consolidating"
-                await retry_with_backoff(
-                    lambda: self.job.update_job_status(
-                        job.job_id,
-                        "processing",
-                        substatus="consolidating",
-                    ),
-                    max_attempts=3,
-                    operation_name=f"Update job {job.job_id} substatus to consolidating",
-                )
-
-                # Run consolidation service
-                consolidation_service = ConsolidationService(self.remediation_storage)
-                proposals, auto_proposal_count, manual_proposal_count, consolidation_usage = (
-                    await consolidation_service.consolidate_observations(
-                        job_id=job.job_id,
-                        markdown=full_markdown,
+                    # Update substatus to "consolidating"
+                    await retry_with_backoff(
+                        lambda: self.job.update_job_status(
+                            job.job_id,
+                            "processing",
+                            substatus="consolidating",
+                        ),
+                        max_attempts=3,
+                        operation_name=f"Update job {job.job_id} substatus to consolidating",
                     )
-                )
 
-                proposal_count = len(proposals)
+                    # Run consolidation service
+                    consolidation_service = ConsolidationService(self.remediation_storage)
+                    proposals, auto_proposal_count, manual_proposal_count, consolidation_usage = (
+                        await consolidation_service.consolidate_observations(
+                            job_id=job.job_id,
+                            markdown=full_markdown,
+                        )
+                    )
 
-                # Debug log: phase end + latency tracking
-                phase_duration_ms = (time.time() - phase_start_time) * 1000
-                debug_logger.end_phase_tracking(job.job_id)
-                debug_logger.log_phase_end(
-                    job_id=job.job_id,
-                    phase_name="consolidation",
-                    phase_number=4,
-                    duration_ms=phase_duration_ms,
-                    result_summary={
-                        "proposal_count": proposal_count,
-                        "auto_proposals": auto_proposal_count,
-                        "manual_proposals": manual_proposal_count,
-                        "input_tokens": consolidation_usage.input_tokens,
-                        "output_tokens": consolidation_usage.output_tokens,
-                        "cost_cents": consolidation_usage.estimated_cost_cents,
-                    },
-                )
+                    proposal_count = len(proposals)
+
+                    span.set_attribute("proposal_count", proposal_count)
+                    span.set_attribute("auto_proposals", auto_proposal_count)
+                    span.set_attribute("manual_proposals", manual_proposal_count)
+                    span.set_attribute("tokens.input", consolidation_usage.input_tokens)
+                    span.set_attribute("tokens.output", consolidation_usage.output_tokens)
+                    span.set_attribute("cost.cents", consolidation_usage.estimated_cost_cents)
 
                 logger.info(
                     f"Job {job.job_id}: Consolidation complete - "
@@ -543,9 +477,6 @@ class ProcessingService:
                 f"est. cost: ${total_usage.estimated_cost_cents/100:.4f})"
             )
 
-            # Log latency summary for debug mode
-            debug_logger.log_latency_summary(job.job_id)
-
             return ProcessingResult(
                 job_id=job.job_id,
                 markdown_url=result_url,
@@ -558,9 +489,6 @@ class ProcessingService:
             # Handle validation errors (e.g., no pages provided)
             error_msg = f"Processing failed: {str(e)}"
             logger.error(f"Job {job.job_id} failed: {error_msg}")
-
-            # Clean up latency tracker on failure
-            debug_logger.finish_job_tracking(job.job_id)
 
             await retry_with_backoff(
                 lambda: self.job.update_job_status(
@@ -581,9 +509,6 @@ class ProcessingService:
         except Exception as e:
             error_msg = f"Processing failed: {str(e)}"
             logger.error(f"Job {job.job_id} failed: {error_msg}", exc_info=True)
-
-            # Clean up latency tracker on failure
-            debug_logger.finish_job_tracking(job.job_id)
 
             await retry_with_backoff(
                 lambda: self.job.update_job_status(
@@ -822,9 +747,6 @@ class ProcessingService:
             f"Job {job.job_id} routed to correction review "
             f"(processing: {processing_time}s, confidence: {avg_confidence:.2f})"
         )
-
-        # Log latency summary for debug mode
-        debug_logger.log_latency_summary(job.job_id)
 
         return ProcessingResult(
             job_id=job.job_id,

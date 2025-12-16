@@ -306,6 +306,7 @@ async def edit_proposal(
     request: EditRequest,
     storage: RemediationStorageService = Depends(get_remediation_storage),
     consolidation: ConsolidationService = Depends(get_consolidation_service),
+    job_service: JobService = Depends(get_job_service),
 ) -> dict[str, Any]:
     """Edit a proposal or submit human observation.
 
@@ -378,11 +379,30 @@ async def edit_proposal(
         await storage.save_observations(job_id, observations)
 
         # Reconsolidate
-        ai_proposal = await consolidation.reconsolidate_observation(
+        ai_proposal, usage = await consolidation.reconsolidate_observation(
             job_id=job_id,
             observation=observation,
             markdown=markdown,
         )
+
+        # Update job's LLM cost with the reconsolidation usage
+        if usage.estimated_cost_cents > 0:
+            job = await job_service.get_job(job_id)
+            if job is not None:
+                current_cost = float(job.get("llm_cost_cents", 0) or 0)
+                current_input = int(job.get("llm_input_tokens", 0) or 0)
+                current_output = int(job.get("llm_output_tokens", 0) or 0)
+                current_total = int(job.get("llm_total_tokens", 0) or 0)
+                current_status = str(job.get("status", "processing"))
+
+                await job_service.update_job_status(
+                    job_id,
+                    current_status,
+                    llm_cost_cents=current_cost + usage.estimated_cost_cents,
+                    llm_input_tokens=current_input + usage.input_tokens,
+                    llm_output_tokens=current_output + usage.output_tokens,
+                    llm_total_tokens=current_total + usage.total_tokens,
+                )
 
         if ai_proposal:
             return {

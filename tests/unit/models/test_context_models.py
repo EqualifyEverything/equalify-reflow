@@ -1,4 +1,4 @@
-"""Tests for document context models (PRD-013)."""
+"""Tests for document context models."""
 
 import pytest
 from pydantic import ValidationError

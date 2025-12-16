@@ -1,4 +1,4 @@
-"""Extraction Agent for guided markdown extraction (PRD-013).
+"""Extraction Agent for guided markdown extraction.
 
 This agent performs manifest-guided markdown extraction using Claude Haiku 4.5
 (EFFICIENT tier) to transcribe PDF documents to accessible markdown.
@@ -11,6 +11,10 @@ The Extraction Agent:
 
 Uses Claude Haiku 4.5 for cost-efficient transcription.
 The hard analytical work was done by the Analysis agent (Sonnet).
+
+Supports dynamic instructions via AgentDependencies for:
+- Document type hints (syllabus, exam, lecture_notes)
+- Retry guidance based on previous failures
 """
 
 from __future__ import annotations
@@ -18,22 +22,25 @@ from __future__ import annotations
 import base64
 import logging
 import time
-from dataclasses import dataclass, field
 from pathlib import Path
-from typing import Any
+from typing import TYPE_CHECKING, Any
 
-import yaml
 from pydantic import BaseModel, Field
-from pydantic_ai import Agent
+from pydantic_ai import Agent, RunContext
 from pydantic_ai.messages import BinaryContent
 
-from src.agents.model_tiers import MODEL_TIER_MAP, ModelTier
+from src.agents.base_agent import AgentConfig, BaseDocumentAgent
+from src.agents.dependencies import AgentDependencies
+from src.agents.model_tiers import ModelTier
 from src.config import settings
 from src.services.debug_logging_service import debug_logger
 from src.services.pdf_converter import PageData
-from src.shared.llm_cost import HAIKU_PRICING, calculate_estimated_cost
 from src.shared.models.processing import LLMUsage
 from src.shared.models.remediation import DocumentManifest, HeadingTree, PageFeatures
+from src.utils.prompt_sanitizer import sanitize_for_prompt
+
+if TYPE_CHECKING:
+    pass
 
 logger = logging.getLogger(__name__)
 
@@ -61,26 +68,11 @@ class ExtractionOutput(BaseModel):
 
 
 # =============================================================================
-# Agent Configuration
-# =============================================================================
-
-
-@dataclass
-class ExtractionAgentConfig:
-    """Configuration for the extraction agent."""
-
-    prompts_file: Path = field(default_factory=lambda: Path("extraction.yaml"))
-    max_retries: int = 2
-    temperature: float = 0.2  # Low temperature for consistent transcription
-    max_tokens: int = 16384  # Large output for full document transcription
-
-
-# =============================================================================
 # Extraction Agent
 # =============================================================================
 
 
-class ExtractionAgent:
+class ExtractionAgent(BaseDocumentAgent[ExtractionOutput]):
     """Agent that performs guided markdown extraction using Haiku.
 
     This agent:
@@ -92,71 +84,136 @@ class ExtractionAgent:
     Uses Claude Haiku 4.5 for cost-efficient transcription.
     The hard analytical work was done by the Analysis agent (Sonnet).
 
+    Supports dynamic instructions for:
+    - Document type hints (syllabus, exam, lecture_notes)
+    - Retry guidance based on previous failures
+
     Example:
         >>> agent = ExtractionAgent()
         >>> markdown, confidence, usage = await agent.extract(pages, manifest, job_id)
         >>> print(f"Extracted {len(markdown)} chars")
     """
 
-    def __init__(self, config: ExtractionAgentConfig | None = None) -> None:
+    # Document type hints for dynamic instructions
+    DOCUMENT_TYPE_HINTS: dict[str, str] = {
+        "syllabus": (
+            "This is a course syllabus. Pay attention to:\n"
+            "- Course schedule tables\n"
+            "- Grading policy sections\n"
+            "- Assignment due dates\n"
+        ),
+        "exam": (
+            "This is an exam document. Pay attention to:\n"
+            "- Question numbering\n"
+            "- Point values\n"
+            "- Answer spaces (preserve blanks)\n"
+        ),
+        "lecture_notes": (
+            "These are lecture notes. Pay attention to:\n"
+            "- Slide numbers/titles\n"
+            "- Bullet point hierarchies\n"
+            "- Diagrams and figures\n"
+        ),
+        "assignment": (
+            "This is an assignment. Pay attention to:\n"
+            "- Question/problem numbering\n"
+            "- Point values and rubric info\n"
+            "- Submission requirements\n"
+        ),
+    }
+
+    def __init__(self, config: AgentConfig | None = None) -> None:
         """Initialize the extraction agent.
 
         Args:
             config: Optional configuration (uses defaults if not provided)
         """
-        self.config = config or ExtractionAgentConfig()
-        self.model_tier = ModelTier.EFFICIENT
-        self.model_id = MODEL_TIER_MAP[self.model_tier]
-        self.prompts = self._load_prompts()
-        self._agent: Agent[None, ExtractionOutput] | None = None
-
+        if config is None:
+            config = AgentConfig(
+                name="extraction_agent",
+                prompts_file=Path("extraction.yaml"),
+                output_type=ExtractionOutput,
+                model_tier=ModelTier.EFFICIENT,
+                max_retries=2,
+                temperature=0.2,
+                max_tokens=16384,
+                use_deps=True,  # Enable dynamic instructions
+            )
+        super().__init__(config)
+        self._instructions_registered = False
         logger.info(
             f"ExtractionAgent initialized with model tier {self.model_tier.value} "
-            f"({self.model_id})"
+            f"({self.model_id}), dynamic instructions enabled"
         )
 
-    def _load_prompts(self) -> dict[str, Any]:
-        """Load prompts from YAML configuration file."""
-        prompts_file = self.config.prompts_file
-        if not prompts_file.is_absolute():
-            prompts_file = Path(settings.agent_prompts_dir) / prompts_file
+    def _get_agent(self) -> Agent[AgentDependencies, ExtractionOutput]:  # type: ignore[override]
+        """Get or create agent with dynamic instructions registered.
 
-        try:
-            with open(prompts_file) as f:
-                prompts: dict[str, Any] = yaml.safe_load(f)
-                logger.debug(f"Loaded prompts from {prompts_file}")
-                return prompts
-        except FileNotFoundError:
-            logger.warning(f"Prompts file not found: {prompts_file}, using defaults")
-            return self._default_prompts()
+        Overrides base class to register dynamic instructions after agent creation.
+        """
+        agent = super()._get_agent()
 
-    def _default_prompts(self) -> dict[str, Any]:
-        """Default prompts for extraction agent."""
-        return {
-            "system_prompt": EXTRACTION_SYSTEM_PROMPT,
-            "user_prompt": EXTRACTION_USER_PROMPT,
-        }
+        # Register dynamic instructions only once
+        if not self._instructions_registered:
+            self._register_dynamic_instructions(agent)  # type: ignore[arg-type]
+            self._instructions_registered = True
 
-    def _get_agent(self) -> Agent[None, ExtractionOutput]:
-        """Get or create the extraction agent."""
-        if self._agent is None:
-            from pydantic_ai.models.bedrock import BedrockConverseModel
+        return agent  # type: ignore[return-value]
 
-            model = BedrockConverseModel(model_name=self.model_id)
-            self._agent = Agent(
-                model,
-                output_type=ExtractionOutput,
-                system_prompt=self.prompts["system_prompt"],
-                retries=self.config.max_retries,
+    def _register_dynamic_instructions(
+        self, agent: Agent[AgentDependencies, ExtractionOutput]
+    ) -> None:
+        """Register dynamic instruction generators on the agent.
+
+        These instructions are evaluated at runtime and can access
+        AgentDependencies via ctx.deps to provide context-aware guidance.
+        """
+
+        @agent.instructions
+        def document_type_guidance(ctx: RunContext[AgentDependencies]) -> str:
+            """Provide document-type-specific extraction tips."""
+            doc_type = ctx.deps.document_type
+            if doc_type and doc_type in self.DOCUMENT_TYPE_HINTS:
+                hint = self.DOCUMENT_TYPE_HINTS[doc_type]
+                return f"""
+<document_type type="{doc_type.upper()}">
+{hint}
+</document_type>"""
+            return ""
+
+        @agent.instructions
+        def retry_guidance(ctx: RunContext[AgentDependencies]) -> str:
+            """Provide guidance for retry attempts."""
+            if not ctx.deps.is_retry:
+                return ""
+
+            # Show last 3 failures
+            failures = "\n".join(
+                f"- {f}" for f in ctx.deps.previous_failures[-3:]
             )
-            logger.debug(f"Created extraction agent with model {self.model_id}")
-        return self._agent
+            return f"""
+<retry_attempt number="{ctx.deps.attempt_number}">
+Previous attempts encountered issues:
+{failures}
+
+Adjust your approach to avoid these issues.
+</retry_attempt>"""
+
+        logger.debug("ExtractionAgent: Dynamic instructions registered")
+
+    async def process(self, input_data: Any) -> ExtractionOutput:
+        """Process method required by BaseDocumentAgent.
+
+        For ExtractionAgent, use extract() method instead.
+        """
+        raise NotImplementedError("ExtractionAgent uses extract() method, not process()")
 
     async def extract(
         self,
         pages: list[PageData],
         manifest: DocumentManifest,
         job_id: str,
+        deps: AgentDependencies | None = None,
     ) -> tuple[str, float, LLMUsage]:
         """Extract markdown guided by manifest.
 
@@ -164,6 +221,8 @@ class ExtractionAgent:
             pages: List of page images from PDF conversion
             manifest: DocumentManifest from analysis phase
             job_id: Job identifier
+            deps: Optional AgentDependencies for dynamic instructions.
+                  If not provided, creates default deps from manifest.
 
         Returns:
             Tuple of (markdown_content, confidence, LLMUsage)
@@ -180,7 +239,16 @@ class ExtractionAgent:
             f"{len(pages)} pages, manifest title='{manifest.document_title}'"
         )
 
-        agent = self._get_agent()
+        # Create or use provided deps
+        if deps is None:
+            deps = AgentDependencies(
+                job_id=job_id,
+                manifest=manifest,
+                document_type=manifest.document_type,
+            )
+
+        # Ensure agent is created (triggers instruction registration)
+        self._get_agent()
 
         # Parse heading tree from manifest
         heading_tree = HeadingTree.model_validate_json(manifest.heading_tree_json)
@@ -206,14 +274,29 @@ class ExtractionAgent:
         # Format page features for prompt
         page_features_text = self._format_page_features(manifest.page_features)
 
-        # Add user prompt with manifest context
+        # Build user prompt with manifest context
+        # SECURITY: Sanitize user-influenced fields to prevent prompt injection
+        # document_title and document_type come from PDF metadata (attacker-controlled)
+        # layout_notes may contain extracted text content
         user_prompt = self.prompts["user_prompt"].format(
             total_pages=manifest.total_pages,
-            document_title=manifest.document_title,
-            document_type=manifest.document_type,
+            document_title=sanitize_for_prompt(
+                manifest.document_title,
+                max_length=200,
+                context="document_title",
+            ),
+            document_type=sanitize_for_prompt(
+                manifest.document_type,
+                max_length=50,
+                context="document_type",
+            ),
             heading_tree=heading_tree_text,
             page_features=page_features_text,
-            layout_notes=manifest.analysis_notes or "No additional notes.",
+            layout_notes=sanitize_for_prompt(
+                manifest.analysis_notes or "No additional notes.",
+                max_length=500,
+                context="layout_notes",
+            ),
         )
         messages.append(user_prompt)
 
@@ -237,10 +320,12 @@ class ExtractionAgent:
             max_tokens=self.config.max_tokens,
         )
 
-        # Run agent
+        # Run agent with deps for dynamic instructions
         start_time = time.time()
+        agent = self._get_agent()
         result = await agent.run(
             messages,
+            deps=deps,
             model_settings={
                 "max_tokens": self.config.max_tokens,
                 "temperature": self.config.temperature,
@@ -248,22 +333,8 @@ class ExtractionAgent:
         )
         duration_ms = (time.time() - start_time) * 1000
 
-        # Extract usage
-        usage_data = result.usage()
-        input_tokens = usage_data.request_tokens or 0
-        output_tokens = usage_data.response_tokens or 0
-        total_tokens = input_tokens + output_tokens
-
-        estimated_cost_cents = calculate_estimated_cost(
-            input_tokens, output_tokens, HAIKU_PRICING
-        )
-
-        usage = LLMUsage(
-            input_tokens=input_tokens,
-            output_tokens=output_tokens,
-            total_tokens=total_tokens,
-            estimated_cost_cents=estimated_cost_cents,
-        )
+        # Use inherited usage tracking
+        usage = self._core.create_llm_usage(result)
 
         output = result.output
 
@@ -271,12 +342,12 @@ class ExtractionAgent:
         debug_logger.log_response(
             job_id=job_id,
             agent_name="extraction_agent",
-            response_text=output.markdown[:1000] if output.markdown else None,  # Log start of markdown
+            response_text=output.markdown[:1000] if output.markdown else None,
             parsed_output={"confidence": output.confidence, "notes": output.notes},
-            input_tokens=input_tokens,
-            output_tokens=output_tokens,
-            total_tokens=total_tokens,
-            estimated_cost_cents=estimated_cost_cents,
+            input_tokens=usage.input_tokens,
+            output_tokens=usage.output_tokens,
+            total_tokens=usage.total_tokens,
+            estimated_cost_cents=usage.estimated_cost_cents,
             duration_ms=duration_ms,
             model_id=self.model_id,
         )
@@ -285,7 +356,7 @@ class ExtractionAgent:
             f"Extraction complete for job {job_id}: "
             f"{len(output.markdown)} chars, "
             f"confidence: {output.confidence:.2f}, "
-            f"cost: ${estimated_cost_cents/100:.4f}"
+            f"cost: ${usage.estimated_cost_cents/100:.4f}"
         )
 
         return output.markdown, output.confidence, usage
@@ -350,74 +421,7 @@ class ExtractionAgent:
         return "\n".join(lines)
 
 
-# =============================================================================
-# Default Prompts (fallback if YAML not found)
-# =============================================================================
-
-EXTRACTION_SYSTEM_PROMPT = """You are a precise document transcription agent.
-Your task is to convert PDF page images into clean, accessible markdown.
-
-CRITICAL INSTRUCTIONS:
-
-1. FOLLOW THE HEADING STRUCTURE EXACTLY
-   - Use the heading hierarchy provided in the analysis
-   - Do not create new headings or change levels
-   - Match heading text exactly as specified
-
-2. IMAGE HANDLING
-   - For each image, use placeholder format: ![TODO: describe](image-page-X-N.png)
-   - X = page number, N = image number on that page
-   - A specialized agent will generate descriptions later
-
-3. TABLE HANDLING
-   - Preserve table structure as markdown tables
-   - Use | column | separators |
-   - Include header rows with | --- | dividers
-
-4. TEXT TRANSCRIPTION
-   - Transcribe all visible text accurately
-   - Preserve paragraph breaks
-   - Maintain list structures (ordered and unordered)
-   - Keep code blocks with proper fencing
-
-5. READING ORDER
-   - Follow the layout type specified (single/two column)
-   - For two-column: transcribe left column fully, then right
-   - For mixed: follow natural reading flow
-
-6. DO NOT:
-   - Add commentary or explanations
-   - Invent content not visible in images
-   - Change the document structure
-   - Skip any visible text content
-
-Your output should be clean markdown that could be rendered directly.
-"""
-
-EXTRACTION_USER_PROMPT = """Transcribe this {total_pages}-page document to markdown.
-
-DOCUMENT: {document_title}
-TYPE: {document_type}
-
-{heading_tree}
-
-{page_features}
-
-LAYOUT NOTES: {layout_notes}
-
-INSTRUCTIONS:
-1. Follow the heading structure exactly as shown above
-2. For images, use: ![TODO: describe](image-page-X-N.png)
-3. Preserve all tables as markdown tables
-4. Transcribe all visible text accurately
-5. Maintain proper reading order based on layout
-
-Begin transcription:
-"""
-
-
 __all__ = [
     "ExtractionAgent",
-    "ExtractionAgentConfig",
     "ExtractionOutput",
 ]

@@ -1,4 +1,4 @@
-# TablesAgent prompts for table structure analysis (PRD-014, Issue #24)
+# TablesAgent prompts for table structure analysis
 # Model: Claude Sonnet 4.5 (REASONING tier)
 
 system_prompt: |
@@ -51,6 +51,47 @@ system_prompt: |
   - Flag specific issues in markdown
   - Recommend appropriate action
   - Route complex tables to manual review if needed
+
+  REASONING FIELDS:
+  Fields named "reasoning" require 1-2 sentences explaining your determination.
+  - State the key structural evidence you observed
+  - Connect evidence to your assessment
+  - Keep it concise - no lengthy explanations
+
+  GOOD reasoning: "Header row with column labels visible in row 1. Standard single-header structure."
+  GOOD reasoning: "Cells spanning multiple columns visible in row 3. Merged cells require restructuring."
+  BAD reasoning: "When I analyze this table, I can see that there are several rows and columns. The first row appears to contain labels..."
+
+  QUALITY SIGNALS:
+  Assess these observable quality factors that affect analysis reliability:
+
+  image_clarity:
+  - "clear": Sharp, readable, good resolution
+  - "blurry": Degraded quality, hard to read table lines
+  - "partial": Cropped, table extends beyond visible area
+  - "missing": No image available for visual verification
+
+  text_legibility:
+  - "clear": Typed, sharp, high contrast
+  - "faded": Low contrast, washed out cell content
+  - "mixed": Varies across table
+  - "handwritten": Manual writing in cells
+
+  structure_complexity:
+  - "simple": Regular grid, single header row
+  - "moderate": Some spanning cells or multiple headers
+  - "complex": Nested tables, heavy merging, irregular structure
+
+  content_ambiguity:
+  - "unambiguous": Clear header/data distinction
+  - "some_ambiguity": Uncertain cell boundaries or headers
+  - "highly_ambiguous": Multiple valid interpretations
+
+  ocr_quality:
+  - "native": Text layer present in PDF
+  - "good_ocr": Clean OCR extraction of cell content
+  - "poor_ocr": OCR with significant errors in cells
+  - "no_text": Image-only table content
 
 user_prompt_template: |
   Analyze the tables on page {page_num} of this document.

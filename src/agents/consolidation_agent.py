@@ -1,4 +1,4 @@
-"""ConsolidationAgent for transforming observations into proposals (PRD-015).
+"""ConsolidationAgent for transforming observations into proposals.
 
 The consolidation phase is the bridge between AI analysis and human review:
 1. Groups related observations (same region → one proposal)
@@ -16,24 +16,17 @@ from pathlib import Path
 from typing import Any, Literal
 
 from pydantic import BaseModel, Field
-from pydantic_ai import Agent
-from pydantic_ai.models.bedrock import BedrockConverseModel
 
-from src.agents.model_tiers import MODEL_TIER_MAP, ModelTier
+from src.agents.base_agent import AgentConfig, BaseDocumentAgent
+from src.agents.model_tiers import ModelTier
 from src.config import settings
 from src.services.debug_logging_service import debug_logger
-from src.shared.llm_cost import calculate_estimated_cost, get_pricing_for_tier
-from src.shared.models.agent_models import LLMUsage
 from src.shared.models.observation import Observation
+from src.shared.models.processing import LLMUsage
 from src.shared.models.proposal import Proposal, SearchReplaceDiff
 from src.utils.diff_utils import validate_search_replace
 
 logger = logging.getLogger(__name__)
-
-
-# ============================================================================
-# Output Models
-# ============================================================================
 
 
 class ProposalDraft(BaseModel):
@@ -96,61 +89,7 @@ class ConsolidationOutput(BaseModel):
     )
 
 
-# ============================================================================
-# System Prompt
-# ============================================================================
-
-
-CONSOLIDATION_SYSTEM_PROMPT = """You are an accessibility remediation coordinator.
-Your task is to consolidate observations into actionable proposals.
-
-CONSOLIDATION RULES:
-
-1. GROUP RELATED OBSERVATIONS
-   - Same page region → combine into one proposal
-   - Same element (e.g., one image) → one proposal
-   - Related fixes (heading + content below) → may combine
-   - Don't over-group: keep proposals focused
-
-2. GENERATE MINIMAL SEARCH TEXT
-   - Use smallest unique string that identifies location
-   - Include enough context to avoid false matches
-   - Preserve whitespace and formatting exactly
-   - Search text MUST exist exactly once in the document
-
-3. GENERATE ACCURATE REPLACE TEXT
-   - Fix all issues addressed by grouped observations
-   - Maintain document style and formatting
-   - Don't introduce new issues
-
-4. WRITE CLEAR JUSTIFICATIONS
-   - Explain why observations are grouped
-   - Describe how the edit resolves each observation
-   - Note any tradeoffs or assumptions
-
-5. ROUTE APPROPRIATELY
-   - confidence >= 0.7: can be batch-approved
-   - confidence < 0.7: needs individual review
-   - conflicting observations: flag as conflict
-
-6. FLAG FOR MANUAL HANDLING
-   - Observations with confidence < 0.5
-   - Conflicting recommendations
-   - Complex structural changes
-   - Ambiguous image classifications
-
-OUTPUT:
-- List of proposals with search/replace diffs
-- List of observation IDs needing manual handling
-- Any conflicts detected"""
-
-
-# ============================================================================
-# ConsolidationAgent
-# ============================================================================
-
-
-class ConsolidationAgent:
+class ConsolidationAgent(BaseDocumentAgent[ConsolidationOutput]):
     """Agent that consolidates observations into proposals.
 
     This agent:
@@ -171,9 +110,6 @@ class ConsolidationAgent:
         ... )
     """
 
-    # Confidence threshold for auto vs manual routing
-    AUTO_ROUTE_THRESHOLD = 0.7
-
     # Maximum markdown length to include in prompt (to manage tokens)
     MAX_MARKDOWN_LENGTH = 8000
 
@@ -183,61 +119,27 @@ class ConsolidationAgent:
         Args:
             prompts_file: Optional path to YAML prompts file (uses default if not provided)
         """
-        self.model_tier = ModelTier.REASONING
-        self.model_id = MODEL_TIER_MAP[self.model_tier]
-        self.prompts_file = prompts_file
-        self.prompts = self._load_prompts()
-
-        # Lazy initialization - agent created on first use
-        self._agent: Agent[None, ConsolidationOutput] | None = None
-
+        config = AgentConfig(
+            name="consolidation_agent",
+            prompts_file=prompts_file or Path("consolidation.yaml"),
+            output_type=ConsolidationOutput,
+            model_tier=ModelTier.REASONING,
+            max_retries=2,
+            temperature=0.3,
+            max_tokens=16000,
+        )
+        super().__init__(config)
         logger.info(
             f"ConsolidationAgent initialized with model tier {self.model_tier.value} "
             f"({self.model_id})"
         )
 
-    def _load_prompts(self) -> dict[str, Any]:
-        """Load prompts from YAML or use defaults."""
-        if self.prompts_file and self.prompts_file.exists():
-            import yaml
+    async def process(self, input_data: Any) -> ConsolidationOutput:
+        """Process method required by BaseDocumentAgent.
 
-            with open(self.prompts_file) as f:
-                prompts = yaml.safe_load(f)
-                logger.debug(f"Loaded prompts from {self.prompts_file}")
-                return dict(prompts)
-
-        # Try default location
-        default_path = Path(settings.agent_prompts_dir) / "consolidation.yaml"
-        if default_path.exists():
-            import yaml
-
-            with open(default_path) as f:
-                prompts = yaml.safe_load(f)
-                logger.debug(f"Loaded prompts from {default_path}")
-                return dict(prompts)
-
-        # Use hardcoded defaults
-        logger.debug("Using default consolidation prompts")
-        return {
-            "system_prompt": CONSOLIDATION_SYSTEM_PROMPT,
-        }
-
-    def _get_agent(self) -> Agent[None, ConsolidationOutput]:
-        """Get or create the PydanticAI agent (lazy initialization)."""
-        if self._agent is None:
-            logger.debug(
-                f"ConsolidationAgent: Creating BedrockConverseModel "
-                f"with model {self.model_id}"
-            )
-            model = BedrockConverseModel(model_name=self.model_id)
-            self._agent = Agent(
-                model,
-                output_type=ConsolidationOutput,
-                system_prompt=self.prompts.get("system_prompt", CONSOLIDATION_SYSTEM_PROMPT),
-                retries=2,
-            )
-            logger.debug("ConsolidationAgent: PydanticAI Agent created")
-        return self._agent
+        For ConsolidationAgent, use consolidate() method instead.
+        """
+        raise NotImplementedError("ConsolidationAgent uses consolidate() method, not process()")
 
     async def consolidate(
         self,
@@ -279,7 +181,7 @@ class ConsolidationAgent:
             f"Generate proposals with exact search-replace diffs."
         )
 
-        # Execute agent
+        # Execute agent (using inherited _get_agent)
         agent = self._get_agent()
 
         # Debug log: prompt being sent
@@ -299,28 +201,16 @@ class ConsolidationAgent:
         result = await agent.run(
             user_message,
             model_settings={
-                "max_tokens": settings.claude_max_tokens,
-                "temperature": 0.3,  # Lower temperature for more consistent diffs
+                "max_tokens": self.config.max_tokens,
+                "temperature": self.config.temperature,
             },
         )
         duration_ms = (time.time() - start_time) * 1000
 
         output = result.output
 
-        # Track LLM usage
-        usage = result.usage()
-        input_tokens = usage.input_tokens or 0
-        output_tokens = usage.output_tokens or 0
-        total_tokens = input_tokens + output_tokens
-        pricing = get_pricing_for_tier(self.model_tier)
-        cost_cents = calculate_estimated_cost(input_tokens, output_tokens, pricing)
-
-        llm_usage = LLMUsage(
-            input_tokens=input_tokens,
-            output_tokens=output_tokens,
-            total_tokens=total_tokens,
-            estimated_cost_cents=cost_cents,
-        )
+        # Use inherited usage tracking
+        llm_usage = self._core.create_llm_usage(result)
 
         # Debug log: response received
         debug_logger.log_response(
@@ -354,7 +244,7 @@ class ConsolidationAgent:
         logger.info(
             f"Job {job_id}: Consolidation complete - "
             f"{len(proposals)} valid proposals, {len(manual_ids)} manual, "
-            f"cost: ${cost_cents/100:.4f}"
+            f"cost: ${llm_usage.estimated_cost_cents/100:.4f}"
         )
 
         return proposals, manual_ids, llm_usage
@@ -376,7 +266,7 @@ class ConsolidationAgent:
 
         for page_num in sorted(obs_by_page.keys()):
             page_obs = obs_by_page[page_num]
-            lines.append(f"=== PAGE {page_num} ({len(page_obs)} observations) ===")
+            lines.append(f"<page number=\"{page_num}\" observations=\"{len(page_obs)}\">")
 
             for obs in page_obs:
                 lines.append(f"""
@@ -391,6 +281,7 @@ OBSERVATION {obs.id}:
                 if obs.manual_reason:
                     lines.append(f"  Manual Reason: {obs.manual_reason}")
 
+            lines.append("</page>")
             lines.append("")
 
         return "\n".join(lines)
@@ -430,7 +321,7 @@ OBSERVATION {obs.id}:
 
             # Determine route based on confidence
             route: Literal["auto", "manual"] = (
-                "auto" if draft.confidence >= self.AUTO_ROUTE_THRESHOLD else "manual"
+                "auto" if draft.confidence >= settings.min_confidence_for_auto_approval else "manual"
             )
 
             proposal = Proposal(

@@ -1,4 +1,4 @@
-"""Tests for TablesAgent (PRD-014, Issue #24).
+"""Tests for TablesAgent.
 
 Tests cover:
 - Agent configuration and initialization
@@ -20,7 +20,15 @@ from src.agents.specialized_models import (
 )
 from src.agents.tables_agent import TablesAgent
 from src.services.pdf_converter import PageData
+from src.shared.models.quality_signals import QualitySignals
+from src.shared.models.reasoned import Reasoned
 from src.shared.models.remediation import DocumentManifest, PageFeatures
+
+
+def make_reasoned(value: str, reasoning: str = "Test reasoning for this value.") -> Reasoned:
+    """Helper to create Reasoned objects for testing."""
+    return Reasoned(reasoning=reasoning, value=value)
+
 
 # =============================================================================
 # Output Model Tests
@@ -37,12 +45,12 @@ class TestTableAnalysis:
             table_index=1,
             has_headers=True,
             header_structure="single_row",
-            complexity="simple",
+            complexity=make_reasoned("simple", "Regular grid layout."),
             data_accuracy="accurate",
             visual_description="Grade distribution table",
             markdown_issues=["Missing header separator"],
             recommended_action="add_headers",
-            confidence=0.85,
+            model_confidence=0.85,
         )
         assert analysis.table_index == 1
         assert analysis.has_headers is True
@@ -52,23 +60,26 @@ class TestTableAnalysis:
         """Test TableAnalysis default values."""
         analysis = TableAnalysis(
             table_index=1,
+            complexity=make_reasoned("simple", "Standard table."),
             visual_description="Simple table",
         )
         assert analysis.has_headers is True
         assert analysis.header_structure == "single_row"
-        assert analysis.complexity == "simple"
+        assert analysis.complexity.value == "simple"
         assert analysis.data_accuracy == "accurate"
         assert analysis.markdown_issues == []
         assert analysis.recommended_action == "none"
-        assert analysis.confidence == 0.8
+        # Confidence is computed from quality signals
+        assert analysis.confidence == 0.96  # Default signals + default model_confidence
 
-    def test_confidence_validation(self):
-        """Test confidence must be between 0 and 1."""
+    def test_model_confidence_validation(self):
+        """Test model_confidence must be between 0 and 1."""
         with pytest.raises(ValidationError):
             TableAnalysis(
                 table_index=1,
+                complexity=make_reasoned("simple"),
                 visual_description="Test",
-                confidence=1.5,
+                model_confidence=1.5,
             )
 
     def test_table_index_validation(self):
@@ -76,6 +87,7 @@ class TestTableAnalysis:
         with pytest.raises(ValidationError):
             TableAnalysis(
                 table_index=0,
+                complexity=make_reasoned("simple"),
                 visual_description="Test",
             )
 
@@ -92,6 +104,7 @@ class TestTablesAnalysisOutput:
             analyses=[
                 TableAnalysis(
                     table_index=1,
+                    complexity=make_reasoned("simple", "Standard grid."),
                     visual_description="Data table",
                 )
             ],
@@ -156,10 +169,11 @@ class TestTableAnalysisToObservation:
             TableAnalysis(
                 table_index=1,
                 has_headers=True,
+                complexity=make_reasoned("simple", "Regular structure."),
                 data_accuracy="missing_data",
                 visual_description="Complex table with missing cells",
                 recommended_action="verify_data",
-                confidence=0.7,
+                model_confidence=0.7,
             )
         ]
 
@@ -176,10 +190,11 @@ class TestTableAnalysisToObservation:
         analyses = [
             TableAnalysis(
                 table_index=1,
+                complexity=make_reasoned("merged_cells", "Cells spanning columns."),
                 data_accuracy="structural_loss",
                 visual_description="Table with merged cells",
                 recommended_action="restructure",
-                confidence=0.75,
+                model_confidence=0.75,
             )
         ]
 
@@ -189,17 +204,17 @@ class TestTableAnalysisToObservation:
         assert observations[0].severity == "critical"
 
     def test_complex_table_routes_to_manual(self):
-        """Test complex tables route to manual review."""
+        """Test complex tables route to manual review even with high confidence."""
         agent = TablesAgent()
 
         for complexity in ["merged_cells", "nested", "irregular"]:
             analyses = [
                 TableAnalysis(
                     table_index=1,
-                    complexity=complexity,
+                    complexity=make_reasoned(complexity, f"Table is {complexity}."),
                     visual_description="Complex table",
                     recommended_action="restructure",
-                    confidence=0.9,  # High confidence but still manual
+                    model_confidence=0.99,  # High confidence, but complex table still routes to manual
                 )
             ]
 
@@ -218,11 +233,11 @@ class TestTableAnalysisToObservation:
                 table_index=1,
                 has_headers=False,
                 header_structure="none",
-                complexity="simple",
+                complexity=make_reasoned("simple", "Regular layout."),
                 data_accuracy="accurate",
                 visual_description="Data table without headers",
                 recommended_action="add_headers",
-                confidence=0.85,
+                model_confidence=0.85,
             )
         ]
 
@@ -238,9 +253,10 @@ class TestTableAnalysisToObservation:
         analyses = [
             TableAnalysis(
                 table_index=1,
+                complexity=make_reasoned("simple", "Well-structured table."),
                 visual_description="Well-formatted table",
                 recommended_action="none",
-                confidence=0.95,
+                model_confidence=0.95,
             )
         ]
 
@@ -255,10 +271,14 @@ class TestTableAnalysisToObservation:
         analyses = [
             TableAnalysis(
                 table_index=1,
-                complexity="simple",  # Not complex, but low confidence
+                complexity=make_reasoned("simple", "Uncertain structure."),
                 visual_description="Unclear table",
                 recommended_action="add_headers",
-                confidence=0.5,
+                model_confidence=0.3,  # Low model confidence
+                quality_signals=QualitySignals(
+                    image_clarity="blurry",
+                    content_ambiguity="highly_ambiguous",
+                ),
             )
         ]
 
@@ -319,8 +339,11 @@ class TestTablesAgentAnalysis:
             analyses=[],
         )
 
-        with patch.object(agent, '_run_agent', new_callable=AsyncMock) as mock_run:
-            mock_run.return_value = (mock_output, AsyncMock(estimated_cost_cents=1.0))
+        from src.shared.models.processing import LLMUsage
+        mock_usage = LLMUsage(input_tokens=100, output_tokens=50, total_tokens=150, estimated_cost_cents=1.0)
+
+        with patch.object(agent, '_run_with_deps', new_callable=AsyncMock) as mock_run:
+            mock_run.return_value = (mock_output, mock_usage)
 
             await agent.analyze(
                 pages=sample_pages,
@@ -348,17 +371,18 @@ class TestTablesAgentAnalysis:
                 TableAnalysis(
                     table_index=1,
                     has_headers=False,
+                    complexity=make_reasoned("simple", "Standard table."),
                     visual_description="Data table",
                     recommended_action="add_headers",
-                    confidence=0.85,
+                    model_confidence=0.85,
                 ),
             ],
         )
 
-        mock_usage = AsyncMock()
-        mock_usage.estimated_cost_cents = 5.0
+        from src.shared.models.processing import LLMUsage
+        mock_usage = LLMUsage(input_tokens=200, output_tokens=100, total_tokens=300, estimated_cost_cents=5.0)
 
-        with patch.object(agent, '_run_agent', new_callable=AsyncMock) as mock_run:
+        with patch.object(agent, '_run_with_deps', new_callable=AsyncMock) as mock_run:
             mock_run.return_value = (mock_output, mock_usage)
 
             observations, usage = await agent.analyze(

@@ -1,4 +1,4 @@
-"""Unit tests for HintsCacheService (PRD-012).
+"""Unit tests for HintsCacheService.
 
 Tests the orchestration service that combines VeraPDF and PyMarkdown
 analyzers to build a DocumentHintsCache.

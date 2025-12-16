@@ -1,4 +1,4 @@
-"""Hints cache service for deterministic pre-analysis (PRD-012).
+"""Hints cache service for deterministic pre-analysis.
 
 This module orchestrates the VeraPDF and PyMarkdown analyzers to build
 a complete DocumentHintsCache for use by specialist agents.

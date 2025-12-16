@@ -1,4 +1,4 @@
-"""PDF accessibility analyzer using VeraPDF (PRD-012).
+"""PDF accessibility analyzer using VeraPDF.
 
 This module wraps the VeraPDF REST API to detect PDF/UA-1 accessibility
 issues that should be addressed during document conversion.

@@ -61,7 +61,7 @@ services:
     networks:
       - equalify-network
 
-  # VeraPDF - PDF/UA-1 accessibility validation (PRD-012)
+  # VeraPDF - PDF/UA-1 accessibility validation
   # Provides deterministic pre-analysis for PDF accessibility issues
   # verapdf:
   #   image: verapdf/rest:latest

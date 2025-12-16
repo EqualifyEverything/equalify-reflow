@@ -88,7 +88,7 @@ class Settings(BaseSettings):
                     "2.0x (144 DPI) may be needed for complex diagrams."
     )
 
-    # Multi-Agent Configuration (PRD-011)
+    # Multi-Agent Configuration
     agent_prompts_dir: str = Field(
         default="config/agents",
         description="Directory containing agent YAML prompt files"
@@ -106,7 +106,7 @@ class Settings(BaseSettings):
         description="Maximum specialized agents to run concurrently"
     )
 
-    # Deterministic Pre-Analysis Configuration (PRD-012)
+    # Deterministic Pre-Analysis Configuration
     # VeraPDF settings for PDF/UA-1 accessibility validation
     verapdf_url: str = Field(
         default="http://verapdf:8080",
@@ -131,7 +131,7 @@ class Settings(BaseSettings):
         description="Comma-separated list of PyMarkdown rules to enable"
     )
 
-    # Document Context Extraction Configuration (PRD-013)
+    # Document Context Extraction Configuration
     context_extraction_enabled: bool = Field(
         default=True,
         description="Enable document context extraction for agent grounding"
@@ -161,14 +161,16 @@ class Settings(BaseSettings):
     # PII Detection Configuration
     pii_confidence_threshold: float = Field(ge=0.0, le=1.0, default=0.85)  # Minimum confidence score for PII detection
 
-    # Text correction auto-approval
+    # Confidence threshold for auto vs manual routing
+    # Observations/proposals with confidence >= this go to auto queue, < this go to manual
     min_confidence_for_auto_approval: float = Field(
-        default=0.95,
+        default=0.7,
         ge=0.0,
         le=1.0,
-        description="Minimum confidence score required to auto-approve corrections. "
-                    "Set to 0.0 to require manual approval for all jobs, "
-                    "1.0 to auto-approve all jobs (not recommended)"
+        description="Confidence threshold for auto vs manual routing. "
+                    "Observations/proposals >= this go to auto queue (batch approval), "
+                    "< this go to manual queue (individual review). "
+                    "Set to 0.0 to auto-approve all, 1.0 to require manual review for all."
     )
 
     # Correction review workflow

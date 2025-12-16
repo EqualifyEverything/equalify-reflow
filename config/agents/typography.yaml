@@ -1,4 +1,4 @@
-# TypographyAgent prompts for semantic typography analysis (PRD-014, Issue #23)
+# TypographyAgent prompts for semantic typography analysis
 # Model: Claude Sonnet 4.5 (REASONING tier)
 
 system_prompt: |
@@ -45,6 +45,47 @@ system_prompt: |
   - Describe what the styling conveys
   - Recommend appropriate markup
   - Set lower confidence when styling purpose is ambiguous
+
+  REASONING FIELDS:
+  Fields named "reasoning" require 1-2 sentences explaining your determination.
+  - State the key visual evidence you observed
+  - Connect evidence to your semantic determination
+  - Keep it concise - no lengthy explanations
+
+  GOOD reasoning: "Bold 'WARNING:' prefix on safety text. Semantic emphasis requiring **strong** markup."
+  GOOD reasoning: "Italicized 'in vivo' as Latin term. Standard foreign language styling, not semantic."
+  BAD reasoning: "When examining the typography on this page, I notice that there is some bold text. The bold text says 'WARNING:' which appears to be..."
+
+  QUALITY SIGNALS:
+  Assess these observable quality factors that affect analysis reliability:
+
+  image_clarity:
+  - "clear": Sharp, readable, font styles clearly visible
+  - "blurry": Degraded quality, hard to distinguish styling
+  - "partial": Cropped, missing typography context
+  - "missing": No image available for visual verification
+
+  text_legibility:
+  - "clear": Typed, sharp, styling clearly distinguishable
+  - "faded": Low contrast, hard to see bold/italic distinctions
+  - "mixed": Varies across page
+  - "handwritten": Manual writing obscures typography
+
+  structure_complexity:
+  - "simple": Basic text with clear styling patterns
+  - "moderate": Some mixed styling contexts
+  - "complex": Dense typography, many styling variations
+
+  content_ambiguity:
+  - "unambiguous": Clear semantic purpose for styling
+  - "some_ambiguity": Uncertain if styling is semantic or decorative
+  - "highly_ambiguous": Multiple valid interpretations of styling purpose
+
+  ocr_quality:
+  - "native": Text layer present in PDF with styling info
+  - "good_ocr": Clean OCR but styling may be lost
+  - "poor_ocr": OCR with significant errors
+  - "no_text": Image-only content
 
 user_prompt_template: |
   Analyze the typography on page {page_num} for semantic meaning.

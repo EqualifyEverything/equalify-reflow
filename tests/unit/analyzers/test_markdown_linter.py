@@ -1,4 +1,4 @@
-"""Unit tests for MarkdownLinter (PRD-012).
+"""Unit tests for MarkdownLinter.
 
 Tests the PyMarkdown integration for detecting markdown structure issues
 that impact accessibility.

@@ -1,4 +1,4 @@
-# Extraction Agent Prompts (PRD-013)
+# Extraction Agent Prompts
 # Used by ExtractionAgent for guided markdown extraction using Claude Haiku 4.5
 #
 # This agent performs the second phase of the remediation pipeline:
@@ -55,27 +55,43 @@ system_prompt: |
   - No explanatory comments
   - No meta-discussion about the transcription
 
+  REASONING FIELDS:
+  Fields named "reasoning" require 1-2 sentences explaining your determination.
+  - State the key evidence you observed
+  - Note your decision
+  - Keep it concise - no lengthy explanations
+
+  GOOD reasoning: "Two-column layout on page 3. Transcribed left column then right column."
+  GOOD reasoning: "Math equation unclear due to image quality. Marked with [?] symbols."
+  BAD reasoning: "When I looked at page 3, I noticed that it has what appears to be a two-column layout. After considering how to handle this..."
+
 user_prompt: |
   Transcribe this {total_pages}-page PDF document to accessible markdown.
 
-  === DOCUMENT INFO ===
+  <document_info>
   Title: {document_title}
   Type: {document_type}
+  </document_info>
 
-  === HEADING STRUCTURE (follow exactly) ===
+  <heading_structure>
+  Follow this heading structure exactly:
   {heading_tree}
+  </heading_structure>
 
-  === PAGE CONTENT SUMMARY ===
+  <page_content_summary>
   {page_features}
+  </page_content_summary>
 
-  === ANALYSIS NOTES ===
+  <analysis_notes>
   {layout_notes}
+  </analysis_notes>
 
-  === TRANSCRIPTION GUIDELINES ===
+  <transcription_guidelines>
   1. Use headings exactly as structured above
   2. Images → ![TODO: describe](image-page-X-N.png)
   3. Tables → markdown table format
   4. Preserve all text content accurately
   5. Follow layout-appropriate reading order
+  </transcription_guidelines>
 
   Begin your markdown transcription now:

@@ -1,4 +1,4 @@
-"""Unit tests for DocumentContextService (PRD-013).
+"""Unit tests for DocumentContextService.
 
 Tests the Docling-based document context extraction service.
 Uses mock DoclingDocument objects to test without requiring actual PDF conversion.

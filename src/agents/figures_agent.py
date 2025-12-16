@@ -1,10 +1,15 @@
-"""FiguresAgent for image accessibility analysis (PRD-014, Issue #24).
+"""FiguresAgent for image accessibility analysis.
 
 Specialized agent for analyzing images in PDF documents:
 - Classifies images (decorative, informative, complex, text)
 - Evaluates current alt text quality
 - Generates appropriate alt text suggestions
 - Identifies images needing long descriptions
+
+Supports dynamic instructions via AgentDependencies for:
+- Document context (title, type, total pages)
+- Page-specific context (expected images, layout)
+- Retry guidance based on previous failures
 """
 
 from __future__ import annotations
@@ -15,10 +20,15 @@ from pathlib import Path
 from typing import Any, Literal, cast
 from uuid import uuid4
 
+from pydantic_ai import Agent, RunContext
+
 from src.agents.base_agent import AgentConfig, BaseDocumentAgent
+from src.agents.dependencies import AgentDependencies
 from src.agents.model_tiers import ModelTier
 from src.agents.specialized_models import FiguresAnalysisOutput, ImageAnalysis
+from src.config import settings
 from src.services.pdf_converter import PageData
+from src.services.reasoning_corpus_service import get_reasoning_corpus_service
 from src.shared.models.observation import Observation, ObservationLocation
 from src.shared.models.processing import LLMUsage
 from src.shared.models.remediation import DocumentManifest, PageFeatures
@@ -36,6 +46,11 @@ class FiguresAgent(BaseDocumentAgent[FiguresAnalysisOutput]):
     - Identifying images needing long descriptions
 
     Uses Sonnet (REASONING tier) for accurate visual analysis.
+
+    Supports dynamic instructions for:
+    - Document context (title, type)
+    - Page-specific context (expected images, layout)
+    - Retry guidance based on previous failures
     """
 
     def __init__(self) -> None:
@@ -48,43 +63,69 @@ class FiguresAgent(BaseDocumentAgent[FiguresAnalysisOutput]):
             max_retries=2,
             temperature=0.3,
             model_tier=ModelTier.REASONING,
+            use_deps=True,  # Enable dynamic instructions
         )
         super().__init__(config)
+        self._instructions_registered = False
 
-    def _default_prompts(self) -> dict[str, Any]:
-        """Provide fallback prompts if YAML file not found."""
-        return {
-            "system_prompt": """You are an image accessibility expert analyzing PDF documents.
-Classify images and evaluate their alt text for accessibility compliance.
+    def _get_agent(self) -> Agent[AgentDependencies, FiguresAnalysisOutput]:  # type: ignore[override]
+        """Get or create agent with dynamic instructions registered."""
+        agent = super()._get_agent()
 
-IMAGE TYPES:
-- decorative: Visual flourish, background, spacer - needs empty alt=""
-- informative: Conveys information - needs descriptive alt text
-- complex: Charts, diagrams, infographics - needs alt + long description
-- text: Image of text - text should be transcribed
+        if not self._instructions_registered:
+            self._register_dynamic_instructions(agent)  # type: ignore[arg-type]
+            self._instructions_registered = True
 
-CURRENT ALT STATUS:
-- "TODO placeholder": Has placeholder like "TODO: describe"
-- "empty": No alt text
-- "has description": Has existing description (evaluate quality)
+        return agent  # type: ignore[return-value]
 
-ACTIONS:
-- add_alt: Add descriptive alt text
-- improve_alt: Existing alt insufficient
-- mark_decorative: Should have empty alt=""
-- add_long_desc: Needs extended description
-- none: Current alt is appropriate""",
-            "user_prompt_template": """Analyze images on page {page_num}.
-Document: {document_title}
-Expected images: {expected_image_count}
+    def _register_dynamic_instructions(
+        self, agent: Agent[AgentDependencies, FiguresAnalysisOutput]
+    ) -> None:
+        """Register dynamic instruction generators on the agent."""
 
-Current markdown:
-```
-{page_markdown}
-```
+        @agent.instructions
+        def document_context(ctx: RunContext[AgentDependencies]) -> str:
+            """Provide document-level context."""
+            if ctx.deps.manifest:
+                return f"""
+<document_context>
+Title: {ctx.deps.manifest.document_title}
+Type: {ctx.deps.manifest.document_type}
+Total pages: {ctx.deps.manifest.total_pages}
+</document_context>"""
+            return ""
 
-Analyze each image for accessibility.""",
-        }
+        @agent.instructions
+        def page_context(ctx: RunContext[AgentDependencies]) -> str:
+            """Provide page-specific context from manifest."""
+            page_features = ctx.deps.custom_context.get("current_page_features")
+            if page_features:
+                page_num = page_features.get("page_num", "?")
+                image_count = page_features.get("image_count", 0)
+                layout_type = page_features.get("layout_type", "single_column")
+                return f"""
+<current_page>
+Page {page_num}: {image_count} images expected
+Layout: {layout_type}
+</current_page>"""
+            return ""
+
+        @agent.instructions
+        def retry_guidance(ctx: RunContext[AgentDependencies]) -> str:
+            """Provide guidance for retry attempts."""
+            if not ctx.deps.is_retry:
+                return ""
+
+            failures = "\n".join(f"- {f}" for f in ctx.deps.previous_failures[-3:])
+            return f"""
+<retry_attempt number="{ctx.deps.attempt_number}">
+Previous attempts encountered issues:
+{failures}
+
+Adjust your approach to avoid these issues.
+</retry_attempt>"""
+
+        logger.debug("FiguresAgent: Dynamic instructions registered")
 
     async def analyze(
         self,
@@ -92,6 +133,7 @@ Analyze each image for accessibility.""",
         manifest: DocumentManifest,
         markdown: str,
         job_id: str,
+        deps: AgentDependencies | None = None,
     ) -> tuple[list[Observation], LLMUsage]:
         """Analyze images on provided pages.
 
@@ -100,6 +142,8 @@ Analyze each image for accessibility.""",
             manifest: Document manifest with page features
             markdown: Current markdown content
             job_id: Job identifier
+            deps: Optional AgentDependencies for dynamic instructions.
+                  If not provided, creates default deps from manifest.
 
         Returns:
             Tuple of (observations for image accessibility issues, combined usage metrics)
@@ -112,6 +156,14 @@ Analyze each image for accessibility.""",
             estimated_cost_cents=0.0,
         )
 
+        # Create base deps if not provided
+        if deps is None:
+            deps = AgentDependencies(
+                job_id=job_id,
+                manifest=manifest,
+                document_type=manifest.document_type,
+            )
+
         for page in pages:
             # Get page features for this page
             page_features = self._get_page_features(manifest, page.page_num)
@@ -119,14 +171,18 @@ Analyze each image for accessibility.""",
             if not page_features or not page_features.has_images:
                 continue
 
+            # Create page-specific deps with context
+            page_deps = deps.clone_for_page(
+                page.page_num,
+                image_count=page_features.image_count,
+                layout_type=page_features.layout_type,
+            )
+
             # Extract approximate markdown section for this page
             page_markdown = self._extract_page_markdown(markdown, page.page_num)
 
             # Build user message
-            user_message = self.prompts.get(
-                "user_prompt_template",
-                self._default_prompts()["user_prompt_template"]
-            ).format(
+            user_message = self.prompts["user_prompt_template"].format(
                 page_num=page.page_num,
                 document_title=manifest.document_title,
                 expected_image_count=page_features.image_count,
@@ -139,9 +195,9 @@ Analyze each image for accessibility.""",
                 image_bytes = base64.b64decode(page.image_base64)
 
             try:
-                # Run analysis
-                output, usage = await self._run_agent(
-                    user_message, image_bytes, job_id=job_id, page_num=page.page_num
+                # Run analysis with deps for dynamic instructions
+                output, usage = await self._run_with_deps(
+                    user_message, page_deps, image_bytes
                 )
 
                 # Accumulate usage
@@ -156,6 +212,16 @@ Analyze each image for accessibility.""",
                     f"{len(output.analyses)} analyses, "
                     f"cost: ${usage.estimated_cost_cents/100:.4f}"
                 )
+
+                # Log reasoning corpus for each analysis
+                corpus_service = get_reasoning_corpus_service()
+                for analysis in output.analyses:
+                    corpus = analysis.extract_reasoning_corpus()
+                    await corpus_service.log_corpus_batch(
+                        job_id=job_id,
+                        agent_name="figures",
+                        corpus=corpus,
+                    )
 
                 # Convert analyses to observations
                 page_observations = self._analyses_to_observations(
@@ -229,21 +295,22 @@ Analyze each image for accessibility.""",
         observations: list[Observation] = []
 
         for analysis in analyses:
-            # Skip if no action needed
-            if analysis.recommended_action == "none":
+            # Skip if no action needed (access .value for Reasoned[T] fields)
+            if analysis.recommended_action.value == "none":
                 continue
 
-            # Determine severity based on image type
+            # Determine severity based on image type (access .value for Reasoned[T] fields)
+            image_type_value = analysis.image_type.value
             severity: str
-            if analysis.image_type in ["informative", "complex"]:
+            if image_type_value in ["informative", "complex"]:
                 severity = "major"
-            elif analysis.image_type == "text":
+            elif image_type_value == "text":
                 severity = "major"  # Text images are important for accessibility
             else:
                 severity = "minor"
 
             # Determine routing based on confidence
-            route = "auto" if analysis.confidence >= 0.7 else "manual"
+            route = "auto" if analysis.confidence >= settings.min_confidence_for_auto_approval else "manual"
             manual_reason = None
             if route == "manual":
                 manual_reason = "Low confidence in image classification"

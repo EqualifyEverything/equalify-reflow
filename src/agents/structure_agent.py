@@ -1,10 +1,15 @@
-"""StructureAgent for document structure analysis (PRD-014, Issue #23).
+"""StructureAgent for document structure analysis.
 
 Specialized agent for analyzing document structure:
 - Heading hierarchy validation (no skipped levels)
 - Visual vs semantic heading alignment
 - Reading order in multi-column layouts
 - Section and landmark structure
+
+Supports dynamic instructions via AgentDependencies for:
+- Document context (title, type, total pages)
+- Page-specific context (layout type)
+- Retry guidance based on previous failures
 """
 
 from __future__ import annotations
@@ -16,10 +21,15 @@ from pathlib import Path
 from typing import Any, Literal, cast
 from uuid import uuid4
 
+from pydantic_ai import Agent, RunContext
+
 from src.agents.base_agent import AgentConfig, BaseDocumentAgent
+from src.agents.dependencies import AgentDependencies
 from src.agents.model_tiers import ModelTier
 from src.agents.specialized_models import StructureAnalysisOutput, StructureIssue
+from src.config import settings
 from src.services.pdf_converter import PageData
+from src.services.reasoning_corpus_service import get_reasoning_corpus_service
 from src.shared.models.observation import Observation, ObservationLocation
 from src.shared.models.processing import LLMUsage
 from src.shared.models.remediation import DocumentManifest
@@ -40,6 +50,11 @@ class StructureAgent(BaseDocumentAgent[StructureAnalysisOutput]):
 
     Note: Unlike other specialized agents, StructureAgent processes
     ALL pages to understand the complete document hierarchy.
+
+    Supports dynamic instructions for:
+    - Document context (title, type)
+    - Page-specific context (layout type)
+    - Retry guidance based on previous failures
     """
 
     def __init__(self) -> None:
@@ -52,45 +67,68 @@ class StructureAgent(BaseDocumentAgent[StructureAnalysisOutput]):
             max_retries=2,
             temperature=0.3,
             model_tier=ModelTier.REASONING,
+            use_deps=True,  # Enable dynamic instructions
         )
         super().__init__(config)
+        self._instructions_registered = False
 
-    def _default_prompts(self) -> dict[str, Any]:
-        """Provide fallback prompts if YAML file not found."""
-        return {
-            "system_prompt": """You are a document structure expert analyzing PDF documents.
-Evaluate heading hierarchy, reading order, and semantic structure.
+    def _get_agent(self) -> Agent[AgentDependencies, StructureAnalysisOutput]:  # type: ignore[override]
+        """Get or create agent with dynamic instructions registered."""
+        agent = super()._get_agent()
 
-HEADING RULES:
-- H1 should be document title (one per document)
-- No skipped levels: H1 -> H2 -> H3 valid; H1 -> H3 invalid
-- Heading levels should match visual hierarchy
-- Nested sections use incrementing levels
+        if not self._instructions_registered:
+            self._register_dynamic_instructions(agent)  # type: ignore[arg-type]
+            self._instructions_registered = True
 
-ISSUE TYPES:
-- heading_skip: Level was skipped (H1 -> H3)
-- heading_mismatch: Visual weight doesn't match semantic level
-- reading_order: Content order doesn't match visual flow
-- missing_landmark: Section lacks appropriate heading
+        return agent  # type: ignore[return-value]
 
-SEVERITY:
-- critical: Heading skips that break navigation
-- major: Mismatches that confuse structure
-- minor: Reading order issues with minimal impact""",
-            "user_prompt_template": """Analyze document structure on page {page_num}.
-Document: {document_title}
+    def _register_dynamic_instructions(
+        self, agent: Agent[AgentDependencies, StructureAnalysisOutput]
+    ) -> None:
+        """Register dynamic instruction generators on the agent."""
+
+        @agent.instructions
+        def document_context(ctx: RunContext[AgentDependencies]) -> str:
+            """Provide document-level context."""
+            if ctx.deps.manifest:
+                return f"""
+<document_context>
+Title: {ctx.deps.manifest.document_title}
+Type: {ctx.deps.manifest.document_type}
+Total pages: {ctx.deps.manifest.total_pages}
+</document_context>"""
+            return ""
+
+        @agent.instructions
+        def page_context(ctx: RunContext[AgentDependencies]) -> str:
+            """Provide page-specific context from manifest."""
+            page_features = ctx.deps.custom_context.get("current_page_features")
+            if page_features:
+                page_num = page_features.get("page_num", "?")
+                layout_type = page_features.get("layout_type", "single_column")
+                return f"""
+<current_page>
+Page {page_num}
 Layout: {layout_type}
+</current_page>"""
+            return ""
 
-Heading structure:
-{heading_tree_summary}
+        @agent.instructions
+        def retry_guidance(ctx: RunContext[AgentDependencies]) -> str:
+            """Provide guidance for retry attempts."""
+            if not ctx.deps.is_retry:
+                return ""
 
-Current markdown:
-```
-{page_markdown}
-```
+            failures = "\n".join(f"- {f}" for f in ctx.deps.previous_failures[-3:])
+            return f"""
+<retry_attempt number="{ctx.deps.attempt_number}">
+Previous attempts encountered issues:
+{failures}
 
-Identify structural issues.""",
-        }
+Adjust your approach to avoid these issues.
+</retry_attempt>"""
+
+        logger.debug("StructureAgent: Dynamic instructions registered")
 
     async def analyze(
         self,
@@ -98,6 +136,7 @@ Identify structural issues.""",
         manifest: DocumentManifest,
         markdown: str,
         job_id: str,
+        deps: AgentDependencies | None = None,
     ) -> tuple[list[Observation], LLMUsage]:
         """Analyze document structure across all pages.
 
@@ -109,6 +148,8 @@ Identify structural issues.""",
             manifest: Document manifest with heading tree
             markdown: Current markdown content
             job_id: Job identifier
+            deps: Optional AgentDependencies for dynamic instructions.
+                  If not provided, creates default deps from manifest.
 
         Returns:
             Tuple of (observations for structural issues, combined usage metrics)
@@ -120,6 +161,14 @@ Identify structural issues.""",
             total_tokens=0,
             estimated_cost_cents=0.0,
         )
+
+        # Create base deps if not provided
+        if deps is None:
+            deps = AgentDependencies(
+                job_id=job_id,
+                manifest=manifest,
+                document_type=manifest.document_type,
+            )
 
         # Parse heading tree for context
         heading_tree_summary = self._summarize_heading_tree(manifest.heading_tree_json)
@@ -133,14 +182,17 @@ Identify structural issues.""",
                     layout_type = pf.layout_type
                     break
 
+            # Create page-specific deps with context
+            page_deps = deps.clone_for_page(
+                page.page_num,
+                layout_type=layout_type,
+            )
+
             # Extract markdown section for this page
             page_markdown = self._extract_page_markdown(markdown, page.page_num)
 
             # Build user message
-            user_message = self.prompts.get(
-                "user_prompt_template",
-                self._default_prompts()["user_prompt_template"]
-            ).format(
+            user_message = self.prompts["user_prompt_template"].format(
                 page_num=page.page_num,
                 document_title=manifest.document_title,
                 layout_type=layout_type,
@@ -154,9 +206,9 @@ Identify structural issues.""",
                 image_bytes = base64.b64decode(page.image_base64)
 
             try:
-                # Run analysis
-                output, usage = await self._run_agent(
-                    user_message, image_bytes, job_id=job_id, page_num=page.page_num
+                # Run analysis with deps for dynamic instructions
+                output, usage = await self._run_with_deps(
+                    user_message, page_deps, image_bytes
                 )
 
                 # Accumulate usage
@@ -172,6 +224,16 @@ Identify structural issues.""",
                     f"order_valid={output.reading_order_valid}, "
                     f"cost: ${usage.estimated_cost_cents/100:.4f}"
                 )
+
+                # Log reasoning corpus for each issue
+                corpus_service = get_reasoning_corpus_service()
+                for issue in output.issues:
+                    corpus = issue.extract_reasoning_corpus()
+                    await corpus_service.log_corpus_batch(
+                        job_id=job_id,
+                        agent_name="structure",
+                        corpus=corpus,
+                    )
 
                 # Convert issues to observations
                 page_observations = self._issues_to_observations(
@@ -256,20 +318,24 @@ Identify structural issues.""",
         observations: list[Observation] = []
 
         for issue in issues:
+            # Access .value for Reasoned[T] fields
+            severity_value = issue.severity.value
+            issue_type_value = issue.issue_type.value
+
             # Map severity string to valid values
-            severity = issue.severity
+            severity = severity_value
             if severity not in ["critical", "major", "minor"]:
                 severity = "major"
 
             # Determine routing
-            route = "auto" if issue.confidence >= 0.7 else "manual"
+            route = "auto" if issue.confidence >= settings.min_confidence_for_auto_approval else "manual"
             manual_reason = None
             if route == "manual":
                 manual_reason = "Low confidence in structural analysis"
 
             # Build location based on issue type
             location_type = "region"
-            if issue.issue_type in ["heading_skip", "heading_mismatch"]:
+            if issue_type_value in ["heading_skip", "heading_mismatch"]:
                 location_type = "element"
 
             obs = Observation(
@@ -285,7 +351,7 @@ Identify structural issues.""",
                     page_num=page_num,
                 ),
                 confidence=issue.confidence,
-                severity=cast(Literal["critical", "major", "minor"], severity),
+                severity=severity,
                 route=cast(Literal["auto", "manual"], route),
                 manual_reason=manual_reason,
             )

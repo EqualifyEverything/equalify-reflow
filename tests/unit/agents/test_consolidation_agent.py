@@ -1,4 +1,4 @@
-"""Tests for ConsolidationAgent (PRD-015).
+"""Tests for ConsolidationAgent.
 
 Tests cover:
 - Agent configuration and initialization
@@ -30,7 +30,7 @@ from src.shared.models.observation import Observation, ObservationLocation
 class TestProposalDraft:
     """Tests for ProposalDraft model."""
 
-    def test_valid_proposal_draft(self):
+    def test_valid_proposal_draft(self) -> None:
         """Test creating a valid ProposalDraft."""
         draft = ProposalDraft(
             observation_ids=["obs-1", "obs-2"],
@@ -45,7 +45,7 @@ class TestProposalDraft:
         assert draft.confidence == 0.9
         assert draft.page_nums == [1]
 
-    def test_proposal_draft_defaults(self):
+    def test_proposal_draft_defaults(self) -> None:
         """Test ProposalDraft default values."""
         draft = ProposalDraft(
             observation_ids=["obs-1"],
@@ -57,7 +57,7 @@ class TestProposalDraft:
         assert draft.estimated_impact == ""
         assert draft.confidence == 0.8
 
-    def test_confidence_validation_too_high(self):
+    def test_confidence_validation_too_high(self) -> None:
         """Test confidence must be <= 1.0."""
         with pytest.raises(ValidationError):
             ProposalDraft(
@@ -68,7 +68,7 @@ class TestProposalDraft:
                 confidence=1.5,
             )
 
-    def test_confidence_validation_too_low(self):
+    def test_confidence_validation_too_low(self) -> None:
         """Test confidence must be >= 0.0."""
         with pytest.raises(ValidationError):
             ProposalDraft(
@@ -79,7 +79,7 @@ class TestProposalDraft:
                 confidence=-0.1,
             )
 
-    def test_empty_observation_ids_allowed(self):
+    def test_empty_observation_ids_allowed(self) -> None:
         """Test empty observation_ids is allowed (per model definition)."""
         # This might fail validation in real usage, but model allows it
         draft = ProposalDraft(
@@ -95,7 +95,7 @@ class TestProposalDraft:
 class TestConsolidationOutput:
     """Tests for ConsolidationOutput model."""
 
-    def test_valid_output(self):
+    def test_valid_output(self) -> None:
         """Test creating a valid ConsolidationOutput."""
         output = ConsolidationOutput(
             proposals=[
@@ -114,7 +114,7 @@ class TestConsolidationOutput:
         assert len(output.manual_observations) == 1
         assert len(output.conflicts) == 1
 
-    def test_output_defaults(self):
+    def test_output_defaults(self) -> None:
         """Test ConsolidationOutput default values."""
         output = ConsolidationOutput()
         assert output.proposals == []
@@ -132,14 +132,14 @@ class TestConsolidationOutput:
 class TestConsolidationAgentInit:
     """Tests for ConsolidationAgent initialization."""
 
-    def test_agent_uses_reasoning_tier(self):
+    def test_agent_uses_reasoning_tier(self) -> None:
         """Test agent uses REASONING (Sonnet) model tier."""
         agent = ConsolidationAgent()
         assert agent.model_tier == ModelTier.REASONING
         assert agent.model_id == MODEL_TIER_MAP[ModelTier.REASONING]
         assert "sonnet" in agent.model_id.lower()
 
-    def test_agent_has_prompts(self):
+    def test_agent_has_prompts(self) -> None:
         """Test agent has prompts (from file or defaults)."""
         agent = ConsolidationAgent()
         assert "system_prompt" in agent.prompts
@@ -147,18 +147,19 @@ class TestConsolidationAgentInit:
         prompt = agent.prompts["system_prompt"].lower()
         assert "consolidat" in prompt or "observation" in prompt
 
-    def test_agent_lazy_initialization(self):
+    def test_agent_lazy_initialization(self) -> None:
         """Test agent does not create PydanticAI agent until needed."""
         agent = ConsolidationAgent()
-        # _agent should be None until first use
-        assert agent._agent is None
+        # _agent should be None until first use (stored in _core)
+        assert agent._core._agent is None
 
-    def test_auto_route_threshold(self):
-        """Test agent has correct auto route threshold."""
-        agent = ConsolidationAgent()
-        assert agent.AUTO_ROUTE_THRESHOLD == 0.7
+    def test_auto_route_threshold_in_settings(self) -> None:
+        """Test confidence threshold is available via settings."""
+        from src.config import settings
+        # Threshold is centralized in settings, not a class constant
+        assert 0.0 <= settings.min_confidence_for_auto_approval <= 1.0
 
-    def test_max_markdown_length(self):
+    def test_max_markdown_length(self) -> None:
         """Test agent has max markdown length constant."""
         agent = ConsolidationAgent()
         assert agent.MAX_MARKDOWN_LENGTH == 8000
@@ -209,7 +210,7 @@ class TestObservationFormatting:
             ),
         ]
 
-    def test_format_observations(self, sample_observations: list[Observation]):
+    def test_format_observations(self, sample_observations: list[Observation]) -> None:
         """Test formatting observations for prompt."""
         agent = ConsolidationAgent()
         formatted = agent._format_observations(sample_observations)
@@ -219,22 +220,23 @@ class TestObservationFormatting:
         assert "obs-2" in formatted
         assert "figures" in formatted
         assert "structure" in formatted
-        assert "PAGE 1" in formatted
-        assert "PAGE 2" in formatted
+        # Uses XML tag format: <page number="1" ...>
+        assert '<page number="1"' in formatted
+        assert '<page number="2"' in formatted
 
     def test_format_observations_groups_by_page(
         self, sample_observations: list[Observation]
-    ):
-        """Test observations are grouped by page."""
+    ) -> None:
+        """Test observations are grouped by page with XML tags."""
         agent = ConsolidationAgent()
         formatted = agent._format_observations(sample_observations)
 
-        # Page sections should appear in order
-        page1_idx = formatted.index("PAGE 1")
-        page2_idx = formatted.index("PAGE 2")
+        # Page sections should appear in order using XML tag format
+        page1_idx = formatted.index('<page number="1"')
+        page2_idx = formatted.index('<page number="2"')
         assert page1_idx < page2_idx
 
-    def test_format_observations_includes_manual_reason(self):
+    def test_format_observations_includes_manual_reason(self) -> None:
         """Test manual_reason is included when present."""
         agent = ConsolidationAgent()
         obs = Observation(
@@ -268,14 +270,14 @@ class TestObservationFormatting:
 class TestMarkdownTruncation:
     """Tests for markdown truncation."""
 
-    def test_short_markdown_unchanged(self):
+    def test_short_markdown_unchanged(self) -> None:
         """Test short markdown is not truncated."""
         agent = ConsolidationAgent()
         markdown = "# Hello World\n\nShort content."
         result = agent._truncate_markdown(markdown)
         assert result == markdown
 
-    def test_long_markdown_truncated(self):
+    def test_long_markdown_truncated(self) -> None:
         """Test long markdown is truncated with indicator."""
         agent = ConsolidationAgent()
         markdown = "x" * 10000
@@ -295,7 +297,7 @@ class TestMarkdownTruncation:
 class TestProposalValidation:
     """Tests for proposal validation and conversion."""
 
-    def test_valid_proposal_converted(self):
+    def test_valid_proposal_converted(self) -> None:
         """Test valid proposal draft is converted to Proposal."""
         agent = ConsolidationAgent()
         markdown = "# Hello World\n\nThis is content."
@@ -307,7 +309,7 @@ class TestProposalValidation:
                 replace_text="Hi There",
                 justification="Test change",
                 page_nums=[1],
-                confidence=0.9,
+                confidence=0.99,  # Use 0.99 to exceed any reasonable threshold
             )
         ]
 
@@ -322,10 +324,10 @@ class TestProposalValidation:
         assert proposals[0].resolves == ["obs-1"]
         assert proposals[0].diff.search == "Hello World"
         assert proposals[0].diff.replace == "Hi There"
-        assert proposals[0].route == "auto"  # High confidence
+        assert proposals[0].route == "auto"  # Confidence 0.99 exceeds threshold
         assert proposals[0].status == "pending"
 
-    def test_invalid_search_text_skipped(self):
+    def test_invalid_search_text_skipped(self) -> None:
         """Test proposals with invalid search text are skipped."""
         agent = ConsolidationAgent()
         markdown = "# Hello World"
@@ -348,7 +350,7 @@ class TestProposalValidation:
 
         assert len(proposals) == 0
 
-    def test_non_unique_search_text_skipped(self):
+    def test_non_unique_search_text_skipped(self) -> None:
         """Test proposals with non-unique search text are skipped."""
         agent = ConsolidationAgent()
         markdown = "Hello Hello Hello"
@@ -371,7 +373,7 @@ class TestProposalValidation:
 
         assert len(proposals) == 0
 
-    def test_low_confidence_routes_to_manual(self):
+    def test_low_confidence_routes_to_manual(self) -> None:
         """Test low confidence proposals route to manual."""
         agent = ConsolidationAgent()
         markdown = "# Hello World"
@@ -395,8 +397,9 @@ class TestProposalValidation:
         assert len(proposals) == 1
         assert proposals[0].route == "manual"
 
-    def test_boundary_confidence_routes_auto(self):
+    def test_boundary_confidence_routes_auto(self) -> None:
         """Test confidence exactly at threshold routes to auto."""
+        from src.config import settings
         agent = ConsolidationAgent()
         markdown = "# Hello World"
 
@@ -406,7 +409,7 @@ class TestProposalValidation:
                 search_text="Hello World",
                 replace_text="Hi There",
                 justification="Test",
-                confidence=0.7,  # Exactly at threshold
+                confidence=settings.min_confidence_for_auto_approval,  # Exactly at threshold
             )
         ]
 
@@ -452,7 +455,7 @@ class TestConsolidationAgentConsolidate:
         ]
 
     @pytest.mark.asyncio
-    async def test_empty_observations_returns_empty(self):
+    async def test_empty_observations_returns_empty(self) -> None:
         """Test consolidating empty observations returns empty results."""
         agent = ConsolidationAgent()
 
@@ -468,7 +471,7 @@ class TestConsolidationAgentConsolidate:
         assert usage.output_tokens == 0
 
     @pytest.mark.asyncio
-    async def test_non_open_observations_filtered(self):
+    async def test_non_open_observations_filtered(self) -> None:
         """Test only open observations are consolidated."""
         agent = ConsolidationAgent()
 
@@ -498,7 +501,7 @@ class TestConsolidationAgentConsolidate:
     @pytest.mark.asyncio
     async def test_consolidate_calls_agent(
         self, sample_observations: list[Observation]
-    ):
+    ) -> None:
         """Test consolidate calls the PydanticAI agent."""
         agent = ConsolidationAgent()
 
@@ -521,8 +524,8 @@ class TestConsolidationAgentConsolidate:
         mock_result = MagicMock()
         mock_result.output = mock_output
         mock_usage = MagicMock()
-        mock_usage.input_tokens = 1000
-        mock_usage.output_tokens = 200
+        mock_usage.request_tokens = 1000
+        mock_usage.response_tokens = 200
         mock_result.usage.return_value = mock_usage
 
         # Mock agent creation and run
@@ -548,7 +551,7 @@ class TestConsolidationAgentConsolidate:
     @pytest.mark.asyncio
     async def test_consolidate_returns_usage_metrics(
         self, sample_observations: list[Observation]
-    ):
+    ) -> None:
         """Test consolidate returns LLM usage metrics."""
         agent = ConsolidationAgent()
 
@@ -556,8 +559,8 @@ class TestConsolidationAgentConsolidate:
         mock_result = MagicMock()
         mock_result.output = mock_output
         mock_usage = MagicMock()
-        mock_usage.input_tokens = 500
-        mock_usage.output_tokens = 100
+        mock_usage.request_tokens = 500
+        mock_usage.response_tokens = 100
         mock_result.usage.return_value = mock_usage
 
         mock_agent = AsyncMock()
@@ -578,7 +581,7 @@ class TestConsolidationAgentConsolidate:
     @pytest.mark.asyncio
     async def test_consolidate_returns_manual_ids(
         self, sample_observations: list[Observation]
-    ):
+    ) -> None:
         """Test consolidate returns manual observation IDs."""
         agent = ConsolidationAgent()
 
@@ -590,8 +593,8 @@ class TestConsolidationAgentConsolidate:
         mock_result = MagicMock()
         mock_result.output = mock_output
         mock_usage = MagicMock()
-        mock_usage.input_tokens = 100
-        mock_usage.output_tokens = 50
+        mock_usage.request_tokens = 100
+        mock_usage.response_tokens = 50
         mock_result.usage.return_value = mock_usage
 
         mock_agent = AsyncMock()

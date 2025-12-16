@@ -1,4 +1,4 @@
-"""Tests for BaseDocumentAgent abstract class (PRD-011)."""
+"""Tests for BaseDocumentAgent abstract class."""
 
 from pathlib import Path
 from unittest.mock import AsyncMock, MagicMock, patch
@@ -82,12 +82,15 @@ class TestAgentConfig:
 class TestBaseDocumentAgentProperties:
     """Test BaseDocumentAgent properties."""
 
+    @patch("src.agents.core.yaml.safe_load")
+    @patch("builtins.open", create=True)
     @patch("pydantic_ai.models.bedrock.BedrockConverseModel")
-    @patch("src.agents.base_agent.Agent")
-    def test_name_property(self, mock_agent_class, mock_bedrock):
+    @patch("src.agents.core.Agent")
+    def test_name_property(self, mock_agent_class, mock_bedrock, mock_open, mock_yaml):
         """Test name property returns config name."""
         mock_bedrock.return_value = MagicMock()
         mock_agent_class.return_value = MagicMock()
+        mock_yaml.return_value = {"system_prompt": "Test", "user_prompt_template": "Test"}
 
         config = AgentConfig(
             name="my_test_agent",
@@ -98,12 +101,15 @@ class TestBaseDocumentAgentProperties:
         agent = ConcreteTestAgent(config)
         assert agent.name == "my_test_agent"
 
+    @patch("src.agents.core.yaml.safe_load")
+    @patch("builtins.open", create=True)
     @patch("pydantic_ai.models.bedrock.BedrockConverseModel")
-    @patch("src.agents.base_agent.Agent")
-    def test_correction_types_property(self, mock_agent_class, mock_bedrock):
+    @patch("src.agents.core.Agent")
+    def test_correction_types_property(self, mock_agent_class, mock_bedrock, mock_open, mock_yaml):
         """Test correction_types property returns config types."""
         mock_bedrock.return_value = MagicMock()
         mock_agent_class.return_value = MagicMock()
+        mock_yaml.return_value = {"system_prompt": "Test", "user_prompt_template": "Test"}
 
         config = AgentConfig(
             name="test",
@@ -120,7 +126,7 @@ class TestPromptLoading:
     """Test YAML prompt loading functionality."""
 
     @patch("pydantic_ai.models.bedrock.BedrockConverseModel")
-    @patch("src.agents.base_agent.Agent")
+    @patch("src.agents.core.Agent")
     def test_load_prompts_from_yaml(self, mock_agent_class, mock_bedrock, tmp_path):
         """Test loading prompts from YAML file."""
         mock_bedrock.return_value = MagicMock()
@@ -144,28 +150,21 @@ class TestPromptLoading:
         assert agent.prompts["system_prompt"] == "Custom system prompt"
         assert "Custom user template" in agent.prompts["user_prompt_template"]
 
-    @patch("pydantic_ai.models.bedrock.BedrockConverseModel")
-    @patch("src.agents.base_agent.Agent")
-    def test_load_prompts_fallback_to_defaults(self, mock_agent_class, mock_bedrock):
-        """Test fallback to default prompts when file not found."""
-        mock_bedrock.return_value = MagicMock()
-        mock_agent_class.return_value = MagicMock()
-
+    def test_raises_when_prompts_file_not_found(self):
+        """Test FileNotFoundError when prompts file missing (fail fast)."""
         config = AgentConfig(
             name="fallback_test",
             prompts_file=Path("nonexistent_file.yaml"),
             output_type=_TestOutput,
             correction_types=[]
         )
-        agent = ConcreteTestAgent(config)
 
-        # Should use default prompts from _default_prompts()
-        assert agent.prompts["system_prompt"] == "You are a test agent."
-        assert "Process this" in agent.prompts["user_prompt_template"]
+        with pytest.raises(FileNotFoundError):
+            ConcreteTestAgent(config)
 
     @patch("pydantic_ai.models.bedrock.BedrockConverseModel")
-    @patch("src.agents.base_agent.Agent")
-    @patch("src.agents.base_agent.settings")
+    @patch("src.agents.core.Agent")
+    @patch("src.agents.core.settings")
     def test_load_prompts_relative_to_config_dir(
         self, mock_settings, mock_agent_class, mock_bedrock, tmp_path
     ):
@@ -197,12 +196,15 @@ class TestPromptLoading:
 class TestCostCalculation:
     """Test token cost calculation."""
 
+    @patch("src.agents.core.yaml.safe_load")
+    @patch("builtins.open", create=True)
     @patch("pydantic_ai.models.bedrock.BedrockConverseModel")
-    @patch("src.agents.base_agent.Agent")
-    def test_calculate_estimated_cost_basic(self, mock_agent_class, mock_bedrock):
+    @patch("src.agents.core.Agent")
+    def test_calculate_estimated_cost_basic(self, mock_agent_class, mock_bedrock, mock_open, mock_yaml):
         """Test basic cost calculation with Claude Haiku 4.5 pricing."""
         mock_bedrock.return_value = MagicMock()
         mock_agent_class.return_value = MagicMock()
+        mock_yaml.return_value = {"system_prompt": "Test", "user_prompt_template": "Test"}
 
         config = AgentConfig(
             name="cost_test",
@@ -222,12 +224,15 @@ class TestCostCalculation:
 
         assert cost == pytest.approx(expected_total)
 
+    @patch("src.agents.core.yaml.safe_load")
+    @patch("builtins.open", create=True)
     @patch("pydantic_ai.models.bedrock.BedrockConverseModel")
-    @patch("src.agents.base_agent.Agent")
-    def test_calculate_estimated_cost_zero_tokens(self, mock_agent_class, mock_bedrock):
+    @patch("src.agents.core.Agent")
+    def test_calculate_estimated_cost_zero_tokens(self, mock_agent_class, mock_bedrock, mock_open, mock_yaml):
         """Test cost calculation with zero tokens."""
         mock_bedrock.return_value = MagicMock()
         mock_agent_class.return_value = MagicMock()
+        mock_yaml.return_value = {"system_prompt": "Test", "user_prompt_template": "Test"}
 
         config = AgentConfig(
             name="zero_cost_test",
@@ -240,12 +245,15 @@ class TestCostCalculation:
         cost = agent._calculate_estimated_cost(input_tokens=0, output_tokens=0)
         assert cost == 0.0
 
+    @patch("src.agents.core.yaml.safe_load")
+    @patch("builtins.open", create=True)
     @patch("pydantic_ai.models.bedrock.BedrockConverseModel")
-    @patch("src.agents.base_agent.Agent")
-    def test_calculate_estimated_cost_large_tokens(self, mock_agent_class, mock_bedrock):
+    @patch("src.agents.core.Agent")
+    def test_calculate_estimated_cost_large_tokens(self, mock_agent_class, mock_bedrock, mock_open, mock_yaml):
         """Test cost calculation with large token counts."""
         mock_bedrock.return_value = MagicMock()
         mock_agent_class.return_value = MagicMock()
+        mock_yaml.return_value = {"system_prompt": "Test", "user_prompt_template": "Test"}
 
         config = AgentConfig(
             name="large_cost_test",
@@ -266,14 +274,17 @@ class TestCostCalculation:
 class TestAgentCreation:
     """Test PydanticAI agent creation."""
 
+    @patch("src.agents.core.yaml.safe_load")
+    @patch("builtins.open", create=True)
     @patch("pydantic_ai.models.bedrock.BedrockConverseModel")
-    @patch("src.agents.base_agent.Agent")
-    def test_agent_created_with_correct_params(self, mock_agent_class, mock_bedrock):
+    @patch("src.agents.core.Agent")
+    def test_agent_created_with_correct_params(self, mock_agent_class, mock_bedrock, mock_open, mock_yaml):
         """Test that PydanticAI Agent is created with correct parameters on first use."""
         mock_model = MagicMock()
         mock_bedrock.return_value = mock_model
         mock_agent = MagicMock()
         mock_agent_class.return_value = mock_agent
+        mock_yaml.return_value = {"system_prompt": "Test", "user_prompt_template": "Test"}
 
         config = AgentConfig(
             name="creation_test",
@@ -285,8 +296,8 @@ class TestAgentCreation:
         )
         agent = ConcreteTestAgent(config)
 
-        # Agent is lazy initialized - should not be created yet
-        assert agent._agent is None
+        # Agent is lazy initialized in core - should not be created yet
+        assert agent._core._agent is None
 
         # Trigger lazy initialization by calling _get_agent()
         agent._get_agent()
@@ -303,17 +314,20 @@ class TestAgentCreation:
 class TestRunAgent:
     """Test _run_agent method."""
 
+    @patch("src.agents.core.yaml.safe_load")
+    @patch("builtins.open", create=True)
     @patch("pydantic_ai.models.bedrock.BedrockConverseModel")
-    @patch("src.agents.base_agent.Agent")
+    @patch("src.agents.core.Agent")
     @pytest.mark.asyncio
-    async def test_run_agent_text_only(self, mock_agent_class, mock_bedrock):
+    async def test_run_agent_text_only(self, mock_agent_class, mock_bedrock, mock_open, mock_yaml):
         """Test running agent with text-only input."""
         mock_bedrock.return_value = MagicMock()
+        mock_yaml.return_value = {"system_prompt": "Test", "user_prompt_template": "Test"}
 
         # Mock the agent's run method
         mock_result = MagicMock()
         mock_result.output = _TestOutput(message="Result", confidence=0.85)
-        mock_result.usage.return_value = MagicMock(input_tokens=100, output_tokens=50)
+        mock_result.usage.return_value = MagicMock(request_tokens=100, response_tokens=50)
 
         mock_agent = MagicMock()
         mock_agent.run = AsyncMock(return_value=mock_result)
@@ -335,16 +349,19 @@ class TestRunAgent:
         assert usage.input_tokens == 100
         assert usage.output_tokens == 50
 
+    @patch("src.agents.core.yaml.safe_load")
+    @patch("builtins.open", create=True)
     @patch("pydantic_ai.models.bedrock.BedrockConverseModel")
-    @patch("src.agents.base_agent.Agent")
+    @patch("src.agents.core.Agent")
     @pytest.mark.asyncio
-    async def test_run_agent_with_image(self, mock_agent_class, mock_bedrock):
+    async def test_run_agent_with_image(self, mock_agent_class, mock_bedrock, mock_open, mock_yaml):
         """Test running agent with image input."""
         mock_bedrock.return_value = MagicMock()
+        mock_yaml.return_value = {"system_prompt": "Test", "user_prompt_template": "Test"}
 
         mock_result = MagicMock()
         mock_result.output = _TestOutput(message="Image result", confidence=0.90)
-        mock_result.usage.return_value = MagicMock(input_tokens=500, output_tokens=100)
+        mock_result.usage.return_value = MagicMock(request_tokens=500, response_tokens=100)
 
         mock_agent = MagicMock()
         mock_agent.run = AsyncMock(return_value=mock_result)
@@ -382,24 +399,6 @@ class TestAbstractMethods:
                 correction_types=[]
             )
             BaseDocumentAgent(config)
-
-        assert "abstract" in str(exc_info.value).lower()
-
-    def test_subclass_must_implement_default_prompts(self):
-        """Test that subclass must implement _default_prompts."""
-
-        class IncompleteAgent(BaseDocumentAgent[_TestOutput]):
-            async def process(self, input_data: AgentInput) -> _TestOutput:
-                return _TestOutput(message="test", confidence=0.5)
-
-        with pytest.raises(TypeError) as exc_info:
-            config = AgentConfig(
-                name="incomplete",
-                prompts_file=Path("test.yaml"),
-                output_type=_TestOutput,
-                correction_types=[]
-            )
-            IncompleteAgent(config)
 
         assert "abstract" in str(exc_info.value).lower()
 

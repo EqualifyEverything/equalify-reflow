@@ -1,4 +1,4 @@
-"""Service for consolidating observations into proposals (PRD-015).
+"""Service for consolidating observations into proposals.
 
 The ConsolidationService wraps the ConsolidationAgent and handles:
 - Loading observations from storage
@@ -119,7 +119,7 @@ class ConsolidationService:
         job_id: str,
         observation: Observation,
         markdown: str,
-    ) -> Proposal | None:
+    ) -> tuple[Proposal | None, LLMUsage]:
         """Re-consolidate a single observation into a proposal.
 
         Used when a human submits a new observation via the edit dialog
@@ -132,13 +132,13 @@ class ConsolidationService:
             markdown: Current markdown
 
         Returns:
-            Generated proposal or None if failed
+            Tuple of (generated proposal or None if failed, LLM usage for cost tracking)
         """
         logger.info(
             f"Job {job_id}: Re-consolidating observation {observation.id}"
         )
 
-        proposals, _, _ = await self.agent.consolidate(
+        proposals, _, usage = await self.agent.consolidate(
             observations=[observation],
             markdown=markdown,
             job_id=job_id,
@@ -151,14 +151,15 @@ class ConsolidationService:
             await self.storage.save_proposals(job_id, all_proposals)
 
             logger.info(
-                f"Job {job_id}: Re-consolidation created proposal {proposals[0].id}"
+                f"Job {job_id}: Re-consolidation created proposal {proposals[0].id}, "
+                f"cost: ${usage.estimated_cost_cents/100:.4f}"
             )
-            return proposals[0]
+            return proposals[0], usage
 
         logger.warning(
             f"Job {job_id}: Re-consolidation failed for observation {observation.id}"
         )
-        return None
+        return None, usage
 
     def _update_manual_statuses(
         self,

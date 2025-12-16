@@ -1,4 +1,4 @@
-"""Unit tests for ApplicationService (PRD-017).
+"""Unit tests for ApplicationService.
 
 Tests for applying approved proposals to markdown using search-replace operations.
 """

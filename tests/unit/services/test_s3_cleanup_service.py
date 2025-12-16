@@ -152,7 +152,7 @@ class TestCleanupTempFilesForJob:
 
 
 class TestListTempFiles:
-    """Tests for list_temp_files method (PRD-003 completion)."""
+    """Tests for list_temp_files method."""
 
     @pytest.mark.asyncio
     async def test_list_old_files(self, cleanup_service, mock_s3_client, mocker):
@@ -255,7 +255,7 @@ class TestListTempFiles:
 
 
 class TestDeleteFromS3:
-    """Tests for delete_from_s3 method (PRD-003 completion)."""
+    """Tests for delete_from_s3 method."""
 
     @pytest.mark.asyncio
     async def test_delete_success(self, cleanup_service, mock_s3_client):

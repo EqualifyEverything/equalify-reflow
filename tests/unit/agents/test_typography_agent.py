@@ -1,4 +1,4 @@
-"""Tests for TypographyAgent (PRD-014, Issue #23).
+"""Tests for TypographyAgent.
 
 Tests cover:
 - Agent configuration and initialization
@@ -20,7 +20,15 @@ from src.agents.specialized_models import (
 )
 from src.agents.typography_agent import TypographyAgent
 from src.services.pdf_converter import PageData
+from src.shared.models.quality_signals import QualitySignals
+from src.shared.models.reasoned import Reasoned
 from src.shared.models.remediation import DocumentManifest, PageFeatures
+
+
+def make_reasoned(value: str, reasoning: str = "Test reasoning for this value.") -> Reasoned:
+    """Helper to create Reasoned objects for testing."""
+    return Reasoned(reasoning=reasoning, value=value)
+
 
 # =============================================================================
 # Output Model Tests
@@ -34,44 +42,46 @@ class TestTypographyIssue:
     def test_valid_typography_issue(self):
         """Test creating a valid TypographyIssue."""
         issue = TypographyIssue(
-            issue_type="emphasis_unmarked",
+            issue_type=make_reasoned("emphasis_unmarked", "Bold text not marked as strong."),
             visual_description="Bold text highlighting key term",
             markup_state="Plain text without emphasis",
             semantic_meaning="Term is being emphasized for importance",
             recommended_markup="**important term**",
-            confidence=0.85,
+            model_confidence=0.85,
         )
-        assert issue.issue_type == "emphasis_unmarked"
-        assert issue.confidence == 0.85
+        assert issue.issue_type.value == "emphasis_unmarked"
+        # Confidence is computed from quality signals + model_confidence
+        assert issue.confidence == 0.97  # Default signals + 0.85 model_confidence
 
     def test_typography_issue_defaults(self):
         """Test TypographyIssue default values."""
         issue = TypographyIssue(
-            issue_type="definition_unmarked",
+            issue_type=make_reasoned("definition_unmarked", "Italic text suggests definition."),
             visual_description="Italic text",
             markup_state="Plain text",
             semantic_meaning="Term being defined",
             recommended_markup="*term*",
         )
-        assert issue.confidence == 0.8
+        # Confidence is computed from quality signals + default model_confidence
+        assert issue.confidence == 0.96  # Default signals + default model_confidence
 
-    def test_confidence_validation(self):
-        """Test confidence must be between 0 and 1."""
+    def test_model_confidence_validation(self):
+        """Test model_confidence must be between 0 and 1."""
         with pytest.raises(ValidationError):
             TypographyIssue(
-                issue_type="emphasis_unmarked",
+                issue_type=make_reasoned("emphasis_unmarked", "Test reasoning."),
                 visual_description="Test",
                 markup_state="Test",
                 semantic_meaning="Test",
                 recommended_markup="Test",
-                confidence=1.5,
+                model_confidence=1.5,
             )
 
     def test_required_fields(self):
         """Test required fields are enforced."""
         with pytest.raises(ValidationError):
             TypographyIssue(
-                issue_type="emphasis_unmarked",
+                issue_type=make_reasoned("emphasis_unmarked", "Test reasoning."),
                 # Missing required fields
             )
 
@@ -86,7 +96,7 @@ class TestTypographyAnalysisOutput:
             page_num=1,
             issues=[
                 TypographyIssue(
-                    issue_type="emphasis_unmarked",
+                    issue_type=make_reasoned("emphasis_unmarked", "Bold text not marked."),
                     visual_description="Bold text",
                     markup_state="Plain text",
                     semantic_meaning="Emphasis",
@@ -151,12 +161,12 @@ class TestIssueToObservation:
 
         issues = [
             TypographyIssue(
-                issue_type="emphasis_unmarked",
+                issue_type=make_reasoned("emphasis_unmarked", "Bold text not marked as strong."),
                 visual_description="Bold text for emphasis",
                 markup_state="Plain text",
                 semantic_meaning="Important emphasis",
                 recommended_markup="**text**",
-                confidence=0.85,
+                model_confidence=0.99,  # Use 0.99 to exceed any reasonable threshold
             )
         ]
 
@@ -166,7 +176,7 @@ class TestIssueToObservation:
         obs = observations[0]
         assert obs.agent == "typography"
         assert obs.severity == "minor"
-        assert obs.route == "auto"
+        assert obs.route == "auto"  # Confidence 0.99 exceeds threshold
 
     def test_semantic_color_creates_major_observation(self):
         """Test semantic color issues create major observations."""
@@ -174,12 +184,12 @@ class TestIssueToObservation:
 
         issues = [
             TypographyIssue(
-                issue_type="semantic_color",
+                issue_type=make_reasoned("semantic_color", "Red text indicates error without text alternative."),
                 visual_description="Red text indicating error",
                 markup_state="Plain text, no error indication",
                 semantic_meaning="Error status indicator",
                 recommended_markup="**Error:** prefix",
-                confidence=0.9,
+                model_confidence=0.9,
             )
         ]
 
@@ -194,12 +204,12 @@ class TestIssueToObservation:
 
         issues = [
             TypographyIssue(
-                issue_type="visual_heading",
+                issue_type=make_reasoned("visual_heading", "Large bold text functions as section header."),
                 visual_description="Large bold text suggesting section header",
                 markup_state="Paragraph text",
                 semantic_meaning="Section heading",
                 recommended_markup="## Section Title",
-                confidence=0.8,
+                model_confidence=0.8,
             )
         ]
 
@@ -214,12 +224,12 @@ class TestIssueToObservation:
 
         issues = [
             TypographyIssue(
-                issue_type="definition_unmarked",
+                issue_type=make_reasoned("definition_unmarked", "Italic text is a term definition."),
                 visual_description="Italic text for term definition",
                 markup_state="Plain text",
                 semantic_meaning="Term being defined",
                 recommended_markup="*term*",
-                confidence=0.75,
+                model_confidence=0.75,
             )
         ]
 
@@ -234,12 +244,16 @@ class TestIssueToObservation:
 
         issues = [
             TypographyIssue(
-                issue_type="emphasis_unmarked",
+                issue_type=make_reasoned("emphasis_unmarked", "Unclear if this is intentional emphasis."),
                 visual_description="Possibly bold text",
                 markup_state="Plain text",
                 semantic_meaning="Unclear emphasis",
                 recommended_markup="**text**",
-                confidence=0.5,
+                model_confidence=0.3,  # Low model confidence
+                quality_signals=QualitySignals(
+                    image_clarity="blurry",
+                    content_ambiguity="highly_ambiguous",
+                ),
             )
         ]
 
@@ -321,8 +335,11 @@ class TestTypographyAgentAnalysis:
             issues=[],
         )
 
-        with patch.object(agent, '_run_agent', new_callable=AsyncMock) as mock_run:
-            mock_run.return_value = (mock_output, AsyncMock(estimated_cost_cents=1.0))
+        from src.shared.models.processing import LLMUsage
+        mock_usage = LLMUsage(input_tokens=100, output_tokens=50, total_tokens=150, estimated_cost_cents=1.0)
+
+        with patch.object(agent, '_run_with_deps', new_callable=AsyncMock) as mock_run:
+            mock_run.return_value = (mock_output, mock_usage)
 
             await agent.analyze(
                 pages=sample_pages,
@@ -347,23 +364,23 @@ class TestTypographyAgentAnalysis:
             page_num=2,
             issues=[
                 TypographyIssue(
-                    issue_type="emphasis_unmarked",
+                    issue_type=make_reasoned("emphasis_unmarked", "Bold text not marked as strong."),
                     visual_description="Bold key terms",
                     markup_state="Plain text",
                     semantic_meaning="Key terms emphasized",
                     recommended_markup="**term**",
-                    confidence=0.85,
+                    model_confidence=0.85,
                 )
             ],
         )
 
-        mock_usage = AsyncMock()
-        mock_usage.estimated_cost_cents = 5.0
+        from src.shared.models.processing import LLMUsage
+        mock_usage = LLMUsage(input_tokens=200, output_tokens=100, total_tokens=300, estimated_cost_cents=5.0)
 
         # Only provide pages that would be processed (complexity > 0.5)
         complex_pages = [p for p in sample_pages if p.page_num in [2, 4]]
 
-        with patch.object(agent, '_run_agent', new_callable=AsyncMock) as mock_run:
+        with patch.object(agent, '_run_with_deps', new_callable=AsyncMock) as mock_run:
             mock_run.return_value = (mock_output, mock_usage)
 
             observations, usage = await agent.analyze(
@@ -388,13 +405,14 @@ class TestTypographyAgentAnalysis:
         agent = TypographyAgent()
 
         mock_output = TypographyAnalysisOutput(page_num=2, issues=[])
-        mock_usage = AsyncMock()
-        mock_usage.estimated_cost_cents = 1.0
+
+        from src.shared.models.processing import LLMUsage
+        mock_usage = LLMUsage(input_tokens=100, output_tokens=50, total_tokens=150, estimated_cost_cents=1.0)
 
         # Only provide page 2 which has complexity factors
         pages = [p for p in sample_pages if p.page_num == 2]
 
-        with patch.object(agent, '_run_agent', new_callable=AsyncMock) as mock_run:
+        with patch.object(agent, '_run_with_deps', new_callable=AsyncMock) as mock_run:
             mock_run.return_value = (mock_output, mock_usage)
 
             observations, usage = await agent.analyze(

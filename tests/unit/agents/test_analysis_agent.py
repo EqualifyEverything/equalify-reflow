@@ -1,4 +1,4 @@
-"""Tests for AnalysisAgent (PRD-012).
+"""Tests for AnalysisAgent.
 
 Tests cover:
 - Model tier selection and cost calculation
@@ -9,19 +9,22 @@ Tests cover:
 """
 
 from pathlib import Path
+from typing import Any
 from unittest.mock import AsyncMock, MagicMock, patch
 
 import pytest
 from pydantic import ValidationError
 from src.agents.analysis_agent import (
     AnalysisAgent,
-    AnalysisAgentConfig,
     AnalysisObservation,
     AnalysisOutput,
     AnalysisPageFeatures,
+    DocumentType,
     HeadingNode,
     HeadingTree,
+    LayoutType,
 )
+from src.agents.base_agent import AgentConfig
 from src.agents.model_tiers import MODEL_TIER_MAP, ModelTier
 from src.services.pdf_converter import PageData
 from src.shared.llm_cost import (
@@ -32,7 +35,62 @@ from src.shared.llm_cost import (
 )
 from src.shared.models.observation import Observation
 from src.shared.models.processing import LLMUsage
+from src.shared.models.reasoned import Reasoned
 from src.shared.models.remediation import DocumentManifest
+
+# =============================================================================
+# Test Helpers
+# =============================================================================
+
+
+def make_page_features(
+    page_num: int,
+    layout_type: LayoutType = "single_column",
+    complexity_score: float = 0.5,
+    **kwargs: Any,
+) -> AnalysisPageFeatures:
+    """Helper to create AnalysisPageFeatures with Reasoned[T] wrappers."""
+    return AnalysisPageFeatures(
+        page_num=page_num,
+        layout_type=Reasoned(
+            reasoning=f"Test reasoning for layout on page {page_num}.",
+            value=layout_type,
+        ),
+        complexity_score=Reasoned(
+            reasoning=f"Test reasoning for complexity on page {page_num}.",
+            value=complexity_score,
+        ),
+        **kwargs
+    )
+
+
+def make_analysis_output(
+    document_title: str = "Test Document",
+    document_type: DocumentType = "other",
+    page_features: list[AnalysisPageFeatures] | None = None,
+    **kwargs: Any,
+) -> AnalysisOutput:
+    """Helper to create AnalysisOutput with Reasoned[T] wrappers."""
+    if page_features is None:
+        page_features = [make_page_features(1)]
+    return AnalysisOutput(
+        document_title=document_title,
+        document_type=Reasoned(
+            reasoning="Test reasoning for document type classification.",
+            value=document_type,
+        ),
+        heading_tree=kwargs.pop("heading_tree", HeadingTree(document_title=document_title)),
+        page_features=page_features,
+        agent_routing_reasoning=kwargs.pop(
+            "agent_routing_reasoning",
+            "Test reasoning for agent routing decisions."
+        ),
+        heading_order_verification=kwargs.pop(
+            "heading_order_verification",
+            "Verified heading order is correct for single-column layout."
+        ),
+        **kwargs
+    )
 
 # =============================================================================
 # Model Tier Tests
@@ -43,21 +101,21 @@ from src.shared.models.remediation import DocumentManifest
 class TestModelTiers:
     """Tests for model tier configuration."""
 
-    def test_model_tier_enum_values(self):
+    def test_model_tier_enum_values(self) -> None:
         """Test ModelTier enum has correct values."""
         assert ModelTier.REASONING.value == "reasoning"
         assert ModelTier.EFFICIENT.value == "efficient"
 
-    def test_model_tier_map_contains_all_tiers(self):
+    def test_model_tier_map_contains_all_tiers(self) -> None:
         """Test MODEL_TIER_MAP has all tiers mapped."""
         assert ModelTier.REASONING in MODEL_TIER_MAP
         assert ModelTier.EFFICIENT in MODEL_TIER_MAP
 
-    def test_reasoning_tier_uses_sonnet(self):
+    def test_reasoning_tier_uses_sonnet(self) -> None:
         """Test REASONING tier maps to Sonnet model."""
         assert "sonnet" in MODEL_TIER_MAP[ModelTier.REASONING].lower()
 
-    def test_efficient_tier_uses_haiku(self):
+    def test_efficient_tier_uses_haiku(self) -> None:
         """Test EFFICIENT tier maps to Haiku model."""
         assert "haiku" in MODEL_TIER_MAP[ModelTier.EFFICIENT].lower()
 
@@ -66,24 +124,24 @@ class TestModelTiers:
 class TestLLMCostCalculation:
     """Tests for LLM cost calculation with model tiers."""
 
-    def test_get_pricing_for_reasoning_tier(self):
+    def test_get_pricing_for_reasoning_tier(self) -> None:
         """Test get_pricing_for_tier returns Sonnet pricing for REASONING."""
         pricing = get_pricing_for_tier(ModelTier.REASONING)
         assert pricing == SONNET_PRICING
         assert pricing.model_name == "Claude Sonnet 4.5 (Bedrock)"
 
-    def test_get_pricing_for_efficient_tier(self):
+    def test_get_pricing_for_efficient_tier(self) -> None:
         """Test get_pricing_for_tier returns Haiku pricing for EFFICIENT."""
         pricing = get_pricing_for_tier(ModelTier.EFFICIENT)
         assert pricing == HAIKU_PRICING
         assert pricing.model_name == "Claude Haiku 4.5 (Bedrock)"
 
-    def test_sonnet_pricing_higher_than_haiku(self):
+    def test_sonnet_pricing_higher_than_haiku(self) -> None:
         """Test Sonnet pricing is higher than Haiku."""
         assert SONNET_PRICING.input_cost_per_token_cents > HAIKU_PRICING.input_cost_per_token_cents
         assert SONNET_PRICING.output_cost_per_token_cents > HAIKU_PRICING.output_cost_per_token_cents
 
-    def test_cost_calculation_with_sonnet(self):
+    def test_cost_calculation_with_sonnet(self) -> None:
         """Test cost calculation with Sonnet pricing."""
         # 1000 input tokens, 100 output tokens
         cost = calculate_estimated_cost(1000, 100, SONNET_PRICING)
@@ -93,7 +151,7 @@ class TestLLMCostCalculation:
         expected_output = 100 * 0.0015  # 0.15 cents
         assert cost == pytest.approx(expected_input + expected_output, rel=0.01)
 
-    def test_cost_calculation_with_haiku(self):
+    def test_cost_calculation_with_haiku(self) -> None:
         """Test cost calculation with Haiku pricing."""
         # 1000 input tokens, 100 output tokens
         cost = calculate_estimated_cost(1000, 100, HAIKU_PRICING)
@@ -113,7 +171,7 @@ class TestLLMCostCalculation:
 class TestHeadingNode:
     """Tests for HeadingNode model."""
 
-    def test_valid_heading_node(self):
+    def test_valid_heading_node(self) -> None:
         """Test creating a valid HeadingNode."""
         node = HeadingNode(
             level=2,
@@ -126,19 +184,19 @@ class TestHeadingNode:
         assert node.page == 1
         assert node.section_number == "1.0"
 
-    def test_heading_node_without_section_number(self):
+    def test_heading_node_without_section_number(self) -> None:
         """Test HeadingNode with no section number."""
         node = HeadingNode(level=1, title="Title", page=1)
         assert node.section_number is None
 
-    def test_heading_level_validation(self):
+    def test_heading_level_validation(self) -> None:
         """Test heading level must be 1-6."""
         with pytest.raises(ValidationError):
             HeadingNode(level=0, title="Invalid", page=1)
         with pytest.raises(ValidationError):
             HeadingNode(level=7, title="Invalid", page=1)
 
-    def test_page_validation(self):
+    def test_page_validation(self) -> None:
         """Test page must be >= 1."""
         with pytest.raises(ValidationError):
             HeadingNode(level=1, title="Test", page=0)
@@ -148,7 +206,7 @@ class TestHeadingNode:
 class TestHeadingTree:
     """Tests for HeadingTree model."""
 
-    def test_valid_heading_tree(self):
+    def test_valid_heading_tree(self) -> None:
         """Test creating a valid HeadingTree."""
         tree = HeadingTree(
             document_title="Test Document",
@@ -165,7 +223,7 @@ class TestHeadingTree:
         assert tree.layout_type == "single_column"
         assert tree.confidence == 0.9
 
-    def test_heading_tree_defaults(self):
+    def test_heading_tree_defaults(self) -> None:
         """Test HeadingTree default values."""
         tree = HeadingTree(document_title="Test")
         assert tree.title_page == 1
@@ -173,12 +231,12 @@ class TestHeadingTree:
         assert tree.layout_type == "single_column"
         assert tree.confidence == 0.9
 
-    def test_layout_type_validation(self):
+    def test_layout_type_validation(self) -> None:
         """Test layout_type must be valid literal."""
         with pytest.raises(ValidationError):
-            HeadingTree(document_title="Test", layout_type="invalid")
+            HeadingTree(document_title="Test", layout_type="invalid")  # type: ignore[arg-type]
 
-    def test_confidence_validation(self):
+    def test_confidence_validation(self) -> None:
         """Test confidence must be 0.0-1.0."""
         with pytest.raises(ValidationError):
             HeadingTree(document_title="Test", confidence=1.5)
@@ -190,45 +248,46 @@ class TestHeadingTree:
 class TestAnalysisPageFeatures:
     """Tests for AnalysisPageFeatures model."""
 
-    def test_valid_page_features(self):
-        """Test creating valid page features."""
-        features = AnalysisPageFeatures(
+    def test_valid_page_features(self) -> None:
+        """Test creating valid page features with Reasoned[T] wrappers."""
+        features = make_page_features(
             page_num=1,
+            layout_type="two_column",
+            complexity_score=0.8,
             has_images=True,
             image_count=2,
             has_tables=True,
             table_count=1,
             has_lists=True,
-            layout_type="two_column",
-            complexity_score=0.8,
             complexity_factors=["dense tables", "images"]
         )
         assert features.page_num == 1
         assert features.has_images is True
         assert features.image_count == 2
-        assert features.complexity_score == 0.8
+        assert features.layout_type.value == "two_column"
+        assert features.complexity_score.value == 0.8
 
-    def test_page_features_defaults(self):
-        """Test default values for page features."""
-        features = AnalysisPageFeatures(page_num=1)
+    def test_page_features_defaults(self) -> None:
+        """Test default boolean values for page features."""
+        features = make_page_features(page_num=1)
         assert features.has_images is False
         assert features.image_count == 0
         assert features.has_tables is False
-        assert features.layout_type == "single_column"
-        assert features.complexity_score == 0.5
+        assert features.layout_type.value == "single_column"
+        assert features.complexity_score.value == 0.5
         assert features.complexity_factors == []
 
-    def test_page_num_validation(self):
+    def test_page_num_validation(self) -> None:
         """Test page_num must be >= 1."""
         with pytest.raises(ValidationError):
-            AnalysisPageFeatures(page_num=0)
+            make_page_features(page_num=0)
 
 
 @pytest.mark.unit
 class TestAnalysisObservation:
     """Tests for AnalysisObservation model."""
 
-    def test_valid_observation(self):
+    def test_valid_observation(self) -> None:
         """Test creating a valid observation."""
         obs = AnalysisObservation(
             page_num=3,
@@ -241,7 +300,7 @@ class TestAnalysisObservation:
         assert obs.severity == "major"
         assert obs.confidence == 0.85
 
-    def test_observation_defaults(self):
+    def test_observation_defaults(self) -> None:
         """Test default values for observation."""
         obs = AnalysisObservation(
             page_num=1,
@@ -251,14 +310,14 @@ class TestAnalysisObservation:
         assert obs.severity == "major"
         assert obs.confidence == 0.8
 
-    def test_severity_validation(self):
+    def test_severity_validation(self) -> None:
         """Test severity must be valid literal."""
         with pytest.raises(ValidationError):
             AnalysisObservation(
                 page_num=1,
                 visual_description="Test",
                 markup_issue="Test",
-                severity="invalid"
+                severity="invalid",  # type: ignore[arg-type]
             )
 
 
@@ -266,30 +325,28 @@ class TestAnalysisObservation:
 class TestAnalysisOutput:
     """Tests for AnalysisOutput model."""
 
-    def test_valid_analysis_output(self):
-        """Test creating a valid analysis output."""
-        output = AnalysisOutput(
+    def test_valid_analysis_output(self) -> None:
+        """Test creating a valid analysis output with Reasoned[T] wrappers."""
+        output = make_analysis_output(
             document_title="CS 101 Syllabus",
             document_type="syllabus",
-            heading_tree=HeadingTree(document_title="CS 101 Syllabus"),
-            page_features=[AnalysisPageFeatures(page_num=1)],
+            page_features=[make_page_features(1)],
             required_agents=["figures", "tables"],
             observations=[],
             confidence=0.9,
             notes="Clear structure"
         )
         assert output.document_title == "CS 101 Syllabus"
-        assert output.document_type == "syllabus"
+        assert output.document_type.value == "syllabus"
         assert len(output.required_agents) == 2
 
-    def test_analysis_output_defaults(self):
+    def test_analysis_output_defaults(self) -> None:
         """Test default values for analysis output."""
-        output = AnalysisOutput(
-            heading_tree=HeadingTree(document_title="Test"),
+        output = make_analysis_output(
             page_features=[]
         )
-        assert output.document_title == "Untitled"
-        assert output.document_type == "unknown"
+        assert output.document_title == "Test Document"
+        assert output.document_type.value == "other"
         assert output.required_agents == []
         assert output.observations == []
         assert output.confidence == 0.8
@@ -303,35 +360,44 @@ class TestAnalysisOutput:
 
 @pytest.mark.unit
 class TestAnalysisAgentConfig:
-    """Tests for AnalysisAgentConfig."""
+    """Tests for AnalysisAgent configuration."""
 
-    def test_default_config(self):
+    def test_default_config(self) -> None:
         """Test default configuration values."""
-        config = AnalysisAgentConfig()
-        assert config.prompts_file == Path("analysis.yaml")
-        assert config.max_retries == 2
-        assert config.temperature == 0.3
-        assert config.max_tokens == 4096
+        agent = AnalysisAgent()
+        assert agent.config.prompts_file == Path("analysis.yaml")
+        assert agent.config.max_retries == 2
+        assert agent.config.temperature == 0.3
+        assert agent.config.max_tokens == 4096
 
-    def test_custom_config(self):
+    @patch("src.agents.core.yaml.safe_load")
+    @patch("builtins.open", create=True)
+    def test_custom_config(self, mock_open: MagicMock, mock_yaml: MagicMock) -> None:
         """Test custom configuration values."""
-        config = AnalysisAgentConfig(
+        mock_yaml.return_value = {
+            "system_prompt": "test prompt",
+            "user_prompt": "test user prompt",
+        }
+        config = AgentConfig(
+            name="custom_analysis",
             prompts_file=Path("custom.yaml"),
+            output_type=AnalysisOutput,
             max_retries=3,
             temperature=0.5,
             max_tokens=8192
         )
-        assert config.prompts_file == Path("custom.yaml")
-        assert config.max_retries == 3
+        agent = AnalysisAgent(config)
+        assert agent.config.prompts_file == Path("custom.yaml")
+        assert agent.config.max_retries == 3
 
 
 @pytest.mark.unit
 class TestAnalysisAgentInitialization:
     """Tests for AnalysisAgent initialization."""
 
-    @patch("src.agents.analysis_agent.yaml.safe_load")
+    @patch("src.agents.core.yaml.safe_load")
     @patch("builtins.open", create=True)
-    def test_agent_initialization(self, mock_open, mock_yaml):
+    def test_agent_initialization(self, mock_open: MagicMock, mock_yaml: MagicMock) -> None:
         """Test agent initializes correctly."""
         mock_yaml.return_value = {
             "system_prompt": "Test system prompt",
@@ -343,15 +409,18 @@ class TestAnalysisAgentInitialization:
         assert "sonnet" in agent.model_id.lower()
         assert agent.prompts is not None
 
-    def test_agent_uses_default_prompts_when_file_not_found(self):
-        """Test agent uses default prompts when file not found."""
-        config = AnalysisAgentConfig(prompts_file=Path("nonexistent.yaml"))
-        agent = AnalysisAgent(config)
+    def test_agent_raises_when_prompts_file_not_found(self) -> None:
+        """Test agent raises FileNotFoundError when prompts file not found (fail fast)."""
+        config = AgentConfig(
+            name="test_analysis",
+            prompts_file=Path("nonexistent.yaml"),
+            output_type=AnalysisOutput,
+        )
 
-        assert "system_prompt" in agent.prompts
-        assert "user_prompt" in agent.prompts
+        with pytest.raises(FileNotFoundError):
+            AnalysisAgent(config)
 
-    def test_all_agents_constant(self):
+    def test_all_agents_constant(self) -> None:
         """Test ALL_AGENTS constant contains expected agents."""
         expected = {"figures", "tables", "structure", "typography"}
         assert AnalysisAgent.ALL_AGENTS == expected
@@ -361,40 +430,36 @@ class TestAnalysisAgentInitialization:
 class TestAnalysisAgentHelperMethods:
     """Tests for AnalysisAgent helper methods."""
 
-    def test_determine_skip_agents_all_required(self):
+    def test_determine_skip_agents_all_required(self) -> None:
         """Test skip agents when all are required."""
-        config = AnalysisAgentConfig(prompts_file=Path("nonexistent.yaml"))
-        agent = AnalysisAgent(config)
+        agent = AnalysisAgent()
 
         required = ["figures", "tables", "structure", "typography"]
         skip = agent._determine_skip_agents(required)
 
         assert skip == []
 
-    def test_determine_skip_agents_some_required(self):
+    def test_determine_skip_agents_some_required(self) -> None:
         """Test skip agents when some are required."""
-        config = AnalysisAgentConfig(prompts_file=Path("nonexistent.yaml"))
-        agent = AnalysisAgent(config)
+        agent = AnalysisAgent()
 
         required = ["figures", "tables"]
         skip = agent._determine_skip_agents(required)
 
         assert set(skip) == {"structure", "typography"}
 
-    def test_determine_skip_agents_none_required(self):
+    def test_determine_skip_agents_none_required(self) -> None:
         """Test skip agents when none are required."""
-        config = AnalysisAgentConfig(prompts_file=Path("nonexistent.yaml"))
-        agent = AnalysisAgent(config)
+        agent = AnalysisAgent()
 
-        required = []
+        required: list[str] = []
         skip = agent._determine_skip_agents(required)
 
         assert set(skip) == {"figures", "tables", "structure", "typography"}
 
-    def test_build_image_messages(self):
+    def test_build_image_messages(self) -> None:
         """Test building image messages from pages."""
-        config = AnalysisAgentConfig(prompts_file=Path("nonexistent.yaml"))
-        agent = AnalysisAgent(config)
+        agent = AnalysisAgent()
 
         # Create mock pages
         pages = [
@@ -414,12 +479,11 @@ class TestAnalysisAgentHelperMethods:
 class TestAnalysisAgentManifestCreation:
     """Tests for manifest creation from analysis output."""
 
-    def test_create_manifest_basic(self):
-        """Test basic manifest creation."""
-        config = AnalysisAgentConfig(prompts_file=Path("nonexistent.yaml"))
-        agent = AnalysisAgent(config)
+    def test_create_manifest_basic(self) -> None:
+        """Test basic manifest creation with Reasoned[T] extraction."""
+        agent = AnalysisAgent()
 
-        output = AnalysisOutput(
+        output = make_analysis_output(
             document_title="Test Document",
             document_type="lecture_notes",
             heading_tree=HeadingTree(
@@ -428,8 +492,8 @@ class TestAnalysisAgentManifestCreation:
                 confidence=0.9
             ),
             page_features=[
-                AnalysisPageFeatures(page_num=1, has_images=True, image_count=2),
-                AnalysisPageFeatures(page_num=2, has_tables=True, table_count=1),
+                make_page_features(page_num=1, has_images=True, image_count=2),
+                make_page_features(page_num=2, has_tables=True, table_count=1),
             ],
             required_agents=["figures", "tables"],
             confidence=0.85,
@@ -449,16 +513,14 @@ class TestAnalysisAgentManifestCreation:
         assert manifest.analysis_notes == "Test notes"
         assert "sonnet" in manifest.analysis_model.lower()
 
-    def test_create_manifest_fills_missing_pages(self):
+    def test_create_manifest_fills_missing_pages(self) -> None:
         """Test manifest creation fills missing page features."""
-        config = AnalysisAgentConfig(prompts_file=Path("nonexistent.yaml"))
-        agent = AnalysisAgent(config)
+        agent = AnalysisAgent()
 
         # Only provide features for page 2
-        output = AnalysisOutput(
-            heading_tree=HeadingTree(document_title="Test"),
+        output = make_analysis_output(
             page_features=[
-                AnalysisPageFeatures(page_num=2, has_images=True)
+                make_page_features(page_num=2, has_images=True)
             ]
         )
 
@@ -482,10 +544,9 @@ class TestAnalysisAgentManifestCreation:
 class TestAnalysisAgentObservationConversion:
     """Tests for observation conversion."""
 
-    def test_convert_observations_basic(self):
+    def test_convert_observations_basic(self) -> None:
         """Test basic observation conversion."""
-        config = AnalysisAgentConfig(prompts_file=Path("nonexistent.yaml"))
-        agent = AnalysisAgent(config)
+        agent = AnalysisAgent()
 
         analysis_obs = [
             AnalysisObservation(
@@ -493,7 +554,7 @@ class TestAnalysisAgentObservationConversion:
                 visual_description="Chart showing trends",
                 markup_issue="Empty alt text",
                 severity="major",
-                confidence=0.9
+                confidence=0.99  # Use 0.99 to exceed any reasonable threshold
             )
         ]
 
@@ -507,21 +568,20 @@ class TestAnalysisAgentObservationConversion:
         assert obs.visual_description == "Chart showing trends"
         assert obs.markup_description == "Empty alt text"
         assert obs.severity == "major"
-        assert obs.confidence == 0.9
+        assert obs.confidence == 0.99
         assert obs.location.page_num == 3
-        assert obs.route == "auto"  # confidence >= 0.7
+        assert obs.route == "auto"  # confidence 0.99 exceeds any threshold
 
-    def test_convert_observations_low_confidence_routes_manual(self):
+    def test_convert_observations_low_confidence_routes_manual(self) -> None:
         """Test low confidence observations route to manual."""
-        config = AnalysisAgentConfig(prompts_file=Path("nonexistent.yaml"))
-        agent = AnalysisAgent(config)
+        agent = AnalysisAgent()
 
         analysis_obs = [
             AnalysisObservation(
                 page_num=1,
                 visual_description="Unclear image",
                 markup_issue="May need description",
-                confidence=0.5  # Below 0.7 threshold
+                confidence=0.5  # Below any reasonable auto-approval threshold
             )
         ]
 
@@ -530,10 +590,9 @@ class TestAnalysisAgentObservationConversion:
         assert len(observations) == 1
         assert observations[0].route == "manual"
 
-    def test_convert_observations_empty_list(self):
+    def test_convert_observations_empty_list(self) -> None:
         """Test converting empty observation list."""
-        config = AnalysisAgentConfig(prompts_file=Path("nonexistent.yaml"))
-        agent = AnalysisAgent(config)
+        agent = AnalysisAgent()
 
         observations = agent._convert_observations([], "job-123")
 
@@ -545,24 +604,22 @@ class TestAnalysisAgentAnalyze:
     """Tests for the analyze method."""
 
     @pytest.mark.asyncio
-    async def test_analyze_raises_on_empty_pages(self):
+    async def test_analyze_raises_on_empty_pages(self) -> None:
         """Test analyze raises ValueError on empty pages."""
-        config = AnalysisAgentConfig(prompts_file=Path("nonexistent.yaml"))
-        agent = AnalysisAgent(config)
+        agent = AnalysisAgent()
 
         with pytest.raises(ValueError, match="No pages provided"):
             await agent.analyze([], "job-123")
 
     @pytest.mark.asyncio
-    async def test_analyze_returns_correct_types(self):
-        """Test analyze returns correct types."""
+    async def test_analyze_returns_correct_types(self) -> None:
+        """Test analyze returns correct types with Reasoned[T] extraction."""
         # Create mock agent with run method
         mock_pydantic_agent = MagicMock()
         mock_result = MagicMock()
-        mock_result.output = AnalysisOutput(
+        mock_result.output = make_analysis_output(
             document_title="Test",
-            heading_tree=HeadingTree(document_title="Test"),
-            page_features=[AnalysisPageFeatures(page_num=1)],
+            page_features=[make_page_features(page_num=1)],
             required_agents=["figures"],
             observations=[
                 AnalysisObservation(
@@ -579,9 +636,8 @@ class TestAnalysisAgentAnalyze:
         mock_pydantic_agent.run = AsyncMock(return_value=mock_result)
 
         # Create agent and replace _get_agent
-        config = AnalysisAgentConfig(prompts_file=Path("nonexistent.yaml"))
-        agent = AnalysisAgent(config)
-        agent._get_agent = MagicMock(return_value=mock_pydantic_agent)
+        agent = AnalysisAgent()
+        agent._get_agent = MagicMock(return_value=mock_pydantic_agent)  # type: ignore[method-assign]
 
         pages = [PageData(page_num=1, image_base64="dGVzdA==")]
         manifest, observations, usage = await agent.analyze(pages, "job-123")

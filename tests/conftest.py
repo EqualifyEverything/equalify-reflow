@@ -18,7 +18,6 @@ from unittest.mock import AsyncMock, MagicMock
 
 import pytest
 from fastapi.testclient import TestClient
-from src.agents.accessibility_agent import PageImprovementResult
 from src.main import app
 from src.services.pdf_converter import PageData, PDFConversionResult
 from src.shared.models.queue import ProcessingQueuePayload
@@ -117,16 +116,6 @@ def sample_pdf_conversion_result(sample_page_data):
 
 
 @pytest.fixture
-def sample_page_improvement_result():
-    """Sample PageImprovementResult for testing."""
-    return PageImprovementResult(
-        improved_markdown="# Test Document\n\n![Description](image.png)\n\nSample content",
-        confidence_score=0.92,
-        processing_notes="Added alt text to image",
-    )
-
-
-@pytest.fixture
 def mock_storage_service():
     """Mock StorageService for unit tests.
 
@@ -164,25 +153,4 @@ def mock_pdf_converter(sample_pdf_conversion_result):
     """Mock PDFConverter for unit tests."""
     mock = AsyncMock()
     mock.convert_with_page_images = AsyncMock(return_value=sample_pdf_conversion_result)
-    return mock
-
-
-@pytest.fixture
-def mock_ai_enhancement_service(sample_page_improvement_result):
-    """Mock AIEnhancementService for unit tests."""
-    mock = AsyncMock()
-    mock.process_pages_concurrently = AsyncMock(
-        return_value=[sample_page_improvement_result]
-    )
-    mock.combine_page_markdown = MagicMock(
-        return_value="# Test Document\n\n![Description](image.png)\n\nSample content"
-    )
-    return mock
-
-
-@pytest.fixture
-def mock_accessibility_agent(sample_page_improvement_result):
-    """Mock AccessibilityAgent for unit tests."""
-    mock = AsyncMock()
-    mock.process_page = AsyncMock(return_value=sample_page_improvement_result)
     return mock

@@ -19,6 +19,7 @@ from httpx import ASGITransport, AsyncClient
 from src.dependencies import get_job_service, get_storage_service
 from src.main import app
 from src.services.remediation_storage_service import RemediationStorageService
+from src.shared.models.agent_models import LLMUsage
 from src.shared.models.observation import Observation, ObservationLocation
 from src.shared.models.proposal import Proposal, SearchReplaceDiff
 from src.shared.models.remediation import DocumentManifest, PageFeatures
@@ -736,9 +737,12 @@ class TestEditEndpoint:
         # Mock the consolidation service's reconsolidate_observation method
         from src.dependencies import get_consolidation_service
 
+        mock_usage = LLMUsage(
+            input_tokens=100, output_tokens=50, total_tokens=150, estimated_cost_cents=5.0
+        )
         mock_consolidation = MagicMock()
         mock_consolidation.reconsolidate_observation = AsyncMock(
-            return_value=mock_proposal
+            return_value=(mock_proposal, mock_usage)
         )
 
         # Override the consolidation service dependency

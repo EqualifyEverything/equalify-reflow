@@ -1,4 +1,4 @@
-"""Unit tests for ConsolidationService (PRD-015).
+"""Unit tests for ConsolidationService.
 
 Tests cover:
 - consolidate_observations workflow
@@ -365,7 +365,7 @@ class TestReconsolidateObservation:
             LLMUsage(input_tokens=0, output_tokens=0, total_tokens=0, estimated_cost_cents=0.0),
         )
 
-        await service.reconsolidate_observation(
+        result, usage = await service.reconsolidate_observation(
             job_id="job-123",
             observation=observation,
             markdown="# Test",
@@ -376,6 +376,8 @@ class TestReconsolidateObservation:
             markdown="# Test",
             job_id="job-123",
         )
+        assert result is None
+        assert usage.estimated_cost_cents == 0.0
 
     @pytest.mark.asyncio
     async def test_appends_proposal_to_existing(
@@ -415,13 +417,16 @@ class TestReconsolidateObservation:
             LLMUsage(input_tokens=100, output_tokens=50, total_tokens=150, estimated_cost_cents=5.0),
         )
 
-        result = await service.reconsolidate_observation(
+        result, usage = await service.reconsolidate_observation(
             job_id="job-123",
             observation=observation,
             markdown="# Test",
         )
 
         assert result == new_proposal
+        assert usage.input_tokens == 100
+        assert usage.output_tokens == 50
+        assert usage.estimated_cost_cents == 5.0
 
         # Should have saved all proposals (existing + new)
         mock_storage.save_proposals.assert_called_once()
@@ -455,13 +460,15 @@ class TestReconsolidateObservation:
             LLMUsage(input_tokens=100, output_tokens=50, total_tokens=150, estimated_cost_cents=5.0),
         )
 
-        result = await service.reconsolidate_observation(
+        result, usage = await service.reconsolidate_observation(
             job_id="job-123",
             observation=observation,
             markdown="# Test",
         )
 
         assert result is None
+        # Usage should still be tracked even if no proposal generated
+        assert usage.estimated_cost_cents == 5.0
 
 
 # =============================================================================

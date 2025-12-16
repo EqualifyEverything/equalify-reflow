@@ -1,4 +1,4 @@
-"""Tests for FiguresAgent (PRD-014, Issue #24).
+"""Tests for FiguresAgent.
 
 Tests cover:
 - Agent configuration and initialization
@@ -21,7 +21,13 @@ from src.agents.specialized_models import (
     ImageAnalysis,
 )
 from src.services.pdf_converter import PageData
+from src.shared.models.reasoned import Reasoned
 from src.shared.models.remediation import DocumentManifest, PageFeatures
+
+
+def make_reasoned(value: str, reasoning: str = "Test reasoning for this value.") -> Reasoned:
+    """Helper to create Reasoned objects for testing."""
+    return Reasoned(reasoning=reasoning, value=value)
 
 # =============================================================================
 # Output Model Tests
@@ -36,39 +42,40 @@ class TestImageAnalysis:
         """Test creating a valid ImageAnalysis."""
         analysis = ImageAnalysis(
             image_index=1,
-            image_type="informative",
+            image_type=make_reasoned("informative", "Chart with data points visible."),
             visual_description="A flowchart showing process steps",
             current_alt_status="empty",
-            recommended_action="add_alt",
+            recommended_action=make_reasoned("add_alt", "Image lacks alt text."),
             suggested_alt="Flowchart showing 5 process steps",
-            confidence=0.9,
+            model_confidence=0.9,
         )
         assert analysis.image_index == 1
-        assert analysis.image_type == "informative"
-        assert analysis.recommended_action == "add_alt"
+        assert analysis.image_type.value == "informative"
+        assert analysis.recommended_action.value == "add_alt"
 
     def test_image_analysis_defaults(self):
         """Test ImageAnalysis default values."""
         analysis = ImageAnalysis(
             image_index=1,
-            image_type="decorative",
+            image_type=make_reasoned("decorative", "Background pattern with no content."),
             visual_description="Background pattern",
             current_alt_status="empty",
-            recommended_action="mark_decorative",
+            recommended_action=make_reasoned("mark_decorative", "Decorative image."),
         )
         assert analysis.suggested_alt is None
-        assert analysis.confidence == 0.8
+        # Confidence is now a computed property from quality signals
+        assert analysis.confidence == 0.96  # Default signals + default model_confidence
 
-    def test_confidence_validation(self):
-        """Test confidence must be between 0 and 1."""
+    def test_model_confidence_validation(self):
+        """Test model_confidence must be between 0 and 1."""
         with pytest.raises(ValidationError):
             ImageAnalysis(
                 image_index=1,
-                image_type="informative",
+                image_type=make_reasoned("informative"),
                 visual_description="Test",
                 current_alt_status="empty",
-                recommended_action="add_alt",
-                confidence=1.5,
+                recommended_action=make_reasoned("add_alt"),
+                model_confidence=1.5,
             )
 
     def test_image_index_validation(self):
@@ -76,10 +83,10 @@ class TestImageAnalysis:
         with pytest.raises(ValidationError):
             ImageAnalysis(
                 image_index=0,
-                image_type="informative",
+                image_type=make_reasoned("informative"),
                 visual_description="Test",
                 current_alt_status="empty",
-                recommended_action="add_alt",
+                recommended_action=make_reasoned("add_alt"),
             )
 
 
@@ -95,10 +102,10 @@ class TestFiguresAnalysisOutput:
             analyses=[
                 ImageAnalysis(
                     image_index=1,
-                    image_type="informative",
+                    image_type=make_reasoned("informative", "Chart with data."),
                     visual_description="Chart",
                     current_alt_status="empty",
-                    recommended_action="add_alt",
+                    recommended_action=make_reasoned("add_alt", "Missing alt text."),
                 )
             ],
             notes="Two images found",
@@ -163,11 +170,11 @@ class TestAnalysisToObservation:
         analyses = [
             ImageAnalysis(
                 image_index=1,
-                image_type="informative",
+                image_type=make_reasoned("informative", "Chart with data."),
                 visual_description="Chart showing data",
                 current_alt_status="empty",
-                recommended_action="add_alt",
-                confidence=0.9,
+                recommended_action=make_reasoned("add_alt", "Missing alt."),
+                model_confidence=0.99,  # Use 0.99 to exceed any reasonable threshold
             )
         ]
 
@@ -177,7 +184,7 @@ class TestAnalysisToObservation:
         obs = observations[0]
         assert obs.agent == "figures"
         assert obs.severity == "major"
-        assert obs.route == "auto"  # High confidence
+        assert obs.route == "auto"  # Confidence exceeds threshold
         assert obs.location.page_num == 1
 
     def test_decorative_image_creates_minor_observation(self):
@@ -187,11 +194,11 @@ class TestAnalysisToObservation:
         analyses = [
             ImageAnalysis(
                 image_index=1,
-                image_type="decorative",
+                image_type=make_reasoned("decorative", "Background pattern."),
                 visual_description="Background pattern",
                 current_alt_status="has description",
-                recommended_action="mark_decorative",
-                confidence=0.85,
+                recommended_action=make_reasoned("mark_decorative", "Decorative image."),
+                model_confidence=0.85,
             )
         ]
 
@@ -202,16 +209,22 @@ class TestAnalysisToObservation:
 
     def test_low_confidence_routes_to_manual(self):
         """Test low confidence analyses route to manual review."""
+        from src.shared.models.quality_signals import QualitySignals
         agent = FiguresAgent()
 
+        # Use poor quality signals to get low confidence
         analyses = [
             ImageAnalysis(
                 image_index=1,
-                image_type="informative",
+                image_type=make_reasoned("informative", "Unclear classification."),
                 visual_description="Unclear image",
                 current_alt_status="empty",
-                recommended_action="add_alt",
-                confidence=0.5,  # Low confidence
+                recommended_action=make_reasoned("add_alt", "Missing alt."),
+                model_confidence=0.3,  # Low model confidence
+                quality_signals=QualitySignals(
+                    image_clarity="blurry",
+                    content_ambiguity="highly_ambiguous",
+                ),
             )
         ]
 
@@ -228,11 +241,11 @@ class TestAnalysisToObservation:
         analyses = [
             ImageAnalysis(
                 image_index=1,
-                image_type="informative",
+                image_type=make_reasoned("informative", "Good existing alt."),
                 visual_description="Well-described image",
                 current_alt_status="has description",
-                recommended_action="none",
-                confidence=0.95,
+                recommended_action=make_reasoned("none", "Alt text is adequate."),
+                model_confidence=0.95,
             )
         ]
 
@@ -247,11 +260,11 @@ class TestAnalysisToObservation:
         analyses = [
             ImageAnalysis(
                 image_index=1,
-                image_type="complex",
+                image_type=make_reasoned("complex", "Detailed infographic."),
                 visual_description="Detailed infographic",
                 current_alt_status="TODO placeholder",
-                recommended_action="add_long_desc",
-                confidence=0.8,
+                recommended_action=make_reasoned("add_long_desc", "Needs long description."),
+                model_confidence=0.8,
             )
         ]
 
@@ -336,15 +349,18 @@ class TestFiguresAgentAnalysis:
         """Test analysis skips pages without images."""
         agent = FiguresAgent()
 
-        # Mock the _run_agent method to avoid AWS calls
+        # Mock the _run_with_deps method to avoid AWS calls
         mock_output = FiguresAnalysisOutput(
             page_num=1,
             images_found=1,
             analyses=[],
         )
 
-        with patch.object(agent, '_run_agent', new_callable=AsyncMock) as mock_run:
-            mock_run.return_value = (mock_output, AsyncMock(estimated_cost_cents=1.0))
+        from src.shared.models.processing import LLMUsage
+        mock_usage = LLMUsage(input_tokens=100, output_tokens=50, total_tokens=150, estimated_cost_cents=1.0)
+
+        with patch.object(agent, '_run_with_deps', new_callable=AsyncMock) as mock_run:
+            mock_run.return_value = (mock_output, mock_usage)
 
             await agent.analyze(
                 pages=sample_pages,
@@ -367,6 +383,8 @@ class TestFiguresAgentAnalysis:
 
         call_count = 0
 
+        from src.shared.models.processing import LLMUsage
+
         async def mock_run(*args, **kwargs):
             nonlocal call_count
             call_count += 1
@@ -374,10 +392,10 @@ class TestFiguresAgentAnalysis:
                 raise Exception("LLM error")
             return (
                 FiguresAnalysisOutput(page_num=3, images_found=0, analyses=[]),
-                AsyncMock(estimated_cost_cents=1.0),
+                LLMUsage(input_tokens=100, output_tokens=50, total_tokens=150, estimated_cost_cents=1.0),
             )
 
-        with patch.object(agent, '_run_agent', side_effect=mock_run):
+        with patch.object(agent, '_run_with_deps', side_effect=mock_run):
             observations, usage = await agent.analyze(
                 pages=sample_pages,
                 manifest=sample_manifest,
@@ -405,27 +423,27 @@ class TestFiguresAgentAnalysis:
             analyses=[
                 ImageAnalysis(
                     image_index=1,
-                    image_type="informative",
+                    image_type=make_reasoned("informative", "Test chart."),
                     visual_description="Test image",
                     current_alt_status="empty",
-                    recommended_action="add_alt",
-                    confidence=0.9,
+                    recommended_action=make_reasoned("add_alt", "Missing alt."),
+                    model_confidence=0.9,
                 ),
                 ImageAnalysis(
                     image_index=2,
-                    image_type="decorative",
+                    image_type=make_reasoned("decorative", "Simple border."),
                     visual_description="Border",
                     current_alt_status="has description",
-                    recommended_action="none",  # Should not create observation
-                    confidence=0.95,
+                    recommended_action=make_reasoned("none", "Already has alt."),
+                    model_confidence=0.95,
                 ),
             ],
         )
 
-        mock_usage = AsyncMock()
-        mock_usage.estimated_cost_cents = 5.0
+        from src.shared.models.processing import LLMUsage
+        mock_usage = LLMUsage(input_tokens=200, output_tokens=100, total_tokens=300, estimated_cost_cents=5.0)
 
-        with patch.object(agent, '_run_agent', new_callable=AsyncMock) as mock_run:
+        with patch.object(agent, '_run_with_deps', new_callable=AsyncMock) as mock_run:
             mock_run.return_value = (mock_output, mock_usage)
 
             observations, usage = await agent.analyze(

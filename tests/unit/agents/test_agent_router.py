@@ -1,4 +1,4 @@
-"""Tests for AgentRouter (PRD-014).
+"""Tests for AgentRouter.
 
 Tests cover:
 - Agent registration and retrieval
@@ -123,7 +123,7 @@ def mock_observation() -> Observation:
 class TestAgentRegistration:
     """Tests for agent registration functionality."""
 
-    def test_register_single_agent(self):
+    def test_register_single_agent(self) -> None:
         """Test registering a single agent."""
         router = AgentRouter()
         mock_agent = MagicMock()
@@ -133,7 +133,7 @@ class TestAgentRegistration:
         assert "figures" in router.registered_agents
         assert router.get_agent("figures") is mock_agent
 
-    def test_register_multiple_agents(self):
+    def test_register_multiple_agents(self) -> None:
         """Test registering multiple agents."""
         router = AgentRouter()
 
@@ -146,12 +146,12 @@ class TestAgentRegistration:
         assert "tables" in router.registered_agents
         assert "structure" in router.registered_agents
 
-    def test_get_unregistered_agent_returns_none(self):
+    def test_get_unregistered_agent_returns_none(self) -> None:
         """Test getting an unregistered agent returns None."""
         router = AgentRouter()
         assert router.get_agent("nonexistent") is None
 
-    def test_register_overwrites_existing(self):
+    def test_register_overwrites_existing(self) -> None:
         """Test registering same name overwrites existing agent."""
         router = AgentRouter()
         agent1 = MagicMock()
@@ -174,7 +174,7 @@ class TestPageFiltering:
 
     def test_figures_agent_gets_pages_with_images(
         self, sample_manifest: DocumentManifest, sample_pages: list[PageData]
-    ):
+    ) -> None:
         """Test figures agent only processes pages with images."""
         router = AgentRouter()
 
@@ -185,7 +185,7 @@ class TestPageFiltering:
 
     def test_tables_agent_gets_pages_with_tables(
         self, sample_manifest: DocumentManifest, sample_pages: list[PageData]
-    ):
+    ) -> None:
         """Test tables agent only processes pages with tables."""
         router = AgentRouter()
 
@@ -196,7 +196,7 @@ class TestPageFiltering:
 
     def test_structure_agent_gets_all_pages(
         self, sample_manifest: DocumentManifest, sample_pages: list[PageData]
-    ):
+    ) -> None:
         """Test structure agent processes all pages."""
         router = AgentRouter()
 
@@ -206,7 +206,7 @@ class TestPageFiltering:
 
     def test_typography_agent_gets_complex_pages(
         self, sample_manifest: DocumentManifest, sample_pages: list[PageData]
-    ):
+    ) -> None:
         """Test typography agent only processes pages with complexity > 0.5."""
         router = AgentRouter()
 
@@ -217,7 +217,7 @@ class TestPageFiltering:
 
     def test_unknown_agent_gets_no_pages(
         self, sample_manifest: DocumentManifest, sample_pages: list[PageData]
-    ):
+    ) -> None:
         """Test unknown agent type gets no pages."""
         router = AgentRouter()
 
@@ -241,7 +241,7 @@ class TestAgentRouting:
         sample_manifest: DocumentManifest,
         sample_pages: list[PageData],
         mock_observation: Observation,
-    ):
+    ) -> None:
         """Test all required agents are called."""
         router = AgentRouter()
 
@@ -288,7 +288,7 @@ class TestAgentRouting:
     @pytest.mark.asyncio
     async def test_skips_unregistered_agents(
         self, sample_manifest: DocumentManifest, sample_pages: list[PageData]
-    ):
+    ) -> None:
         """Test unregistered agents are skipped with warning."""
         router = AgentRouter()
 
@@ -314,7 +314,7 @@ class TestAgentRouting:
     @pytest.mark.asyncio
     async def test_skips_agents_with_no_relevant_pages(
         self, sample_pages: list[PageData]
-    ):
+    ) -> None:
         """Test agents are skipped if no relevant pages."""
         # Manifest with no images or tables
         manifest = DocumentManifest(
@@ -354,7 +354,7 @@ class TestAgentRouting:
         sample_manifest: DocumentManifest,
         sample_pages: list[PageData],
         mock_observation: Observation,
-    ):
+    ) -> None:
         """Test router continues if one agent fails."""
         router = AgentRouter()
 
@@ -387,7 +387,7 @@ class TestAgentRouting:
     @pytest.mark.asyncio
     async def test_collects_observations_from_all_agents(
         self, sample_manifest: DocumentManifest, sample_pages: list[PageData]
-    ):
+    ) -> None:
         """Test observations from all agents are collected."""
         router = AgentRouter()
 
@@ -449,7 +449,7 @@ class TestEdgeCases:
     """Tests for edge cases and boundary conditions."""
 
     @pytest.mark.asyncio
-    async def test_empty_required_agents(self, sample_pages: list[PageData]):
+    async def test_empty_required_agents(self, sample_pages: list[PageData]) -> None:
         """Test handling empty required_agents list."""
         manifest = DocumentManifest(
             job_id="test",
@@ -475,7 +475,7 @@ class TestEdgeCases:
         assert combined_usage.total_input_tokens == 0
 
     @pytest.mark.asyncio
-    async def test_empty_pages_list(self, sample_manifest: DocumentManifest):
+    async def test_empty_pages_list(self, sample_manifest: DocumentManifest) -> None:
         """Test handling empty pages list."""
         router = AgentRouter()
 
@@ -496,7 +496,7 @@ class TestEdgeCases:
         assert observations == []
         assert combined_usage.total_input_tokens == 0
 
-    def test_page_features_helper(self, sample_manifest: DocumentManifest):
+    def test_page_features_helper(self, sample_manifest: DocumentManifest) -> None:
         """Test _get_page_features helper method."""
         router = AgentRouter()
 

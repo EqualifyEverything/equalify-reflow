@@ -1,4 +1,4 @@
-"""Unit tests for Review API endpoints (PRD-016).
+"""Unit tests for Review API endpoints.
 
 Tests the review workflow API including:
 - Review summary endpoint
@@ -22,6 +22,7 @@ from src.dependencies import (
 )
 from src.main import app
 from src.services.application_service import ApplicationResult
+from src.shared.models.agent_models import LLMUsage
 from src.shared.models.observation import Observation, ObservationLocation
 from src.shared.models.proposal import Proposal, SearchReplaceDiff
 
@@ -483,7 +484,7 @@ class TestEditProposal:
         mock_storage.load_proposals = AsyncMock(return_value=sample_proposals.copy())
         mock_storage.save_proposals = AsyncMock()
 
-        # Mock consolidation service to return a proposal
+        # Mock consolidation service to return a proposal with usage
         mock_proposal = Proposal(
             id="new-prop",
             job_id="job-123",
@@ -491,11 +492,28 @@ class TestEditProposal:
             diff=SearchReplaceDiff(search="![](fig1.png)", replace="![AI generated](fig1.png)"),
             justification="AI generated",
         )
+        mock_usage = LLMUsage(
+            input_tokens=100, output_tokens=50, total_tokens=150, estimated_cost_cents=5.0
+        )
         mock_consolidation = MagicMock()
-        mock_consolidation.reconsolidate_observation = AsyncMock(return_value=mock_proposal)
+        mock_consolidation.reconsolidate_observation = AsyncMock(
+            return_value=(mock_proposal, mock_usage)
+        )
+
+        # Mock job service for cost tracking
+        mock_job_service = MagicMock()
+        mock_job_service.get_job = AsyncMock(return_value={
+            "status": "awaiting_correction_approval",
+            "llm_cost_cents": 100.0,
+            "llm_input_tokens": 1000,
+            "llm_output_tokens": 500,
+            "llm_total_tokens": 1500,
+        })
+        mock_job_service.update_job_status = AsyncMock()
 
         app.dependency_overrides[get_remediation_storage] = lambda: mock_storage
         app.dependency_overrides[get_consolidation_service] = lambda: mock_consolidation
+        app.dependency_overrides[get_job_service] = lambda: mock_job_service
 
         try:
             response = client.post(

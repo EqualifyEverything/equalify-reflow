@@ -1,4 +1,4 @@
-"""Analysis Agent for document accessibility analysis (PRD-012).
+"""Analysis Agent for document accessibility analysis.
 
 This agent performs deep document analysis using Claude Sonnet 4.5 (REASONING tier)
 to guide the remediation pipeline.
@@ -19,28 +19,31 @@ import base64
 import logging
 import time
 import uuid
-from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Any, Literal
 
-import yaml
-from pydantic import BaseModel, Field
-from pydantic_ai import Agent
+from pydantic import BaseModel, Field, field_validator
 from pydantic_ai.messages import BinaryContent
 
-from src.agents.model_tiers import MODEL_TIER_MAP, ModelTier
+from src.agents.base_agent import AgentConfig, BaseDocumentAgent
+from src.agents.model_tiers import ModelTier
 from src.config import settings
 from src.services.debug_logging_service import debug_logger
 from src.services.pdf_converter import PageData
-from src.shared.llm_cost import calculate_estimated_cost, get_pricing_for_tier
+from src.services.reasoning_corpus_service import get_reasoning_corpus_service
 from src.shared.models.observation import Observation, ObservationLocation
 from src.shared.models.processing import LLMUsage
+from src.shared.models.reasoned import Reasoned, ReasonedOutputMixin
 from src.shared.models.remediation import (
     DocumentManifest,
     HeadingNode,
     HeadingTree,
     PageFeatures,
 )
+
+# Type aliases for Reasoned[T] wrappers
+LayoutType = Literal["single_column", "two_column", "mixed"]
+DocumentType = Literal["syllabus", "lecture_notes", "exam", "handout", "research_paper", "other"]
 
 logger = logging.getLogger(__name__)
 
@@ -50,23 +53,99 @@ logger = logging.getLogger(__name__)
 # =============================================================================
 
 
-class AnalysisPageFeatures(BaseModel):
-    """Page features detected during analysis (matches PageFeatures schema)."""
+class AnalysisPageFeatures(BaseModel, ReasonedOutputMixin):
+    """Page features detected during analysis with glass-box reasoning.
+
+    Complex determinations (layout_type, complexity_score) use Reasoned[T]
+    wrapper to capture chain-of-thought reasoning before the value.
+    """
 
     page_num: int = Field(..., ge=1, description="1-indexed page number")
-    has_images: bool = Field(default=False)
-    image_count: int = Field(default=0, ge=0)
-    has_tables: bool = Field(default=False)
-    table_count: int = Field(default=0, ge=0)
-    has_lists: bool = Field(default=False)
-    has_code_blocks: bool = Field(default=False)
-    has_math: bool = Field(default=False)
-    layout_type: Literal["single_column", "two_column", "mixed"] = Field(
-        default="single_column"
+    has_images: bool = Field(
+        default=False,
+        description=(
+            "True if page contains INFORMATIVE images (charts, diagrams, photos, "
+            "screenshots with content). Exclude decorative borders, backgrounds, logos, "
+            "spacers, and purely visual flourishes."
+        ),
     )
-    has_headers_footers: bool = Field(default=False)
-    complexity_score: float = Field(default=0.5, ge=0.0, le=1.0)
-    complexity_factors: list[str] = Field(default_factory=list)
+    image_count: int = Field(
+        default=0,
+        ge=0,
+        description="Count of informative images only (same criteria as has_images).",
+    )
+    has_tables: bool = Field(
+        default=False,
+        description=(
+            "True if page contains DATA tables with rows and columns. "
+            "Exclude layout tables used purely for positioning content."
+        ),
+    )
+    table_count: int = Field(
+        default=0,
+        ge=0,
+        description="Count of data tables only (same criteria as has_tables).",
+    )
+    has_lists: bool = Field(
+        default=False,
+        description=(
+            "True if page contains ordered lists, unordered lists, or definition lists. "
+            "Look for bullet points, numbered items, or term-definition pairs."
+        ),
+    )
+    has_code_blocks: bool = Field(
+        default=False,
+        description=(
+            "True if page contains programming code, command-line examples, or "
+            "monospace-formatted technical content that should be in code blocks."
+        ),
+    )
+    has_math: bool = Field(
+        default=False,
+        description=(
+            "True if page contains mathematical notation, equations, formulas, "
+            "or expressions that would need MathML or LaTeX representation."
+        ),
+    )
+    layout_type: Reasoned[LayoutType] = Field(
+        ...,
+        description=(
+            "Layout classification with reasoning. "
+            "Cite visual evidence: gutter presence, text block width, column structure. "
+            "Example: 'Vertical gutter at ~50% width, parallel text blocks. Two-column.'"
+        ),
+    )
+    has_headers_footers: bool = Field(
+        default=False,
+        description=(
+            "True if page has repeating header/footer content (page numbers, "
+            "document title, chapter headings, logos that appear on every page)."
+        ),
+    )
+    complexity_score: Reasoned[float] = Field(
+        ...,
+        description=(
+            "Page complexity (0.0-1.0) with reasoning. "
+            "Cite factors: table density, nesting depth, column count, image density. "
+            "Example: 'Nested 3-level table with merged cells, dense figures. 0.85.'"
+        ),
+    )
+    complexity_factors: list[str] = Field(
+        default_factory=list,
+        description=(
+            "Specific factors contributing to complexity. Examples: 'nested_tables', "
+            "'merged_cells', 'multi_column', 'dense_images', 'complex_lists', "
+            "'mixed_layout', 'math_equations', 'code_blocks'."
+        ),
+    )
+
+    @field_validator("complexity_score")
+    @classmethod
+    def validate_complexity_range(cls, v: Reasoned[float]) -> Reasoned[float]:
+        """Validate complexity_score value is in valid range."""
+        if not 0.0 <= v.value <= 1.0:
+            raise ValueError(f"complexity_score must be between 0.0 and 1.0, got {v.value}")
+        return v
 
 
 class AnalysisObservation(BaseModel):
@@ -74,23 +153,59 @@ class AnalysisObservation(BaseModel):
 
     page_num: int = Field(..., ge=1, description="Page number where issue appears")
     visual_description: str = Field(
-        ..., description="What is visually presented in the PDF"
+        ...,
+        description=(
+            "What is visually presented in the PDF at this location. "
+            "Describe the actual visual content objectively without interpretation."
+        ),
     )
     markup_issue: str = Field(
-        ..., description="The accessibility issue with the markup"
+        ...,
+        description=(
+            "The accessibility issue with the markup. Describe what's wrong or missing, "
+            "not how to fix it."
+        ),
     )
-    severity: Literal["critical", "major", "minor"] = Field(default="major")
-    confidence: float = Field(default=0.8, ge=0.0, le=1.0)
+    severity: Literal["critical", "major", "minor"] = Field(
+        default="major",
+        description=(
+            "critical=Blocks access entirely (missing alt on key diagram, broken table "
+            "structure, unreadable content). "
+            "major=Significant barrier (skipped heading level, unclear reading order, "
+            "missing image description). "
+            "minor=Inconvenience (missing emphasis markup, suboptimal but functional, "
+            "cosmetic issues)."
+        ),
+    )
+    confidence: float = Field(
+        default=0.8,
+        ge=0.0,
+        le=1.0,
+        description=(
+            "Confidence in this observation (0.0-1.0). Lower if: image is blurry, "
+            "content is ambiguous, multiple interpretations possible, or visual "
+            "evidence is unclear."
+        ),
+    )
 
 
-class AnalysisOutput(BaseModel):
-    """Structured output from analysis phase."""
+class AnalysisOutput(BaseModel, ReasonedOutputMixin):
+    """Structured output from analysis phase with glass-box reasoning.
+
+    Complex determination (document_type) uses Reasoned[T] wrapper to capture
+    chain-of-thought reasoning before the value. Verification fields capture
+    validation of heading order and agent routing decisions.
+    """
 
     # Document metadata
     document_title: str = Field(default="Untitled")
-    document_type: str = Field(
-        default="unknown",
-        description="syllabus, lecture_notes, exam, handout, research_paper, other",
+    document_type: Reasoned[DocumentType] = Field(
+        ...,
+        description=(
+            "Document classification with reasoning. "
+            "Cite visual evidence: title patterns, structure, content type. "
+            "Example: 'Course code CS101 in header, weekly schedule grid, grading section. Syllabus.'"
+        ),
     )
 
     # Structure
@@ -104,6 +219,30 @@ class AnalysisOutput(BaseModel):
         default_factory=list,
         description="Agents needed: figures, tables, structure, typography",
     )
+    agent_routing_reasoning: str = Field(
+        ...,
+        min_length=10,
+        max_length=500,
+        description=(
+            "Reasoning for agent routing decisions. "
+            "State which agents included/excluded and why. "
+            "Example: 'figures: 3 informative images on p2-3. tables: none detected. "
+            "structure: two-column layout requires reading order verification.'"
+        ),
+    )
+
+    # Heading order verification
+    heading_order_verification: str = Field(
+        ...,
+        min_length=10,
+        max_length=500,
+        description=(
+            "Verification that heading tree respects reading order. "
+            "For two-column pages: confirm reading down left column then right. "
+            "Check: every subsection (5.1, 5.2) appears AFTER its parent (5). "
+            "State any corrections made or confirm order is valid."
+        ),
+    )
 
     # Initial observations
     observations: list[AnalysisObservation] = Field(default_factory=list)
@@ -114,26 +253,11 @@ class AnalysisOutput(BaseModel):
 
 
 # =============================================================================
-# Agent Configuration
-# =============================================================================
-
-
-@dataclass
-class AnalysisAgentConfig:
-    """Configuration for the analysis agent."""
-
-    prompts_file: Path = field(default_factory=lambda: Path("analysis.yaml"))
-    max_retries: int = 2
-    temperature: float = 0.3  # Slightly higher for analytical reasoning
-    max_tokens: int = 4096
-
-
-# =============================================================================
 # Analysis Agent
 # =============================================================================
 
 
-class AnalysisAgent:
+class AnalysisAgent(BaseDocumentAgent[AnalysisOutput]):
     """Agent that performs deep document analysis using Sonnet.
 
     This agent:
@@ -154,59 +278,34 @@ class AnalysisAgent:
     # All possible specialized agents
     ALL_AGENTS = {"figures", "tables", "structure", "typography"}
 
-    def __init__(self, config: AnalysisAgentConfig | None = None) -> None:
+    def __init__(self, config: AgentConfig | None = None) -> None:
         """Initialize the analysis agent.
 
         Args:
             config: Optional configuration (uses defaults if not provided)
         """
-        self.config = config or AnalysisAgentConfig()
-        self.model_tier = ModelTier.REASONING
-        self.model_id = MODEL_TIER_MAP[self.model_tier]
-        self.prompts = self._load_prompts()
-        self._agent: Agent[None, AnalysisOutput] | None = None
-
+        if config is None:
+            config = AgentConfig(
+                name="analysis_agent",
+                prompts_file=Path("analysis.yaml"),
+                output_type=AnalysisOutput,
+                model_tier=ModelTier.REASONING,
+                max_retries=2,
+                temperature=0.3,
+                max_tokens=4096,
+            )
+        super().__init__(config)
         logger.info(
             f"AnalysisAgent initialized with model tier {self.model_tier.value} "
             f"({self.model_id})"
         )
 
-    def _load_prompts(self) -> dict[str, Any]:
-        """Load prompts from YAML configuration file."""
-        prompts_file = self.config.prompts_file
-        if not prompts_file.is_absolute():
-            prompts_file = Path(settings.agent_prompts_dir) / prompts_file
+    async def process(self, input_data: Any) -> AnalysisOutput:
+        """Process method required by BaseDocumentAgent.
 
-        try:
-            with open(prompts_file) as f:
-                prompts: dict[str, Any] = yaml.safe_load(f)
-                logger.debug(f"Loaded prompts from {prompts_file}")
-                return prompts
-        except FileNotFoundError:
-            logger.warning(f"Prompts file not found: {prompts_file}, using defaults")
-            return self._default_prompts()
-
-    def _default_prompts(self) -> dict[str, Any]:
-        """Default prompts for analysis agent."""
-        return {
-            "system_prompt": ANALYSIS_SYSTEM_PROMPT,
-            "user_prompt": ANALYSIS_USER_PROMPT,
-        }
-
-    def _get_agent(self) -> Agent[None, AnalysisOutput]:
-        """Get or create the analysis agent."""
-        if self._agent is None:
-            from pydantic_ai.models.bedrock import BedrockConverseModel
-
-            model = BedrockConverseModel(model_name=self.model_id)
-            self._agent = Agent(
-                model,
-                output_type=AnalysisOutput,
-                system_prompt=self.prompts["system_prompt"],
-                retries=self.config.max_retries,
-            )
-            logger.debug(f"Created analysis agent with model {self.model_id}")
-        return self._agent
+        For AnalysisAgent, use analyze() method instead.
+        """
+        raise NotImplementedError("AnalysisAgent uses analyze() method, not process()")
 
     async def analyze(
         self,
@@ -284,23 +383,8 @@ class AnalysisAgent:
         )
         duration_ms = (time.time() - start_time) * 1000
 
-        # Extract usage
-        usage_data = result.usage()
-        input_tokens = usage_data.request_tokens or 0
-        output_tokens = usage_data.response_tokens or 0
-        total_tokens = input_tokens + output_tokens
-
-        pricing = get_pricing_for_tier(self.model_tier)
-        estimated_cost_cents = calculate_estimated_cost(
-            input_tokens, output_tokens, pricing
-        )
-
-        usage = LLMUsage(
-            input_tokens=input_tokens,
-            output_tokens=output_tokens,
-            total_tokens=total_tokens,
-            estimated_cost_cents=estimated_cost_cents,
-        )
+        # Use inherited usage tracking
+        usage = self._core.create_llm_usage(result)
 
         # Debug log: response received
         debug_logger.log_response(
@@ -323,15 +407,60 @@ class AnalysisAgent:
         # Convert observations to full Observation model
         observations = self._convert_observations(output.observations, job_id)
 
+        # Log reasoning corpus for analysis and debugging
+        await self._log_reasoning_corpus(output, job_id)
+
         logger.info(
             f"Analysis complete for job {job_id}: "
             f"{len(manifest.page_features)} pages analyzed, "
             f"{len(manifest.required_agents)} agents needed, "
             f"{len(observations)} initial observations, "
-            f"cost: ${estimated_cost_cents/100:.4f}"
+            f"cost: ${usage.estimated_cost_cents/100:.4f}"
         )
 
         return manifest, observations, usage
+
+    async def _log_reasoning_corpus(
+        self,
+        output: AnalysisOutput,
+        job_id: str,
+    ) -> None:
+        """Log reasoning corpus from Reasoned[T] fields for analysis.
+
+        Extracts reasoning from:
+        - AnalysisOutput.document_type
+        - AnalysisPageFeatures.layout_type (per page)
+        - AnalysisPageFeatures.complexity_score (per page)
+        """
+        try:
+            corpus_service = get_reasoning_corpus_service()
+
+            # Extract from page features (layout_type, complexity_score per page)
+            for pf in output.page_features:
+                corpus = pf.extract_reasoning_corpus()
+                if corpus:
+                    await corpus_service.log_corpus_batch(
+                        job_id=job_id,
+                        agent_name="analysis",
+                        corpus=corpus,
+                    )
+
+            # Extract from output level (document_type)
+            output_corpus = output.extract_reasoning_corpus()
+            if output_corpus:
+                await corpus_service.log_corpus_batch(
+                    job_id=job_id,
+                    agent_name="analysis",
+                    corpus=output_corpus,
+                )
+
+            logger.debug(
+                f"Logged reasoning corpus for job {job_id}: "
+                f"{len(output.page_features)} page analyses, 1 document analysis"
+            )
+        except Exception as e:
+            # Don't fail analysis if corpus logging fails
+            logger.warning(f"Failed to log reasoning corpus for job {job_id}: {e}")
 
     def _build_image_messages(
         self, pages: list[PageData]
@@ -355,8 +484,12 @@ class AnalysisAgent:
         job_id: str,
         total_pages: int,
     ) -> DocumentManifest:
-        """Convert analysis output to DocumentManifest."""
+        """Convert analysis output to DocumentManifest.
+
+        Extracts .value from Reasoned[T] fields for downstream compatibility.
+        """
         # Convert AnalysisPageFeatures to PageFeatures
+        # Extract .value and .reasoning from Reasoned[T] fields
         page_features = [
             PageFeatures(
                 page_num=pf.page_num,
@@ -367,9 +500,11 @@ class AnalysisAgent:
                 has_lists=pf.has_lists,
                 has_code_blocks=pf.has_code_blocks,
                 has_math=pf.has_math,
-                layout_type=pf.layout_type,
+                layout_type=pf.layout_type.value,  # Extract value from Reasoned[T]
+                layout_type_reasoning=pf.layout_type.reasoning,  # Extract reasoning
                 has_headers_footers=pf.has_headers_footers,
-                complexity_score=pf.complexity_score,
+                complexity_score=pf.complexity_score.value,  # Extract value from Reasoned[T]
+                complexity_score_reasoning=pf.complexity_score.reasoning,  # Extract reasoning
                 complexity_factors=pf.complexity_factors,
             )
             for pf in output.page_features
@@ -390,7 +525,8 @@ class AnalysisAgent:
         return DocumentManifest(
             job_id=job_id,
             document_title=output.document_title,
-            document_type=output.document_type,
+            document_type=output.document_type.value,  # Extract value from Reasoned[T]
+            document_type_reasoning=output.document_type.reasoning,  # Extract reasoning
             total_pages=total_pages,
             heading_tree_json=output.heading_tree.model_dump_json(),
             page_features=page_features,
@@ -398,6 +534,8 @@ class AnalysisAgent:
             skip_agents=skip_agents,
             analysis_confidence=output.confidence,
             analysis_notes=output.notes,
+            heading_order_verification=output.heading_order_verification,
+            agent_routing_reasoning=output.agent_routing_reasoning,
             analysis_model=self.model_id,
         )
 
@@ -422,7 +560,7 @@ class AnalysisAgent:
                 ),
                 confidence=obs.confidence,
                 severity=obs.severity,
-                route="auto" if obs.confidence >= 0.7 else "manual",
+                route="auto" if obs.confidence >= settings.min_confidence_for_auto_approval else "manual",
             )
             for obs in analysis_observations
         ]
@@ -432,84 +570,8 @@ class AnalysisAgent:
         return list(self.ALL_AGENTS - set(required))
 
 
-# =============================================================================
-# Default Prompts
-# =============================================================================
-
-ANALYSIS_SYSTEM_PROMPT = """You are an expert document accessibility analyst specializing in \
-PDF remediation for educational materials.
-
-Your task is to perform deep analysis of PDF documents to guide the accessibility remediation pipeline.
-
-ANALYSIS OBJECTIVES:
-
-1. DOCUMENT CLASSIFICATION
-   - Identify document type: syllabus, lecture_notes, exam, handout, research_paper, other
-   - Note any special characteristics (multi-column layout, scanned content, etc.)
-
-2. STRUCTURE ANALYSIS
-   - Build complete heading hierarchy (H1-H6)
-   - Detect layout: single_column, two_column, mixed
-   - Identify reading order issues in multi-column layouts
-   - Note section numbering patterns
-
-3. PER-PAGE FEATURE DETECTION
-   For each page, report:
-   - has_images: true/false (informative images, not decorative)
-   - image_count: number of images
-   - has_tables: true/false
-   - table_count: number of tables
-   - has_lists: true/false (ordered, unordered, definition)
-   - has_code_blocks: true/false
-   - has_math: true/false (mathematical notation)
-   - layout_type: single_column/two_column/mixed
-   - has_headers_footers: true/false
-   - complexity_score: 0.0-1.0 (based on content density and structure)
-   - complexity_factors: ["dense tables", "nested lists", "complex images", etc.]
-
-4. INITIAL OBSERVATIONS
-   Note any clear accessibility issues:
-   - Missing or incorrect heading levels
-   - Images that appear informative but likely lack descriptions
-   - Tables with complex structures (merged cells, nested headers)
-   - Typography conveying meaning (color-coded text, bold for emphasis)
-   - Reading order problems in multi-column layouts
-
-5. AGENT ROUTING
-   Based on content, recommend which specialized agents should run:
-   - "figures": Document has images that need description
-   - "tables": Document has data tables that need structure markup
-   - "structure": Heading hierarchy needs verification or is complex
-   - "typography": Visual styling appears to convey semantic meaning
-
-Be thorough but focused on accessibility-relevant details.
-"""
-
-ANALYSIS_USER_PROMPT = """Analyze this {total_pages}-page PDF document.
-
-Examine each page image and provide:
-
-1. Document title and type classification
-
-2. Complete heading structure with:
-   - Level (1-6)
-   - Title text as it appears
-   - Page number
-   - Section numbering if present
-
-3. Page-by-page feature analysis (for EVERY page)
-
-4. List of required specialized agents based on content
-
-5. Initial accessibility observations for any clear issues you notice
-
-Focus on content that will need accessibility remediation.
-"""
-
-
 __all__ = [
     "AnalysisAgent",
-    "AnalysisAgentConfig",
     "AnalysisOutput",
     "AnalysisObservation",
     "AnalysisPageFeatures",

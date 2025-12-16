@@ -3,10 +3,10 @@
 Tests cover:
 - Agent configuration and initialization
 - Model tier selection (REASONING = Sonnet)
-- Output model validation (ProposalDraft, ConsolidationOutput)
-- Observation formatting
+- Output model validation (ProposalDraft, ConsolidationOutput, ConflictRecord)
+- Observation formatting (XML structure)
 - Proposal validation and conversion
-- Confidence-based routing
+- Confidence-based routing with route reasoning
 """
 
 from unittest.mock import AsyncMock, MagicMock, patch
@@ -14,6 +14,7 @@ from unittest.mock import AsyncMock, MagicMock, patch
 import pytest
 from pydantic import ValidationError
 from src.agents.consolidation_agent import (
+    ConflictRecord,
     ConsolidationAgent,
     ConsolidationOutput,
     ProposalDraft,
@@ -31,7 +32,7 @@ class TestProposalDraft:
     """Tests for ProposalDraft model."""
 
     def test_valid_proposal_draft(self) -> None:
-        """Test creating a valid ProposalDraft."""
+        """Test creating a valid ProposalDraft with all fields."""
         draft = ProposalDraft(
             observation_ids=["obs-1", "obs-2"],
             search_text="![](image.png)",
@@ -40,22 +41,73 @@ class TestProposalDraft:
             page_nums=[1],
             estimated_impact="Adds alt text to 1 image",
             confidence=0.9,
+            grouping_rationale="Both observations about same image on page 1",
+            route="auto",
+            route_reasoning="High confidence (0.9), simple image fix",
         )
         assert len(draft.observation_ids) == 2
         assert draft.confidence == 0.9
         assert draft.page_nums == [1]
+        assert draft.route == "auto"
+        assert "High confidence" in draft.route_reasoning
 
-    def test_proposal_draft_defaults(self) -> None:
-        """Test ProposalDraft default values."""
+    def test_proposal_draft_required_fields(self) -> None:
+        """Test ProposalDraft with only required fields."""
         draft = ProposalDraft(
             observation_ids=["obs-1"],
             search_text="old",
             replace_text="new",
-            justification="Test",
+            justification="Test justification",
+            confidence=0.85,
+            route="auto",
+            route_reasoning="Simple fix with high confidence",
         )
+        # Optional fields should have defaults
         assert draft.page_nums == []
         assert draft.estimated_impact == ""
-        assert draft.confidence == 0.8
+        assert draft.grouping_rationale == "Single observation, no grouping needed."
+
+    def test_confidence_is_required(self) -> None:
+        """Test confidence must be provided (not defaulted to 0.8)."""
+        with pytest.raises(ValidationError) as exc_info:
+            ProposalDraft(
+                observation_ids=["obs-1"],
+                search_text="old",
+                replace_text="new",
+                justification="Test",
+                route="auto",
+                route_reasoning="Test",
+                # confidence omitted - should fail
+            )
+        assert "confidence" in str(exc_info.value)
+
+    def test_route_is_required(self) -> None:
+        """Test route must be provided."""
+        with pytest.raises(ValidationError) as exc_info:
+            ProposalDraft(
+                observation_ids=["obs-1"],
+                search_text="old",
+                replace_text="new",
+                justification="Test",
+                confidence=0.8,
+                route_reasoning="Test",
+                # route omitted - should fail
+            )
+        assert "route" in str(exc_info.value)
+
+    def test_route_reasoning_is_required(self) -> None:
+        """Test route_reasoning must be provided."""
+        with pytest.raises(ValidationError) as exc_info:
+            ProposalDraft(
+                observation_ids=["obs-1"],
+                search_text="old",
+                replace_text="new",
+                justification="Test",
+                confidence=0.8,
+                route="auto",
+                # route_reasoning omitted - should fail
+            )
+        assert "route_reasoning" in str(exc_info.value)
 
     def test_confidence_validation_too_high(self) -> None:
         """Test confidence must be <= 1.0."""
@@ -66,6 +118,8 @@ class TestProposalDraft:
                 replace_text="new",
                 justification="Test",
                 confidence=1.5,
+                route="auto",
+                route_reasoning="Test",
             )
 
     def test_confidence_validation_too_low(self) -> None:
@@ -77,6 +131,21 @@ class TestProposalDraft:
                 replace_text="new",
                 justification="Test",
                 confidence=-0.1,
+                route="manual",
+                route_reasoning="Test",
+            )
+
+    def test_route_must_be_auto_or_manual(self) -> None:
+        """Test route must be 'auto' or 'manual'."""
+        with pytest.raises(ValidationError):
+            ProposalDraft(
+                observation_ids=["obs-1"],
+                search_text="old",
+                replace_text="new",
+                justification="Test",
+                confidence=0.8,
+                route="invalid",  # type: ignore
+                route_reasoning="Test",
             )
 
     def test_empty_observation_ids_allowed(self) -> None:
@@ -87,8 +156,50 @@ class TestProposalDraft:
             search_text="old",
             replace_text="new",
             justification="Test",
+            confidence=0.8,
+            route="manual",
+            route_reasoning="No observations linked",
         )
         assert draft.observation_ids == []
+
+
+@pytest.mark.unit
+class TestConflictRecord:
+    """Tests for ConflictRecord model."""
+
+    def test_valid_conflict_record(self) -> None:
+        """Test creating a valid ConflictRecord."""
+        conflict = ConflictRecord(
+            observation_ids=["obs-1", "obs-2"],
+            conflict_type="contradictory_classification",
+            description="Image classified as both decorative and informative",
+            page_num=3,
+            element="image 1 (university logo)",
+        )
+        assert len(conflict.observation_ids) == 2
+        assert conflict.conflict_type == "contradictory_classification"
+        assert conflict.page_num == 3
+
+    def test_conflict_record_required_fields(self) -> None:
+        """Test ConflictRecord with only required fields."""
+        conflict = ConflictRecord(
+            observation_ids=["obs-1"],
+            conflict_type="ambiguous_element",
+            description="Could not determine element type",
+            page_num=1,
+        )
+        # element has default
+        assert conflict.element == ""
+
+    def test_page_num_must_be_positive(self) -> None:
+        """Test page_num must be >= 1."""
+        with pytest.raises(ValidationError):
+            ConflictRecord(
+                observation_ids=["obs-1"],
+                conflict_type="test",
+                description="test",
+                page_num=0,  # Must be >= 1
+            )
 
 
 @pytest.mark.unit
@@ -104,10 +215,20 @@ class TestConsolidationOutput:
                     search_text="# Old",
                     replace_text="# New",
                     justification="Fix heading",
+                    confidence=0.85,
+                    route="manual",
+                    route_reasoning="Structural heading change needs review",
                 )
             ],
             manual_observations=["obs-2"],
-            conflicts=[{"observation_ids": ["obs-3", "obs-4"], "reason": "Conflict"}],
+            conflicts=[
+                ConflictRecord(
+                    observation_ids=["obs-3", "obs-4"],
+                    conflict_type="contradictory_classification",
+                    description="Conflict between recommendations",
+                    page_num=2,
+                )
+            ],
             notes="Some observations were conflicting",
         )
         assert len(output.proposals) == 1
@@ -310,6 +431,8 @@ class TestProposalValidation:
                 justification="Test change",
                 page_nums=[1],
                 confidence=0.99,  # Use 0.99 to exceed any reasonable threshold
+                route="auto",
+                route_reasoning="High confidence fix",
             )
         ]
 
@@ -339,6 +462,8 @@ class TestProposalValidation:
                 replace_text="Replacement",
                 justification="Test",
                 confidence=0.9,
+                route="auto",
+                route_reasoning="Test",
             )
         ]
 
@@ -362,6 +487,8 @@ class TestProposalValidation:
                 replace_text="Hi",
                 justification="Test",
                 confidence=0.9,
+                route="auto",
+                route_reasoning="Test",
             )
         ]
 
@@ -373,8 +500,8 @@ class TestProposalValidation:
 
         assert len(proposals) == 0
 
-    def test_low_confidence_routes_to_manual(self) -> None:
-        """Test low confidence proposals route to manual."""
+    def test_low_confidence_overrides_route_to_manual(self) -> None:
+        """Test low confidence proposals override route to manual."""
         agent = ConsolidationAgent()
         markdown = "# Hello World"
 
@@ -385,6 +512,8 @@ class TestProposalValidation:
                 replace_text="Hi There",
                 justification="Test",
                 confidence=0.5,  # Below threshold
+                route="auto",  # LLM said auto, but confidence too low
+                route_reasoning="LLM routed auto, but should be overridden",
             )
         ]
 
@@ -395,10 +524,36 @@ class TestProposalValidation:
         )
 
         assert len(proposals) == 1
-        assert proposals[0].route == "manual"
+        assert proposals[0].route == "manual"  # Overridden due to low confidence
+
+    def test_manual_route_respected(self) -> None:
+        """Test manual route from LLM is respected even with high confidence."""
+        agent = ConsolidationAgent()
+        markdown = "# Hello World"
+
+        drafts = [
+            ProposalDraft(
+                observation_ids=["obs-1"],
+                search_text="Hello World",
+                replace_text="Hi There",
+                justification="Structural change",
+                confidence=0.95,  # High confidence
+                route="manual",  # But LLM says manual (structural change)
+                route_reasoning="Heading change affects document structure",
+            )
+        ]
+
+        proposals = agent._validate_and_convert_proposals(
+            drafts=drafts,
+            markdown=markdown,
+            job_id="test-job",
+        )
+
+        assert len(proposals) == 1
+        assert proposals[0].route == "manual"  # Respected
 
     def test_boundary_confidence_routes_auto(self) -> None:
-        """Test confidence exactly at threshold routes to auto."""
+        """Test confidence exactly at threshold routes to auto when LLM says auto."""
         from src.config import settings
         agent = ConsolidationAgent()
         markdown = "# Hello World"
@@ -410,6 +565,8 @@ class TestProposalValidation:
                 replace_text="Hi There",
                 justification="Test",
                 confidence=settings.min_confidence_for_auto_approval,  # Exactly at threshold
+                route="auto",
+                route_reasoning="At threshold",
             )
         ]
 
@@ -421,6 +578,34 @@ class TestProposalValidation:
 
         assert len(proposals) == 1
         assert proposals[0].route == "auto"
+
+    def test_grouping_rationale_included_in_justification(self) -> None:
+        """Test grouping rationale is added to justification for multi-observation proposals."""
+        agent = ConsolidationAgent()
+        markdown = "# Hello World"
+
+        drafts = [
+            ProposalDraft(
+                observation_ids=["obs-1", "obs-2"],
+                search_text="Hello World",
+                replace_text="Hi There",
+                justification="Fixes both observations",
+                grouping_rationale="Both observations concern the same heading element",
+                confidence=0.85,
+                route="auto",
+                route_reasoning="Simple fix",
+            )
+        ]
+
+        proposals = agent._validate_and_convert_proposals(
+            drafts=drafts,
+            markdown=markdown,
+            job_id="test-job",
+        )
+
+        assert len(proposals) == 1
+        assert "Grouping:" in proposals[0].justification
+        assert "Both observations concern the same heading element" in proposals[0].justification
 
 
 # =============================================================================
@@ -505,15 +690,17 @@ class TestConsolidationAgentConsolidate:
         """Test consolidate calls the PydanticAI agent."""
         agent = ConsolidationAgent()
 
-        # Create mock output
+        # Create mock output with all required fields
         mock_output = ConsolidationOutput(
             proposals=[
                 ProposalDraft(
                     observation_ids=["obs-1"],
                     search_text="![](image-page-1-1.png)",
                     replace_text="![Flowchart](image-page-1-1.png)",
-                    justification="Adding alt text",
+                    justification="Adding alt text to flowchart image",
                     confidence=0.9,
+                    route="auto",
+                    route_reasoning="High confidence, simple image fix",
                 )
             ],
             manual_observations=[],

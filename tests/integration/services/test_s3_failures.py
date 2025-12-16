@@ -10,6 +10,7 @@ from unittest.mock import AsyncMock
 
 import pytest
 from botocore.exceptions import ClientError
+from src.agents.extraction_agent import ExtractionOutput
 from src.services.job_service import JobService
 from src.services.pii_service import PIIDetectionService
 from src.services.processing_service import ProcessingService
@@ -17,6 +18,7 @@ from src.services.queue_service import QueueService
 from src.services.storage_service import StorageService
 from src.shared.models.processing import LLMUsage
 from src.shared.models.queue import PIIQueuePayload, ProcessingQueuePayload
+from src.shared.models.reasoned import Reasoned
 from src.shared.models.remediation import DocumentManifest, HeadingTree, PageFeatures
 
 
@@ -340,8 +342,15 @@ class TestProcessingServiceS3Failures:
         )
         mock_extraction_agent = mocker.Mock()
         mock_extraction_agent.model_id = "us.anthropic.claude-haiku-4-5-20251001-v1:0"
+        mock_extraction_output = ExtractionOutput(
+            markdown="# Test Improved",
+            confidence=Reasoned(reasoning="Clear text", value=0.88),
+            reading_order_followed=Reasoned(reasoning="Single column", value=True),
+            pages_transcribed=[1],
+            transcription_notes="",
+        )
         mock_extraction_agent.extract = AsyncMock(
-            return_value=("# Test Improved", 0.88, mock_extraction_usage)
+            return_value=(mock_extraction_output, mock_extraction_usage)
         )
         mock_extraction_agent_class.return_value = mock_extraction_agent
 
@@ -426,8 +435,15 @@ class TestProcessingServiceS3Failures:
         )
         mock_extraction_agent = mocker.Mock()
         mock_extraction_agent.model_id = "us.anthropic.claude-haiku-4-5-20251001-v1:0"
+        mock_extraction_output = ExtractionOutput(
+            markdown="# Test",
+            confidence=Reasoned(reasoning="Clear text", value=0.88),
+            reading_order_followed=Reasoned(reasoning="Single column", value=True),
+            pages_transcribed=[1],
+            transcription_notes="",
+        )
         mock_extraction_agent.extract = AsyncMock(
-            return_value=("# Test", 0.88, mock_extraction_usage)
+            return_value=(mock_extraction_output, mock_extraction_usage)
         )
         mock_extraction_agent_class.return_value = mock_extraction_agent
 

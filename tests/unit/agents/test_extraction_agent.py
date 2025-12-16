@@ -3,12 +3,13 @@
 Tests cover:
 - Agent configuration and initialization
 - Model tier selection (EFFICIENT = Haiku)
-- Output model validation
+- Output model validation with Reasoned[T] fields
 - Manifest parsing and formatting
 - Heading tree formatting
 - Page features formatting
 - Cost calculation with Haiku pricing
 - Image message building
+- Reasoning corpus extraction
 """
 
 from pathlib import Path
@@ -24,6 +25,7 @@ from src.agents.extraction_agent import (
 from src.agents.model_tiers import MODEL_TIER_MAP, ModelTier
 from src.services.pdf_converter import PageData
 from src.shared.llm_cost import HAIKU_PRICING, calculate_estimated_cost
+from src.shared.models.reasoned import Reasoned
 from src.shared.models.remediation import (
     DocumentManifest,
     HeadingNode,
@@ -36,38 +38,117 @@ from src.shared.models.remediation import (
 # =============================================================================
 
 
+def _create_extraction_output(
+    markdown: str = "# Title\n\nContent here.",
+    confidence_value: float = 0.9,
+    confidence_reasoning: str = "Clear images, all text readable. 0.9.",
+    reading_order_value: bool = True,
+    reading_order_reasoning: str = "Single-column layout, top-to-bottom. True.",
+    pages_transcribed: list[int] | None = None,
+    transcription_notes: str = "",
+) -> ExtractionOutput:
+    """Helper to create ExtractionOutput with Reasoned[T] fields."""
+    return ExtractionOutput(
+        markdown=markdown,
+        confidence=Reasoned(reasoning=confidence_reasoning, value=confidence_value),
+        reading_order_followed=Reasoned(reasoning=reading_order_reasoning, value=reading_order_value),
+        pages_transcribed=pages_transcribed or [1],
+        transcription_notes=transcription_notes,
+    )
+
+
 @pytest.mark.unit
 class TestExtractionOutput:
-    """Tests for ExtractionOutput model."""
+    """Tests for ExtractionOutput model with Reasoned[T] fields."""
 
-    def test_valid_extraction_output(self):
-        """Test creating a valid ExtractionOutput."""
-        output = ExtractionOutput(
+    def test_valid_extraction_output(self) -> None:
+        """Test creating a valid ExtractionOutput with Reasoned[T] fields."""
+        output = _create_extraction_output(
             markdown="# Title\n\nContent here.",
-            confidence=0.9,
-            notes="Transcription complete.",
+            confidence_value=0.9,
+            confidence_reasoning="Clear images, all text visible. 0.9.",
+            reading_order_value=True,
+            reading_order_reasoning="Single-column, top-to-bottom order. True.",
+            pages_transcribed=[1, 2, 3],
+            transcription_notes="Transcription complete.",
         )
         assert output.markdown == "# Title\n\nContent here."
-        assert output.confidence == 0.9
-        assert output.notes == "Transcription complete."
+        assert output.confidence.value == 0.9
+        assert output.confidence.reasoning == "Clear images, all text visible. 0.9."
+        assert output.reading_order_followed.value is True
+        assert output.pages_transcribed == [1, 2, 3]
+        assert output.transcription_notes == "Transcription complete."
 
-    def test_extraction_output_defaults(self):
+    def test_extraction_output_defaults(self) -> None:
         """Test ExtractionOutput default values."""
-        output = ExtractionOutput(markdown="# Test")
-        assert output.confidence == 0.85
-        assert output.notes == ""
+        output = ExtractionOutput(
+            markdown="# Test",
+            confidence=Reasoned(reasoning="Good quality images.", value=0.85),
+            reading_order_followed=Reasoned(reasoning="Simple layout.", value=True),
+            pages_transcribed=[1],
+        )
+        assert output.transcription_notes == ""
 
-    def test_confidence_validation(self):
+    def test_confidence_validation(self) -> None:
         """Test confidence must be between 0 and 1."""
         with pytest.raises(ValidationError):
-            ExtractionOutput(markdown="test", confidence=1.5)
+            ExtractionOutput(
+                markdown="test",
+                confidence=Reasoned(reasoning="test", value=1.5),
+                reading_order_followed=Reasoned(reasoning="test", value=True),
+                pages_transcribed=[1],
+            )
         with pytest.raises(ValidationError):
-            ExtractionOutput(markdown="test", confidence=-0.1)
+            ExtractionOutput(
+                markdown="test",
+                confidence=Reasoned(reasoning="test", value=-0.1),
+                reading_order_followed=Reasoned(reasoning="test", value=True),
+                pages_transcribed=[1],
+            )
 
-    def test_markdown_required(self):
+    def test_markdown_required(self) -> None:
         """Test markdown field is required."""
         with pytest.raises(ValidationError):
-            ExtractionOutput()
+            ExtractionOutput(
+                confidence=Reasoned(reasoning="test", value=0.9),
+                reading_order_followed=Reasoned(reasoning="test", value=True),
+                pages_transcribed=[1],
+            )
+
+    def test_reasoning_required(self) -> None:
+        """Test reasoning fields are required (cannot have empty reasoning)."""
+        with pytest.raises(ValidationError):
+            ExtractionOutput(
+                markdown="test",
+                confidence=Reasoned(reasoning="", value=0.9),  # Empty reasoning
+                reading_order_followed=Reasoned(reasoning="test", value=True),
+                pages_transcribed=[1],
+            )
+
+    def test_extract_reasoning_corpus(self) -> None:
+        """Test reasoning corpus extraction from Reasoned[T] fields."""
+        output = _create_extraction_output(
+            confidence_value=0.92,
+            confidence_reasoning="All pages clear, 2 [?] markers. 0.92.",
+            reading_order_value=True,
+            reading_order_reasoning="Pages 1-3 single-column. True.",
+            pages_transcribed=[1, 2, 3],
+        )
+        corpus = output.extract_reasoning_corpus()
+
+        # Should extract reasoning from both Reasoned[T] fields
+        assert len(corpus) == 2
+
+        # Check confidence reasoning
+        confidence_entry = next(c for c in corpus if c["field"] == "confidence")
+        assert confidence_entry["reasoning"] == "All pages clear, 2 [?] markers. 0.92."
+        assert confidence_entry["value"] == 0.92
+        assert confidence_entry["model_class"] == "ExtractionOutput"
+
+        # Check reading_order_followed reasoning
+        reading_entry = next(c for c in corpus if c["field"] == "reading_order_followed")
+        assert reading_entry["reasoning"] == "Pages 1-3 single-column. True."
+        assert reading_entry["value"] is True
 
 
 # =============================================================================
@@ -81,7 +162,7 @@ class TestExtractionAgentConfig:
 
     @patch("src.agents.core.yaml.safe_load")
     @patch("builtins.open", create=True)
-    def test_default_config(self, mock_open, mock_yaml):
+    def test_default_config(self, mock_open: MagicMock, mock_yaml: MagicMock) -> None:
         """Test default configuration values when no config provided."""
         mock_yaml.return_value = {
             "system_prompt": "test prompt",
@@ -95,7 +176,7 @@ class TestExtractionAgentConfig:
 
     @patch("src.agents.core.yaml.safe_load")
     @patch("builtins.open", create=True)
-    def test_custom_config(self, mock_open, mock_yaml):
+    def test_custom_config(self, mock_open: MagicMock, mock_yaml: MagicMock) -> None:
         """Test custom configuration values."""
         mock_yaml.return_value = {
             "system_prompt": "test prompt",
@@ -127,7 +208,7 @@ class TestExtractionAgentInit:
 
     @patch("src.agents.core.yaml.safe_load")
     @patch("builtins.open", create=True)
-    def test_agent_uses_efficient_tier(self, mock_open, mock_yaml):
+    def test_agent_uses_efficient_tier(self, mock_open: MagicMock, mock_yaml: MagicMock) -> None:
         """Test agent uses EFFICIENT (Haiku) model tier."""
         mock_yaml.return_value = {
             "system_prompt": "test prompt",
@@ -140,7 +221,7 @@ class TestExtractionAgentInit:
 
     @patch("src.agents.core.yaml.safe_load")
     @patch("builtins.open", create=True)
-    def test_agent_loads_prompts(self, mock_open, mock_yaml):
+    def test_agent_loads_prompts(self, mock_open: MagicMock, mock_yaml: MagicMock) -> None:
         """Test agent loads prompts from YAML."""
         mock_yaml.return_value = {
             "system_prompt": "custom system",
@@ -150,7 +231,7 @@ class TestExtractionAgentInit:
         assert agent.prompts["system_prompt"] == "custom system"
         assert agent.prompts["user_prompt"] == "custom user"
 
-    def test_agent_raises_when_prompts_file_not_found(self):
+    def test_agent_raises_when_prompts_file_not_found(self) -> None:
         """Test agent raises FileNotFoundError when prompts file not found (fail fast)."""
         config = AgentConfig(
             name="test_extraction",
@@ -172,7 +253,7 @@ class TestHeadingTreeFormatting:
 
     @patch("src.agents.core.yaml.safe_load", return_value={"system_prompt": "test", "user_prompt": "test"})
     @patch("builtins.open", create=True)
-    def test_format_heading_tree_basic(self, mock_open, mock_yaml):  # noqa: ARG002
+    def test_format_heading_tree_basic(self, mock_open: MagicMock, mock_yaml: MagicMock) -> None:
         """Test basic heading tree formatting."""
         agent = ExtractionAgent()
         tree = HeadingTree(
@@ -196,7 +277,7 @@ class TestHeadingTreeFormatting:
 
     @patch("src.agents.core.yaml.safe_load", return_value={"system_prompt": "test", "user_prompt": "test"})
     @patch("builtins.open", create=True)
-    def test_format_heading_tree_with_section_numbers(self, mock_open, mock_yaml):
+    def test_format_heading_tree_with_section_numbers(self, mock_open: MagicMock, mock_yaml: MagicMock) -> None:
         """Test heading tree formatting with section numbers."""
         agent = ExtractionAgent()
         tree = HeadingTree(
@@ -217,7 +298,7 @@ class TestHeadingTreeFormatting:
 
     @patch("src.agents.core.yaml.safe_load", return_value={"system_prompt": "test", "user_prompt": "test"})
     @patch("builtins.open", create=True)
-    def test_format_heading_tree_nested_levels(self, mock_open, mock_yaml):
+    def test_format_heading_tree_nested_levels(self, mock_open: MagicMock, mock_yaml: MagicMock) -> None:
         """Test heading tree formatting with nested levels."""
         agent = ExtractionAgent()
         tree = HeadingTree(
@@ -239,7 +320,7 @@ class TestHeadingTreeFormatting:
 
     @patch("src.agents.core.yaml.safe_load", return_value={"system_prompt": "test", "user_prompt": "test"})
     @patch("builtins.open", create=True)
-    def test_format_heading_tree_two_column(self, mock_open, mock_yaml):
+    def test_format_heading_tree_two_column(self, mock_open: MagicMock, mock_yaml: MagicMock) -> None:
         """Test heading tree with two-column layout."""
         agent = ExtractionAgent()
         tree = HeadingTree(
@@ -264,7 +345,7 @@ class TestPageFeaturesFormatting:
 
     @patch("src.agents.core.yaml.safe_load", return_value={"system_prompt": "test", "user_prompt": "test"})
     @patch("builtins.open", create=True)
-    def test_format_page_features_basic(self, mock_open, mock_yaml):
+    def test_format_page_features_basic(self, mock_open: MagicMock, mock_yaml: MagicMock) -> None:
         """Test basic page features formatting."""
         agent = ExtractionAgent()
         features = [
@@ -280,7 +361,7 @@ class TestPageFeaturesFormatting:
 
     @patch("src.agents.core.yaml.safe_load", return_value={"system_prompt": "test", "user_prompt": "test"})
     @patch("builtins.open", create=True)
-    def test_format_page_features_with_images(self, mock_open, mock_yaml):
+    def test_format_page_features_with_images(self, mock_open: MagicMock, mock_yaml: MagicMock) -> None:
         """Test page features formatting with images."""
         agent = ExtractionAgent()
         features = [
@@ -292,7 +373,7 @@ class TestPageFeaturesFormatting:
 
     @patch("src.agents.core.yaml.safe_load", return_value={"system_prompt": "test", "user_prompt": "test"})
     @patch("builtins.open", create=True)
-    def test_format_page_features_with_tables(self, mock_open, mock_yaml):
+    def test_format_page_features_with_tables(self, mock_open: MagicMock, mock_yaml: MagicMock) -> None:
         """Test page features formatting with tables."""
         agent = ExtractionAgent()
         features = [
@@ -304,7 +385,7 @@ class TestPageFeaturesFormatting:
 
     @patch("src.agents.core.yaml.safe_load", return_value={"system_prompt": "test", "user_prompt": "test"})
     @patch("builtins.open", create=True)
-    def test_format_page_features_with_all_content(self, mock_open, mock_yaml):
+    def test_format_page_features_with_all_content(self, mock_open: MagicMock, mock_yaml: MagicMock) -> None:
         """Test page features formatting with all content types."""
         agent = ExtractionAgent()
         features = [
@@ -341,7 +422,7 @@ class TestImageMessageBuilding:
 
     @patch("src.agents.core.yaml.safe_load", return_value={"system_prompt": "test", "user_prompt": "test"})
     @patch("builtins.open", create=True)
-    def test_build_image_messages_empty(self, mock_open, mock_yaml):
+    def test_build_image_messages_empty(self, mock_open: MagicMock, mock_yaml: MagicMock) -> None:
         """Test building messages with no pages."""
         agent = ExtractionAgent()
         messages = agent._build_image_messages([])
@@ -349,7 +430,7 @@ class TestImageMessageBuilding:
 
     @patch("src.agents.core.yaml.safe_load", return_value={"system_prompt": "test", "user_prompt": "test"})
     @patch("builtins.open", create=True)
-    def test_build_image_messages_with_images(self, mock_open, mock_yaml):
+    def test_build_image_messages_with_images(self, mock_open: MagicMock, mock_yaml: MagicMock) -> None:
         """Test building messages with page images."""
         import base64
 
@@ -368,7 +449,7 @@ class TestImageMessageBuilding:
 
     @patch("src.agents.core.yaml.safe_load", return_value={"system_prompt": "test", "user_prompt": "test"})
     @patch("builtins.open", create=True)
-    def test_build_image_messages_without_images(self, mock_open, mock_yaml):
+    def test_build_image_messages_without_images(self, mock_open: MagicMock, mock_yaml: MagicMock) -> None:
         """Test building messages with pages but no images."""
         agent = ExtractionAgent()
         pages = [
@@ -392,14 +473,14 @@ class TestImageMessageBuilding:
 class TestCostCalculation:
     """Tests for cost calculation with Haiku pricing."""
 
-    def test_haiku_pricing_used(self):
+    def test_haiku_pricing_used(self) -> None:
         """Test Haiku pricing is correct."""
         # $1/1M input = 0.0001 cents/token
         # $5/1M output = 0.0005 cents/token
         assert HAIKU_PRICING.input_cost_per_token_cents == 0.0001
         assert HAIKU_PRICING.output_cost_per_token_cents == 0.0005
 
-    def test_extraction_cost_calculation(self):
+    def test_extraction_cost_calculation(self) -> None:
         """Test typical extraction cost calculation."""
         # Typical extraction: 52K input tokens (images), 8K output tokens
         input_tokens = 52000
@@ -414,7 +495,7 @@ class TestCostCalculation:
         expected = (52000 * 0.0001) + (8000 * 0.0005)
         assert cost == pytest.approx(expected, rel=0.01)
 
-    def test_cost_is_cheaper_than_sonnet(self):
+    def test_cost_is_cheaper_than_sonnet(self) -> None:
         """Test Haiku extraction is cheaper than would be with Sonnet."""
         from src.shared.llm_cost import SONNET_PRICING
 
@@ -442,7 +523,7 @@ class TestExtractMethod:
 
     @patch("src.agents.core.yaml.safe_load", return_value={"system_prompt": "test", "user_prompt": "test"})
     @patch("builtins.open", create=True)
-    def test_extract_raises_on_empty_pages(self, mock_open, mock_yaml):
+    def test_extract_raises_on_empty_pages(self, mock_open: MagicMock, mock_yaml: MagicMock) -> None:
         """Test extract raises ValueError with no pages."""
         agent = ExtractionAgent()
         manifest = DocumentManifest(
@@ -465,8 +546,8 @@ class TestExtractMethod:
     @pytest.mark.asyncio
     @patch("src.agents.core.yaml.safe_load", return_value={"system_prompt": "test", "user_prompt": "test"})
     @patch("builtins.open", create=True)
-    async def test_extract_parses_manifest_heading_tree(self, mock_open, mock_yaml):
-        """Test extract correctly parses heading tree from manifest."""
+    async def test_extract_returns_extraction_output(self, mock_open: MagicMock, mock_yaml: MagicMock) -> None:
+        """Test extract returns ExtractionOutput with Reasoned[T] fields."""
         agent = ExtractionAgent()
 
         heading_tree = HeadingTree(
@@ -486,18 +567,25 @@ class TestExtractMethod:
             analysis_notes="Test notes",
         )
 
-        # Mock the agent.run call
+        # Mock the agent.run call with new output format
         mock_result = MagicMock()
-        mock_result.output = ExtractionOutput(
+        mock_result.output = _create_extraction_output(
             markdown="# Test Doc\n\n## Intro\n\nContent",
-            confidence=0.9,
-            notes="",
+            confidence_value=0.9,
+            confidence_reasoning="Clear images, all content visible. 0.9.",
+            reading_order_value=True,
+            reading_order_reasoning="Two-column pages, left then right. True.",
+            pages_transcribed=[1, 2],
+            transcription_notes="",
         )
         mock_result.usage.return_value = MagicMock(
             request_tokens=1000, response_tokens=500
         )
 
-        with patch.object(agent, "_get_agent") as mock_get_agent:
+        with (
+            patch.object(agent, "_get_agent") as mock_get_agent,
+            patch.object(agent, "_log_reasoning_corpus", new_callable=AsyncMock),
+        ):
             mock_agent = AsyncMock()
             mock_agent.run = AsyncMock(return_value=mock_result)
             mock_get_agent.return_value = mock_agent
@@ -507,10 +595,14 @@ class TestExtractMethod:
             test_image = base64.b64encode(b"fake").decode()
             pages = [PageData(page_num=1, image_base64=test_image)]
 
-            markdown, confidence, usage = await agent.extract(pages, manifest, "test-job")
+            output, usage = await agent.extract(pages, manifest, "test-job")
 
-            assert markdown == "# Test Doc\n\n## Intro\n\nContent"
-            assert confidence == 0.9
+            # Verify output is ExtractionOutput with Reasoned[T] fields
+            assert output.markdown == "# Test Doc\n\n## Intro\n\nContent"
+            assert output.confidence.value == 0.9
+            assert output.confidence.reasoning == "Clear images, all content visible. 0.9."
+            assert output.reading_order_followed.value is True
+            assert output.pages_transcribed == [1, 2]
             assert usage.input_tokens == 1000
             assert usage.output_tokens == 500
 
@@ -527,7 +619,7 @@ class TestExtractionAgentIntegration:
     @pytest.mark.asyncio
     @patch("src.agents.core.yaml.safe_load", return_value={"system_prompt": "test", "user_prompt": "test"})
     @patch("builtins.open", create=True)
-    async def test_full_extraction_flow(self, mock_open, mock_yaml):
+    async def test_full_extraction_flow(self, mock_open: MagicMock, mock_yaml: MagicMock) -> None:
         """Test full extraction flow with mocked model."""
         agent = ExtractionAgent()
 
@@ -577,16 +669,23 @@ Office: 123 Science Hall
 """
 
         mock_result = MagicMock()
-        mock_result.output = ExtractionOutput(
+        mock_result.output = _create_extraction_output(
             markdown=expected_markdown,
-            confidence=0.88,
-            notes="Table on page 2 transcribed successfully.",
+            confidence_value=0.88,
+            confidence_reasoning="All 3 pages clear, table on page 2 intact. 0.88.",
+            reading_order_value=True,
+            reading_order_reasoning="Single-column layout throughout. True.",
+            pages_transcribed=[1, 2, 3],
+            transcription_notes="Table on page 2 transcribed successfully.",
         )
         mock_result.usage.return_value = MagicMock(
             request_tokens=15000, response_tokens=2000
         )
 
-        with patch.object(agent, "_get_agent") as mock_get_agent:
+        with (
+            patch.object(agent, "_get_agent") as mock_get_agent,
+            patch.object(agent, "_log_reasoning_corpus", new_callable=AsyncMock),
+        ):
             mock_agent = AsyncMock()
             mock_agent.run = AsyncMock(return_value=mock_result)
             mock_get_agent.return_value = mock_agent
@@ -600,13 +699,13 @@ Office: 123 Science Hall
                 PageData(page_num=3, image_base64=test_image),
             ]
 
-            markdown, confidence, usage = await agent.extract(
-                pages, manifest, "job-123"
-            )
+            output, usage = await agent.extract(pages, manifest, "job-123")
 
             # Verify output
-            assert markdown == expected_markdown
-            assert confidence == 0.88
+            assert output.markdown == expected_markdown
+            assert output.confidence.value == 0.88
+            assert output.reading_order_followed.value is True
+            assert output.pages_transcribed == [1, 2, 3]
 
             # Verify usage tracking
             assert usage.input_tokens == 15000
@@ -620,7 +719,7 @@ Office: 123 Science Hall
     @pytest.mark.asyncio
     @patch("src.agents.core.yaml.safe_load", return_value={"system_prompt": "test", "user_prompt": "test"})
     @patch("builtins.open", create=True)
-    async def test_extraction_with_image_placeholders(self, mock_open, mock_yaml):
+    async def test_extraction_with_image_placeholders(self, mock_open: MagicMock, mock_yaml: MagicMock) -> None:
         """Test extraction produces correct image placeholder format."""
         agent = ExtractionAgent()
 
@@ -657,15 +756,22 @@ Page 2 content.
 """
 
         mock_result = MagicMock()
-        mock_result.output = ExtractionOutput(
+        mock_result.output = _create_extraction_output(
             markdown=expected_markdown,
-            confidence=0.85,
+            confidence_value=0.85,
+            confidence_reasoning="Images placed correctly, text clear. 0.85.",
+            reading_order_value=True,
+            reading_order_reasoning="Single-column layout. True.",
+            pages_transcribed=[1, 2],
         )
         mock_result.usage.return_value = MagicMock(
             request_tokens=10000, response_tokens=500
         )
 
-        with patch.object(agent, "_get_agent") as mock_get_agent:
+        with (
+            patch.object(agent, "_get_agent") as mock_get_agent,
+            patch.object(agent, "_log_reasoning_corpus", new_callable=AsyncMock),
+        ):
             mock_agent = AsyncMock()
             mock_agent.run = AsyncMock(return_value=mock_result)
             mock_get_agent.return_value = mock_agent
@@ -678,9 +784,36 @@ Page 2 content.
                 PageData(page_num=2, image_base64=test_image),
             ]
 
-            markdown, _, _ = await agent.extract(pages, manifest, "job-456")
+            output, _ = await agent.extract(pages, manifest, "job-456")
 
             # Verify placeholder format
-            assert "![TODO: describe](image-page-1-1.png)" in markdown
-            assert "![TODO: describe](image-page-1-2.png)" in markdown
-            assert "![TODO: describe](image-page-2-1.png)" in markdown
+            assert "![TODO: describe](image-page-1-1.png)" in output.markdown
+            assert "![TODO: describe](image-page-1-2.png)" in output.markdown
+            assert "![TODO: describe](image-page-2-1.png)" in output.markdown
+
+
+# =============================================================================
+# Dynamic Instructions Tests
+# =============================================================================
+
+
+@pytest.mark.unit
+class TestDynamicInstructions:
+    """Tests for dynamic instruction registration."""
+
+    @patch("src.agents.core.yaml.safe_load", return_value={"system_prompt": "test", "user_prompt": "test"})
+    @patch("builtins.open", create=True)
+    def test_document_type_hints_include_research_paper(self, mock_open: MagicMock, mock_yaml: MagicMock) -> None:
+        """Test research_paper document type hint exists."""
+        agent = ExtractionAgent()
+        assert "research_paper" in agent.DOCUMENT_TYPE_HINTS
+        assert "two-column layout" in agent.DOCUMENT_TYPE_HINTS["research_paper"].lower()
+
+    @patch("src.agents.core.yaml.safe_load", return_value={"system_prompt": "test", "user_prompt": "test"})
+    @patch("builtins.open", create=True)
+    def test_all_document_types_have_hints(self, mock_open: MagicMock, mock_yaml: MagicMock) -> None:
+        """Test all expected document types have hints."""
+        agent = ExtractionAgent()
+        expected_types = ["syllabus", "exam", "lecture_notes", "assignment", "research_paper"]
+        for doc_type in expected_types:
+            assert doc_type in agent.DOCUMENT_TYPE_HINTS, f"Missing hint for {doc_type}"

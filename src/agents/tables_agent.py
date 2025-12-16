@@ -282,12 +282,13 @@ Adjust your approach to avoid these issues.
         observations: list[Observation] = []
 
         for analysis in analyses:
-            # Skip if no action needed
-            if analysis.recommended_action == "none":
-                continue
-
-            # Access .value for Reasoned[T] field
+            # Access .value for Reasoned[T] fields
             complexity_value = analysis.complexity.value
+            action_value = analysis.recommended_action.value
+
+            # Skip if no action needed
+            if action_value == "none":
+                continue
 
             # Determine severity based on complexity and data accuracy
             severity: str
@@ -320,12 +321,13 @@ Adjust your approach to avoid these issues.
             issues_str = ", ".join(analysis.markdown_issues) if analysis.markdown_issues else "none identified"
             visual_desc = f"{analysis.visual_description}. Issues: {issues_str}"
 
-            # Build markup description
+            # Build markup description including action reasoning
             markup_desc = (
                 f"Table {analysis.table_index}: "
                 f"headers={analysis.header_structure}, "
                 f"complexity={complexity_value}, "
-                f"accuracy={analysis.data_accuracy}"
+                f"accuracy={analysis.data_accuracy}, "
+                f"action={action_value}"
             )
 
             obs = Observation(

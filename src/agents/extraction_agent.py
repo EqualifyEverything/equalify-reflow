@@ -15,6 +15,10 @@ The hard analytical work was done by the Analysis agent (Sonnet).
 Supports dynamic instructions via AgentDependencies for:
 - Document type hints (syllabus, exam, lecture_notes)
 - Retry guidance based on previous failures
+
+NOTE: This agent uses Reasoned[T] wrappers for key determinations:
+- confidence: Reasoned[float] - Transcription accuracy assessment
+- reading_order_followed: Reasoned[bool] - Layout compliance verification
 """
 
 from __future__ import annotations
@@ -25,7 +29,7 @@ import time
 from pathlib import Path
 from typing import TYPE_CHECKING, Any
 
-from pydantic import BaseModel, Field
+from pydantic import BaseModel, Field, field_validator
 from pydantic_ai import Agent, RunContext
 from pydantic_ai.messages import BinaryContent
 
@@ -35,7 +39,9 @@ from src.agents.model_tiers import ModelTier
 from src.config import settings
 from src.services.debug_logging_service import debug_logger
 from src.services.pdf_converter import PageData
+from src.services.reasoning_corpus_service import get_reasoning_corpus_service
 from src.shared.models.processing import LLMUsage
+from src.shared.models.reasoned import Reasoned, ReasonedOutputMixin
 from src.shared.models.remediation import DocumentManifest, HeadingTree, PageFeatures
 from src.utils.prompt_sanitizer import sanitize_for_prompt
 
@@ -50,21 +56,62 @@ logger = logging.getLogger(__name__)
 # =============================================================================
 
 
-class ExtractionOutput(BaseModel):
-    """Structured output from extraction phase."""
+class ExtractionOutput(BaseModel, ReasonedOutputMixin):
+    """Structured output from extraction phase with glass-box reasoning.
+
+    Complex determinations (confidence, reading_order_followed) use Reasoned[T]
+    wrapper to capture chain-of-thought reasoning before the value.
+
+    Attributes:
+        markdown: Complete markdown transcription of the document
+        confidence: Transcription accuracy confidence with reasoning
+        reading_order_followed: Whether layout-based reading order was followed
+        pages_transcribed: List of page numbers successfully transcribed
+        transcription_notes: Notes about issues, decisions, or [?] markers
+    """
 
     markdown: str = Field(
         ..., description="Complete markdown transcription of the document"
     )
-    confidence: float = Field(
-        default=0.85,
-        ge=0.0,
-        le=1.0,
-        description="Confidence in transcription accuracy",
+    confidence: Reasoned[float] = Field(
+        ...,
+        description=(
+            "Confidence in transcription accuracy (0.0-1.0) with reasoning. "
+            "Cite factors: image quality, unclear text count, layout complexity. "
+            "Example: 'All 5 pages clear, 2 words marked [?], tables intact. 0.92.'"
+        ),
     )
-    notes: str = Field(
-        default="", description="Notes about transcription decisions or issues"
+    reading_order_followed: Reasoned[bool] = Field(
+        ...,
+        description=(
+            "Whether layout-based reading order was correctly followed, with reasoning. "
+            "Cite which pages had which layout type and how you handled them. "
+            "Example: 'Pages 1-2 single-column (top-to-bottom), pages 3-5 two-column "
+            "(left then right). True.'"
+        ),
     )
+    pages_transcribed: list[int] = Field(
+        ...,
+        description=(
+            "List of page numbers successfully transcribed. "
+            "Should include all pages from 1 to total_pages unless page was blank/unreadable."
+        ),
+    )
+    transcription_notes: str = Field(
+        default="",
+        description=(
+            "Notes about transcription decisions, issues encountered, or [?] markers used. "
+            "Include: unclear text locations, complex table handling, layout ambiguities."
+        ),
+    )
+
+    @field_validator("confidence")
+    @classmethod
+    def validate_confidence_range(cls, v: Reasoned[float]) -> Reasoned[float]:
+        """Validate confidence value is in valid range."""
+        if not 0.0 <= v.value <= 1.0:
+            raise ValueError(f"confidence must be between 0.0 and 1.0, got {v.value}")
+        return v
 
 
 # =============================================================================
@@ -84,41 +131,52 @@ class ExtractionAgent(BaseDocumentAgent[ExtractionOutput]):
     Uses Claude Haiku 4.5 for cost-efficient transcription.
     The hard analytical work was done by the Analysis agent (Sonnet).
 
+    Uses Reasoned[T] wrappers for:
+    - confidence: Transcription accuracy assessment
+    - reading_order_followed: Layout compliance verification
+
     Supports dynamic instructions for:
     - Document type hints (syllabus, exam, lecture_notes)
     - Retry guidance based on previous failures
 
     Example:
         >>> agent = ExtractionAgent()
-        >>> markdown, confidence, usage = await agent.extract(pages, manifest, job_id)
-        >>> print(f"Extracted {len(markdown)} chars")
+        >>> result = await agent.extract(pages, manifest, job_id)
+        >>> print(f"Extracted {len(result.markdown)} chars, confidence: {result.confidence.value}")
     """
 
     # Document type hints for dynamic instructions
     DOCUMENT_TYPE_HINTS: dict[str, str] = {
         "syllabus": (
             "This is a course syllabus. Pay attention to:\n"
-            "- Course schedule tables\n"
-            "- Grading policy sections\n"
-            "- Assignment due dates\n"
+            "- Course schedule tables (preserve structure carefully)\n"
+            "- Grading policy sections (often contain nested lists)\n"
+            "- Assignment due dates (accuracy critical)\n"
         ),
         "exam": (
             "This is an exam document. Pay attention to:\n"
-            "- Question numbering\n"
-            "- Point values\n"
-            "- Answer spaces (preserve blanks)\n"
+            "- Question numbering (must be exact)\n"
+            "- Point values (preserve in brackets)\n"
+            "- Answer spaces (preserve blanks, do not fill in)\n"
         ),
         "lecture_notes": (
             "These are lecture notes. Pay attention to:\n"
-            "- Slide numbers/titles\n"
-            "- Bullet point hierarchies\n"
-            "- Diagrams and figures\n"
+            "- Slide numbers/titles (often serve as headings)\n"
+            "- Bullet point hierarchies (preserve nesting)\n"
+            "- Diagrams and figures (use placeholders)\n"
         ),
         "assignment": (
             "This is an assignment. Pay attention to:\n"
-            "- Question/problem numbering\n"
-            "- Point values and rubric info\n"
-            "- Submission requirements\n"
+            "- Question/problem numbering (must be exact)\n"
+            "- Point values and rubric info (preserve carefully)\n"
+            "- Submission requirements (often in lists or tables)\n"
+        ),
+        "research_paper": (
+            "This is a research paper. Pay attention to:\n"
+            "- Two-column layout (common in academic papers)\n"
+            "- Citations and references (preserve formatting)\n"
+            "- Figures and tables (often have captions)\n"
+            "- Abstract (usually single-column before two-column body)\n"
         ),
     }
 
@@ -176,9 +234,9 @@ class ExtractionAgent(BaseDocumentAgent[ExtractionOutput]):
             if doc_type and doc_type in self.DOCUMENT_TYPE_HINTS:
                 hint = self.DOCUMENT_TYPE_HINTS[doc_type]
                 return f"""
-<document_type type="{doc_type.upper()}">
+<document_type_guidance type="{doc_type.upper()}">
 {hint}
-</document_type>"""
+</document_type_guidance>"""
             return ""
 
         @agent.instructions
@@ -199,6 +257,28 @@ Previous attempts encountered issues:
 Adjust your approach to avoid these issues.
 </retry_attempt>"""
 
+        @agent.instructions
+        def layout_guidance(ctx: RunContext[AgentDependencies]) -> str:
+            """Provide layout-specific guidance from manifest."""
+            if not ctx.deps.manifest:
+                return ""
+
+            # Check for two-column pages
+            two_column_pages = []
+            for pf in ctx.deps.manifest.page_features:
+                if pf.layout_type == "two_column":
+                    two_column_pages.append(pf.page_num)
+
+            if two_column_pages:
+                pages_str = ", ".join(str(p) for p in two_column_pages)
+                return f"""
+<layout_warning>
+CRITICAL: Pages {pages_str} have two-column layout.
+For these pages: transcribe LEFT column completely (top to bottom), THEN right column completely.
+Verify heading order matches this reading pattern.
+</layout_warning>"""
+            return ""
+
         logger.debug("ExtractionAgent: Dynamic instructions registered")
 
     async def process(self, input_data: Any) -> ExtractionOutput:
@@ -214,7 +294,7 @@ Adjust your approach to avoid these issues.
         manifest: DocumentManifest,
         job_id: str,
         deps: AgentDependencies | None = None,
-    ) -> tuple[str, float, LLMUsage]:
+    ) -> tuple[ExtractionOutput, LLMUsage]:
         """Extract markdown guided by manifest.
 
         Args:
@@ -225,7 +305,13 @@ Adjust your approach to avoid these issues.
                   If not provided, creates default deps from manifest.
 
         Returns:
-            Tuple of (markdown_content, confidence, LLMUsage)
+            Tuple of (ExtractionOutput, LLMUsage)
+            ExtractionOutput contains:
+            - markdown: Complete transcription
+            - confidence: Reasoned[float] with accuracy assessment
+            - reading_order_followed: Reasoned[bool] with layout compliance
+            - pages_transcribed: List of page numbers transcribed
+            - transcription_notes: Issues and decisions
 
         Raises:
             ValueError: If no pages provided
@@ -343,7 +429,7 @@ Adjust your approach to avoid these issues.
             job_id=job_id,
             agent_name="extraction_agent",
             response_text=output.markdown[:1000] if output.markdown else None,
-            parsed_output={"confidence": output.confidence, "notes": output.notes},
+            parsed_output={"confidence": output.confidence.value, "notes": output.notes},
             input_tokens=usage.input_tokens,
             output_tokens=usage.output_tokens,
             total_tokens=usage.total_tokens,
@@ -352,14 +438,50 @@ Adjust your approach to avoid these issues.
             model_id=self.model_id,
         )
 
+        # Log reasoning corpus for analysis and debugging
+        await self._log_reasoning_corpus(output, job_id)
+
         logger.info(
             f"Extraction complete for job {job_id}: "
             f"{len(output.markdown)} chars, "
-            f"confidence: {output.confidence:.2f}, "
+            f"confidence: {output.confidence.value:.2f}, "
+            f"reading_order: {output.reading_order_followed.value}, "
+            f"pages: {len(output.pages_transcribed)}, "
             f"cost: ${usage.estimated_cost_cents/100:.4f}"
         )
 
-        return output.markdown, output.confidence, usage
+        return output, usage
+
+    async def _log_reasoning_corpus(
+        self,
+        output: ExtractionOutput,
+        job_id: str,
+    ) -> None:
+        """Log reasoning corpus from Reasoned[T] fields for analysis.
+
+        Extracts reasoning from:
+        - ExtractionOutput.confidence
+        - ExtractionOutput.reading_order_followed
+        """
+        try:
+            corpus_service = get_reasoning_corpus_service()
+
+            # Extract reasoning corpus from output
+            corpus = output.extract_reasoning_corpus()
+            if corpus:
+                await corpus_service.log_corpus_batch(
+                    job_id=job_id,
+                    agent_name="extraction",
+                    corpus=corpus,
+                )
+
+            logger.debug(
+                f"Logged reasoning corpus for job {job_id}: "
+                f"{len(corpus)} reasoning entries from extraction"
+            )
+        except Exception as e:
+            # Don't fail extraction if corpus logging fails
+            logger.warning(f"Failed to log reasoning corpus for job {job_id}: {e}")
 
     def _build_image_messages(
         self, pages: list[PageData]

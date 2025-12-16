@@ -10,7 +10,7 @@ Tests cover:
 """
 
 from pathlib import Path
-from unittest.mock import AsyncMock, patch
+from unittest.mock import AsyncMock, MagicMock, patch
 
 import pytest
 from pydantic import ValidationError
@@ -341,15 +341,23 @@ class TestFiguresAgentAnalysis:
         ]
 
     @pytest.mark.asyncio
+    @patch("src.agents.figures_agent.get_agent")
+    @patch("src.agents.figures_agent.load_prompts")
     async def test_analyze_skips_pages_without_images(
         self,
+        mock_load_prompts,
+        mock_get_agent,
         sample_manifest: DocumentManifest,
         sample_pages: list[PageData],
     ):
         """Test analysis skips pages without images."""
-        agent = FiguresAgent()
+        # Setup mock prompts
+        mock_load_prompts.return_value = {
+            "system_prompt": "test",
+            "user_prompt_template": "{page_num}{document_title}{expected_image_count}{page_markdown}"
+        }
 
-        # Mock the _run_with_deps method to avoid AWS calls
+        # Mock the agent's run method
         mock_output = FiguresAnalysisOutput(
             page_num=1,
             images_found=1,
@@ -359,8 +367,17 @@ class TestFiguresAgentAnalysis:
         from src.shared.models.processing import LLMUsage
         mock_usage = LLMUsage(input_tokens=100, output_tokens=50, total_tokens=150, estimated_cost_cents=1.0)
 
-        with patch.object(agent, '_run_with_deps', new_callable=AsyncMock) as mock_run:
-            mock_run.return_value = (mock_output, mock_usage)
+        mock_result = MagicMock()
+        mock_result.data = mock_output
+        mock_result.usage.return_value.total_tokens = mock_usage.total_tokens
+
+        mock_agent = AsyncMock()
+        mock_agent.run = AsyncMock(return_value=mock_result)
+        mock_get_agent.return_value = mock_agent
+
+        # Mock extract_usage to return our mock usage
+        with patch("src.agents.figures_agent.extract_usage", return_value=mock_usage):
+            agent = FiguresAgent()
 
             await agent.analyze(
                 pages=sample_pages,
@@ -370,16 +387,24 @@ class TestFiguresAgentAnalysis:
             )
 
             # Should only call for pages 1 and 3 (have images)
-            assert mock_run.call_count == 2
+            assert mock_agent.run.call_count == 2
 
     @pytest.mark.asyncio
+    @patch("src.agents.figures_agent.get_agent")
+    @patch("src.agents.figures_agent.load_prompts")
     async def test_analyze_continues_on_page_error(
         self,
+        mock_load_prompts,
+        mock_get_agent,
         sample_manifest: DocumentManifest,
         sample_pages: list[PageData],
     ):
         """Test analysis continues if one page fails."""
-        agent = FiguresAgent()
+        # Setup mock prompts
+        mock_load_prompts.return_value = {
+            "system_prompt": "test",
+            "user_prompt_template": "{page_num}{document_title}{expected_image_count}{page_markdown}"
+        }
 
         call_count = 0
 
@@ -390,12 +415,21 @@ class TestFiguresAgentAnalysis:
             call_count += 1
             if call_count == 1:
                 raise Exception("LLM error")
-            return (
-                FiguresAnalysisOutput(page_num=3, images_found=0, analyses=[]),
-                LLMUsage(input_tokens=100, output_tokens=50, total_tokens=150, estimated_cost_cents=1.0),
-            )
+            # Second call succeeds
+            mock_result = MagicMock()
+            mock_result.data = FiguresAnalysisOutput(page_num=3, images_found=0, analyses=[])
+            mock_result.usage.return_value.total_tokens = 150
+            return mock_result
 
-        with patch.object(agent, '_run_with_deps', side_effect=mock_run):
+        mock_agent = AsyncMock()
+        mock_agent.run = AsyncMock(side_effect=mock_run)
+        mock_get_agent.return_value = mock_agent
+
+        # Mock extract_usage to return our mock usage
+        mock_usage = LLMUsage(input_tokens=100, output_tokens=50, total_tokens=150, estimated_cost_cents=1.0)
+        with patch("src.agents.figures_agent.extract_usage", return_value=mock_usage):
+            agent = FiguresAgent()
+
             observations, usage = await agent.analyze(
                 pages=sample_pages,
                 manifest=sample_manifest,
@@ -409,13 +443,21 @@ class TestFiguresAgentAnalysis:
             assert usage is not None  # Usage should be returned
 
     @pytest.mark.asyncio
+    @patch("src.agents.figures_agent.get_agent")
+    @patch("src.agents.figures_agent.load_prompts")
     async def test_analyze_returns_observations(
         self,
+        mock_load_prompts,
+        mock_get_agent,
         sample_manifest: DocumentManifest,
         sample_pages: list[PageData],
     ):
         """Test analysis returns observations from agent output."""
-        agent = FiguresAgent()
+        # Setup mock prompts
+        mock_load_prompts.return_value = {
+            "system_prompt": "test",
+            "user_prompt_template": "{page_num}{document_title}{expected_image_count}{page_markdown}"
+        }
 
         mock_output = FiguresAnalysisOutput(
             page_num=1,
@@ -443,8 +485,17 @@ class TestFiguresAgentAnalysis:
         from src.shared.models.processing import LLMUsage
         mock_usage = LLMUsage(input_tokens=200, output_tokens=100, total_tokens=300, estimated_cost_cents=5.0)
 
-        with patch.object(agent, '_run_with_deps', new_callable=AsyncMock) as mock_run:
-            mock_run.return_value = (mock_output, mock_usage)
+        mock_result = MagicMock()
+        mock_result.data = mock_output
+        mock_result.usage.return_value.total_tokens = mock_usage.total_tokens
+
+        mock_agent = AsyncMock()
+        mock_agent.run = AsyncMock(return_value=mock_result)
+        mock_get_agent.return_value = mock_agent
+
+        # Mock extract_usage to return our mock usage
+        with patch("src.agents.figures_agent.extract_usage", return_value=mock_usage):
+            agent = FiguresAgent()
 
             observations, usage = await agent.analyze(
                 pages=sample_pages[:1],  # Just page 1

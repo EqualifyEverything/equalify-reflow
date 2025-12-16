@@ -49,18 +49,19 @@ class TestTableAnalysis:
             data_accuracy="accurate",
             visual_description="Grade distribution table",
             markdown_issues=["Missing header separator"],
-            recommended_action="add_headers",
+            recommended_action=make_reasoned("add_headers", "Missing header separator needs adding."),
             model_confidence=0.85,
         )
         assert analysis.table_index == 1
         assert analysis.has_headers is True
         assert len(analysis.markdown_issues) == 1
 
-    def test_table_analysis_defaults(self):
-        """Test TableAnalysis default values."""
+    def test_table_analysis_required_fields(self):
+        """Test TableAnalysis requires complexity and recommended_action with reasoning."""
         analysis = TableAnalysis(
             table_index=1,
             complexity=make_reasoned("simple", "Standard table."),
+            recommended_action=make_reasoned("none", "Table is well-formatted."),
             visual_description="Simple table",
         )
         assert analysis.has_headers is True
@@ -68,7 +69,7 @@ class TestTableAnalysis:
         assert analysis.complexity.value == "simple"
         assert analysis.data_accuracy == "accurate"
         assert analysis.markdown_issues == []
-        assert analysis.recommended_action == "none"
+        assert analysis.recommended_action.value == "none"
         # Confidence is computed from quality signals
         assert analysis.confidence == 0.96  # Default signals + default model_confidence
 
@@ -78,6 +79,7 @@ class TestTableAnalysis:
             TableAnalysis(
                 table_index=1,
                 complexity=make_reasoned("simple"),
+                recommended_action=make_reasoned("none", "Test."),
                 visual_description="Test",
                 model_confidence=1.5,
             )
@@ -88,6 +90,7 @@ class TestTableAnalysis:
             TableAnalysis(
                 table_index=0,
                 complexity=make_reasoned("simple"),
+                recommended_action=make_reasoned("none", "Test."),
                 visual_description="Test",
             )
 
@@ -105,6 +108,7 @@ class TestTablesAnalysisOutput:
                 TableAnalysis(
                     table_index=1,
                     complexity=make_reasoned("simple", "Standard grid."),
+                    recommended_action=make_reasoned("none", "Well-formatted."),
                     visual_description="Data table",
                 )
             ],
@@ -172,7 +176,7 @@ class TestTableAnalysisToObservation:
                 complexity=make_reasoned("simple", "Regular structure."),
                 data_accuracy="missing_data",
                 visual_description="Complex table with missing cells",
-                recommended_action="verify_data",
+                recommended_action=make_reasoned("verify_data", "Missing data requires verification."),
                 model_confidence=0.7,
             )
         ]
@@ -193,7 +197,7 @@ class TestTableAnalysisToObservation:
                 complexity=make_reasoned("merged_cells", "Cells spanning columns."),
                 data_accuracy="structural_loss",
                 visual_description="Table with merged cells",
-                recommended_action="restructure",
+                recommended_action=make_reasoned("restructure", "Merged cells need restructuring."),
                 model_confidence=0.75,
             )
         ]
@@ -213,7 +217,7 @@ class TestTableAnalysisToObservation:
                     table_index=1,
                     complexity=make_reasoned(complexity, f"Table is {complexity}."),
                     visual_description="Complex table",
-                    recommended_action="restructure",
+                    recommended_action=make_reasoned("restructure", f"Complex {complexity} needs restructuring."),
                     model_confidence=0.99,  # High confidence, but complex table still routes to manual
                 )
             ]
@@ -236,7 +240,7 @@ class TestTableAnalysisToObservation:
                 complexity=make_reasoned("simple", "Regular layout."),
                 data_accuracy="accurate",
                 visual_description="Data table without headers",
-                recommended_action="add_headers",
+                recommended_action=make_reasoned("add_headers", "No headers identified."),
                 model_confidence=0.85,
             )
         ]
@@ -255,7 +259,7 @@ class TestTableAnalysisToObservation:
                 table_index=1,
                 complexity=make_reasoned("simple", "Well-structured table."),
                 visual_description="Well-formatted table",
-                recommended_action="none",
+                recommended_action=make_reasoned("none", "Table is well-formatted."),
                 model_confidence=0.95,
             )
         ]
@@ -273,7 +277,7 @@ class TestTableAnalysisToObservation:
                 table_index=1,
                 complexity=make_reasoned("simple", "Uncertain structure."),
                 visual_description="Unclear table",
-                recommended_action="add_headers",
+                recommended_action=make_reasoned("add_headers", "Headers unclear but likely needed."),
                 model_confidence=0.3,  # Low model confidence
                 quality_signals=QualitySignals(
                     image_clarity="blurry",
@@ -373,7 +377,7 @@ class TestTablesAgentAnalysis:
                     has_headers=False,
                     complexity=make_reasoned("simple", "Standard table."),
                     visual_description="Data table",
-                    recommended_action="add_headers",
+                    recommended_action=make_reasoned("add_headers", "No headers found."),
                     model_confidence=0.85,
                 ),
             ],

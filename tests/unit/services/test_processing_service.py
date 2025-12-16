@@ -7,9 +7,11 @@ Validates the analysis + extraction pipeline.
 from unittest.mock import AsyncMock, MagicMock, patch
 
 import pytest
+from src.agents.extraction_agent import ExtractionOutput
 from src.services.pdf_converter import PageData, PDFConversionResult
 from src.services.processing_service import ProcessingService
 from src.shared.models.processing import LLMUsage
+from src.shared.models.reasoned import Reasoned
 from src.shared.models.remediation import (
     DocumentManifest,
     HeadingNode,
@@ -110,6 +112,21 @@ def mock_analysis_usage():
     )
 
 
+def make_extraction_output(
+    markdown: str = "# Test Document\n\nContent here.",
+    confidence: float = 0.88,
+    pages_transcribed: list[int] | None = None,
+) -> ExtractionOutput:
+    """Helper to create ExtractionOutput for tests."""
+    return ExtractionOutput(
+        markdown=markdown,
+        confidence=Reasoned(reasoning="Clear text, no issues", value=confidence),
+        reading_order_followed=Reasoned(reasoning="Single column layout", value=True),
+        pages_transcribed=pages_transcribed or [1, 2],
+        transcription_notes="",
+    )
+
+
 # ============================================================================
 # Initialization Tests
 # ============================================================================
@@ -173,12 +190,12 @@ async def test_process_document_happy_path(
         # Mock extraction agent
         mock_extraction_agent = MagicMock()
         mock_extraction_agent.model_id = "us.anthropic.claude-haiku-4-5-20251001-v1:0"
+        mock_extraction_output = make_extraction_output(
+            markdown="# Test Document\n\nContent here.",
+            confidence=0.88,
+        )
         mock_extraction_agent.extract = AsyncMock(
-            return_value=(
-                "# Test Document\n\nContent here.",
-                0.88,  # confidence
-                mock_llm_usage,
-            )
+            return_value=(mock_extraction_output, mock_llm_usage)
         )
         mock_extraction_agent_class.return_value = mock_extraction_agent
 
@@ -239,8 +256,12 @@ async def test_process_document_confidence_from_extraction(
         # Mock extraction agent with specific confidence
         mock_extraction_agent = MagicMock()
         mock_extraction_agent.model_id = "us.anthropic.claude-haiku-4-5-20251001-v1:0"
+        mock_extraction_output = make_extraction_output(
+            markdown="# Test",
+            confidence=0.85,
+        )
         mock_extraction_agent.extract = AsyncMock(
-            return_value=("# Test", 0.85, mock_llm_usage)  # 0.85 confidence
+            return_value=(mock_extraction_output, mock_llm_usage)
         )
         mock_extraction_agent_class.return_value = mock_extraction_agent
 
@@ -433,8 +454,12 @@ async def test_process_document_s3_upload_failure(
         # Mock extraction agent
         mock_extraction_agent = MagicMock()
         mock_extraction_agent.model_id = "us.anthropic.claude-haiku-4-5-20251001-v1:0"
+        mock_extraction_output = make_extraction_output(
+            markdown="# Test",
+            confidence=0.9,
+        )
         mock_extraction_agent.extract = AsyncMock(
-            return_value=("# Test", 0.9, mock_llm_usage)
+            return_value=(mock_extraction_output, mock_llm_usage)
         )
         mock_extraction_agent_class.return_value = mock_extraction_agent
 

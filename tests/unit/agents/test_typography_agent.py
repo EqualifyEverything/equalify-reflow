@@ -46,10 +46,12 @@ class TestTypographyIssue:
             visual_description="Bold text highlighting key term",
             markup_state="Plain text without emphasis",
             semantic_meaning="Term is being emphasized for importance",
+            severity=make_reasoned("minor", "Missing emphasis is inconvenience, not barrier."),
             recommended_markup="**important term**",
             model_confidence=0.85,
         )
         assert issue.issue_type.value == "emphasis_unmarked"
+        assert issue.severity.value == "minor"
         # Confidence is computed from quality signals + model_confidence
         assert issue.confidence == 0.97  # Default signals + 0.85 model_confidence
 
@@ -60,6 +62,7 @@ class TestTypographyIssue:
             visual_description="Italic text",
             markup_state="Plain text",
             semantic_meaning="Term being defined",
+            severity=make_reasoned("minor", "Missing definition markup is minor."),
             recommended_markup="*term*",
         )
         # Confidence is computed from quality signals + default model_confidence
@@ -73,6 +76,7 @@ class TestTypographyIssue:
                 visual_description="Test",
                 markup_state="Test",
                 semantic_meaning="Test",
+                severity=make_reasoned("minor", "Test severity reasoning."),
                 recommended_markup="Test",
                 model_confidence=1.5,
             )
@@ -82,7 +86,7 @@ class TestTypographyIssue:
         with pytest.raises(ValidationError):
             TypographyIssue(
                 issue_type=make_reasoned("emphasis_unmarked", "Test reasoning."),
-                # Missing required fields
+                # Missing required fields including severity
             )
 
 
@@ -100,6 +104,7 @@ class TestTypographyAnalysisOutput:
                     visual_description="Bold text",
                     markup_state="Plain text",
                     semantic_meaning="Emphasis",
+                    severity=make_reasoned("minor", "Missing emphasis is minor barrier."),
                     recommended_markup="**text**",
                 )
             ],
@@ -156,7 +161,7 @@ class TestIssueToObservation:
     """Tests for converting TypographyIssue to Observation."""
 
     def test_emphasis_issue_creates_minor_observation(self):
-        """Test emphasis issues create minor observations."""
+        """Test emphasis issues create observations with model-determined severity."""
         agent = TypographyAgent()
 
         issues = [
@@ -165,6 +170,7 @@ class TestIssueToObservation:
                 visual_description="Bold text for emphasis",
                 markup_state="Plain text",
                 semantic_meaning="Important emphasis",
+                severity=make_reasoned("minor", "Missing emphasis is inconvenience, not barrier."),
                 recommended_markup="**text**",
                 model_confidence=0.99,  # Use 0.99 to exceed any reasonable threshold
             )
@@ -175,11 +181,11 @@ class TestIssueToObservation:
         assert len(observations) == 1
         obs = observations[0]
         assert obs.agent == "typography"
-        assert obs.severity == "minor"
+        assert obs.severity == "minor"  # From Reasoned[Severity]
         assert obs.route == "auto"  # Confidence 0.99 exceeds threshold
 
     def test_semantic_color_creates_major_observation(self):
-        """Test semantic color issues create major observations."""
+        """Test semantic color issues create observations with model-determined severity."""
         agent = TypographyAgent()
 
         issues = [
@@ -188,6 +194,7 @@ class TestIssueToObservation:
                 visual_description="Red text indicating error",
                 markup_state="Plain text, no error indication",
                 semantic_meaning="Error status indicator",
+                severity=make_reasoned("major", "Color-only indication is significant accessibility barrier."),
                 recommended_markup="**Error:** prefix",
                 model_confidence=0.9,
             )
@@ -196,10 +203,10 @@ class TestIssueToObservation:
         observations = agent._issues_to_observations(issues, page_num=1, job_id="test-job")
 
         assert len(observations) == 1
-        assert observations[0].severity == "major"
+        assert observations[0].severity == "major"  # From Reasoned[Severity]
 
     def test_visual_heading_creates_major_observation(self):
-        """Test visual heading issues create major observations."""
+        """Test visual heading issues create observations with model-determined severity."""
         agent = TypographyAgent()
 
         issues = [
@@ -208,18 +215,19 @@ class TestIssueToObservation:
                 visual_description="Large bold text suggesting section header",
                 markup_state="Paragraph text",
                 semantic_meaning="Section heading",
+                severity=make_reasoned("major", "Missing heading breaks document structure for screen readers."),
                 recommended_markup="## Section Title",
-                model_confidence=0.8,
+                model_confidence=0.85,
             )
         ]
 
         observations = agent._issues_to_observations(issues, page_num=1, job_id="test-job")
 
         assert len(observations) == 1
-        assert observations[0].severity == "major"
+        assert observations[0].severity == "major"  # From Reasoned[Severity]
 
     def test_definition_issue_creates_minor_observation(self):
-        """Test definition issues create minor observations."""
+        """Test definition issues create observations with model-determined severity."""
         agent = TypographyAgent()
 
         issues = [
@@ -228,6 +236,7 @@ class TestIssueToObservation:
                 visual_description="Italic text for term definition",
                 markup_state="Plain text",
                 semantic_meaning="Term being defined",
+                severity=make_reasoned("minor", "Missing definition markup is minor inconvenience."),
                 recommended_markup="*term*",
                 model_confidence=0.75,
             )
@@ -236,7 +245,7 @@ class TestIssueToObservation:
         observations = agent._issues_to_observations(issues, page_num=1, job_id="test-job")
 
         assert len(observations) == 1
-        assert observations[0].severity == "minor"
+        assert observations[0].severity == "minor"  # From Reasoned[Severity]
 
     def test_low_confidence_routes_to_manual(self):
         """Test low confidence issues route to manual review."""
@@ -248,6 +257,7 @@ class TestIssueToObservation:
                 visual_description="Possibly bold text",
                 markup_state="Plain text",
                 semantic_meaning="Unclear emphasis",
+                severity=make_reasoned("minor", "Unclear styling is low priority."),
                 recommended_markup="**text**",
                 model_confidence=0.3,  # Low model confidence
                 quality_signals=QualitySignals(
@@ -368,6 +378,7 @@ class TestTypographyAgentAnalysis:
                     visual_description="Bold key terms",
                     markup_state="Plain text",
                     semantic_meaning="Key terms emphasized",
+                    severity=make_reasoned("minor", "Missing emphasis is minor barrier."),
                     recommended_markup="**term**",
                     model_confidence=0.85,
                 )

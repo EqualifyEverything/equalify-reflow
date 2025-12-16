@@ -16,12 +16,14 @@ import boto3
 import pytest
 import pytest_asyncio
 import redis.asyncio as aioredis
+from src.agents.extraction_agent import ExtractionOutput
 from src.config import settings
 from src.services.approval_service import ApprovalService
 from src.services.job_service import JobService
 from src.services.queue_service import QueueService
 from src.services.storage_service import StorageService
 from src.shared.models.pii import PIIFinding
+from src.shared.models.reasoned import Reasoned
 from src.workers.pii_worker import PIIWorker
 from src.workers.processing_worker import ProcessingWorker
 from testcontainers.localstack import LocalStackContainer
@@ -259,12 +261,15 @@ def mock_ai_agents(request):
         # Mock ExtractionAgent
         with patch('src.agents.extraction_agent.ExtractionAgent') as mock_extraction_class:
             mock_extraction = MagicMock()
-            # extract() returns (markdown, confidence, usage)
-            mock_extraction.extract = AsyncMock(return_value=(
-                "# Test Document\n\nThis is mock extracted content.",
-                0.92,
-                mock_usage
-            ))
+            # extract() returns (ExtractionOutput, usage)
+            mock_extraction_output = ExtractionOutput(
+                markdown="# Test Document\n\nThis is mock extracted content.",
+                confidence=Reasoned(reasoning="Clear text, no issues", value=0.92),
+                reading_order_followed=Reasoned(reasoning="Single column layout", value=True),
+                pages_transcribed=[1],
+                transcription_notes="",
+            )
+            mock_extraction.extract = AsyncMock(return_value=(mock_extraction_output, mock_usage))
             mock_extraction_class.return_value = mock_extraction
 
             # Mock ConsolidationService (converts observations to proposals)

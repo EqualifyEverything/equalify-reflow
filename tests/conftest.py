@@ -90,16 +90,20 @@ def reset_agent_singletons():
     # Import agent modules that use singleton pattern
     from src.agents import (
         extraction_agent,
-        figures_agent,
         structure_agent,
         tables_agent,
         typography_agent,
+    )
+    from src.agents.figures import (
+        classification_agent as figures_classification,
+        generation_agent as figures_generation,
     )
 
     # Reset before test
     for agent_module in [
         extraction_agent,
-        figures_agent,
+        figures_classification,
+        figures_generation,
         structure_agent,
         tables_agent,
         typography_agent,
@@ -112,7 +116,8 @@ def reset_agent_singletons():
     # Reset after test (cleanup)
     for agent_module in [
         extraction_agent,
-        figures_agent,
+        figures_classification,
+        figures_generation,
         structure_agent,
         tables_agent,
         typography_agent,

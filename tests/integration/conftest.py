@@ -277,11 +277,18 @@ def mock_ai_agents(request):
             new_callable=AsyncMock,
             return_value=(mock_extraction_result, mock_usage)
         ):
-            # Mock specialized agents (Phase 3b) - they return empty observations
+            # Mock specialized agents (Phase 3b) - they return empty observations/results
+            # FiguresAgent returns AgentResult, not tuple
+            mock_figures_result = MagicMock()
+            mock_figures_result.observations = []
+            mock_figures_result.auto_corrections = []
+            mock_figures_result.review_items = []
+            mock_figures_result.cost_cents = 0.0
+            mock_figures_agent = MagicMock()
+            mock_figures_agent.process = AsyncMock(return_value=mock_figures_result)
             with patch(
-                'src.services.processing_service.chained_figures',
-                new_callable=AsyncMock,
-                return_value=([], mock_usage)
+                'src.services.processing_service.FiguresAgent',
+                return_value=mock_figures_agent
             ):
                 with patch(
                     'src.services.processing_service.chained_tables',

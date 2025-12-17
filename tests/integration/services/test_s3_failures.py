@@ -10,7 +10,7 @@ from unittest.mock import AsyncMock
 
 import pytest
 from botocore.exceptions import ClientError
-from src.agents.extraction_agent import ExtractionOutput
+from src.agents.extraction.models import ExtractionMetrics, ExtractionResult
 from src.services.job_service import JobService
 from src.services.pii_service import PIIDetectionService
 from src.services.processing_service import ProcessingService
@@ -18,7 +18,6 @@ from src.services.queue_service import QueueService
 from src.services.storage_service import StorageService
 from src.shared.models.processing import LLMUsage
 from src.shared.models.queue import PIIQueuePayload, ProcessingQueuePayload
-from src.shared.models.reasoned import Reasoned
 from src.shared.models.remediation import DocumentManifest, HeadingTree, PageFeatures
 
 
@@ -330,26 +329,27 @@ class TestProcessingServiceS3Failures:
             return_value=(mock_analysis_manifest, [], mock_analysis_usage),
         )
 
-        # Mock ExtractionAgent
+        # Mock extract_with_validation (new 4-phase architecture)
         mock_extraction_usage = LLMUsage(
             input_tokens=100, output_tokens=50, total_tokens=150, estimated_cost_cents=0.01
         )
-        mock_extraction_agent_class = mocker.patch(
-            "src.services.processing_service.ExtractionAgent"
-        )
-        mock_extraction_agent = mocker.Mock()
-        mock_extraction_agent.model_id = "us.anthropic.claude-haiku-4-5-20251001-v1:0"
-        mock_extraction_output = ExtractionOutput(
+        mock_extraction_result = ExtractionResult(
             markdown="# Test Improved",
-            confidence=Reasoned(reasoning="Clear text", value=0.88),
-            reading_order_followed=Reasoned(reasoning="Single column", value=True),
-            pages_transcribed=[1],
-            transcription_notes="",
+            metrics=ExtractionMetrics(
+                confidence=0.88,
+                heading_count=1,
+                total_words=2,
+                issues=[],
+                critical_issue_count=0,
+            ),
+            attempt_count=1,
+            correction_applied=False,
         )
-        mock_extraction_agent.extract = AsyncMock(
-            return_value=(mock_extraction_output, mock_extraction_usage)
+        mocker.patch(
+            "src.services.processing_service.extract_with_validation",
+            new_callable=AsyncMock,
+            return_value=(mock_extraction_result, mock_extraction_usage),
         )
-        mock_extraction_agent_class.return_value = mock_extraction_agent
 
         # Execute
         result = await processing_service.process_document(job)
@@ -420,26 +420,27 @@ class TestProcessingServiceS3Failures:
             return_value=(mock_analysis_manifest, [], mock_analysis_usage),
         )
 
-        # Mock ExtractionAgent
+        # Mock extract_with_validation (new 4-phase architecture)
         mock_extraction_usage = LLMUsage(
             input_tokens=100, output_tokens=50, total_tokens=150, estimated_cost_cents=0.01
         )
-        mock_extraction_agent_class = mocker.patch(
-            "src.services.processing_service.ExtractionAgent"
-        )
-        mock_extraction_agent = mocker.Mock()
-        mock_extraction_agent.model_id = "us.anthropic.claude-haiku-4-5-20251001-v1:0"
-        mock_extraction_output = ExtractionOutput(
+        mock_extraction_result = ExtractionResult(
             markdown="# Test",
-            confidence=Reasoned(reasoning="Clear text", value=0.88),
-            reading_order_followed=Reasoned(reasoning="Single column", value=True),
-            pages_transcribed=[1],
-            transcription_notes="",
+            metrics=ExtractionMetrics(
+                confidence=0.88,
+                heading_count=1,
+                total_words=1,
+                issues=[],
+                critical_issue_count=0,
+            ),
+            attempt_count=1,
+            correction_applied=False,
         )
-        mock_extraction_agent.extract = AsyncMock(
-            return_value=(mock_extraction_output, mock_extraction_usage)
+        mocker.patch(
+            "src.services.processing_service.extract_with_validation",
+            new_callable=AsyncMock,
+            return_value=(mock_extraction_result, mock_extraction_usage),
         )
-        mock_extraction_agent_class.return_value = mock_extraction_agent
 
         # Execute - should NOT raise, but catch exception and mark job as failed
         result = await processing_service.process_document(job)

@@ -3,9 +3,11 @@
 These tests verify end-to-end data flows for the Phase 4 remediation pipeline:
 - DocumentManifest save/load
 - Observations save/load/append
-- Proposals save/load/update
 - Application log persistence
 - Current markdown operations
+
+Note: Proposal tests are skipped as the Proposal model was removed in PRD-021
+(simplified Observation lifecycle in the 4-phase architecture refactor).
 
 Uses real LocalStack S3 (no mocking) to test actual S3 operations.
 """
@@ -17,7 +19,6 @@ from datetime import UTC, datetime
 import pytest
 from src.services.remediation_storage_service import RemediationStorageService
 from src.shared.models.observation import Observation, ObservationLocation
-from src.shared.models.proposal import Proposal, SearchReplaceDiff
 from src.shared.models.remediation import DocumentManifest, PageFeatures
 
 
@@ -156,7 +157,6 @@ class TestObservationOperations:
                 ),
                 confidence=0.9,
                 severity="major",
-                route="auto",
                 status="open"
             ),
             Observation(
@@ -173,8 +173,8 @@ class TestObservationOperations:
                 ),
                 confidence=0.85,
                 severity="critical",
-                route="manual",
-                manual_reason="Complex table structure needs review"
+                status="closed",
+                resolution="fixed"
             )
         ]
 
@@ -190,7 +190,7 @@ class TestObservationOperations:
         # Assert - Loaded data matches original
         assert len(loaded_observations) == 2
 
-        # Check first observation
+        # Check first observation (open)
         obs1 = loaded_observations[0]
         assert obs1.job_id == job_id
         assert obs1.agent == "figures"
@@ -201,15 +201,14 @@ class TestObservationOperations:
         assert obs1.location.page_num == 2
         assert obs1.confidence == 0.9
         assert obs1.severity == "major"
-        assert obs1.route == "auto"
         assert obs1.status == "open"
 
-        # Check second observation
+        # Check second observation (closed with resolution)
         obs2 = loaded_observations[1]
         assert obs2.agent == "tables"
         assert obs2.severity == "critical"
-        assert obs2.route == "manual"
-        assert obs2.manual_reason == "Complex table structure needs review"
+        assert obs2.status == "closed"
+        assert obs2.resolution == "fixed"
 
     @pytest.mark.asyncio
     async def test_append_observations(self, storage_service):
@@ -292,8 +291,8 @@ class TestObservationOperations:
         assert loaded_observations == []
 
     @pytest.mark.asyncio
-    async def test_update_observation_status(self, storage_service):
-        """Test updating a single observation's status."""
+    async def test_close_observation(self, storage_service):
+        """Test closing a single observation with a resolution."""
         # Arrange
         remediation_storage = RemediationStorageService(storage_service)
         job_id = str(uuid.uuid4())
@@ -317,13 +316,11 @@ class TestObservationOperations:
 
         await remediation_storage.save_observations(job_id, observations)
 
-        # Act - Update status
-        proposal_id = str(uuid.uuid4())
-        success = await remediation_storage.update_observation_status(
+        # Act - Close observation with resolution
+        success = await remediation_storage.close_observation(
             job_id=job_id,
             observation_id=obs_id,
-            status="resolved",
-            resolved_by=proposal_id
+            resolution="fixed"
         )
 
         # Assert
@@ -332,158 +329,8 @@ class TestObservationOperations:
         # Verify update
         loaded = await remediation_storage.load_observations(job_id)
         assert len(loaded) == 1
-        assert loaded[0].status == "resolved"
-        assert loaded[0].resolved_by == proposal_id
-
-
-@pytest.mark.integration
-class TestProposalOperations:
-    """Tests for Proposal save/load/update operations with real S3."""
-
-    @pytest.mark.asyncio
-    async def test_save_and_load_proposals(self, storage_service):
-        """Test saving and loading proposals to/from S3."""
-        # Arrange
-        remediation_storage = RemediationStorageService(storage_service)
-        job_id = str(uuid.uuid4())
-
-        proposals = [
-            Proposal(
-                id=str(uuid.uuid4()),
-                job_id=job_id,
-                resolves=["obs-1", "obs-2"],
-                diff=SearchReplaceDiff(
-                    search="![](figure-1.png)",
-                    replace="![Flowchart showing registration process](figure-1.png)"
-                ),
-                justification="Combining empty alt text with visual content analysis",
-                page_nums=[2],
-                estimated_impact="Adds descriptive alt text to 1 image",
-                route="auto",
-                status="pending"
-            ),
-            Proposal(
-                id=str(uuid.uuid4()),
-                job_id=job_id,
-                resolves=["obs-3"],
-                diff=SearchReplaceDiff(
-                    search="| A | B | C |\n|---|---|---|",
-                    replace="| Student | Grade | Comments |\n|---------|-------|----------|\n| A | B | C |"
-                ),
-                justification="Adding table headers for accessibility",
-                page_nums=[3],
-                estimated_impact="Adds semantic structure to 1 table",
-                route="manual",
-                status="pending"
-            )
-        ]
-
-        # Act - Save proposals
-        key = await remediation_storage.save_proposals(job_id, proposals)
-
-        # Assert - Save operation
-        assert key == f"{job_id}/proposals.json"
-
-        # Act - Load proposals
-        loaded_proposals = await remediation_storage.load_proposals(job_id)
-
-        # Assert - Loaded data matches original
-        assert len(loaded_proposals) == 2
-
-        # Check first proposal
-        prop1 = loaded_proposals[0]
-        assert prop1.job_id == job_id
-        assert prop1.resolves == ["obs-1", "obs-2"]
-        assert "figure-1.png" in prop1.diff.search
-        assert "Flowchart" in prop1.diff.replace
-        assert "alt text" in prop1.justification
-        assert prop1.page_nums == [2]
-        assert prop1.route == "auto"
-        assert prop1.status == "pending"
-
-        # Check second proposal
-        prop2 = loaded_proposals[1]
-        assert prop2.resolves == ["obs-3"]
-        assert "Student" in prop2.diff.replace
-        assert prop2.route == "manual"
-
-    @pytest.mark.asyncio
-    async def test_update_proposal_status(self, storage_service):
-        """Test updating a single proposal's status and review fields."""
-        # Arrange
-        remediation_storage = RemediationStorageService(storage_service)
-        job_id = str(uuid.uuid4())
-        proposal_id = str(uuid.uuid4())
-
-        proposals = [
-            Proposal(
-                id=proposal_id,
-                job_id=job_id,
-                resolves=["obs-1"],
-                diff=SearchReplaceDiff(
-                    search="test",
-                    replace="TEST"
-                ),
-                justification="Test justification",
-                status="pending"
-            )
-        ]
-
-        await remediation_storage.save_proposals(job_id, proposals)
-
-        # Act - Update to approved with review fields
-        success = await remediation_storage.update_proposal_status(
-            job_id=job_id,
-            proposal_id=proposal_id,
-            status="approved",
-            reviewed_by="reviewer@test.com",
-            reviewed_at=datetime.now(UTC),
-            review_notes="Looks good"
-        )
-
-        # Assert
-        assert success is True
-
-        # Verify update
-        loaded = await remediation_storage.load_proposals(job_id)
-        assert len(loaded) == 1
-        assert loaded[0].status == "approved"
-        assert loaded[0].reviewed_by == "reviewer@test.com"
-        assert loaded[0].reviewed_at is not None
-        assert loaded[0].review_notes == "Looks good"
-
-    @pytest.mark.asyncio
-    async def test_update_nonexistent_proposal(self, storage_service):
-        """Test updating a proposal that doesn't exist returns False."""
-        # Arrange
-        remediation_storage = RemediationStorageService(storage_service)
-        job_id = str(uuid.uuid4())
-
-        # Save empty proposal list
-        await remediation_storage.save_proposals(job_id, [])
-
-        # Act - Try to update nonexistent proposal
-        success = await remediation_storage.update_proposal_status(
-            job_id=job_id,
-            proposal_id="nonexistent-id",
-            status="approved"
-        )
-
-        # Assert
-        assert success is False
-
-    @pytest.mark.asyncio
-    async def test_load_nonexistent_proposals(self, storage_service):
-        """Test loading proposals that don't exist returns empty list."""
-        # Arrange
-        remediation_storage = RemediationStorageService(storage_service)
-        job_id = str(uuid.uuid4())
-
-        # Act
-        loaded_proposals = await remediation_storage.load_proposals(job_id)
-
-        # Assert
-        assert loaded_proposals == []
+        assert loaded[0].status == "closed"
+        assert loaded[0].resolution == "fixed"
 
 
 @pytest.mark.integration
@@ -634,11 +481,15 @@ More content with a table:
 
 @pytest.mark.integration
 class TestEndToEndWorkflow:
-    """Test complete end-to-end workflow with all remediation artifacts."""
+    """Test complete end-to-end workflow with remediation artifacts.
+
+    Note: Proposal-related steps are removed as the Proposal model was
+    deprecated in PRD-021 (4-phase architecture refactor).
+    """
 
     @pytest.mark.asyncio
     async def test_complete_remediation_workflow(self, storage_service):
-        """Test complete workflow: manifest → observations → proposals → application log."""
+        """Test complete workflow: manifest → observations → application log."""
         # Arrange
         remediation_storage = RemediationStorageService(storage_service)
         job_id = str(uuid.uuid4())
@@ -683,7 +534,8 @@ class TestEndToEndWorkflow:
                     location_type="element",
                     value="img.figure-1",
                     page_num=1
-                )
+                ),
+                status="open"
             )
         ]
 
@@ -701,45 +553,18 @@ class TestEndToEndWorkflow:
                     location_type="element",
                     value="img.figure-1",
                     page_num=1
-                )
+                ),
+                status="closed",
+                resolution="fixed"
             )
         ]
 
         await remediation_storage.append_observations(job_id, specialized_observations)
 
-        # Phase 4: Save proposals (auto-corrections)
-        proposal_id = str(uuid.uuid4())
-
-        proposals = [
-            Proposal(
-                id=proposal_id,
-                job_id=job_id,
-                resolves=[obs1_id, obs2_id],
-                diff=SearchReplaceDiff(
-                    search="![](figure-1.png)",
-                    replace="![Flowchart showing three-step process](figure-1.png)"
-                ),
-                justification="Combining observations about missing alt text",
-                page_nums=[1],
-                route="auto",
-                status="pending"
-            )
-        ]
-
-        await remediation_storage.save_proposals(job_id, proposals)
-
-        # Phase 5: Approve proposal
-        await remediation_storage.update_proposal_status(
-            job_id=job_id,
-            proposal_id=proposal_id,
-            status="approved",
-            reviewed_by="test@example.com"
-        )
-
-        # Phase 6: Save application log
+        # Phase 4: Save application log
         app_log = [
             {
-                "proposal_id": proposal_id,
+                "observation_id": obs1_id,
                 "status": "applied",
                 "method": "exact",
                 "timestamp": datetime.now(UTC).isoformat()
@@ -748,18 +573,16 @@ class TestEndToEndWorkflow:
 
         await remediation_storage.save_application_log(job_id, app_log)
 
-        # Phase 7: Update observation status to resolved
-        await remediation_storage.update_observation_status(
+        # Phase 5: Close observation with resolution
+        await remediation_storage.close_observation(
             job_id=job_id,
             observation_id=obs1_id,
-            status="resolved",
-            resolved_by=proposal_id
+            resolution="fixed"
         )
 
         # Verify entire state
         loaded_manifest = await remediation_storage.load_manifest(job_id)
         loaded_observations = await remediation_storage.load_observations(job_id)
-        loaded_proposals = await remediation_storage.load_proposals(job_id)
         loaded_log = await remediation_storage.load_application_log(job_id)
 
         # Assert - All data persisted correctly
@@ -767,12 +590,15 @@ class TestEndToEndWorkflow:
         assert loaded_manifest.document_title == "Complete Workflow Test"
 
         assert len(loaded_observations) == 2
-        assert loaded_observations[0].status == "resolved"
-        assert loaded_observations[0].resolved_by == proposal_id
+        # First observation was closed with resolution
+        obs1_loaded = next(o for o in loaded_observations if o.id == obs1_id)
+        assert obs1_loaded.status == "closed"
+        assert obs1_loaded.resolution == "fixed"
 
-        assert len(loaded_proposals) == 1
-        assert loaded_proposals[0].status == "approved"
-        assert loaded_proposals[0].reviewed_by == "test@example.com"
+        # Second observation was already closed
+        obs2_loaded = next(o for o in loaded_observations if o.id == obs2_id)
+        assert obs2_loaded.status == "closed"
+        assert obs2_loaded.resolution == "fixed"
 
         assert len(loaded_log) == 1
         assert loaded_log[0]["status"] == "applied"

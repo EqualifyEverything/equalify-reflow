@@ -16,14 +16,12 @@ import boto3
 import pytest
 import pytest_asyncio
 import redis.asyncio as aioredis
-from src.agents.extraction_agent import ExtractionOutput
 from src.config import settings
 from src.services.approval_service import ApprovalService
 from src.services.job_service import JobService
 from src.services.queue_service import QueueService
 from src.services.storage_service import StorageService
 from src.shared.models.pii import PIIFinding
-from src.shared.models.reasoned import Reasoned
 from src.workers.pii_worker import PIIWorker
 from src.workers.processing_worker import ProcessingWorker
 from testcontainers.localstack import LocalStackContainer
@@ -187,16 +185,17 @@ async def approval_service(real_redis_client, real_s3_client, job_service, queue
 def mock_ai_agents(request):
     """Auto-mock all AI agents for integration tests (no API keys needed).
 
-    This fixture mocks the multi-agent pipeline:
+    This fixture mocks the multi-agent pipeline (4-phase architecture):
     - analyze_document: Returns mock DocumentManifest and observations (chained analysis)
-    - ExtractionAgent: Returns mock markdown content
-    - Specialized agents (FiguresAgent, TablesAgent, etc.): Skipped via empty required_agents
+    - extract_with_validation: Returns mock markdown content (extraction phase)
+    - Specialized agents (figures, tables, structure, typography): Mocked via chained_ functions
 
     NOTE: This fixture is EXCLUDED for test_bedrock_agent.py tests which
     are designed to test real Bedrock API integration.
     """
-    from unittest.mock import AsyncMock, MagicMock, patch
+    from unittest.mock import AsyncMock, patch
 
+    from src.agents.extraction.models import ExtractionMetrics, ExtractionResult
     from src.shared.models.processing import LLMUsage
     from src.shared.models.remediation import DocumentManifest, PageFeatures
 
@@ -251,36 +250,49 @@ def mock_ai_agents(request):
         analysis_confidence=0.95
     )
 
-    # Mock analyze_document (chained analysis function)
+    # Mock extraction result (ExtractionResult object with metrics)
+    mock_extraction_result = ExtractionResult(
+        markdown="# Test Document\n\nThis is mock extracted content.",
+        metrics=ExtractionMetrics(
+            confidence=0.92,
+            heading_count=1,
+            total_words=6,
+            issues=[],
+            critical_issue_count=0,
+        ),
+        attempt_count=1,
+        correction_applied=False,
+    )
+
+    # Mock analyze_document (chained analysis function - Phase 1)
     with patch(
         'src.services.processing_service.analyze_document',
         new_callable=AsyncMock,
         return_value=(mock_manifest, [], mock_usage)
     ):
-        # Mock ExtractionAgent
-        with patch('src.agents.extraction_agent.ExtractionAgent') as mock_extraction_class:
-            mock_extraction = MagicMock()
-            # extract() returns (ExtractionOutput, usage)
-            mock_extraction_output = ExtractionOutput(
-                markdown="# Test Document\n\nThis is mock extracted content.",
-                confidence=Reasoned(reasoning="Clear text, no issues", value=0.92),
-                reading_order_followed=Reasoned(reasoning="Single column layout", value=True),
-                pages_transcribed=[1],
-                transcription_notes="",
-            )
-            mock_extraction.extract = AsyncMock(return_value=(mock_extraction_output, mock_usage))
-            mock_extraction_class.return_value = mock_extraction
-
-            # Mock ConsolidationService (legacy - now agents produce AutoCorrections directly)
-            with patch('src.services.consolidation_service.ConsolidationService') as mock_consolidation_class:
-                mock_consolidation = MagicMock()
-                # consolidate() returns (proposals, usage)
-                mock_consolidation.consolidate = AsyncMock(return_value=([], mock_usage))
-                mock_consolidation_class.return_value = mock_consolidation
-
-                # Patch at the ProcessingService module level for imports
-                with patch('src.services.processing_service.ExtractionAgent', mock_extraction_class):
-                    with patch('src.services.processing_service.ConsolidationService', mock_consolidation_class):
+        # Mock extract_with_validation (extraction function - Phase 2)
+        # Returns tuple of (ExtractionResult, LLMUsage)
+        with patch(
+            'src.services.processing_service.extract_with_validation',
+            new_callable=AsyncMock,
+            return_value=(mock_extraction_result, mock_usage)
+        ):
+            # Mock specialized agents (Phase 3b) - they return empty observations
+            with patch(
+                'src.services.processing_service.chained_figures',
+                new_callable=AsyncMock,
+                return_value=([], mock_usage)
+            ):
+                with patch(
+                    'src.services.processing_service.chained_tables',
+                    new_callable=AsyncMock,
+                    return_value=([], mock_usage)
+                ):
+                    with patch(
+                        'src.services.processing_service.chained_structure',
+                        new_callable=AsyncMock,
+                        return_value=([], mock_usage)
+                    ):
                         yield
 
 

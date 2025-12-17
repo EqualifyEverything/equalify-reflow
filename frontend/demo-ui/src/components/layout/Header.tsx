@@ -16,7 +16,7 @@ export function Header() {
             className="flex items-center gap-4"
           >
             {/* UIC Logo circle - links to dashboard */}
-            <Link to="/" className="w-12 h-12 bg-uic-blue rounded-full flex items-center justify-center shadow-sm hover:bg-uic-blue/90 transition-colors">
+            <Link to="/" className="w-12 h-12 bg-uic-red rounded-full flex items-center justify-center shadow-sm hover:bg-uic-red/90 transition-colors">
               <span className="text-white font-bold text-lg">UIC</span>
             </Link>
 

@@ -64,7 +64,7 @@
 @layer components {
   /* Demo badge - pill shaped like UIC OSF */
   .demo-badge {
-    @apply bg-uic-red text-white px-4 py-1.5 rounded-full text-xs font-bold uppercase tracking-wider;
+    @apply bg-uic-blue text-white px-4 py-1.5 rounded-full text-xs font-bold uppercase tracking-wider;
   }
 
   /* Decorative blur circles (UIC OSF style) */

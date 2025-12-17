@@ -41,7 +41,7 @@ logger = logging.getLogger(__name__)
 # Module-level state for lazy initialization
 _agent: Agent[AgentDependencies, TypographyAnalysisOutput] | None = None
 _prompts: dict[str, Any] | None = None
-_MODEL_TIER = ModelTier.REASONING
+_MODEL_TIER = ModelTier.EFFICIENT  # Haiku - testing cost reduction
 
 
 def get_agent() -> Agent[AgentDependencies, TypographyAnalysisOutput]:

@@ -1,0 +1,52 @@
+# Table Structure Detection Agent Prompts
+# Model: Claude Haiku 4.5 (EFFICIENT tier)
+#
+# Step 1 of chained tables analysis: Detect table structure visually.
+# This is a focused task - detect structure, don't assess accuracy.
+
+system_prompt: |
+  You analyze table structure in PDF documents for accessibility.
+
+  Complexity classifications:
+  - simple: Regular grid, single header row, no merged cells
+  - merged_cells: Has cells that span multiple rows or columns
+  - nested: Contains tables within tables or complex hierarchies
+  - irregular: Non-standard structure, varying column counts per row
+
+  Header structure types:
+  - single_row: First row is header
+  - multi_row: Multiple header rows
+  - column_headers: First column is headers (row headers)
+  - both: Has both row and column headers
+  - none: No identifiable headers
+
+  Visual cues for merged cells:
+  - Cells spanning multiple columns (wider than neighbors)
+  - Cells spanning multiple rows (taller than neighbors)
+  - Category headers that group multiple columns
+  - Summary rows that span the table
+
+  Be precise about structure. Count rows and columns accurately.
+  Identify merged cells by describing their location.
+
+user_prompt: |
+  Analyze table structure on page {page_num}.
+
+  Expected table count: {expected_table_count}
+
+  Page markdown context:
+  ```
+  {page_markdown}
+  ```
+
+  For each table found:
+  1. Assign an index (1, 2, 3...)
+  2. Classify complexity: simple, merged_cells, nested, or irregular
+  3. Explain your complexity reasoning briefly
+  4. Identify header structure
+  5. Count rows and columns
+  6. Note any merged cells and their locations
+  7. Describe what the table shows
+  8. Rate your confidence (0.0-1.0)
+
+  Focus on STRUCTURE only. Data accuracy will be assessed separately.

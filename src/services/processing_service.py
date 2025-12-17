@@ -15,17 +15,17 @@ from typing import Any
 
 from opentelemetry import trace
 
-from ..agents.agent_router import AgentRouter
 from ..agents.chained_analysis import analyze_document
-from ..agents.extraction_agent import ExtractionAgent
-from ..agents.figures_agent import FiguresAgent
+from ..agents.chained_consolidation import consolidate_observations as chained_consolidate
+from ..agents.chained_figures import analyze_figures as chained_figures
+from ..agents.chained_structure import analyze_structure as chained_structure
+from ..agents.chained_tables import analyze_tables as chained_tables
+from ..agents.extraction import extract_with_validation
+from ..agents.factory import aggregate_usage
 from ..agents.model_tiers import ModelTier, get_model_id
-from ..agents.structure_agent import StructureAgent
-from ..agents.tables_agent import TablesAgent
 from ..agents.typography_agent import TypographyAgent
 from ..config import settings
 from ..services.application_service import ApplicationService
-from ..services.consolidation_service import ConsolidationService
 from ..services.correction_approval_service import CorrectionApprovalService
 from ..services.document_context_service import DocumentContextService
 from ..services.job_service import JobService
@@ -38,6 +38,7 @@ from ..shared.models.observation import Observation
 from ..shared.models.processing import LLMUsage, ProcessingResult
 from ..shared.models.proposal import Proposal
 from ..shared.models.queue import ProcessingQueuePayload
+from ..shared.models.remediation import HeadingTree
 from ..utils.retry_helpers import retry_with_backoff
 
 logger = logging.getLogger(__name__)
@@ -193,8 +194,8 @@ class ProcessingService:
                 operation_name=f"Update job {job.job_id} substatus to extracting",
             )
 
-            # Step 5: Extraction Phase (Haiku)
-            # ExtractionAgent uses manifest guidance for accurate transcription
+            # Step 5: Extraction Phase (Haiku) with validation-driven correction loop
+            # Uses plain text output and pure Python validation for reliability
             logger.info(
                 f"Job {job.job_id}: Starting extraction phase (Haiku)..."
             )
@@ -204,21 +205,22 @@ class ProcessingService:
                 span.set_attribute("phase.number", 2)
                 span.set_attribute("document_title", manifest.document_title)
 
-                extraction_agent = ExtractionAgent()
-
-                # Extract markdown guided by the manifest from analysis phase
-                extraction_output, extraction_usage = await extraction_agent.extract(
+                # Extract markdown with validation loop (plain text output)
+                extraction_result, extraction_usage = await extract_with_validation(
                     pages=pages,
                     manifest=manifest,
                     job_id=job.job_id,
                 )
 
-                # Extract values from Reasoned[T] fields
-                full_markdown = extraction_output.markdown
-                extraction_confidence = extraction_output.confidence.value
+                # Get values from ExtractionResult
+                full_markdown = extraction_result.markdown
+                extraction_confidence = extraction_result.metrics.confidence
 
                 span.set_attribute("markdown_length", len(full_markdown))
                 span.set_attribute("confidence", extraction_confidence)
+                span.set_attribute("is_valid", extraction_result.metrics.is_valid)
+                span.set_attribute("attempt_count", extraction_result.attempt_count)
+                span.set_attribute("correction_applied", extraction_result.correction_applied)
                 span.set_attribute("tokens.input", extraction_usage.input_tokens)
                 span.set_attribute("tokens.output", extraction_usage.output_tokens)
                 span.set_attribute("cost.cents", extraction_usage.estimated_cost_cents)
@@ -235,21 +237,21 @@ class ProcessingService:
                 f"Job {job.job_id}: Extraction complete - "
                 f"{len(full_markdown)} chars, "
                 f"confidence: {extraction_confidence:.2f}, "
-                f"reading_order_followed: {extraction_output.reading_order_followed.value}, "
-                f"pages: {extraction_output.pages_transcribed}, "
+                f"valid: {extraction_result.metrics.is_valid}, "
+                f"attempts: {extraction_result.attempt_count}, "
+                f"pages: {len(extraction_result.metrics.pages_found)}/{manifest.total_pages}, "
                 f"extraction cost: ${extraction_usage.estimated_cost_cents/100:.4f}"
             )
 
-            # Step 6: Specialized Agents Phase (Sonnet)
-            # Run specialized agents based on manifest.required_agents
+            # Step 6: Specialized Agents Phase (Chained Agents)
+            # Run chained agents based on manifest.required_agents
+            # Uses Haiku where possible, with conditional LLM calls for cost efficiency
             specialized_observations: list[Observation] = []
-            specialized_usage = LLMUsage(
-                input_tokens=0, output_tokens=0, total_tokens=0, estimated_cost_cents=0.0
-            )
+            specialized_usages: list[LLMUsage] = []
 
             if manifest.required_agents:
                 logger.info(
-                    f"Job {job.job_id}: Starting specialized analysis phase (Sonnet)..."
+                    f"Job {job.job_id}: Starting specialized analysis phase (chained agents)..."
                 )
 
                 with self._tracer.start_as_current_span("phase.specialized_agents") as span:
@@ -268,23 +270,75 @@ class ProcessingService:
                         operation_name=f"Update job {job.job_id} substatus to analyzing_specialized",
                     )
 
-                    # Create and configure agent router with all specialized agents
-                    router = AgentRouter()
-                    router.register_agent("figures", FiguresAgent())
-                    router.register_agent("tables", TablesAgent())
-                    router.register_agent("structure", StructureAgent())
-                    router.register_agent("typography", TypographyAgent())
+                    # Run chained agents based on manifest.required_agents
+                    if "figures" in manifest.required_agents:
+                        with self._tracer.start_as_current_span("agent.chained_figures"):
+                            figures_obs, figures_usage = await chained_figures(
+                                pages=pages,
+                                manifest=manifest,
+                                markdown=full_markdown,
+                                job_id=job.job_id,
+                            )
+                            specialized_observations.extend(figures_obs)
+                            specialized_usages.append(figures_usage)
+                            logger.info(
+                                f"Job {job.job_id}: Chained figures - "
+                                f"{len(figures_obs)} observations, "
+                                f"cost: ${figures_usage.estimated_cost_cents/100:.4f}"
+                            )
 
-                    # Run required agents and collect observations
-                    specialized_observations, combined_agent_usage = await router.run_required_agents(
-                        manifest=manifest,
-                        pages=pages,
-                        markdown=full_markdown,
-                        job_id=job.job_id,
-                    )
+                    if "tables" in manifest.required_agents:
+                        with self._tracer.start_as_current_span("agent.chained_tables"):
+                            tables_obs, tables_usage = await chained_tables(
+                                pages=pages,
+                                manifest=manifest,
+                                markdown=full_markdown,
+                                job_id=job.job_id,
+                            )
+                            specialized_observations.extend(tables_obs)
+                            specialized_usages.append(tables_usage)
+                            logger.info(
+                                f"Job {job.job_id}: Chained tables - "
+                                f"{len(tables_obs)} observations, "
+                                f"cost: ${tables_usage.estimated_cost_cents/100:.4f}"
+                            )
 
-                    # Convert combined usage to LLMUsage for consistent tracking
-                    specialized_usage = combined_agent_usage.to_llm_usage()
+                    if "structure" in manifest.required_agents:
+                        with self._tracer.start_as_current_span("agent.chained_structure"):
+                            structure_obs, structure_usage = await chained_structure(
+                                pages=pages,
+                                manifest=manifest,
+                                markdown=full_markdown,
+                                job_id=job.job_id,
+                            )
+                            specialized_observations.extend(structure_obs)
+                            specialized_usages.append(structure_usage)
+                            logger.info(
+                                f"Job {job.job_id}: Chained structure - "
+                                f"{len(structure_obs)} observations, "
+                                f"cost: ${structure_usage.estimated_cost_cents/100:.4f}"
+                            )
+
+                    if "typography" in manifest.required_agents:
+                        # Typography still uses old agent (no chained version yet)
+                        with self._tracer.start_as_current_span("agent.typography"):
+                            typography_agent = TypographyAgent()
+                            typography_obs, typography_usage = await typography_agent.analyze(
+                                pages=pages,
+                                manifest=manifest,
+                                markdown=full_markdown,
+                                job_id=job.job_id,
+                            )
+                            specialized_observations.extend(typography_obs)
+                            specialized_usages.append(typography_usage)
+                            logger.info(
+                                f"Job {job.job_id}: Typography - "
+                                f"{len(typography_obs)} observations, "
+                                f"cost: ${typography_usage.estimated_cost_cents/100:.4f}"
+                            )
+
+                    # Aggregate all specialized usage
+                    specialized_usage = aggregate_usage(specialized_usages)
 
                     span.set_attribute("observations_found", len(specialized_observations))
                     span.set_attribute("tokens.input", specialized_usage.input_tokens)
@@ -293,15 +347,14 @@ class ProcessingService:
 
                 logger.info(
                     f"Job {job.job_id}: Specialized analysis complete - "
-                    f"{len(specialized_observations)} additional observations found, "
+                    f"{len(specialized_observations)} observations found, "
                     f"specialized cost: ${specialized_usage.estimated_cost_cents/100:.4f}"
                 )
 
-                # Append specialized observations to initial observations
-                # Note: initial_observations is currently empty list[str], so use specialized only
+                # Use specialized observations
                 all_observations = specialized_observations
 
-                # Save updated observations to S3
+                # Save observations to S3
                 if specialized_observations:
                     await self.remediation_storage.save_observations(
                         job.job_id, all_observations
@@ -310,11 +363,14 @@ class ProcessingService:
                 logger.info(
                     f"Job {job.job_id}: No specialized agents required, skipping Phase 3"
                 )
-                # initial_observations is list[str], so use empty list for Observations
                 all_observations = []
+                specialized_usage = LLMUsage(
+                    input_tokens=0, output_tokens=0, total_tokens=0, estimated_cost_cents=0.0
+                )
 
-            # Step 7: Consolidation Phase (Sonnet)
+            # Step 7: Consolidation Phase (Chained Consolidation)
             # Transform observations into actionable proposals
+            # Uses chained pipeline: Grouping → Conflict Detection → Proposal Generation → Routing
             consolidation_usage = LLMUsage(
                 input_tokens=0, output_tokens=0, total_tokens=0, estimated_cost_cents=0.0
             )
@@ -324,7 +380,7 @@ class ProcessingService:
 
             if all_observations:
                 logger.info(
-                    f"Job {job.job_id}: Starting consolidation phase (Sonnet)..."
+                    f"Job {job.job_id}: Starting chained consolidation phase..."
                 )
 
                 with self._tracer.start_as_current_span("phase.consolidation") as span:
@@ -343,26 +399,33 @@ class ProcessingService:
                         operation_name=f"Update job {job.job_id} substatus to consolidating",
                     )
 
-                    # Run consolidation service
-                    consolidation_service = ConsolidationService(self.remediation_storage)
-                    proposals, auto_proposal_count, manual_proposal_count, consolidation_usage = (
-                        await consolidation_service.consolidate_observations(
-                            job_id=job.job_id,
+                    # Run chained consolidation
+                    proposals, manual_observation_ids, consolidation_usage = (
+                        await chained_consolidate(
+                            observations=all_observations,
                             markdown=full_markdown,
+                            job_id=job.job_id,
                         )
                     )
 
+                    # Save proposals to S3
+                    if proposals:
+                        await self.remediation_storage.save_proposals(job.job_id, proposals)
+
                     proposal_count = len(proposals)
+                    auto_proposal_count = sum(1 for p in proposals if p.route == "auto")
+                    manual_proposal_count = sum(1 for p in proposals if p.route == "manual")
 
                     span.set_attribute("proposal_count", proposal_count)
                     span.set_attribute("auto_proposals", auto_proposal_count)
                     span.set_attribute("manual_proposals", manual_proposal_count)
+                    span.set_attribute("manual_observations", len(manual_observation_ids))
                     span.set_attribute("tokens.input", consolidation_usage.input_tokens)
                     span.set_attribute("tokens.output", consolidation_usage.output_tokens)
                     span.set_attribute("cost.cents", consolidation_usage.estimated_cost_cents)
 
                 logger.info(
-                    f"Job {job.job_id}: Consolidation complete - "
+                    f"Job {job.job_id}: Chained consolidation complete - "
                     f"{proposal_count} proposals ({auto_proposal_count} auto, {manual_proposal_count} manual), "
                     f"consolidation cost: ${consolidation_usage.estimated_cost_cents/100:.4f}"
                 )
@@ -443,8 +506,6 @@ class ProcessingService:
             processing_time = int(time.time() - start_time)
 
             # Parse heading tree from manifest to get section count and layout
-            from ..shared.models.remediation import HeadingTree
-
             heading_tree = HeadingTree.model_validate_json(manifest.heading_tree_json)
 
             update_fields = {
@@ -458,7 +519,7 @@ class ProcessingService:
                 "llm_output_tokens": total_usage.output_tokens,
                 "llm_total_tokens": total_usage.total_tokens,
                 "extraction_method": "analysis_extraction",
-                "extraction_model": extraction_agent.model_id,
+                "extraction_model": get_model_id(ModelTier.EFFICIENT),
                 "layout_type": heading_tree.layout_type,
                 "section_count": len(heading_tree.sections),
                 "observation_count": len(all_observations),  # From specialized agents
@@ -603,9 +664,6 @@ class ProcessingService:
             for p in auto_proposals:
                 p.status = "approved"
 
-            # Save proposals so ApplicationService can load them
-            await self.remediation_storage.save_proposals(job.job_id, proposals)
-
             # Apply approved proposals
             from ..services.application_service import ApplicationService
             app_service = ApplicationService(
@@ -626,6 +684,9 @@ class ProcessingService:
                     logger.warning(
                         f"Failed to apply auto proposal {proposal.id}: {result.get('error')}"
                     )
+
+            # Save proposals AFTER all mutations are complete to avoid race condition
+            await self.remediation_storage.save_proposals(job.job_id, proposals)
 
         # Step 3: Save corrected markdown with -corrected suffix
         await self.storage.upload_result(
@@ -704,7 +765,6 @@ class ProcessingService:
         )
 
         # Parse heading tree from manifest
-        from ..shared.models.remediation import HeadingTree
         heading_tree = HeadingTree.model_validate_json(manifest.heading_tree_json)
 
         # Calculate confidence level

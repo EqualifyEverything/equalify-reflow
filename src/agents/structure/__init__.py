@@ -9,15 +9,15 @@ This package contains the chained agents for structure analysis:
 The chained_structure.py orchestrator coordinates these steps.
 """
 
-from src.agents.structure.hierarchy_validator import (
-    HierarchyIssue,
-    HierarchyValidation,
-    validate_hierarchy,
-)
 from src.agents.structure.alignment_agent import (
     AlignmentIssue,
     AlignmentOutput,
     check_alignment,
+)
+from src.agents.structure.hierarchy_validator import (
+    HierarchyIssue,
+    HierarchyValidation,
+    validate_hierarchy,
 )
 from src.agents.structure.reading_order_agent import (
     ReadingOrderIssue,

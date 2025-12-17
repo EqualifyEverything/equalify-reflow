@@ -14,10 +14,10 @@ Usage:
 """
 
 from .extractor import (
+    MAX_CORRECTION_ATTEMPTS,
     extract_with_validation,
     get_agent,
     reset_agent,
-    MAX_CORRECTION_ATTEMPTS,
 )
 from .models import (
     ExtractionMetrics,

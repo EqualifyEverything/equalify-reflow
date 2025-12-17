@@ -185,7 +185,7 @@ def validate_hierarchy(
                     issue_type="multiple_h1",
                     severity="major",
                     location=f"Page {page_num}, line {line_num}",
-                    description=f"Multiple h1 headings found (document should have one)",
+                    description="Multiple h1 headings found (document should have one)",
                     current_level=1,
                     heading_text=text[:50],
                 )

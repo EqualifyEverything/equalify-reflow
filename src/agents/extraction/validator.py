@@ -104,10 +104,11 @@ def validate_extraction(
                 page_features.has_lists or
                 page_features.has_code_blocks
             ):
+                char_count = len(content.strip())
                 issues.append(ValidationIssue(
                     issue_type="truncated_content",
                     severity="warning",
-                    message=f"Page {page_num} has very little content ({len(content.strip())} chars). May be truncated.",
+                    message=f"Page {page_num} has very little content ({char_count} chars). May be truncated.",
                     page_num=page_num,
                 ))
 
@@ -242,8 +243,8 @@ def _check_heading_order(
         prev_level = level
 
     # Check if major headings are in correct order
-    expected_h1_h2 = [(l, t) for l, t in expected_normalized if l <= 2]
-    extracted_h1_h2 = [(l, t) for l, t in extracted_normalized if l <= 2]
+    expected_h1_h2 = [(lvl, txt) for lvl, txt in expected_normalized if lvl <= 2]
+    extracted_h1_h2 = [(lvl, txt) for lvl, txt in extracted_normalized if lvl <= 2]
 
     # Simple order check - are the major headings in the same sequence?
     expected_texts = [t for _, t in expected_h1_h2]

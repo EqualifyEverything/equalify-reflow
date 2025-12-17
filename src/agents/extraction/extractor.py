@@ -27,10 +27,10 @@ from pydantic_ai.models.bedrock import BedrockConverseModel
 
 from src.agents.dependencies import AgentDependencies
 from src.agents.factory import (
+    aggregate_usage,
     extract_usage,
     get_tracer,
     load_prompts,
-    aggregate_usage,
 )
 from src.agents.model_tiers import MODEL_TIER_MAP, ModelTier
 from src.services.pdf_converter import PageData

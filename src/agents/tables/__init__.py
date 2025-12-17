@@ -8,17 +8,17 @@ This package contains the chained agents for table analysis:
 The chained_tables.py orchestrator coordinates these steps.
 """
 
-from src.agents.tables.structure_agent import (
-    TableStructure,
-    TableStructureOutput,
-    detect_structure,
-)
 from src.agents.tables.accuracy_agent import (
     DataAccuracy,
     DataAccuracyOutput,
     assess_accuracy,
 )
 from src.agents.tables.routing import route_table
+from src.agents.tables.structure_agent import (
+    TableStructure,
+    TableStructureOutput,
+    detect_structure,
+)
 
 __all__ = [
     # Structure

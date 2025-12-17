@@ -22,19 +22,17 @@ from uuid import uuid4
 from opentelemetry import trace
 
 from src.agents.factory import aggregate_usage, get_tracer
-from src.agents.tables.structure_agent import (
-    TableStructureOutput,
-    detect_structure,
-)
+from src.agents.helpers import extract_page_markdown, get_page_features
 from src.agents.tables.accuracy_agent import (
-    DataAccuracyOutput,
     assess_accuracy,
 )
 from src.agents.tables.routing import (
     TableRoutingResult,
     route_page_tables,
 )
-from src.agents.helpers import extract_page_markdown, get_page_features
+from src.agents.tables.structure_agent import (
+    detect_structure,
+)
 from src.services.pdf_converter import PageData
 from src.shared.models.observation import Observation, ObservationLocation
 from src.shared.models.processing import LLMUsage

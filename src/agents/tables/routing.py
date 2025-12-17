@@ -16,8 +16,8 @@ import logging
 from dataclasses import dataclass
 from typing import Literal
 
-from src.agents.tables.structure_agent import TableStructure
 from src.agents.tables.accuracy_agent import DataAccuracy
+from src.agents.tables.structure_agent import TableStructure
 from src.config import settings
 
 logger = logging.getLogger(__name__)

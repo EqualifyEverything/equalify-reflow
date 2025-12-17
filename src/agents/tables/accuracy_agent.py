@@ -22,8 +22,8 @@ from pydantic import BaseModel, Field
 from pydantic_ai import Agent
 
 from src.agents.factory import create_agent, extract_usage, load_prompts, run_agent
-from src.agents.tables.structure_agent import TableStructure
 from src.agents.model_tiers import ModelTier
+from src.agents.tables.structure_agent import TableStructure
 from src.shared.models.processing import LLMUsage
 
 logger = logging.getLogger(__name__)
@@ -140,8 +140,9 @@ async def assess_accuracy(
 
     if not tables_needing_assessment:
         # All tables are simple with headers - return empty result
+        table_count = len(structures)
         logger.debug(
-            f"Job {job_id}: Page {page_num} - all {len(structures)} tables are simple with headers, skipping accuracy assessment"
+            f"Job {job_id}: Page {page_num} - all {table_count} tables are simple with headers, skipping"
         )
         return (
             DataAccuracyOutput(page_num=page_num, assessments=[]),

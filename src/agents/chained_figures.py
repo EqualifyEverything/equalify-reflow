@@ -22,11 +22,9 @@ from opentelemetry import trace
 
 from src.agents.factory import aggregate_usage, get_tracer
 from src.agents.figures.classification_agent import (
-    ImageClassificationOutput,
     classify,
 )
 from src.agents.figures.generation_agent import (
-    AltTextGenerationOutput,
     generate,
 )
 from src.agents.figures.routing import (

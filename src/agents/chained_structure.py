@@ -23,20 +23,20 @@ from uuid import uuid4
 from opentelemetry import trace
 
 from src.agents.factory import aggregate_usage, get_tracer
+from src.agents.helpers import extract_page_markdown, get_page_features
+from src.agents.structure.alignment_agent import (
+    AlignmentOutput,
+    check_alignment,
+)
 from src.agents.structure.hierarchy_validator import (
     HierarchyIssue,
     HierarchyValidation,
     validate_hierarchy,
 )
-from src.agents.structure.alignment_agent import (
-    AlignmentOutput,
-    check_alignment,
-)
 from src.agents.structure.reading_order_agent import (
     ReadingOrderOutput,
     check_reading_order,
 )
-from src.agents.helpers import extract_page_markdown, get_page_features
 from src.services.pdf_converter import PageData
 from src.shared.models.observation import Observation, ObservationLocation
 from src.shared.models.processing import LLMUsage

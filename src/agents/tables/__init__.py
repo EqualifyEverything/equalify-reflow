@@ -1,13 +1,17 @@
-"""Chained tables analysis agents.
+"""Tables analysis agents.
 
-This package contains the chained agents for table analysis:
-1. structure_agent - Table structure detection (Haiku, multimodal)
-2. accuracy_agent - Data accuracy assessment (Haiku, text-only)
-3. routing - Pure Python routing logic
+This package contains the TablesAgent for table analysis and enhancement.
 
-The chained_tables.py orchestrator coordinates these steps.
+The TablesAgent (new architecture):
+- Single merged agent with validation loop
+- Outputs AgentResult directly
+- Replaces the old chained approach
+
+Reference: PRD-024 - Tables Agent Merge & Validation Loop
 """
 
+# Legacy exports for backwards compatibility during transition
+# TODO: Remove these after updating all consumers
 from src.agents.tables.accuracy_agent import (
     DataAccuracy,
     DataAccuracyOutput,
@@ -19,16 +23,25 @@ from src.agents.tables.structure_agent import (
     TableStructureOutput,
     detect_structure,
 )
+from src.agents.tables.tables_agent import (
+    TableEnhanceOutput,
+    TablePlaceholder,
+    TablesAgent,
+    TableValidationIssue,
+)
 
 __all__ = [
-    # Structure
+    # New architecture (PRD-024)
+    "TablesAgent",
+    "TablePlaceholder",
+    "TableValidationIssue",
+    "TableEnhanceOutput",
+    # Legacy (for backwards compatibility)
     "TableStructure",
     "TableStructureOutput",
     "detect_structure",
-    # Accuracy
     "DataAccuracy",
     "DataAccuracyOutput",
     "assess_accuracy",
-    # Routing
     "route_table",
 ]

@@ -12,7 +12,7 @@ from fastapi import FastAPI
 from fastapi.openapi.utils import get_openapi
 from fastapi.staticfiles import StaticFiles
 
-from .api import approval, corrections, documents, health, review
+from .api import approval, corrections, documents, health, review, review_checklist
 from .config import settings
 from .dependencies import get_redis_client
 from .middleware import (
@@ -145,6 +145,7 @@ app.include_router(documents.router)
 app.include_router(approval.router)
 app.include_router(corrections.router)
 app.include_router(review.router)
+app.include_router(review_checklist.router)
 
 # Conditionally import dev monitoring endpoints (only in development)
 if settings.environment == "dev":

@@ -1,8 +1,9 @@
 """Storage service for S3 operations."""
 
+import json
 import logging
 import uuid
-from typing import Any
+from typing import TYPE_CHECKING, Any
 
 from botocore.exceptions import ClientError
 from fastapi import HTTPException, UploadFile
@@ -10,6 +11,9 @@ from fastapi import HTTPException, UploadFile
 from ..config import settings
 from ..utils.circuit_breaker import CircuitBreaker, CircuitBreakerOpenError
 from ..utils.retry_helpers import retry_with_backoff_for_sync_func
+
+if TYPE_CHECKING:
+    from ..shared.models.processing_result import ProcessingResult
 
 logger = logging.getLogger(__name__)
 
@@ -451,6 +455,196 @@ class StorageService:
             return False
         except Exception:
             return False
+
+    async def load_processing_result(self, job_id: str) -> "ProcessingResult | None":
+        """Load ProcessingResult from S3.
+
+        Args:
+            job_id: Job identifier
+
+        Returns:
+            ProcessingResult if found, None if not found
+
+        Raises:
+            HTTPException: If download fails (other than not found)
+            CircuitBreakerOpenError: If S3 download circuit breaker is open
+        """
+        from ..shared.models.processing_result import ProcessingResult
+
+        # Check circuit breaker
+        self.download_circuit.check_state()
+        if self.download_circuit.is_open:
+            raise CircuitBreakerOpenError(
+                "S3 download circuit breaker is open due to repeated failures"
+            )
+
+        key = f"jobs/{job_id}/processing_result.json"
+
+        try:
+            response: Any = await retry_with_backoff_for_sync_func(
+                lambda: self.s3_client.get_object(
+                    Bucket=self.results_bucket,
+                    Key=key
+                ),
+                max_attempts=3,
+                base_delay=1.0,
+                operation_name=f"load processing result {job_id}"
+            )
+
+            # Record success
+            self.download_circuit.record_success()
+
+            data = json.loads(response['Body'].read().decode('utf-8'))
+            return ProcessingResult.model_validate(data)
+
+        except CircuitBreakerOpenError:
+            raise
+        except ClientError as e:
+            if e.response['Error']['Code'] == 'NoSuchKey':
+                return None
+            # Record failure
+            self.download_circuit.record_failure()
+            raise HTTPException(
+                status_code=500,
+                detail=f"Failed to load processing result: {str(e)}"
+            )
+        except Exception as e:
+            # Record failure
+            self.download_circuit.record_failure()
+            raise HTTPException(
+                status_code=500,
+                detail=f"Unexpected error loading processing result: {str(e)}"
+            )
+
+    async def save_processing_result(
+        self,
+        job_id: str,
+        result: "ProcessingResult"
+    ) -> str:
+        """Save ProcessingResult to S3.
+
+        Args:
+            job_id: Job identifier
+            result: ProcessingResult to save
+
+        Returns:
+            S3 key where result was saved
+
+        Raises:
+            HTTPException: If upload fails
+            CircuitBreakerOpenError: If S3 upload circuit breaker is open
+        """
+        # Check circuit breaker
+        self.upload_circuit.check_state()
+        if self.upload_circuit.is_open:
+            raise CircuitBreakerOpenError(
+                "S3 upload circuit breaker is open due to repeated failures"
+            )
+
+        key = f"jobs/{job_id}/processing_result.json"
+
+        try:
+            body = result.model_dump_json(indent=2)
+
+            await retry_with_backoff_for_sync_func(
+                lambda: self.s3_client.put_object(
+                    Bucket=self.results_bucket,
+                    Key=key,
+                    Body=body.encode('utf-8'),
+                    ContentType='application/json',
+                ),
+                max_attempts=3,
+                base_delay=1.0,
+                operation_name=f"save processing result {job_id}"
+            )
+
+            # Record success
+            self.upload_circuit.record_success()
+
+            logger.info(f"Saved ProcessingResult for job {job_id}")
+            return key
+
+        except CircuitBreakerOpenError:
+            raise
+        except ClientError as e:
+            # Record failure
+            self.upload_circuit.record_failure()
+            error_code = e.response.get('Error', {}).get('Code', 'Unknown')
+            raise HTTPException(
+                status_code=500,
+                detail=f"Failed to save processing result: {error_code}"
+            ) from e
+        except Exception as e:
+            # Record failure
+            self.upload_circuit.record_failure()
+            raise HTTPException(
+                status_code=500,
+                detail=f"Failed to save processing result: {str(e)}"
+            )
+
+    async def upload_final_markdown(self, job_id: str, markdown: str) -> str:
+        """Upload final reviewed markdown and return URL.
+
+        This is used after all reviews have been applied to save the
+        final accessible markdown document.
+
+        Args:
+            job_id: Job identifier
+            markdown: Final markdown content
+
+        Returns:
+            S3 key where markdown was saved
+
+        Raises:
+            HTTPException: If upload fails
+            CircuitBreakerOpenError: If S3 upload circuit breaker is open
+        """
+        # Check circuit breaker
+        self.upload_circuit.check_state()
+        if self.upload_circuit.is_open:
+            raise CircuitBreakerOpenError(
+                "S3 upload circuit breaker is open due to repeated failures"
+            )
+
+        key = f"jobs/{job_id}/final.md"
+
+        try:
+            await retry_with_backoff_for_sync_func(
+                lambda: self.s3_client.put_object(
+                    Bucket=self.results_bucket,
+                    Key=key,
+                    Body=markdown.encode('utf-8'),
+                    ContentType='text/markdown',
+                    CacheControl='public, max-age=31536000'
+                ),
+                max_attempts=3,
+                base_delay=1.0,
+                operation_name=f"upload final markdown {job_id}"
+            )
+
+            # Record success
+            self.upload_circuit.record_success()
+
+            logger.info(f"Uploaded final markdown for job {job_id}")
+            return key
+
+        except CircuitBreakerOpenError:
+            raise
+        except ClientError as e:
+            # Record failure
+            self.upload_circuit.record_failure()
+            error_code = e.response.get('Error', {}).get('Code', 'Unknown')
+            raise HTTPException(
+                status_code=500,
+                detail=f"Failed to upload final markdown: {error_code}"
+            ) from e
+        except Exception as e:
+            # Record failure
+            self.upload_circuit.record_failure()
+            raise HTTPException(
+                status_code=500,
+                detail=f"Failed to upload final markdown: {str(e)}"
+            )
 
 
 

@@ -225,8 +225,8 @@ class TestTableAnalysisToObservation:
             observations = agent._analyses_to_observations(analyses, page_num=1, job_id="test-job")
 
             assert len(observations) == 1
-            assert observations[0].route == "manual"
-            assert "Complex table structure" in observations[0].manual_reason
+            assert observations[0].status == "open"
+            assert observations[0].severity == "major"
 
     def test_missing_headers_creates_major_observation(self):
         """Test tables without headers create major observations."""
@@ -268,8 +268,8 @@ class TestTableAnalysisToObservation:
 
         assert len(observations) == 0
 
-    def test_low_confidence_routes_to_manual(self):
-        """Test low confidence analyses route to manual review."""
+    def test_low_confidence_creates_observation_with_low_confidence(self):
+        """Test low confidence analyses still create observations."""
         agent = TablesAgent()
 
         analyses = [
@@ -289,8 +289,9 @@ class TestTableAnalysisToObservation:
         observations = agent._analyses_to_observations(analyses, page_num=1, job_id="test-job")
 
         assert len(observations) == 1
-        assert observations[0].route == "manual"
-        assert "Low confidence" in observations[0].manual_reason
+        assert observations[0].status == "open"
+        # Confidence should reflect the low model confidence
+        assert observations[0].confidence <= 0.5
 
 
 # =============================================================================

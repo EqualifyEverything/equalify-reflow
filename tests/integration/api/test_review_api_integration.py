@@ -709,7 +709,7 @@ class TestEditEndpoint:
         setup_remediation_job,
         api_key_headers
     ):
-        """Test edit without 'after' creates observation and triggers consolidation."""
+        """Test edit without 'after' creates observation (legacy test - consolidation removed)."""
         # Arrange
         data = setup_remediation_job
         job_id = data["job_id"]
@@ -722,7 +722,7 @@ class TestEditEndpoint:
             "reviewed_by": "editor@test.com"
         }
 
-        # Create a mock proposal that will be returned by the consolidation service
+        # Create a mock proposal that will be returned by the legacy consolidation service
         mock_proposal = Proposal(
             id=str(uuid.uuid4()),
             job_id=job_id,
@@ -734,7 +734,7 @@ class TestEditEndpoint:
             justification="AI-generated from human observation"
         )
 
-        # Mock the consolidation service's reconsolidate_observation method
+        # Mock the legacy consolidation service's reconsolidate_observation method
         from src.dependencies import get_consolidation_service
 
         mock_usage = LLMUsage(
@@ -745,7 +745,7 @@ class TestEditEndpoint:
             return_value=(mock_proposal, mock_usage)
         )
 
-        # Override the consolidation service dependency
+        # Override the legacy consolidation service dependency
         app.dependency_overrides[get_consolidation_service] = lambda: mock_consolidation
 
         try:
@@ -778,7 +778,7 @@ class TestEditEndpoint:
             assert new_obs.source == "human"
             assert new_obs.human_comment == "This text needs improvement"
         finally:
-            # Cleanup: remove the consolidation service override
+            # Cleanup: remove the legacy consolidation service override
             # Note: override_dependencies fixture will clear all overrides after test,
             # but being explicit here for clarity
             if get_consolidation_service in app.dependency_overrides:

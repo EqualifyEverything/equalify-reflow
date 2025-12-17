@@ -707,7 +707,7 @@ class TestEndToEndWorkflow:
 
         await remediation_storage.append_observations(job_id, specialized_observations)
 
-        # Phase 4: Save proposals (consolidation)
+        # Phase 4: Save proposals (auto-corrections)
         proposal_id = str(uuid.uuid4())
 
         proposals = [

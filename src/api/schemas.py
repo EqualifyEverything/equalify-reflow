@@ -217,8 +217,9 @@ class ObservationSummary(BaseModel):
     agent: str
     severity: str
     confidence: float
-    route: str
+    category: str
     status: str
+    resolution: str | None = Field(default=None)
     visual_description: str | None = Field(default=None)
     markup_description: str | None = Field(default=None)
     page_num: int | None = Field(default=None)
@@ -234,29 +235,29 @@ class AgentsPhase(BaseModel):
     raw_observations: list[dict] | None = Field(default=None, description="Full observations when show_raw=true")
 
 
-class ProposalSummary(BaseModel):
-    """Summary of a single proposal."""
+class AutoCorrectionSummary(BaseModel):
+    """Summary of a single auto correction."""
 
     id: str
-    route: str
-    status: str
-    page_nums: list[int]
-    resolves_count: int
+    observation_id: str
+    applied: bool
+    page_num: int | None
     search_preview: str = Field(..., description="First 100 chars of search text")
     replace_preview: str = Field(..., description="First 100 chars of replace text")
     justification: str
-    estimated_impact: str | None = Field(default=None)
+    confidence: float
+    agent: str
 
 
-class ConsolidationPhase(BaseModel):
-    """Phase 4: Consolidation output."""
+class RemediationPhase(BaseModel):
+    """Phase 4: Remediation output (auto corrections + review items)."""
 
     status: str = Field(..., description="completed, skipped, or error")
-    proposal_count: int = Field(default=0)
-    auto_count: int = Field(default=0)
-    manual_count: int = Field(default=0)
-    proposals: list[ProposalSummary] = Field(default_factory=list)
-    raw_proposals: list[dict] | None = Field(default=None, description="Full proposals when show_raw=true")
+    auto_correction_count: int = Field(default=0)
+    applied_count: int = Field(default=0)
+    pending_count: int = Field(default=0)
+    auto_corrections: list[AutoCorrectionSummary] = Field(default_factory=list)
+    raw_corrections: list[dict] | None = Field(default=None, description="Full corrections when show_raw=true")
 
 
 class ProcessingPhasesResponse(BaseModel):
@@ -271,6 +272,6 @@ class ProcessingPhasesResponse(BaseModel):
     analysis: AnalysisPhase
     extraction: ExtractionPhase
     agents: AgentsPhase
-    consolidation: ConsolidationPhase
+    remediation: RemediationPhase
 
     total_llm_cost: LLMCostInfo | None = None

@@ -3,7 +3,8 @@
 Handles S3 operations for storing and retrieving:
 - DocumentManifest (analysis output)
 - Observations (discrepancies found)
-- Proposals (suggested edits)
+- AutoCorrections (auto-applied edits)
+- ReviewItems (items needing human review)
 """
 
 import json
@@ -14,9 +15,10 @@ from typing import Any
 from botocore.exceptions import ClientError
 
 from src.services.storage_service import StorageService
+from src.shared.models.auto_correction import AutoCorrection
 from src.shared.models.observation import Observation
-from src.shared.models.proposal import Proposal
 from src.shared.models.remediation import DocumentManifest
+from src.shared.models.review_checklist import ReviewItem
 
 logger = logging.getLogger(__name__)
 
@@ -180,143 +182,167 @@ class RemediationStorageService:
             f"(total: {len(all_observations)})"
         )
 
-    async def save_proposals(
+    async def save_auto_corrections(
         self,
         job_id: str,
-        proposals: list[Proposal]
+        corrections: list[AutoCorrection]
     ) -> str:
-        """Save proposals to S3.
+        """Save auto corrections to S3.
 
         Args:
             job_id: Job identifier
-            proposals: List of Proposal objects
+            corrections: List of AutoCorrection objects
 
         Returns:
-            S3 key where proposals were saved
+            S3 key where corrections were saved
 
         Raises:
             Exception: If upload fails
         """
         content = json.dumps(
-            [prop.model_dump() for prop in proposals],
+            [corr.model_dump() for corr in corrections],
             indent=2,
             default=self._json_serializer
         )
-        key = f"{job_id}/proposals.json"
+        key = f"{job_id}/auto_corrections.json"
 
         try:
             body = content.encode("utf-8")
             await self._put_json_object(key, body)
-            logger.info(f"Saved {len(proposals)} proposals for job {job_id}")
+            logger.info(f"Saved {len(corrections)} auto corrections for job {job_id}")
             return key
         except Exception as e:
-            logger.error(f"Failed to save proposals for job {job_id}: {e}")
+            logger.error(f"Failed to save auto corrections for job {job_id}: {e}")
             raise
 
-    async def load_proposals(self, job_id: str) -> list[Proposal]:
-        """Load proposals from S3.
+    async def load_auto_corrections(self, job_id: str) -> list[AutoCorrection]:
+        """Load auto corrections from S3.
 
         Args:
             job_id: Job identifier
 
         Returns:
-            List of Proposal objects (empty list if not found)
+            List of AutoCorrection objects (empty list if not found)
         """
-        key = f"{job_id}/proposals.json"
+        key = f"{job_id}/auto_corrections.json"
 
         try:
             content = await self._get_json_object(key)
             if content is None:
                 return []
             data = json.loads(content)
-            return [Proposal(**item) for item in data]
+            return [AutoCorrection(**item) for item in data]
         except json.JSONDecodeError as e:
-            logger.error(f"Invalid JSON in proposals for job {job_id}: {e}")
+            logger.error(f"Invalid JSON in auto corrections for job {job_id}: {e}")
             return []
         except Exception as e:
-            logger.error(f"Failed to load proposals for job {job_id}: {e}")
+            logger.error(f"Failed to load auto corrections for job {job_id}: {e}")
             return []
 
-    async def update_proposal_status(
+    async def save_review_items(
         self,
         job_id: str,
-        proposal_id: str,
-        status: str,
-        **fields: Any
-    ) -> bool:
-        """Update a single proposal's status.
-
-        Loads all proposals, updates the matching one, and saves back.
+        items: list[ReviewItem]
+    ) -> str:
+        """Save review items to S3.
 
         Args:
             job_id: Job identifier
-            proposal_id: Proposal ID to update
-            status: New status value
-            **fields: Additional fields to update (e.g., reviewed_by, review_notes)
+            items: List of ReviewItem objects
 
         Returns:
-            True if proposal was found and updated, False otherwise
+            S3 key where items were saved
+
+        Raises:
+            Exception: If upload fails
         """
-        proposals = await self.load_proposals(job_id)
+        content = json.dumps(
+            [item.model_dump() for item in items],
+            indent=2,
+            default=self._json_serializer
+        )
+        key = f"{job_id}/review_items.json"
 
-        found = False
-        for proposal in proposals:
-            if proposal.id == proposal_id:
-                setattr(proposal, "status", status)
-                for key, value in fields.items():
-                    if hasattr(proposal, key):
-                        setattr(proposal, key, value)
-                found = True
-                break
+        try:
+            body = content.encode("utf-8")
+            await self._put_json_object(key, body)
+            logger.info(f"Saved {len(items)} review items for job {job_id}")
+            return key
+        except Exception as e:
+            logger.error(f"Failed to save review items for job {job_id}: {e}")
+            raise
 
-        if found:
-            await self.save_proposals(job_id, proposals)
-            logger.info(
-                f"Updated proposal {proposal_id} to status '{status}' "
-                f"for job {job_id}"
-            )
-        else:
-            logger.warning(
-                f"Proposal {proposal_id} not found for job {job_id}"
-            )
+    async def load_review_items(self, job_id: str) -> list[ReviewItem]:
+        """Load review items from S3.
 
-        return found
+        Args:
+            job_id: Job identifier
 
-    async def update_observation_status(
+        Returns:
+            List of ReviewItem objects (empty list if not found)
+        """
+        key = f"{job_id}/review_items.json"
+
+        try:
+            content = await self._get_json_object(key)
+            if content is None:
+                return []
+            data = json.loads(content)
+            return [ReviewItem(**item) for item in data]
+        except json.JSONDecodeError as e:
+            logger.error(f"Invalid JSON in review items for job {job_id}: {e}")
+            return []
+        except Exception as e:
+            logger.error(f"Failed to load review items for job {job_id}: {e}")
+            return []
+
+    async def close_observation(
         self,
         job_id: str,
         observation_id: str,
-        status: str,
-        resolved_by: str | None = None
+        resolution: str,
     ) -> bool:
-        """Update a single observation's status.
+        """Close an observation with a resolution.
 
-        Loads all observations, updates the matching one, and saves back.
+        Loads all observations, closes the matching one, and saves back.
+        Uses the new simplified 2-field lifecycle (status + resolution).
 
         Args:
             job_id: Job identifier
-            observation_id: Observation ID to update
-            status: New status value
-            resolved_by: Proposal ID that resolved this (if applicable)
+            observation_id: Observation ID to close
+            resolution: Resolution type: "fixed", "kept_original", or "skipped"
 
         Returns:
-            True if observation was found and updated, False otherwise
+            True if observation was found and closed, False otherwise
+
+        Raises:
+            ValueError: If resolution is not a valid value
         """
+        # Validate resolution parameter
+        valid_resolutions = {"fixed", "kept_original", "skipped"}
+        if resolution not in valid_resolutions:
+            raise ValueError(
+                f"Resolution must be one of {valid_resolutions}, got '{resolution}'"
+            )
+
         observations = await self.load_observations(job_id)
 
         found = False
         for observation in observations:
             if observation.id == observation_id:
-                setattr(observation, "status", status)
-                if resolved_by:
-                    observation.resolved_by = resolved_by
-                found = True
+                if observation.status == "open":
+                    observation.close(resolution)  # type: ignore[arg-type]
+                    found = True
+                else:
+                    logger.warning(
+                        f"Observation {observation_id} already closed for job {job_id}"
+                    )
                 break
 
         if found:
             await self.save_observations(job_id, observations)
             logger.info(
-                f"Updated observation {observation_id} to status '{status}' "
+                f"Closed observation {observation_id} with resolution '{resolution}' "
                 f"for job {job_id}"
             )
         else:

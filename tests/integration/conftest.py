@@ -271,7 +271,7 @@ def mock_ai_agents(request):
             mock_extraction.extract = AsyncMock(return_value=(mock_extraction_output, mock_usage))
             mock_extraction_class.return_value = mock_extraction
 
-            # Mock ConsolidationService (converts observations to proposals)
+            # Mock ConsolidationService (legacy - now agents produce AutoCorrections directly)
             with patch('src.services.consolidation_service.ConsolidationService') as mock_consolidation_class:
                 mock_consolidation = MagicMock()
                 # consolidate() returns (proposals, usage)

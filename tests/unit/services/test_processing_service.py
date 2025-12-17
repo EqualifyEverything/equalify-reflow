@@ -7,11 +7,10 @@ Validates the analysis + extraction pipeline.
 from unittest.mock import AsyncMock, MagicMock, patch
 
 import pytest
-from src.agents.extraction_agent import ExtractionOutput
+from src.agents.extraction import ExtractionMetrics, ExtractionResult
 from src.services.pdf_converter import PageData, PDFConversionResult
 from src.services.processing_service import ProcessingService
 from src.shared.models.processing import LLMUsage
-from src.shared.models.reasoned import Reasoned
 from src.shared.models.remediation import (
     DocumentManifest,
     HeadingNode,
@@ -112,18 +111,22 @@ def mock_analysis_usage():
     )
 
 
-def make_extraction_output(
+def make_extraction_result(
     markdown: str = "# Test Document\n\nContent here.",
     confidence: float = 0.88,
-    pages_transcribed: list[int] | None = None,
-) -> ExtractionOutput:
-    """Helper to create ExtractionOutput for tests."""
-    return ExtractionOutput(
+    pages_found: list[int] | None = None,
+) -> ExtractionResult:
+    """Helper to create ExtractionResult for tests."""
+    return ExtractionResult(
         markdown=markdown,
-        confidence=Reasoned(reasoning="Clear text, no issues", value=confidence),
-        reading_order_followed=Reasoned(reasoning="Single column layout", value=True),
-        pages_transcribed=pages_transcribed or [1, 2],
-        transcription_notes="",
+        metrics=ExtractionMetrics(
+            confidence=confidence,
+            pages_found=pages_found or [1, 2],
+            pages_missing=[],
+            is_valid=True,
+        ),
+        attempt_count=1,
+        correction_applied=False,
     )
 
 
@@ -175,25 +178,20 @@ async def test_process_document_happy_path(
         sample_pdf_conversion_result_no_markdown
     )
 
+    mock_extraction_result = make_extraction_result(
+        markdown="# Test Document\n\nContent here.",
+        confidence=0.88,
+    )
+
     with patch(
         "src.services.processing_service.analyze_document",
         new_callable=AsyncMock,
         return_value=(mock_analysis_manifest, [], mock_analysis_usage),
     ) as mock_analyze_document, patch(
-        "src.services.processing_service.ExtractionAgent"
-    ) as mock_extraction_agent_class:
-        # Mock extraction agent
-        mock_extraction_agent = MagicMock()
-        mock_extraction_agent.model_id = "us.anthropic.claude-haiku-4-5-20251001-v1:0"
-        mock_extraction_output = make_extraction_output(
-            markdown="# Test Document\n\nContent here.",
-            confidence=0.88,
-        )
-        mock_extraction_agent.extract = AsyncMock(
-            return_value=(mock_extraction_output, mock_llm_usage)
-        )
-        mock_extraction_agent_class.return_value = mock_extraction_agent
-
+        "src.services.processing_service.extract_with_validation",
+        new_callable=AsyncMock,
+        return_value=(mock_extraction_result, mock_llm_usage),
+    ) as mock_extract:
         service = ProcessingService(
             storage_service=mock_storage_service_extended,
             queue_service=mock_queue_service,
@@ -214,7 +212,7 @@ async def test_process_document_happy_path(
     mock_storage_service_extended.download_temp_file.assert_called_once()
     mock_pdf_converter.convert_with_page_images.assert_called_once()
     mock_analyze_document.assert_called_once()  # Analysis phase
-    mock_extraction_agent.extract.assert_called_once()  # Extraction phase
+    mock_extract.assert_called_once()  # Extraction phase
     # Should upload both v0 and final markdown
     assert mock_storage_service_extended.upload_result.call_count >= 2
 
@@ -231,9 +229,14 @@ async def test_process_document_confidence_from_extraction(
     mock_analysis_usage,
     sample_pdf_conversion_result_no_markdown,
 ):
-    """Test confidence score comes from extraction agent."""
+    """Test confidence score comes from extraction."""
     mock_pdf_converter.convert_with_page_images.return_value = (
         sample_pdf_conversion_result_no_markdown
+    )
+
+    mock_extraction_result = make_extraction_result(
+        markdown="# Test",
+        confidence=0.85,
     )
 
     with patch(
@@ -241,20 +244,10 @@ async def test_process_document_confidence_from_extraction(
         new_callable=AsyncMock,
         return_value=(mock_analysis_manifest, [], mock_analysis_usage),
     ), patch(
-        "src.services.processing_service.ExtractionAgent"
-    ) as mock_extraction_agent_class:
-        # Mock extraction agent with specific confidence
-        mock_extraction_agent = MagicMock()
-        mock_extraction_agent.model_id = "us.anthropic.claude-haiku-4-5-20251001-v1:0"
-        mock_extraction_output = make_extraction_output(
-            markdown="# Test",
-            confidence=0.85,
-        )
-        mock_extraction_agent.extract = AsyncMock(
-            return_value=(mock_extraction_output, mock_llm_usage)
-        )
-        mock_extraction_agent_class.return_value = mock_extraction_agent
-
+        "src.services.processing_service.extract_with_validation",
+        new_callable=AsyncMock,
+        return_value=(mock_extraction_result, mock_llm_usage),
+    ):
         service = ProcessingService(
             storage_service=mock_storage_service_extended,
             queue_service=mock_queue_service,
@@ -264,7 +257,7 @@ async def test_process_document_confidence_from_extraction(
 
         result = await service.process_document(sample_job_payload)
 
-    # Confidence should come from extraction agent
+    # Confidence should come from extraction
     assert result.confidence_score == 0.85
 
 
@@ -354,15 +347,10 @@ async def test_process_document_handles_extraction_error(
         new_callable=AsyncMock,
         return_value=(mock_analysis_manifest, [], mock_analysis_usage),
     ), patch(
-        "src.services.processing_service.ExtractionAgent"
-    ) as mock_extraction_agent_class:
-        # Mock extraction agent - fails
-        mock_extraction_agent = MagicMock()
-        mock_extraction_agent.extract = AsyncMock(
-            side_effect=ValueError("No pages provided for extraction")
-        )
-        mock_extraction_agent_class.return_value = mock_extraction_agent
-
+        "src.services.processing_service.extract_with_validation",
+        new_callable=AsyncMock,
+        side_effect=ValueError("No pages provided for extraction"),
+    ):
         service = ProcessingService(
             storage_service=mock_storage_service_extended,
             queue_service=mock_queue_service,
@@ -424,25 +412,20 @@ async def test_process_document_s3_upload_failure(
     )
     mock_storage_service.upload_result.side_effect = Exception("S3 bucket full")
 
+    mock_extraction_result = make_extraction_result(
+        markdown="# Test",
+        confidence=0.9,
+    )
+
     with patch(
         "src.services.processing_service.analyze_document",
         new_callable=AsyncMock,
         return_value=(mock_analysis_manifest, [], mock_analysis_usage),
     ), patch(
-        "src.services.processing_service.ExtractionAgent"
-    ) as mock_extraction_agent_class:
-        # Mock extraction agent
-        mock_extraction_agent = MagicMock()
-        mock_extraction_agent.model_id = "us.anthropic.claude-haiku-4-5-20251001-v1:0"
-        mock_extraction_output = make_extraction_output(
-            markdown="# Test",
-            confidence=0.9,
-        )
-        mock_extraction_agent.extract = AsyncMock(
-            return_value=(mock_extraction_output, mock_llm_usage)
-        )
-        mock_extraction_agent_class.return_value = mock_extraction_agent
-
+        "src.services.processing_service.extract_with_validation",
+        new_callable=AsyncMock,
+        return_value=(mock_extraction_result, mock_llm_usage),
+    ):
         service = ProcessingService(
             storage_service=mock_storage_service,
             queue_service=mock_queue_service,

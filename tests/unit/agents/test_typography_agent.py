@@ -151,7 +151,7 @@ class TestTypographyAgentInit:
         call_args = mock_create.call_args
         assert call_args[0][0] == "typography.yaml"
         assert call_args[0][1] == TypographyAnalysisOutput
-        assert call_args[1]["model_tier"] == ModelTier.REASONING
+        assert call_args[1]["model_tier"] == ModelTier.EFFICIENT
         assert call_args[1]["use_deps"] is True
 
     @patch("src.agents.typography_agent.load_prompts")
@@ -220,7 +220,7 @@ class TestIssueToObservation:
         obs = observations[0]
         assert obs.agent == "typography"
         assert obs.severity == "minor"  # From Reasoned[Severity]
-        assert obs.route == "auto"  # Confidence 0.99 exceeds threshold
+        assert obs.status == "open"
 
     def test_semantic_color_creates_major_observation(self):
         """Test semantic color issues create observations with model-determined severity."""
@@ -279,8 +279,8 @@ class TestIssueToObservation:
         assert len(observations) == 1
         assert observations[0].severity == "minor"  # From Reasoned[Severity]
 
-    def test_low_confidence_routes_to_manual(self):
-        """Test low confidence issues route to manual review."""
+    def test_low_confidence_creates_observation_with_low_confidence(self):
+        """Test low confidence issues still create observations."""
         issues = [
             TypographyIssue(
                 issue_type=make_reasoned("emphasis_unmarked", "Unclear if this is intentional emphasis."),
@@ -300,8 +300,9 @@ class TestIssueToObservation:
         observations = typography_agent._issues_to_observations(issues, page_num=1, job_id="test-job")
 
         assert len(observations) == 1
-        assert observations[0].route == "manual"
-        assert observations[0].manual_reason is not None
+        assert observations[0].status == "open"
+        # Confidence should reflect the low model confidence
+        assert observations[0].confidence <= 0.5
 
 
 # =============================================================================

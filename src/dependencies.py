@@ -11,7 +11,6 @@ from fastapi import Depends
 
 from .config import settings
 from .services.application_service import ApplicationService
-from .services.consolidation_service import ConsolidationService
 from .services.correction_approval_service import CorrectionApprovalService
 from .services.job_service import JobService
 from .services.queue_service import QueueService
@@ -310,29 +309,6 @@ async def get_remediation_storage(
             )
     """
     return RemediationStorageService(storage_service=storage)
-
-
-async def get_consolidation_service(
-    remediation_storage: RemediationStorageService = Depends(get_remediation_storage),
-) -> ConsolidationService:
-    """Get consolidation service instance.
-
-    Provides observation consolidation into proposals, including
-    re-consolidation for human-submitted observations.
-
-    Args:
-        remediation_storage: RemediationStorageService (injected)
-
-    Returns:
-        ConsolidationService instance
-
-    Note:
-        In FastAPI routes, use:
-            consolidation: ConsolidationService = Depends(
-                get_consolidation_service
-            )
-    """
-    return ConsolidationService(storage=remediation_storage)
 
 
 async def get_application_service(

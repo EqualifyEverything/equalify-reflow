@@ -89,7 +89,6 @@ def reset_agent_singletons():
     """
     # Import agent modules that use singleton pattern
     from src.agents import (
-        consolidation_agent,
         extraction_agent,
         figures_agent,
         structure_agent,
@@ -99,7 +98,6 @@ def reset_agent_singletons():
 
     # Reset before test
     for agent_module in [
-        consolidation_agent,
         extraction_agent,
         figures_agent,
         structure_agent,
@@ -113,7 +111,6 @@ def reset_agent_singletons():
 
     # Reset after test (cleanup)
     for agent_module in [
-        consolidation_agent,
         extraction_agent,
         figures_agent,
         structure_agent,

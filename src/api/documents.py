@@ -23,10 +23,10 @@ from ..shared.models.queue import ProcessingQueuePayload
 from .schemas import (
     AgentsPhase,
     AnalysisPhase,
+    AutoCorrectionSummary,
     AwaitingCorrectionApprovalResponse,
     AwaitingPIIApprovalResponse,
     CompletedResponse,
-    ConsolidationPhase,
     CorrectionDecision,
     CorrectionItem,
     CorrectionSummary,
@@ -41,7 +41,7 @@ from .schemas import (
     PIIScanningResponse,
     ProcessingPhasesResponse,
     ProcessingResponse,
-    ProposalSummary,
+    RemediationPhase,
 )
 
 router = APIRouter(prefix="/api/documents", tags=["Documents"])
@@ -319,7 +319,7 @@ async def get_job_phases(
     - Analysis: Document structure, page features, heading tree
     - Extraction: Original markdown (v0), extraction confidence
     - Agents: Observations from specialized agents
-    - Consolidation: Proposals with auto/manual routing
+    - Remediation: Auto corrections and review items
 
     Query params:
         show_raw: Include full raw JSON from each phase artifact
@@ -333,7 +333,6 @@ async def get_job_phases(
     # Load artifacts from S3
     manifest = await remediation_storage.load_manifest(job_id)
     observations = await remediation_storage.load_observations(job_id)
-    proposals = await remediation_storage.load_proposals(job_id)
 
     # Build Analysis Phase
     analysis_phase = AnalysisPhase(status="skipped")
@@ -406,8 +405,9 @@ async def get_job_phases(
                 agent=obs.agent,
                 severity=obs.severity,
                 confidence=obs.confidence,
-                route=obs.route,
+                category=obs.category,
                 status=obs.status,
+                resolution=obs.resolution,
                 visual_description=obs.visual_description[:200] if obs.visual_description else None,
                 markup_description=obs.markup_description[:200] if obs.markup_description else None,
                 page_num=obs.location.page_num if obs.location else None,
@@ -422,33 +422,34 @@ async def get_job_phases(
             raw_observations=[obs.model_dump(mode="json") for obs in observations] if show_raw else None,
         )
 
-    # Build Consolidation Phase
-    consolidation_phase = ConsolidationPhase(status="skipped")
-    if proposals:
-        auto_count = sum(1 for p in proposals if p.route == "auto")
-        manual_count = sum(1 for p in proposals if p.route == "manual")
+    # Build Remediation Phase (auto corrections)
+    auto_corrections = await remediation_storage.load_auto_corrections(job_id)
+    remediation_phase = RemediationPhase(status="skipped")
+    if auto_corrections:
+        applied_count = sum(1 for c in auto_corrections if c.applied)
+        pending_count = sum(1 for c in auto_corrections if not c.applied)
 
-        proposal_summaries = [
-            ProposalSummary(
-                id=p.id,
-                route=p.route,
-                status=p.status,
-                page_nums=p.page_nums,
-                resolves_count=len(p.resolves),
-                search_preview=p.diff.search[:100] if p.diff else "",
-                replace_preview=p.diff.replace[:100] if p.diff else "",
-                justification=p.justification,
-                estimated_impact=p.estimated_impact,
+        correction_summaries = [
+            AutoCorrectionSummary(
+                id=c.id,
+                observation_id=c.observation_id,
+                applied=c.applied,
+                page_num=c.page_num,
+                search_preview=c.search[:100] if c.search else "",
+                replace_preview=c.replace[:100] if c.replace else "",
+                justification=c.justification,
+                confidence=c.confidence,
+                agent=c.agent,
             )
-            for p in proposals
+            for c in auto_corrections
         ]
-        consolidation_phase = ConsolidationPhase(
+        remediation_phase = RemediationPhase(
             status="completed",
-            proposal_count=len(proposals),
-            auto_count=auto_count,
-            manual_count=manual_count,
-            proposals=proposal_summaries,
-            raw_proposals=[p.model_dump(mode="json") for p in proposals] if show_raw else None,
+            auto_correction_count=len(auto_corrections),
+            applied_count=applied_count,
+            pending_count=pending_count,
+            auto_corrections=correction_summaries,
+            raw_corrections=[c.model_dump(mode="json") for c in auto_corrections] if show_raw else None,
         )
 
     return ProcessingPhasesResponse(
@@ -460,6 +461,6 @@ async def get_job_phases(
         analysis=analysis_phase,
         extraction=extraction_phase,
         agents=agents_phase,
-        consolidation=consolidation_phase,
+        remediation=remediation_phase,
         total_llm_cost=_build_llm_cost(job),
     )

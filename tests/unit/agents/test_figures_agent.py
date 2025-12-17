@@ -184,7 +184,7 @@ class TestAnalysisToObservation:
         obs = observations[0]
         assert obs.agent == "figures"
         assert obs.severity == "major"
-        assert obs.route == "auto"  # Confidence exceeds threshold
+        assert obs.status == "open"
         assert obs.location.page_num == 1
 
     def test_decorative_image_creates_minor_observation(self):
@@ -207,8 +207,8 @@ class TestAnalysisToObservation:
         assert len(observations) == 1
         assert observations[0].severity == "minor"
 
-    def test_low_confidence_routes_to_manual(self):
-        """Test low confidence analyses route to manual review."""
+    def test_low_confidence_creates_observation_with_low_confidence(self):
+        """Test low confidence analyses still create observations."""
         from src.shared.models.quality_signals import QualitySignals
         agent = FiguresAgent()
 
@@ -231,8 +231,9 @@ class TestAnalysisToObservation:
         observations = agent._analyses_to_observations(analyses, page_num=1, job_id="test-job")
 
         assert len(observations) == 1
-        assert observations[0].route == "manual"
-        assert observations[0].manual_reason is not None
+        assert observations[0].status == "open"
+        # Confidence should reflect the low model confidence
+        assert observations[0].confidence <= 0.5
 
     def test_none_action_creates_no_observation(self):
         """Test analyses with action=none don't create observations."""

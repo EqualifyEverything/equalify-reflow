@@ -251,7 +251,7 @@ class TestIssueToObservation:
         obs = observations[0]
         assert obs.agent == "structure"
         assert obs.severity == "critical"
-        assert obs.route == "auto"  # Confidence 0.99 exceeds threshold
+        assert obs.status == "open"
         assert obs.location.location_type == "element"
 
     def test_reading_order_issue_creates_observation(self):
@@ -276,8 +276,8 @@ class TestIssueToObservation:
         obs = observations[0]
         assert obs.location.location_type == "region"
 
-    def test_low_confidence_routes_to_manual(self):
-        """Test low confidence issues route to manual review."""
+    def test_low_confidence_creates_observation_with_low_confidence(self):
+        """Test low confidence issues still create observations."""
         agent = StructureAgent()
 
         issues = [
@@ -299,8 +299,9 @@ class TestIssueToObservation:
         observations = agent._issues_to_observations(issues, page_num=1, job_id="test-job")
 
         assert len(observations) == 1
-        assert observations[0].route == "manual"
-        assert observations[0].manual_reason is not None
+        assert observations[0].status == "open"
+        # Confidence should reflect the low model confidence
+        assert observations[0].confidence <= 0.5
 
     def test_severity_is_validated_by_pydantic(self):
         """Test that severity values are validated by Pydantic.

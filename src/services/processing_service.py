@@ -1,10 +1,11 @@
 """Main processing service orchestrating PDF conversion and AI enhancement.
 
 The processing pipeline consists of:
-1. Analysis Phase (Haiku) - Chained analysis: layout → doctype → headings/features
-2. Extraction Phase (Haiku) - Guided markdown extraction
-3. Specialized Agents (Sonnet) - Figures, tables, structure, typography
-4. Consolidation (Sonnet) - Observations to proposals
+1. Analyze Phase (Haiku) - Chained analysis: layout → doctype → headings/features/summary
+2. Extract Phase (Haiku) - Guided markdown extraction
+3. Refine Phase (Sonnet) - Specialized agents: figures, tables, structure, typography
+   (Agents produce Observations, AutoCorrections, and ReviewItems)
+4. Assemble Phase - Apply auto-corrections and prepare review items
 """
 
 import base64
@@ -16,7 +17,6 @@ from typing import Any
 from opentelemetry import trace
 
 from ..agents.chained_analysis import analyze_document
-from ..agents.chained_consolidation import consolidate_observations as chained_consolidate
 from ..agents.chained_figures import analyze_figures as chained_figures
 from ..agents.chained_structure import analyze_structure as chained_structure
 from ..agents.chained_tables import analyze_tables as chained_tables
@@ -36,7 +36,6 @@ from ..services.storage_service import StorageService
 from ..shared.constants.statuses import STATUS_AWAITING_CORRECTION_APPROVAL
 from ..shared.models.observation import Observation
 from ..shared.models.processing import LLMUsage, ProcessingResult
-from ..shared.models.proposal import Proposal
 from ..shared.models.queue import ProcessingQueuePayload
 from ..shared.models.remediation import HeadingTree
 from ..utils.retry_helpers import retry_with_backoff
@@ -91,12 +90,13 @@ class ProcessingService:
         self,
         job: ProcessingQueuePayload,
     ) -> ProcessingResult:
-        """Process PDF using analysis + extraction pipeline.
+        """Process PDF using 4-phase pipeline: Analyze → Extract → Refine → Assemble.
 
         The processing pipeline:
-        1. Analysis Phase (Sonnet) - Deep document analysis, manifest generation
-        2. Extraction Phase (Haiku) - Guided markdown extraction (via ExtractionAgent)
-        3. Specialized agents, consolidation, review
+        1. Analyze Phase (Haiku) - Deep document analysis, manifest generation
+        2. Extract Phase (Haiku) - Guided markdown extraction (via ExtractionAgent)
+        3. Refine Phase (Sonnet) - Specialized agents generate AutoCorrections/ReviewItems
+        4. Assemble Phase - Apply auto-corrections and prepare for review
 
         Args:
             job: Processing queue payload with job_id and s3_key
@@ -368,119 +368,53 @@ class ProcessingService:
                     input_tokens=0, output_tokens=0, total_tokens=0, estimated_cost_cents=0.0
                 )
 
-            # Step 7: Consolidation Phase (Chained Consolidation)
-            # Transform observations into actionable proposals
-            # Uses chained pipeline: Grouping → Conflict Detection → Proposal Generation → Routing
-            consolidation_usage = LLMUsage(
-                input_tokens=0, output_tokens=0, total_tokens=0, estimated_cost_cents=0.0
-            )
-            proposal_count = 0
-            auto_proposal_count = 0
-            manual_proposal_count = 0
+            # Step 7: Check for review items
+            # Specialized agents now produce AutoCorrections (high confidence)
+            # and ReviewItems (needing human review) directly
+            # TODO: Update specialized agents to produce AutoCorrections and ReviewItems
 
-            if all_observations:
-                logger.info(
-                    f"Job {job.job_id}: Starting chained consolidation phase..."
-                )
-
-                with self._tracer.start_as_current_span("phase.consolidation") as span:
-                    span.set_attribute("job_id", job.job_id)
-                    span.set_attribute("phase.number", 4)
-                    span.set_attribute("total_observations", len(all_observations))
-
-                    # Update substatus to "consolidating"
-                    await retry_with_backoff(
-                        lambda: self.job.update_job_status(
-                            job.job_id,
-                            "processing",
-                            substatus="consolidating",
-                        ),
-                        max_attempts=3,
-                        operation_name=f"Update job {job.job_id} substatus to consolidating",
-                    )
-
-                    # Run chained consolidation
-                    proposals, manual_observation_ids, consolidation_usage = (
-                        await chained_consolidate(
-                            observations=all_observations,
-                            markdown=full_markdown,
-                            job_id=job.job_id,
-                        )
-                    )
-
-                    # Save proposals to S3
-                    if proposals:
-                        await self.remediation_storage.save_proposals(job.job_id, proposals)
-
-                    proposal_count = len(proposals)
-                    auto_proposal_count = sum(1 for p in proposals if p.route == "auto")
-                    manual_proposal_count = sum(1 for p in proposals if p.route == "manual")
-
-                    span.set_attribute("proposal_count", proposal_count)
-                    span.set_attribute("auto_proposals", auto_proposal_count)
-                    span.set_attribute("manual_proposals", manual_proposal_count)
-                    span.set_attribute("manual_observations", len(manual_observation_ids))
-                    span.set_attribute("tokens.input", consolidation_usage.input_tokens)
-                    span.set_attribute("tokens.output", consolidation_usage.output_tokens)
-                    span.set_attribute("cost.cents", consolidation_usage.estimated_cost_cents)
-
-                logger.info(
-                    f"Job {job.job_id}: Chained consolidation complete - "
-                    f"{proposal_count} proposals ({auto_proposal_count} auto, {manual_proposal_count} manual), "
-                    f"consolidation cost: ${consolidation_usage.estimated_cost_cents/100:.4f}"
-                )
-            else:
-                logger.info(
-                    f"Job {job.job_id}: No observations to consolidate, skipping Phase 4"
-                )
-                proposals = []
+            # For now, check if there are observations that need human review
+            # (all observations without auto-corrections are considered review items)
+            review_item_count = len(all_observations)
 
             # Check if correction review is needed
             should_route_to_review = (
-                manual_proposal_count > 0 or
+                review_item_count > 0 or
                 settings.always_require_correction_review
             )
 
             if should_route_to_review and self.correction_approval and self.redis:
                 logger.info(
                     f"Job {job.job_id}: Routing to correction review "
-                    f"({manual_proposal_count} manual proposals)"
+                    f"({review_item_count} observations need review)"
                 )
                 return await self._route_to_correction_review(
                     job=job,
                     full_markdown=full_markdown,
-                    proposals=proposals if all_observations else [],
                     observations=all_observations,
                     pages=conversion_result.pages,
                     avg_confidence=extraction_confidence,
                     analysis_usage=analysis_usage,
                     extraction_usage=extraction_usage,
                     specialized_usage=specialized_usage,
-                    consolidation_usage=consolidation_usage,
                     manifest=manifest,
                     start_time=start_time,
-                    auto_proposal_count=auto_proposal_count,
-                    manual_proposal_count=manual_proposal_count,
                 )
 
             # Combine usage from all phases
             total_usage = LLMUsage(
                 input_tokens=analysis_usage.input_tokens
                 + extraction_usage.input_tokens
-                + specialized_usage.input_tokens
-                + consolidation_usage.input_tokens,
+                + specialized_usage.input_tokens,
                 output_tokens=analysis_usage.output_tokens
                 + extraction_usage.output_tokens
-                + specialized_usage.output_tokens
-                + consolidation_usage.output_tokens,
+                + specialized_usage.output_tokens,
                 total_tokens=analysis_usage.total_tokens
                 + extraction_usage.total_tokens
-                + specialized_usage.total_tokens
-                + consolidation_usage.total_tokens,
+                + specialized_usage.total_tokens,
                 estimated_cost_cents=analysis_usage.estimated_cost_cents
                 + extraction_usage.estimated_cost_cents
-                + specialized_usage.estimated_cost_cents
-                + consolidation_usage.estimated_cost_cents,
+                + specialized_usage.estimated_cost_cents,
             )
 
             # Step 8: Calculate confidence level
@@ -523,9 +457,6 @@ class ProcessingService:
                 "layout_type": heading_tree.layout_type,
                 "section_count": len(heading_tree.sections),
                 "observation_count": len(all_observations),  # From specialized agents
-                "proposal_count": proposal_count,
-                "auto_proposal_count": auto_proposal_count,
-                "manual_proposal_count": manual_proposal_count,
                 "required_agents": ",".join(manifest.required_agents),
                 "analysis_model": manifest.analysis_model,
             }
@@ -596,47 +527,37 @@ class ProcessingService:
         self,
         job: ProcessingQueuePayload,
         full_markdown: str,
-        proposals: list[Proposal],
         observations: list[Observation],
         pages: list[Any],
         avg_confidence: float,
         analysis_usage: LLMUsage,
         extraction_usage: LLMUsage,
         specialized_usage: LLMUsage,
-        consolidation_usage: LLMUsage,
         manifest: Any,
         start_time: float,
-        auto_proposal_count: int,
-        manual_proposal_count: int,
     ) -> ProcessingResult:
         """Route job to correction review workflow.
 
         This method:
         1. Saves original markdown with -original suffix
-        2. Applies auto proposals to create corrected version (if ApplicationService available)
-        3. Saves corrected markdown with -corrected suffix
-        4. Uploads page images for visual comparison
-        5. Transforms proposals to correction_results format for frontend
-        6. Generates approval token via CorrectionApprovalService
-        7. Calculates correction_expires_at (now + timeout hours)
-        8. Adds job to timeout tracking sorted set
-        9. Updates job status to "awaiting_correction_approval" with all metadata
+        2. Uploads page images for visual comparison
+        3. Transforms observations to review format for frontend
+        4. Generates approval token via CorrectionApprovalService
+        5. Calculates correction_expires_at (now + timeout hours)
+        6. Adds job to timeout tracking sorted set
+        7. Updates job status to "awaiting_correction_approval" with all metadata
 
         Args:
             job: Processing queue payload
             full_markdown: Original extracted markdown
-            proposals: List of all proposals (auto + manual)
             observations: List of all observations
             pages: Page images and metadata
             avg_confidence: Extraction confidence score
             analysis_usage: Analysis phase LLM usage
             extraction_usage: Extraction phase LLM usage
             specialized_usage: Specialized agents LLM usage
-            consolidation_usage: Consolidation phase LLM usage
             manifest: Analysis manifest
             start_time: Processing start time
-            auto_proposal_count: Count of auto-route proposals
-            manual_proposal_count: Count of manual-route proposals
 
         Returns:
             ProcessingResult with awaiting_correction_approval status
@@ -653,52 +574,7 @@ class ProcessingService:
         original_key = f"{job.job_id}-original.md"
         logger.info(f"Job {job.job_id}: Saved original markdown to {original_key}")
 
-        # Step 2: Apply auto proposals to create corrected version
-        corrected_markdown = full_markdown
-        if self.application and auto_proposal_count > 0:
-            logger.info(
-                f"Job {job.job_id}: Applying {auto_proposal_count} auto proposals"
-            )
-            # Filter to auto-route proposals and mark them as approved
-            auto_proposals = [p for p in proposals if p.route == "auto"]
-            for p in auto_proposals:
-                p.status = "approved"
-
-            # Apply approved proposals
-            from ..services.application_service import ApplicationService
-            app_service = ApplicationService(
-                remediation_storage=self.remediation_storage,
-                storage=self.storage,
-                job_service=self.job,
-            )
-
-            # Apply proposals to markdown
-            for proposal in auto_proposals:
-                result = app_service._apply_single_proposal(corrected_markdown, proposal)
-                if result["success"]:
-                    corrected_markdown = result["new_markdown"]
-                    logger.debug(
-                        f"Applied proposal {proposal.id} using {result['method']} method"
-                    )
-                else:
-                    logger.warning(
-                        f"Failed to apply auto proposal {proposal.id}: {result.get('error')}"
-                    )
-
-            # Save proposals AFTER all mutations are complete to avoid race condition
-            await self.remediation_storage.save_proposals(job.job_id, proposals)
-
-        # Step 3: Save corrected markdown with -corrected suffix
-        await self.storage.upload_result(
-            job_id=job.job_id,
-            content=corrected_markdown,
-            format="md",
-            suffix="corrected",
-        )
-        corrected_key = f"{job.job_id}-corrected.md"
-        logger.info(f"Job {job.job_id}: Saved corrected markdown to {corrected_key}")
-
-        # Step 4: Upload page images for visual comparison
+        # Step 2: Upload page images for visual comparison
         page_image_urls = []
         for page in pages:
             if page.image_base64:
@@ -713,24 +589,21 @@ class ProcessingService:
 
         logger.info(f"Job {job.job_id}: Uploaded {len(page_image_urls)} page images")
 
-        # Step 5: Transform ALL proposals to correction_results format for frontend
-        correction_results = self._proposals_to_correction_results(
-            proposals=proposals,  # Include all proposals (auto + manual)
-            observations=observations,
-        )
+        # Step 3: Transform observations to review format for frontend
+        review_items = self._observations_to_review_items(observations)
 
-        # Step 6: Generate approval token (not currently used, but generated for future use)
+        # Step 4: Generate approval token (not currently used, but generated for future use)
         if self.correction_approval:
             _ = await self.correction_approval.generate_correction_approval_token(
                 job.job_id
             )
 
-        # Step 7: Calculate correction_expires_at
+        # Step 5: Calculate correction_expires_at
         correction_expires_at = datetime.now(UTC) + timedelta(
             hours=settings.correction_approval_timeout_hours
         )
 
-        # Step 8: Add job to timeout tracking sorted set
+        # Step 6: Add job to timeout tracking sorted set
         timeout_key = "eq-pdf:timeouts:correction-approval"
         await self.redis.zadd(
             timeout_key,
@@ -741,27 +614,23 @@ class ProcessingService:
             f"(expires at {correction_expires_at.isoformat()})"
         )
 
-        # Step 9: Update job status to awaiting_correction_approval
+        # Step 7: Update job status to awaiting_correction_approval
         processing_time = int(time.time() - start_time)
 
         # Combine usage from all phases
         total_usage = LLMUsage(
             input_tokens=analysis_usage.input_tokens
             + extraction_usage.input_tokens
-            + specialized_usage.input_tokens
-            + consolidation_usage.input_tokens,
+            + specialized_usage.input_tokens,
             output_tokens=analysis_usage.output_tokens
             + extraction_usage.output_tokens
-            + specialized_usage.output_tokens
-            + consolidation_usage.output_tokens,
+            + specialized_usage.output_tokens,
             total_tokens=analysis_usage.total_tokens
             + extraction_usage.total_tokens
-            + specialized_usage.total_tokens
-            + consolidation_usage.total_tokens,
+            + specialized_usage.total_tokens,
             estimated_cost_cents=analysis_usage.estimated_cost_cents
             + extraction_usage.estimated_cost_cents
-            + specialized_usage.estimated_cost_cents
-            + consolidation_usage.estimated_cost_cents,
+            + specialized_usage.estimated_cost_cents,
         )
 
         # Parse heading tree from manifest
@@ -777,9 +646,8 @@ class ProcessingService:
 
         update_fields = {
             "original_markdown_key": original_key,
-            "corrected_markdown_key": corrected_key,
             "page_image_urls": ",".join(page_image_urls),
-            "correction_results": correction_results,
+            "review_items": review_items,
             "correction_expires_at": correction_expires_at.isoformat(),
             "confidence_score": avg_confidence,
             "confidence_level": confidence_level,
@@ -794,9 +662,6 @@ class ProcessingService:
             "layout_type": heading_tree.layout_type,
             "section_count": len(heading_tree.sections),
             "observation_count": len(observations),
-            "proposal_count": len(proposals),
-            "auto_proposal_count": auto_proposal_count,
-            "manual_proposal_count": manual_proposal_count,
             "required_agents": ",".join(manifest.required_agents),
             "analysis_model": manifest.analysis_model,
         }
@@ -816,69 +681,52 @@ class ProcessingService:
 
         return ProcessingResult(
             job_id=job.job_id,
-            markdown_url=corrected_key,
+            markdown_url=original_key,
             confidence_score=avg_confidence,
             processing_time_seconds=processing_time,
             error_message=None,
         )
 
-    def _proposals_to_correction_results(
+    def _observations_to_review_items(
         self,
-        proposals: list[Proposal],
         observations: list[Observation]
     ) -> list[dict[str, Any]]:
-        """Transform all proposals to correction_results format for frontend.
+        """Transform observations to review items format for frontend.
 
         Args:
-            proposals: List of all proposals (auto + manual)
             observations: List of all observations
 
         Returns:
-            List of correction results grouped by page, with is_auto_applied flag
+            List of review items grouped by page
         """
         from collections import defaultdict
 
-        obs_map = {obs.id: obs for obs in observations}
-        page_corrections: dict[int, list[dict]] = defaultdict(list)
+        page_items: dict[int, list[dict]] = defaultdict(list)
 
-        for proposal in proposals:
-            page = proposal.page_nums[0] if proposal.page_nums else 1
+        for obs in observations:
+            page = obs.location.page_num
 
-            # Calculate confidence from resolved observations
-            resolved_confidences = [
-                obs_map[obs_id].confidence
-                for obs_id in proposal.resolves
-                if obs_id in obs_map
-            ]
-            avg_confidence = (
-                sum(resolved_confidences) / len(resolved_confidences)
-                if resolved_confidences else 0.8
-            )
-
-            page_corrections[page].append({
-                "type": self._infer_correction_type(proposal, obs_map),
-                "original": proposal.diff.search[:200],
-                "corrected": proposal.diff.replace[:200],
-                "confidence": avg_confidence,
-                "explanation": proposal.justification,
-                "is_auto_applied": proposal.route == "auto",
+            page_items[page].append({
+                "id": obs.id,
+                "agent": obs.agent,
+                "type": self._agent_to_type(obs.agent),
+                "visual_description": obs.visual_description,
+                "markup_description": obs.markup_description,
+                "confidence": obs.confidence,
+                "severity": obs.severity,
+                "category": obs.category,
             })
 
         return [
-            {"page": page, "corrections": corrections}
-            for page, corrections in sorted(page_corrections.items())
+            {"page": page, "items": items}
+            for page, items in sorted(page_items.items())
         ]
 
-    def _infer_correction_type(
-        self,
-        proposal: Proposal,
-        obs_map: dict[str, Observation]
-    ) -> str:
-        """Infer correction type from proposal's resolved observations.
+    def _agent_to_type(self, agent: str) -> str:
+        """Map agent name to correction type.
 
         Args:
-            proposal: Proposal to infer type for
-            obs_map: Map of observation IDs to observations
+            agent: Agent name
 
         Returns:
             Correction type string
@@ -890,9 +738,4 @@ class ProcessingService:
             "typography": "emphasis",
             "analysis": "other",
         }
-        for obs_id in proposal.resolves:
-            if obs_id in obs_map:
-                agent = obs_map[obs_id].agent
-                if agent in agent_to_type:
-                    return agent_to_type[agent]
-        return "other"
+        return agent_to_type.get(agent, "other")

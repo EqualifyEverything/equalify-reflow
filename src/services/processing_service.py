@@ -3,7 +3,9 @@
 The processing pipeline consists of:
 1. Analyze Phase (Haiku) - Chained analysis: layout → doctype → headings/features/summary
 2. Extract Phase (Haiku) - Guided markdown extraction
-3. Refine Phase (Sonnet) - Specialized agents: figures, tables, structure, typography
+3. Refine Phase:
+   - Phase 3a: Structure Loop - Validation-driven lint/OCR/heading fixes
+   - Phase 3b: Specialized agents (figures, tables, structure, typography)
    (Agents produce Observations, AutoCorrections, and ReviewItems)
 4. Assemble Phase - Apply auto-corrections and prepare review items
 """
@@ -33,6 +35,7 @@ from ..services.pdf_converter import PDFConverter
 from ..services.queue_service import QueueService
 from ..services.remediation_storage_service import RemediationStorageService
 from ..services.storage_service import StorageService
+from ..services.structure_loop import StructureLoop
 from ..shared.constants.statuses import STATUS_AWAITING_CORRECTION_APPROVAL
 from ..shared.models.observation import Observation
 from ..shared.models.processing import LLMUsage, ProcessingResult
@@ -243,6 +246,69 @@ class ProcessingService:
                 f"extraction cost: ${extraction_usage.estimated_cost_cents/100:.4f}"
             )
 
+            # Step 5.5: Phase 3a - Structure Verification Loop
+            # Ensures structurally correct markdown before specialized agents
+            # Uses validation-driven loop: lint → OCR check → mdformat → LLM fix
+            logger.info(
+                f"Job {job.job_id}: Starting structure verification loop (Phase 3a)..."
+            )
+
+            structure_loop_usage = LLMUsage(
+                input_tokens=0, output_tokens=0, total_tokens=0, estimated_cost_cents=0.0
+            )
+
+            with self._tracer.start_as_current_span("phase.structure_loop") as span:
+                span.set_attribute("job_id", job.job_id)
+                span.set_attribute("phase.number", "3a")
+
+                # Update substatus to "verifying_structure"
+                await retry_with_backoff(
+                    lambda: self.job.update_job_status(
+                        job.job_id,
+                        "processing",
+                        substatus="verifying_structure",
+                    ),
+                    max_attempts=3,
+                    operation_name=f"Update job {job.job_id} substatus to verifying_structure",
+                )
+
+                structure_loop = StructureLoop()
+                structure_result = await structure_loop.run(
+                    markdown=full_markdown,
+                    pages=pages,
+                    manifest=manifest,
+                    job_id=job.job_id,
+                )
+
+                # Use structurally-correct markdown for specialized agents
+                full_markdown = structure_result.markdown
+                structure_trace = structure_result.trace
+
+                # Track usage from structure loop LLM calls
+                structure_loop_usage = LLMUsage(
+                    input_tokens=0,  # Tracked within structure loop
+                    output_tokens=0,
+                    total_tokens=0,
+                    estimated_cost_cents=structure_trace.cost_cents,
+                )
+
+                span.set_attribute("iterations", structure_trace.iterations)
+                span.set_attribute("lint_issues_found", structure_trace.lint_issues_found)
+                span.set_attribute("lint_issues_fixed", structure_trace.lint_issues_fixed)
+                span.set_attribute("ocr_suggestions", structure_trace.ocr_suggestions_processed)
+                span.set_attribute("final_lint_clean", structure_trace.final_lint_clean)
+                span.set_attribute("time_seconds", structure_trace.time_seconds)
+                span.set_attribute("cost.cents", structure_trace.cost_cents)
+
+            logger.info(
+                f"Job {job.job_id}: Structure loop complete - "
+                f"{structure_trace.iterations} iterations, "
+                f"{structure_trace.lint_issues_fixed}/{structure_trace.lint_issues_found} lint issues fixed, "
+                f"{structure_trace.ocr_suggestions_processed} OCR suggestions processed, "
+                f"clean: {structure_trace.final_lint_clean}, "
+                f"cost: ${structure_trace.cost_cents/100:.4f}"
+            )
+
             # Step 6: Specialized Agents Phase (Chained Agents)
             # Run chained agents based on manifest.required_agents
             # Uses Haiku where possible, with conditional LLM calls for cost efficiency
@@ -396,6 +462,7 @@ class ProcessingService:
                     avg_confidence=extraction_confidence,
                     analysis_usage=analysis_usage,
                     extraction_usage=extraction_usage,
+                    structure_loop_usage=structure_loop_usage,
                     specialized_usage=specialized_usage,
                     manifest=manifest,
                     start_time=start_time,
@@ -405,15 +472,19 @@ class ProcessingService:
             total_usage = LLMUsage(
                 input_tokens=analysis_usage.input_tokens
                 + extraction_usage.input_tokens
+                + structure_loop_usage.input_tokens
                 + specialized_usage.input_tokens,
                 output_tokens=analysis_usage.output_tokens
                 + extraction_usage.output_tokens
+                + structure_loop_usage.output_tokens
                 + specialized_usage.output_tokens,
                 total_tokens=analysis_usage.total_tokens
                 + extraction_usage.total_tokens
+                + structure_loop_usage.total_tokens
                 + specialized_usage.total_tokens,
                 estimated_cost_cents=analysis_usage.estimated_cost_cents
                 + extraction_usage.estimated_cost_cents
+                + structure_loop_usage.estimated_cost_cents
                 + specialized_usage.estimated_cost_cents,
             )
 
@@ -532,6 +603,7 @@ class ProcessingService:
         avg_confidence: float,
         analysis_usage: LLMUsage,
         extraction_usage: LLMUsage,
+        structure_loop_usage: LLMUsage,
         specialized_usage: LLMUsage,
         manifest: Any,
         start_time: float,
@@ -555,6 +627,7 @@ class ProcessingService:
             avg_confidence: Extraction confidence score
             analysis_usage: Analysis phase LLM usage
             extraction_usage: Extraction phase LLM usage
+            structure_loop_usage: Structure loop (Phase 3a) LLM usage
             specialized_usage: Specialized agents LLM usage
             manifest: Analysis manifest
             start_time: Processing start time
@@ -621,15 +694,19 @@ class ProcessingService:
         total_usage = LLMUsage(
             input_tokens=analysis_usage.input_tokens
             + extraction_usage.input_tokens
+            + structure_loop_usage.input_tokens
             + specialized_usage.input_tokens,
             output_tokens=analysis_usage.output_tokens
             + extraction_usage.output_tokens
+            + structure_loop_usage.output_tokens
             + specialized_usage.output_tokens,
             total_tokens=analysis_usage.total_tokens
             + extraction_usage.total_tokens
+            + structure_loop_usage.total_tokens
             + specialized_usage.total_tokens,
             estimated_cost_cents=analysis_usage.estimated_cost_cents
             + extraction_usage.estimated_cost_cents
+            + structure_loop_usage.estimated_cost_cents
             + specialized_usage.estimated_cost_cents,
         )
 

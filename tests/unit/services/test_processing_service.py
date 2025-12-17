@@ -218,7 +218,7 @@ async def test_process_document_happy_path(
 
 
 @pytest.mark.asyncio
-async def test_process_document_confidence_from_extraction(
+async def test_process_document_confidence_from_assembly(
     sample_job_payload,
     mock_storage_service_extended,
     mock_queue_service,
@@ -229,7 +229,14 @@ async def test_process_document_confidence_from_extraction(
     mock_analysis_usage,
     sample_pdf_conversion_result_no_markdown,
 ):
-    """Test confidence score comes from extraction."""
+    """Test confidence score is computed by AssemblyService.
+
+    PRD-026: The final confidence is a weighted average:
+    - extraction: 40%
+    - structure: 20%
+    - agents: 30%
+    - review_penalty: 10%
+    """
     mock_pdf_converter.convert_with_page_images.return_value = (
         sample_pdf_conversion_result_no_markdown
     )
@@ -257,8 +264,10 @@ async def test_process_document_confidence_from_extraction(
 
         result = await service.process_document(sample_job_payload)
 
-    # Confidence should come from extraction
-    assert result.confidence_score == 0.85
+    # Confidence is computed by AssemblyService as weighted average
+    # With extraction=0.85, structure=1.0 (clean), agents=1.0 (no obs), review=1.0 (no items)
+    # = 0.4*0.85 + 0.2*1.0 + 0.3*1.0 + 0.1*1.0 = 0.34 + 0.2 + 0.3 + 0.1 = 0.94
+    assert result.confidence_score == 0.94
 
 
 # ============================================================================

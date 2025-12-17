@@ -20,16 +20,21 @@ from opentelemetry import trace
 
 from ..agents.chained_analysis import analyze_document
 from ..agents.chained_structure import analyze_structure as chained_structure
-from ..agents.chained_tables import analyze_tables as chained_tables
 from ..agents.extraction import extract_with_validation
 from ..agents.factory import aggregate_usage
 from ..agents.figures import FiguresAgent
 from ..agents.model_tiers import ModelTier, get_model_id
 
+# PRD-024: TablesAgent with AgentResult output
+from ..agents.tables import TablesAgent
+
 # PRD-025: Enhanced typography agent with AgentResult output
 from ..agents.typography import TypographyAgent
 from ..config import settings
 from ..services.application_service import ApplicationService
+
+# PRD-026: Assembly Service for Phase 4 (Assemble)
+from ..services.assembly_service import AssemblyService
 from ..services.correction_approval_service import CorrectionApprovalService
 from ..services.document_context_service import DocumentContextService
 from ..services.job_service import JobService
@@ -39,6 +44,7 @@ from ..services.remediation_storage_service import RemediationStorageService
 from ..services.storage_service import StorageService
 from ..services.structure_loop import StructureLoop
 from ..shared.constants.statuses import STATUS_AWAITING_CORRECTION_APPROVAL
+from ..shared.models.agent_trace import AgentResult
 from ..shared.models.observation import Observation
 from ..shared.models.processing import LLMUsage, ProcessingResult
 from ..shared.models.queue import ProcessingQueuePayload
@@ -311,20 +317,20 @@ class ProcessingService:
                 f"cost: ${structure_trace.cost_cents/100:.4f}"
             )
 
-            # Step 6: Specialized Agents Phase (Chained Agents)
-            # Run chained agents based on manifest.required_agents
-            # Uses Haiku where possible, with conditional LLM calls for cost efficiency
-            specialized_observations: list[Observation] = []
+            # Step 6: Specialized Agents Phase (PRD-023-025)
+            # Run specialized agents based on manifest.required_agents
+            # All agents return AgentResult for unified processing
+            agent_results: list[AgentResult] = []
             specialized_usages: list[LLMUsage] = []
 
             if manifest.required_agents:
                 logger.info(
-                    f"Job {job.job_id}: Starting specialized analysis phase (chained agents)..."
+                    f"Job {job.job_id}: Starting specialized analysis phase (Phase 3b)..."
                 )
 
                 with self._tracer.start_as_current_span("phase.specialized_agents") as span:
                     span.set_attribute("job_id", job.job_id)
-                    span.set_attribute("phase.number", 3)
+                    span.set_attribute("phase.number", "3b")
                     span.set_attribute("required_agents", str(manifest.required_agents))
 
                     # Update substatus to "analyzing_specialized"
@@ -338,7 +344,7 @@ class ProcessingService:
                         operation_name=f"Update job {job.job_id} substatus to analyzing_specialized",
                     )
 
-                    # Run specialized agents based on manifest.required_agents
+                    # PRD-023: FiguresAgent with AgentResult output
                     if "figures" in manifest.required_agents:
                         with self._tracer.start_as_current_span("agent.figures"):
                             figures_agent = FiguresAgent()
@@ -348,11 +354,9 @@ class ProcessingService:
                                 manifest=manifest,
                                 job_id=job.job_id,
                             )
-                            # Extract observations from AgentResult
-                            specialized_observations.extend(figures_result.observations)
-                            # Create LLMUsage from AgentResult metrics
+                            agent_results.append(figures_result)
                             figures_usage = LLMUsage(
-                                input_tokens=0,  # Not tracked in AgentResult
+                                input_tokens=0,
                                 output_tokens=0,
                                 total_tokens=0,
                                 estimated_cost_cents=figures_result.cost_cents,
@@ -366,22 +370,34 @@ class ProcessingService:
                                 f"cost: ${figures_result.cost_cents/100:.4f}"
                             )
 
+                    # PRD-024: TablesAgent with AgentResult output
                     if "tables" in manifest.required_agents:
-                        with self._tracer.start_as_current_span("agent.chained_tables"):
-                            tables_obs, tables_usage = await chained_tables(
+                        with self._tracer.start_as_current_span("agent.tables"):
+                            tables_agent = TablesAgent()
+                            tables_result = await tables_agent.process(
+                                markdown=full_markdown,
                                 pages=pages,
                                 manifest=manifest,
-                                markdown=full_markdown,
                                 job_id=job.job_id,
                             )
-                            specialized_observations.extend(tables_obs)
+                            agent_results.append(tables_result)
+                            tables_usage = LLMUsage(
+                                input_tokens=0,
+                                output_tokens=0,
+                                total_tokens=0,
+                                estimated_cost_cents=tables_result.cost_cents,
+                            )
                             specialized_usages.append(tables_usage)
                             logger.info(
-                                f"Job {job.job_id}: Chained tables - "
-                                f"{len(tables_obs)} observations, "
-                                f"cost: ${tables_usage.estimated_cost_cents/100:.4f}"
+                                f"Job {job.job_id}: TablesAgent - "
+                                f"{len(tables_result.observations)} observations, "
+                                f"{len(tables_result.auto_corrections)} auto-corrections, "
+                                f"{len(tables_result.review_items)} review items, "
+                                f"cost: ${tables_result.cost_cents/100:.4f}"
                             )
 
+                    # Structure agent (still uses legacy chained pattern)
+                    # TODO: Migrate to AgentResult output in future PRD
                     if "structure" in manifest.required_agents:
                         with self._tracer.start_as_current_span("agent.chained_structure"):
                             structure_obs, structure_usage = await chained_structure(
@@ -390,7 +406,18 @@ class ProcessingService:
                                 markdown=full_markdown,
                                 job_id=job.job_id,
                             )
-                            specialized_observations.extend(structure_obs)
+                            # Convert legacy output to AgentResult for assembly
+                            structure_agent_result = AgentResult(
+                                agent_name="structure",
+                                observations=structure_obs,
+                                auto_corrections=[],
+                                review_items=[],
+                                reasoning_summary=f"Found {len(structure_obs)} structure issues",
+                                confidence=0.9,
+                                cost_cents=structure_usage.estimated_cost_cents,
+                                time_seconds=0.0,
+                            )
+                            agent_results.append(structure_agent_result)
                             specialized_usages.append(structure_usage)
                             logger.info(
                                 f"Job {job.job_id}: Chained structure - "
@@ -398,8 +425,8 @@ class ProcessingService:
                                 f"cost: ${structure_usage.estimated_cost_cents/100:.4f}"
                             )
 
+                    # PRD-025: TypographyAgent with AgentResult output
                     if "typography" in manifest.required_agents:
-                        # PRD-025: Enhanced typography agent with AgentResult output
                         with self._tracer.start_as_current_span("agent.typography"):
                             typography_agent = TypographyAgent()
                             typography_result = await typography_agent.process(
@@ -409,18 +436,16 @@ class ProcessingService:
                                 ocr_suggestions=[],  # TODO: Pass from structure loop
                                 job_id=job.job_id,
                             )
-                            # Extract observations from AgentResult
-                            specialized_observations.extend(typography_result.observations)
-                            # Create LLMUsage from result cost
+                            agent_results.append(typography_result)
                             typography_usage = LLMUsage(
-                                input_tokens=0,  # Not tracked separately in AgentResult
+                                input_tokens=0,
                                 output_tokens=0,
                                 total_tokens=0,
                                 estimated_cost_cents=typography_result.cost_cents,
                             )
                             specialized_usages.append(typography_usage)
                             logger.info(
-                                f"Job {job.job_id}: Typography - "
+                                f"Job {job.job_id}: TypographyAgent - "
                                 f"{len(typography_result.observations)} observations, "
                                 f"{len(typography_result.auto_corrections)} auto-corrections, "
                                 f"{len(typography_result.review_items)} review items, "
@@ -430,44 +455,90 @@ class ProcessingService:
                     # Aggregate all specialized usage
                     specialized_usage = aggregate_usage(specialized_usages)
 
-                    span.set_attribute("observations_found", len(specialized_observations))
+                    # Collect all observations for span attribute
+                    all_observations = []
+                    for result in agent_results:
+                        all_observations.extend(result.observations)
+
+                    span.set_attribute("observations_found", len(all_observations))
                     span.set_attribute("tokens.input", specialized_usage.input_tokens)
                     span.set_attribute("tokens.output", specialized_usage.output_tokens)
                     span.set_attribute("cost.cents", specialized_usage.estimated_cost_cents)
 
                 logger.info(
                     f"Job {job.job_id}: Specialized analysis complete - "
-                    f"{len(specialized_observations)} observations found, "
+                    f"{len(all_observations)} observations found, "
                     f"specialized cost: ${specialized_usage.estimated_cost_cents/100:.4f}"
                 )
 
-                # Use specialized observations
-                all_observations = specialized_observations
-
                 # Save observations to S3
-                if specialized_observations:
+                if all_observations:
                     await self.remediation_storage.save_observations(
                         job.job_id, all_observations
                     )
             else:
                 logger.info(
-                    f"Job {job.job_id}: No specialized agents required, skipping Phase 3"
+                    f"Job {job.job_id}: No specialized agents required, skipping Phase 3b"
                 )
+                agent_results = []
                 all_observations = []
                 specialized_usage = LLMUsage(
                     input_tokens=0, output_tokens=0, total_tokens=0, estimated_cost_cents=0.0
                 )
 
-            # Step 7: Check for review items
-            # Specialized agents now produce AutoCorrections (high confidence)
-            # and ReviewItems (needing human review) directly
-            # TODO: Update specialized agents to produce AutoCorrections and ReviewItems
+            # Step 7: Phase 4 - Assembly (PRD-026)
+            # Apply auto_corrections, build ProcessingTrace, compute confidence
+            logger.info(f"Job {job.job_id}: Starting assembly phase (Phase 4)...")
 
-            # For now, check if there are observations that need human review
-            # (all observations without auto-corrections are considered review items)
-            review_item_count = len(all_observations)
+            with self._tracer.start_as_current_span("phase.assembly") as span:
+                span.set_attribute("job_id", job.job_id)
+                span.set_attribute("phase.number", 4)
+                span.set_attribute("agent_results_count", len(agent_results))
 
-            # Check if correction review is needed
+                # Update substatus to "assembling"
+                await retry_with_backoff(
+                    lambda: self.job.update_job_status(
+                        job.job_id,
+                        "processing",
+                        substatus="assembling",
+                    ),
+                    max_attempts=3,
+                    operation_name=f"Update job {job.job_id} substatus to assembling",
+                )
+
+                assembly_service = AssemblyService()
+                assembly_result = assembly_service.assemble(
+                    job_id=job.job_id,
+                    markdown=full_markdown,
+                    manifest=manifest,
+                    extraction_confidence=extraction_confidence,
+                    extraction_time=extraction_usage.estimated_cost_cents,  # Approximation
+                    extraction_cost=extraction_usage.estimated_cost_cents,
+                    extraction_iterations=extraction_result.attempt_count,
+                    structure_trace=structure_trace,
+                    agent_results=agent_results,
+                )
+
+                # Use assembled markdown with corrections applied
+                final_markdown = assembly_result.markdown
+
+                span.set_attribute("corrections_applied", assembly_result.processing_trace.auto_corrections_applied)
+                span.set_attribute("review_items", assembly_result.review_checklist.total_items)
+                span.set_attribute("final_confidence", assembly_result.confidence)
+                span.set_attribute("status", assembly_result.status)
+
+            logger.info(
+                f"Job {job.job_id}: Assembly complete - "
+                f"status: {assembly_result.status}, "
+                f"corrections: {assembly_result.processing_trace.auto_corrections_applied}, "
+                f"review_items: {assembly_result.review_checklist.total_items}, "
+                f"confidence: {assembly_result.confidence:.2f}"
+            )
+
+            # Step 8: Check for review items
+            # Route to correction review if there are review items or settings require it
+            review_item_count = assembly_result.review_checklist.total_items
+
             should_route_to_review = (
                 review_item_count > 0 or
                 settings.always_require_correction_review
@@ -476,14 +547,14 @@ class ProcessingService:
             if should_route_to_review and self.correction_approval and self.redis:
                 logger.info(
                     f"Job {job.job_id}: Routing to correction review "
-                    f"({review_item_count} observations need review)"
+                    f"({review_item_count} review items)"
                 )
                 return await self._route_to_correction_review(
                     job=job,
-                    full_markdown=full_markdown,
+                    full_markdown=final_markdown,
                     observations=all_observations,
                     pages=conversion_result.pages,
-                    avg_confidence=extraction_confidence,
+                    avg_confidence=assembly_result.confidence,
                     analysis_usage=analysis_usage,
                     extraction_usage=extraction_usage,
                     structure_loop_usage=structure_loop_usage,
@@ -512,9 +583,8 @@ class ProcessingService:
                 + specialized_usage.estimated_cost_cents,
             )
 
-            # Step 8: Calculate confidence level
-            # Use extraction confidence (analysis confidence is stored in manifest)
-            avg_confidence = extraction_confidence
+            # Step 9: Calculate confidence level using assembled confidence
+            avg_confidence = assembly_result.confidence
 
             if avg_confidence >= settings.confidence_threshold_high:
                 confidence_level = "high"
@@ -523,15 +593,15 @@ class ProcessingService:
             else:
                 confidence_level = "low"
 
-            # Step 9: Upload result to S3
-            logger.info(f"Job {job.job_id}: Uploading extracted markdown to S3")
+            # Step 10: Upload result to S3
+            logger.info(f"Job {job.job_id}: Uploading final markdown to S3")
             result_url = await self.storage.upload_result(
                 job_id=job.job_id,
-                content=full_markdown,
+                content=final_markdown,
                 format="md",
             )
 
-            # Step 10: Update job status to completed
+            # Step 11: Update job status to completed
             processing_time = int(time.time() - start_time)
 
             # Parse heading tree from manifest to get section count and layout

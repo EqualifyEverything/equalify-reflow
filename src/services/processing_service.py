@@ -19,9 +19,9 @@ from typing import Any
 from opentelemetry import trace
 
 from ..agents.chained_analysis import analyze_document
-from ..agents.chained_figures import analyze_figures as chained_figures
 from ..agents.chained_structure import analyze_structure as chained_structure
 from ..agents.chained_tables import analyze_tables as chained_tables
+from ..agents.figures import FiguresAgent
 from ..agents.extraction import extract_with_validation
 from ..agents.factory import aggregate_usage
 from ..agents.model_tiers import ModelTier, get_model_id
@@ -336,21 +336,32 @@ class ProcessingService:
                         operation_name=f"Update job {job.job_id} substatus to analyzing_specialized",
                     )
 
-                    # Run chained agents based on manifest.required_agents
+                    # Run specialized agents based on manifest.required_agents
                     if "figures" in manifest.required_agents:
-                        with self._tracer.start_as_current_span("agent.chained_figures"):
-                            figures_obs, figures_usage = await chained_figures(
+                        with self._tracer.start_as_current_span("agent.figures"):
+                            figures_agent = FiguresAgent()
+                            figures_result = await figures_agent.process(
+                                markdown=full_markdown,
                                 pages=pages,
                                 manifest=manifest,
-                                markdown=full_markdown,
                                 job_id=job.job_id,
                             )
-                            specialized_observations.extend(figures_obs)
+                            # Extract observations from AgentResult
+                            specialized_observations.extend(figures_result.observations)
+                            # Create LLMUsage from AgentResult metrics
+                            figures_usage = LLMUsage(
+                                input_tokens=0,  # Not tracked in AgentResult
+                                output_tokens=0,
+                                total_tokens=0,
+                                estimated_cost_cents=figures_result.cost_cents,
+                            )
                             specialized_usages.append(figures_usage)
                             logger.info(
-                                f"Job {job.job_id}: Chained figures - "
-                                f"{len(figures_obs)} observations, "
-                                f"cost: ${figures_usage.estimated_cost_cents/100:.4f}"
+                                f"Job {job.job_id}: FiguresAgent - "
+                                f"{len(figures_result.observations)} observations, "
+                                f"{len(figures_result.auto_corrections)} auto-corrections, "
+                                f"{len(figures_result.review_items)} review items, "
+                                f"cost: ${figures_result.cost_cents/100:.4f}"
                             )
 
                     if "tables" in manifest.required_agents:

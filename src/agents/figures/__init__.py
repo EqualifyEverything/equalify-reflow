@@ -1,11 +1,14 @@
-"""Chained figures analysis agents.
+"""Figures analysis agents for Phase 3b: Refine (Specialized Agents).
 
-This package contains the chained agents for figure/image analysis:
-1. classification_agent - Image type classification (Haiku)
-2. generation_agent - Alt text generation (Haiku)
-3. routing - Pure Python routing logic
+This package contains the agents for figure/image analysis:
+- FiguresAgent - Main orchestrator that outputs AgentResult
+- classification_agent - Image type classification (Haiku)
+- generation_agent - Alt text generation (Haiku)
 
-The chained_figures.py orchestrator coordinates these steps.
+The FiguresAgent orchestrates classification and generation, routing
+high-confidence fixes to auto_corrections and low-confidence to review_items.
+
+Reference: PRD-023 - Figures Agent Refactor
 """
 
 from src.agents.figures.classification_agent import (
@@ -13,14 +16,17 @@ from src.agents.figures.classification_agent import (
     ImageClassificationOutput,
     classify,
 )
+from src.agents.figures.figures_agent import FiguresAgent, ImagePlaceholder
 from src.agents.figures.generation_agent import (
     AltTextGeneration,
     AltTextGenerationOutput,
     generate,
 )
-from src.agents.figures.routing import route_image
 
 __all__ = [
+    # Main agent
+    "FiguresAgent",
+    "ImagePlaceholder",
     # Classification
     "ImageClassification",
     "ImageClassificationOutput",
@@ -29,6 +35,4 @@ __all__ = [
     "AltTextGeneration",
     "AltTextGenerationOutput",
     "generate",
-    # Routing
-    "route_image",
 ]

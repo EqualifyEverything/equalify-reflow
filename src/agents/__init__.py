@@ -5,22 +5,22 @@ This module provides the multi-agent framework including:
 - Chained analysis pipeline (layout → doctype → headings/features/summary)
 - ExtractionAgent: Manifest-guided extraction agent
 - Specialized agents for accessibility analysis:
-  - FiguresAgent: Image accessibility
+  - FiguresAgent: Image accessibility (Phase 3b refactored)
   - TablesAgent: Table structure
   - StructureAgent: Heading hierarchy
   - TypographyAgent: Semantic typography
 - SummaryAgent: Document summary for downstream context
 - AgentRouter: Routes specialized agents based on manifest
+
+Reference: PRD-023 - FiguresAgent now outputs AgentResult directly
 """
 
 from .agent_router import AgentRouter
 from .chained_analysis import analyze_document
 from .core import AgentConfig
 from .extraction_agent import ExtractionAgent
-from .figures_agent import FiguresAgent
+from .figures import FiguresAgent  # Refactored in PRD-023
 from .specialized_models import (
-    FiguresAnalysisOutput,
-    ImageAnalysis,
     StructureAnalysisOutput,
     StructureIssue,
     TableAnalysis,
@@ -47,8 +47,6 @@ __all__ = [
     "TypographyAgent",
     "SummaryAgent",
     # Specialized agent output models
-    "ImageAnalysis",
-    "FiguresAnalysisOutput",
     "TableAnalysis",
     "TablesAnalysisOutput",
     "StructureIssue",

@@ -5,6 +5,7 @@ This package contains the chained agents for structure analysis:
 2. alignment_agent - Visual-semantic alignment (Haiku, conditional)
 3. reading_order_agent - Reading order validation (Haiku, conditional)
 4. coherence_agent - Cross-page coherence (Haiku, conditional)
+5. structure_fix_agent - Semantic structural fixes (Haiku, Phase 3a)
 
 The chained_structure.py orchestrator coordinates these steps.
 """
@@ -24,6 +25,12 @@ from src.agents.structure.reading_order_agent import (
     ReadingOrderOutput,
     check_reading_order,
 )
+from src.agents.structure.structure_fix_agent import (
+    OCRDecision,
+    StructureFixOutput,
+    StructureFixResult,
+    fix_structural_issues,
+)
 
 __all__ = [
     # Hierarchy (Pure Python)
@@ -38,4 +45,9 @@ __all__ = [
     "ReadingOrderIssue",
     "ReadingOrderOutput",
     "check_reading_order",
+    # Structure Fix (Phase 3a)
+    "OCRDecision",
+    "StructureFixOutput",
+    "StructureFixResult",
+    "fix_structural_issues",
 ]

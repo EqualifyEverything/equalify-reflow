@@ -25,13 +25,18 @@ from .specialized_models import (
     StructureIssue,
     TableAnalysis,
     TablesAnalysisOutput,
-    TypographyAnalysisOutput,
-    TypographyIssue,
 )
 from .structure_agent import StructureAgent
 from .summary_agent import DocumentSummaryOutput, SummaryAgent
 from .tables_agent import TablesAgent
-from .typography_agent import TypographyAgent
+
+# PRD-025: Enhanced typography agent with AgentResult output
+from .typography import (
+    FormattingIssue,
+    OCRDecision,
+    TypographyAgent,
+    TypographyAnalysisOutput,
+)
 
 __all__ = [
     # Agent configuration
@@ -51,7 +56,9 @@ __all__ = [
     "TablesAnalysisOutput",
     "StructureIssue",
     "StructureAnalysisOutput",
-    "TypographyIssue",
-    "TypographyAnalysisOutput",
     "DocumentSummaryOutput",
+    # PRD-025: Enhanced typography models
+    "FormattingIssue",
+    "OCRDecision",
+    "TypographyAnalysisOutput",
 ]

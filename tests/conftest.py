@@ -92,10 +92,11 @@ def reset_agent_singletons():
         extraction_agent,
         structure_agent,
         tables_agent,
-        typography_agent,
     )
     from src.agents.figures import (
         classification_agent as figures_classification,
+    )
+    from src.agents.figures import (
         generation_agent as figures_generation,
     )
 
@@ -106,7 +107,6 @@ def reset_agent_singletons():
         figures_generation,
         structure_agent,
         tables_agent,
-        typography_agent,
     ]:
         if hasattr(agent_module, "reset_agent"):
             agent_module.reset_agent()
@@ -120,7 +120,6 @@ def reset_agent_singletons():
         figures_generation,
         structure_agent,
         tables_agent,
-        typography_agent,
     ]:
         if hasattr(agent_module, "reset_agent"):
             agent_module.reset_agent()

@@ -25,7 +25,9 @@ from ..agents.extraction import extract_with_validation
 from ..agents.factory import aggregate_usage
 from ..agents.figures import FiguresAgent
 from ..agents.model_tiers import ModelTier, get_model_id
-from ..agents.typography_agent import TypographyAgent
+
+# PRD-025: Enhanced typography agent with AgentResult output
+from ..agents.typography import TypographyAgent
 from ..config import settings
 from ..services.application_service import ApplicationService
 from ..services.correction_approval_service import CorrectionApprovalService
@@ -397,21 +399,32 @@ class ProcessingService:
                             )
 
                     if "typography" in manifest.required_agents:
-                        # Typography still uses old agent (no chained version yet)
+                        # PRD-025: Enhanced typography agent with AgentResult output
                         with self._tracer.start_as_current_span("agent.typography"):
                             typography_agent = TypographyAgent()
-                            typography_obs, typography_usage = await typography_agent.analyze(
+                            typography_result = await typography_agent.process(
+                                markdown=full_markdown,
                                 pages=pages,
                                 manifest=manifest,
-                                markdown=full_markdown,
+                                ocr_suggestions=[],  # TODO: Pass from structure loop
                                 job_id=job.job_id,
                             )
-                            specialized_observations.extend(typography_obs)
+                            # Extract observations from AgentResult
+                            specialized_observations.extend(typography_result.observations)
+                            # Create LLMUsage from result cost
+                            typography_usage = LLMUsage(
+                                input_tokens=0,  # Not tracked separately in AgentResult
+                                output_tokens=0,
+                                total_tokens=0,
+                                estimated_cost_cents=typography_result.cost_cents,
+                            )
                             specialized_usages.append(typography_usage)
                             logger.info(
                                 f"Job {job.job_id}: Typography - "
-                                f"{len(typography_obs)} observations, "
-                                f"cost: ${typography_usage.estimated_cost_cents/100:.4f}"
+                                f"{len(typography_result.observations)} observations, "
+                                f"{len(typography_result.auto_corrections)} auto-corrections, "
+                                f"{len(typography_result.review_items)} review items, "
+                                f"cost: ${typography_result.cost_cents/100:.4f}"
                             )
 
                     # Aggregate all specialized usage

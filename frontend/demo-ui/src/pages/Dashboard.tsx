@@ -1,4 +1,5 @@
 import { useState } from 'react'
+import { motion } from 'framer-motion'
 import { DocumentUpload } from '@/components/document/DocumentUpload'
 import { JobList } from '@/components/document/JobList'
 
@@ -6,16 +7,39 @@ export function Dashboard() {
   const [latestJobId, setLatestJobId] = useState<string | null>(null)
 
   return (
-    <div className="max-w-6xl mx-auto space-y-6">
-      <div>
-        <h1 className="text-3xl font-bold text-uic-navy mb-2">Dashboard</h1>
-        <p className="text-muted-foreground">
-          Upload PDF documents for accessibility conversion
+    <div className="space-y-8">
+      {/* Hero section */}
+      <motion.div
+        initial={{ opacity: 0, y: 20 }}
+        animate={{ opacity: 1, y: 0 }}
+        transition={{ duration: 0.5 }}
+        className="text-center mb-8"
+      >
+        <h1 className="text-4xl md:text-5xl font-bold text-uic-blue mb-4 tracking-tight">
+          PDF Accessibility Converter
+        </h1>
+        <p className="text-xl text-gray-600 font-light max-w-2xl mx-auto">
+          Transform PDF documents into{' '}
+          <span className="font-semibold text-uic-blue">accessible, semantic markup</span>{' '}
+          for UIC course materials.
         </p>
-      </div>
+      </motion.div>
 
-      <DocumentUpload onUploadSuccess={setLatestJobId} />
-      <JobList latestJobId={latestJobId} />
+      <motion.div
+        initial={{ opacity: 0, y: 20 }}
+        animate={{ opacity: 1, y: 0 }}
+        transition={{ duration: 0.5, delay: 0.1 }}
+      >
+        <DocumentUpload onUploadSuccess={setLatestJobId} />
+      </motion.div>
+
+      <motion.div
+        initial={{ opacity: 0, y: 20 }}
+        animate={{ opacity: 1, y: 0 }}
+        transition={{ duration: 0.5, delay: 0.2 }}
+      >
+        <JobList latestJobId={latestJobId} />
+      </motion.div>
     </div>
   )
 }

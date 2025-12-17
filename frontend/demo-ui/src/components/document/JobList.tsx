@@ -1,7 +1,7 @@
 import { useEffect } from 'react'
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card'
 import { Button } from '@/components/ui/button'
-import { Trash2 } from 'lucide-react'
+import { Trash2, Layers } from 'lucide-react'
 import { JobCard } from './JobCard'
 import { usePersistedJobs } from '@/hooks/usePersistedJobs'
 
@@ -22,11 +22,16 @@ export function JobList({ latestJobId }: JobListProps) {
   if (isLoading) {
     return (
       <Card>
-        <CardHeader>
-          <CardTitle className="text-uic-navy">Recent Jobs</CardTitle>
+        <CardHeader className="bg-gradient-to-r from-gray-50 to-gray-100 border-b border-gray-100">
+          <CardTitle className="flex items-center gap-3">
+            <div className="p-2 bg-uic-blue/10 rounded-lg">
+              <Layers className="h-5 w-5 text-uic-blue" />
+            </div>
+            Recent Jobs
+          </CardTitle>
         </CardHeader>
-        <CardContent>
-          <p className="text-muted-foreground text-center py-8">
+        <CardContent className="p-6">
+          <p className="text-gray-500 text-center py-8">
             Loading saved jobs...
           </p>
         </CardContent>
@@ -37,11 +42,16 @@ export function JobList({ latestJobId }: JobListProps) {
   if (jobs.length === 0) {
     return (
       <Card>
-        <CardHeader>
-          <CardTitle className="text-uic-navy">Recent Jobs</CardTitle>
+        <CardHeader className="bg-gradient-to-r from-gray-50 to-gray-100 border-b border-gray-100">
+          <CardTitle className="flex items-center gap-3">
+            <div className="p-2 bg-uic-blue/10 rounded-lg">
+              <Layers className="h-5 w-5 text-uic-blue" />
+            </div>
+            Recent Jobs
+          </CardTitle>
         </CardHeader>
-        <CardContent>
-          <p className="text-muted-foreground text-center py-8">
+        <CardContent className="p-6">
+          <p className="text-gray-500 text-center py-8">
             No jobs yet. Upload a PDF to get started.
           </p>
         </CardContent>
@@ -51,19 +61,25 @@ export function JobList({ latestJobId }: JobListProps) {
 
   return (
     <Card>
-      <CardHeader className="flex flex-row items-center justify-between space-y-0">
-        <CardTitle className="text-uic-navy">Recent Jobs</CardTitle>
+      <CardHeader className="flex flex-row items-center justify-between space-y-0 bg-gradient-to-r from-gray-50 to-gray-100 border-b border-gray-100">
+        <CardTitle className="flex items-center gap-3">
+          <div className="p-2 bg-uic-blue/10 rounded-lg">
+            <Layers className="h-5 w-5 text-uic-blue" />
+          </div>
+          Recent Jobs
+          <span className="text-sm font-normal text-gray-500">({jobs.length})</span>
+        </CardTitle>
         <Button
           variant="ghost"
           size="sm"
           onClick={clearAllJobs}
-          className="text-muted-foreground hover:text-destructive"
+          className="text-gray-500 hover:text-uic-red hover:bg-red-50"
         >
           <Trash2 className="h-4 w-4 mr-1" />
-          Clear
+          Clear All
         </Button>
       </CardHeader>
-      <CardContent className="space-y-3">
+      <CardContent className="p-4 space-y-3">
         {jobs.map((job) => (
           <JobCard key={job.job_id} job={job} />
         ))}

@@ -8,83 +8,77 @@ export default {
   theme: {
     extend: {
       colors: {
-        // UIC Brand Colors
-        'uic-navy': '#001e62',
-        'uic-red': '#d50032',
+        // UIC Brand Colors (matching UIC OSF naming)
+        uic: {
+          red: '#D50032',
+          blue: '#001E62',
+        },
+        // Legacy aliases for compatibility
+        'uic-navy': '#001E62',
+        'uic-red': '#D50032',
         'uic-light-gray': '#f8f8f8',
 
-        // OKLCH Semantic Colors
-        background: 'oklch(var(--background))',
-        foreground: 'oklch(var(--foreground))',
+        // Semantic Colors (simplified)
+        background: 'hsl(var(--background))',
+        foreground: 'hsl(var(--foreground))',
 
         card: {
-          DEFAULT: 'oklch(var(--card))',
-          foreground: 'oklch(var(--card-foreground))',
+          DEFAULT: 'hsl(var(--card))',
+          foreground: 'hsl(var(--card-foreground))',
         },
 
         primary: {
-          DEFAULT: 'oklch(var(--primary))',
-          foreground: 'oklch(var(--primary-foreground))',
+          DEFAULT: 'hsl(var(--primary))',
+          foreground: 'hsl(var(--primary-foreground))',
         },
 
         secondary: {
-          DEFAULT: 'oklch(var(--secondary))',
-          foreground: 'oklch(var(--secondary-foreground))',
+          DEFAULT: 'hsl(var(--secondary))',
+          foreground: 'hsl(var(--secondary-foreground))',
         },
 
         muted: {
-          DEFAULT: 'oklch(var(--muted))',
-          foreground: 'oklch(var(--muted-foreground))',
+          DEFAULT: 'hsl(var(--muted))',
+          foreground: 'hsl(var(--muted-foreground))',
         },
 
         accent: {
-          DEFAULT: 'oklch(var(--accent))',
-          foreground: 'oklch(var(--accent-foreground))',
+          DEFAULT: 'hsl(var(--accent))',
+          foreground: 'hsl(var(--accent-foreground))',
         },
 
         destructive: {
-          DEFAULT: 'oklch(var(--destructive))',
-          foreground: 'oklch(var(--destructive-foreground))',
+          DEFAULT: 'hsl(var(--destructive))',
+          foreground: 'hsl(var(--destructive-foreground))',
         },
 
-        border: 'oklch(var(--border))',
-        input: 'oklch(var(--input))',
-        ring: 'oklch(var(--ring))',
+        border: 'hsl(var(--border))',
+        input: 'hsl(var(--input))',
+        ring: 'hsl(var(--ring))',
 
         // Chart colors
         chart: {
-          '1': 'oklch(0.488 0.243 264.376)',
-          '2': 'oklch(0.696 0.17 162.48)',
-          '3': 'oklch(0.769 0.188 70.08)',
-          '4': 'oklch(0.627 0.265 303.9)',
-          '5': 'oklch(0.645 0.246 16.439)',
+          '1': 'hsl(var(--chart-1))',
+          '2': 'hsl(var(--chart-2))',
+          '3': 'hsl(var(--chart-3))',
+          '4': 'hsl(var(--chart-4))',
+          '5': 'hsl(var(--chart-5))',
         },
 
         // Sidebar colors
         sidebar: {
-          DEFAULT: 'oklch(var(--sidebar))',
-          foreground: 'oklch(var(--sidebar-foreground))',
-          primary: 'oklch(var(--sidebar-primary))',
-          accent: 'oklch(var(--sidebar-accent))',
-          border: 'oklch(var(--sidebar-border))',
-          ring: 'oklch(var(--sidebar-ring))',
+          DEFAULT: 'hsl(var(--sidebar))',
+          foreground: 'hsl(var(--sidebar-foreground))',
+          primary: 'hsl(var(--sidebar-primary))',
+          accent: 'hsl(var(--sidebar-accent))',
+          border: 'hsl(var(--sidebar-border))',
+          ring: 'hsl(var(--sidebar-ring))',
         },
       },
 
       fontFamily: {
-        sans: ['Inter', 'sans-serif'],
+        sans: ['Inter', 'system-ui', 'sans-serif'],
         mono: ['JetBrains Mono', 'monospace'],
-        serif: ['Georgia', 'Cambria', 'Times New Roman', 'Times', 'serif'],
-      },
-
-      fontSize: {
-        'base': '1rem',
-        'lg': '1.125rem',
-        'xl': '1.25rem',
-        '2xl': '1.5rem',
-        '3xl': '1.875rem',
-        '4xl': '2.25rem',
-        '5xl': '3rem',
       },
 
       borderRadius: {
@@ -93,17 +87,28 @@ export default {
         md: 'calc(var(--radius) - 2px)',
         lg: 'var(--radius)',
         xl: 'calc(var(--radius) + 4px)',
+        '2xl': 'calc(var(--radius) + 8px)',
       },
 
-      spacing: {
-        'hero': '6rem',
-        'section': '4rem',
+      boxShadow: {
+        'card': '0 1px 3px 0 rgb(0 0 0 / 0.1), 0 1px 2px -1px rgb(0 0 0 / 0.1)',
+        'card-hover': '0 10px 15px -3px rgb(0 0 0 / 0.1), 0 4px 6px -4px rgb(0 0 0 / 0.1)',
       },
 
-      maxWidth: {
-        'article': '56rem',
-        'hero-title': '64rem',
-        'footer': '80rem',
+      animation: {
+        'fade-in': 'fadeIn 0.5s ease-out',
+        'slide-up': 'slideUp 0.5s ease-out',
+      },
+
+      keyframes: {
+        fadeIn: {
+          '0%': { opacity: '0' },
+          '100%': { opacity: '1' },
+        },
+        slideUp: {
+          '0%': { opacity: '0', transform: 'translateY(10px)' },
+          '100%': { opacity: '1', transform: 'translateY(0)' },
+        },
       },
     },
   },

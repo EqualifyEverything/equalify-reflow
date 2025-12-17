@@ -5,7 +5,7 @@ the monolithic analysis prompt into focused, sequential steps:
 
 1. Layout detection (visual, must be first)
 2. Document type classification (uses layout context)
-3. Headings + Features in parallel (headings uses doc_type, features independent)
+3. Headings + Features + Summary in parallel (headings uses doc_type, features/summary independent)
 4. Manifest assembly (pure Python, no LLM)
 
 This approach improves layout detection accuracy by giving the model
@@ -13,7 +13,7 @@ a focused task with a short prompt, rather than a 267-line monolithic prompt
 that causes the model to "barely glance" at images.
 
 Execution timeline:
-    Layout (5s) → DocType (3s) → [Headings | Features] parallel (5s) → Assemble
+    Layout (5s) → DocType (3s) → [Headings | Features | Summary] parallel (5s) → Assemble
     Total: ~13s for typical document (vs ~24s fully sequential)
 """
 
@@ -23,14 +23,16 @@ from typing import Literal
 
 from opentelemetry import trace
 
-from src.agents import doctype_agent, features_agent, headings_agent, layout_agent
+from src.agents import doctype_agent, features_agent, headings_agent, layout_agent, summary_agent
 from src.agents.doctype_agent import DocumentTypeOutput
 from src.agents.factory import aggregate_usage, get_tracer
 from src.agents.features_agent import PageFeatureDetection
 from src.agents.headings_agent import HeadingsOutput
 from src.agents.layout_agent import PageLayout
 from src.agents.model_tiers import MODEL_TIER_MAP, ModelTier
+from src.agents.summary_agent import DocumentSummaryOutput, build_structure_summary
 from src.services.pdf_converter import PageData
+from src.shared.models.document_context import DocumentSummary
 from src.shared.models.processing import LLMUsage
 from src.shared.models.remediation import (
     DocumentManifest,
@@ -98,18 +100,23 @@ async def analyze_document(
             )
             usages.append(doctype_usage)
 
-        # Step 3: Headings + Features (can run in parallel)
+        # Step 3: Headings + Features + Summary (can run in parallel)
         if parallel:
-            with tracer.start_as_current_span("step.headings_features_parallel"):
+            with tracer.start_as_current_span("step.headings_features_summary_parallel"):
                 headings_task = headings_agent.extract(
                     pages, layouts, doc_type, job_id
                 )
                 features_task = features_agent.detect(pages, job_id)
-
-                (headings_output, headings_usage), (features_list, features_usage) = (
-                    await asyncio.gather(headings_task, features_task)
+                summary_task = summary_agent.summarize(
+                    pages, doc_type.document_type, layouts, job_id
                 )
-                usages.extend([headings_usage, features_usage])
+
+                (
+                    (headings_output, headings_usage),
+                    (features_list, features_usage),
+                    (summary_output, summary_usage),
+                ) = await asyncio.gather(headings_task, features_task, summary_task)
+                usages.extend([headings_usage, features_usage, summary_usage])
         else:
             # Sequential mode (for debugging or if parallel causes issues)
             with tracer.start_as_current_span("step.headings_extraction"):
@@ -124,6 +131,12 @@ async def analyze_document(
                 )
                 usages.append(features_usage)
 
+            with tracer.start_as_current_span("step.summary_extraction"):
+                summary_output, summary_usage = await summary_agent.summarize(
+                    pages, doc_type.document_type, layouts, job_id
+                )
+                usages.append(summary_usage)
+
         # Step 4: Assemble manifest (pure Python, no LLM)
         with tracer.start_as_current_span("step.manifest_assembly"):
             manifest = assemble_manifest(
@@ -133,6 +146,7 @@ async def analyze_document(
                 doc_type=doc_type,
                 headings=headings_output,
                 features=features_list,
+                summary=summary_output,
             )
 
         # Aggregate usage
@@ -168,6 +182,7 @@ def assemble_manifest(
     doc_type: DocumentTypeOutput,
     headings: HeadingsOutput,
     features: list[PageFeatureDetection],
+    summary: DocumentSummaryOutput | None = None,
 ) -> DocumentManifest:
     """Assemble DocumentManifest from chained analysis results.
 
@@ -181,6 +196,7 @@ def assemble_manifest(
         doc_type: Document type classification
         headings: Heading structure extraction results
         features: Page feature detection results
+        summary: Document summary for downstream agents (optional)
 
     Returns:
         Assembled DocumentManifest
@@ -209,6 +225,15 @@ def assemble_manifest(
         sum(layout.confidence for layout in layouts) / len(layouts) if layouts else 0.8
     )
 
+    # Convert summary output to DocumentSummary if provided
+    document_summary: DocumentSummary | None = None
+    if summary is not None:
+        structure_summary_str = build_structure_summary(layouts, total_pages)
+        document_summary = summary.to_document_summary(
+            document_type=doc_type.document_type,
+            structure_summary=structure_summary_str,
+        )
+
     return DocumentManifest(
         job_id=job_id,
         document_title=heading_tree.document_title,
@@ -223,6 +248,7 @@ def assemble_manifest(
         document_type_reasoning=doc_type.evidence,
         heading_order_verification=headings.reading_order_notes,
         agent_routing_reasoning=build_routing_reasoning(features, required_agents),
+        summary=document_summary,
         analysis_model=MODEL_TIER_MAP[ModelTier.EFFICIENT],
     )
 

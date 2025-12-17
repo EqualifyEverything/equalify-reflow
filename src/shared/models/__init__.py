@@ -3,18 +3,31 @@
 This package provides type-safe Pydantic models for all data structures
 used across microservices including job tracking, queue payloads, PII
 detection, approval workflows, processing results, and remediation pipeline.
+
+4-Phase Architecture Models (PRD-021):
+- ProcessingResult (new): Top-level API output with glass box trace
+- AgentTrace/AgentResult: Per-agent execution traces
+- AutoCorrection: Safe automatic edits (replaces Proposal)
+- ReviewChecklist/ReviewItem: Human review interface
+- DocumentSummary: Context for downstream agents
 """
 
+from .agent_trace import AgentResult, AgentTrace
 from .approval import ApprovalDecision, ApprovalRequest
+from .auto_correction import AutoCorrection
+from .document_context import DocumentSummary, ObservationContext
 from .job import VALID_TRANSITIONS, JobStatus, JobSubmission
-from .observation import (
-    VALID_OBSERVATION_TRANSITIONS,
-    Observation,
-    ObservationLocation,
-)
+from .observation import Observation, ObservationLocation
 from .pii import PIIFinding, PIIResult
-from .processing import LLMUsage, ProcessingJob, ProcessingResult
-from .proposal import VALID_PROPOSAL_TRANSITIONS, Proposal, SearchReplaceDiff
+from .processing import LLMUsage, ProcessingJob
+from .processing import ProcessingResult as LegacyProcessingResult
+from .processing_result import (
+    AnalysisSummary,
+    ExtractionSummary,
+    ProcessingResult,
+    ProcessingTrace,
+    StructureSummary,
+)
 from .queue import ApprovalQueuePayload, PIIQueuePayload, ProcessingQueuePayload
 from .redis_schema import (
     APPROVAL_QUEUE,
@@ -28,12 +41,19 @@ from .redis_schema import (
     queue_key,
     timeout_key,
 )
-from .remediation import DocumentManifest, PageFeatures
+from .remediation import DocumentManifest, HeadingNode, HeadingTree, PageFeatures
 from .remediation_progress import (
     VALID_SUBSTATUSES,
     RemediationProgress,
     SubstatusType,
 )
+from .review_checklist import ReviewChecklist, ReviewItem, ReviewOption
+
+# Rebuild models with forward references now that all types are imported
+# This resolves string-quoted type annotations like "DocumentSummary"
+DocumentManifest.model_rebuild()
+ObservationContext.model_rebuild()
+ReviewChecklist.model_rebuild()
 
 __all__ = [
     # Job models
@@ -49,8 +69,8 @@ __all__ = [
     "ApprovalRequest",
     "ApprovalDecision",
 
-    # Processing models
-    "ProcessingResult",
+    # Legacy processing models (keeping for backward compatibility)
+    "LegacyProcessingResult",
     "ProcessingJob",
     "LLMUsage",
 
@@ -62,15 +82,37 @@ __all__ = [
     # Remediation models
     "PageFeatures",
     "DocumentManifest",
+    "HeadingNode",
+    "HeadingTree",
     "ObservationLocation",
     "Observation",
-    "VALID_OBSERVATION_TRANSITIONS",
-    "SearchReplaceDiff",
-    "Proposal",
-    "VALID_PROPOSAL_TRANSITIONS",
     "RemediationProgress",
     "VALID_SUBSTATUSES",
     "SubstatusType",
+
+    # NEW: 4-phase architecture models (PRD-021)
+    # Processing result (replaces LegacyProcessingResult for new pipeline)
+    "ProcessingResult",
+    "ProcessingTrace",
+    "AnalysisSummary",
+    "ExtractionSummary",
+    "StructureSummary",
+
+    # Agent traces (glass box transparency)
+    "AgentTrace",
+    "AgentResult",
+
+    # Auto-corrections (replaces Proposal)
+    "AutoCorrection",
+
+    # Review checklist (human review interface)
+    "ReviewChecklist",
+    "ReviewItem",
+    "ReviewOption",
+
+    # Document context (for downstream agents)
+    "DocumentSummary",
+    "ObservationContext",
 
     # Redis schema utilities
     "job_status_key",
@@ -82,5 +124,5 @@ __all__ = [
     "PROCESSING_QUEUE",
     "APPROVAL_TIMEOUTS",
     "DAILY_METRICS",
-    "JOB_STATUS_PREFIX"
+    "JOB_STATUS_PREFIX",
 ]

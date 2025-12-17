@@ -7,9 +7,12 @@ These models capture the output of Phase 1 (Analysis) which guides:
 """
 
 from datetime import UTC, datetime
-from typing import Literal
+from typing import TYPE_CHECKING, Literal
 
 from pydantic import BaseModel, ConfigDict, Field, model_validator
+
+if TYPE_CHECKING:
+    from .document_context import DocumentSummary
 
 
 class HeadingNode(BaseModel):
@@ -422,6 +425,12 @@ class DocumentManifest(BaseModel):
         ),
     )
 
+    # Document summary for downstream agents (NEW in 4-phase architecture)
+    summary: "DocumentSummary | None" = Field(
+        default=None,
+        description="Generated during analysis for downstream context"
+    )
+
     # Metadata
     created_at: datetime = Field(default_factory=lambda: datetime.now(UTC))
     analysis_model: str = Field(default="claude-sonnet-4-5")
@@ -439,6 +448,7 @@ class DocumentManifest(BaseModel):
                 "skip_agents": ["typography"],
                 "analysis_confidence": 0.92,
                 "analysis_notes": "Clear structure, some complex tables on pages 5-6",
+                "summary": None,
                 "created_at": "2024-12-10T10:30:00Z",
                 "analysis_model": "claude-sonnet-4-5"
             }

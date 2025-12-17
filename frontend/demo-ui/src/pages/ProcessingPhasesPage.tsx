@@ -39,8 +39,8 @@ function PhaseStatusBadge({ status }: { status: string }) {
   )
 }
 
-function AnalysisPhaseCard({ phase, showRaw }: { phase: ProcessingPhasesResponse['analysis']; showRaw: boolean }) {
-  if (phase.status === 'skipped') {
+function AnalysisPhaseCard({ phase, showRaw }: { phase?: ProcessingPhasesResponse['analysis']; showRaw: boolean }) {
+  if (!phase || phase.status === 'skipped') {
     return (
       <Card>
         <CardHeader>
@@ -49,7 +49,7 @@ function AnalysisPhaseCard({ phase, showRaw }: { phase: ProcessingPhasesResponse
               <FileSearch className="h-5 w-5" />
               Phase 1: Analysis
             </CardTitle>
-            <PhaseStatusBadge status={phase.status} />
+            <PhaseStatusBadge status={phase?.status || 'skipped'} />
           </div>
         </CardHeader>
         <CardContent>
@@ -150,8 +150,8 @@ function AnalysisPhaseCard({ phase, showRaw }: { phase: ProcessingPhasesResponse
   )
 }
 
-function ExtractionPhaseCard({ phase }: { phase: ProcessingPhasesResponse['extraction'] }) {
-  if (phase.status === 'skipped') {
+function ExtractionPhaseCard({ phase }: { phase?: ProcessingPhasesResponse['extraction'] }) {
+  if (!phase || phase.status === 'skipped') {
     return (
       <Card>
         <CardHeader>
@@ -160,7 +160,7 @@ function ExtractionPhaseCard({ phase }: { phase: ProcessingPhasesResponse['extra
               <FileText className="h-5 w-5" />
               Phase 2: Extraction
             </CardTitle>
-            <PhaseStatusBadge status={phase.status} />
+            <PhaseStatusBadge status={phase?.status || 'skipped'} />
           </div>
         </CardHeader>
         <CardContent>
@@ -206,8 +206,8 @@ function ExtractionPhaseCard({ phase }: { phase: ProcessingPhasesResponse['extra
   )
 }
 
-function AgentsPhaseCard({ phase, showRaw }: { phase: ProcessingPhasesResponse['agents']; showRaw: boolean }) {
-  if (phase.status === 'skipped') {
+function AgentsPhaseCard({ phase, showRaw }: { phase?: ProcessingPhasesResponse['agents']; showRaw: boolean }) {
+  if (!phase || phase.status === 'skipped') {
     return (
       <Card>
         <CardHeader>
@@ -216,7 +216,7 @@ function AgentsPhaseCard({ phase, showRaw }: { phase: ProcessingPhasesResponse['
               <Eye className="h-5 w-5" />
               Phase 3: Specialized Agents
             </CardTitle>
-            <PhaseStatusBadge status={phase.status} />
+            <PhaseStatusBadge status={phase?.status || 'skipped'} />
           </div>
         </CardHeader>
         <CardContent>
@@ -311,8 +311,8 @@ function AgentsPhaseCard({ phase, showRaw }: { phase: ProcessingPhasesResponse['
   )
 }
 
-function ConsolidationPhaseCard({ phase, showRaw }: { phase: ProcessingPhasesResponse['consolidation']; showRaw: boolean }) {
-  if (phase.status === 'skipped') {
+function ConsolidationPhaseCard({ phase, showRaw }: { phase?: ProcessingPhasesResponse['consolidation']; showRaw: boolean }) {
+  if (!phase || phase.status === 'skipped') {
     return (
       <Card>
         <CardHeader>
@@ -321,7 +321,7 @@ function ConsolidationPhaseCard({ phase, showRaw }: { phase: ProcessingPhasesRes
               <GitMerge className="h-5 w-5" />
               Phase 4: Consolidation
             </CardTitle>
-            <PhaseStatusBadge status={phase.status} />
+            <PhaseStatusBadge status={phase?.status || 'skipped'} />
           </div>
         </CardHeader>
         <CardContent>

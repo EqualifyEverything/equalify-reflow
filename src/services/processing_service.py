@@ -21,9 +21,9 @@ from opentelemetry import trace
 from ..agents.chained_analysis import analyze_document
 from ..agents.chained_structure import analyze_structure as chained_structure
 from ..agents.chained_tables import analyze_tables as chained_tables
-from ..agents.figures import FiguresAgent
 from ..agents.extraction import extract_with_validation
 from ..agents.factory import aggregate_usage
+from ..agents.figures import FiguresAgent
 from ..agents.model_tiers import ModelTier, get_model_id
 from ..agents.typography_agent import TypographyAgent
 from ..config import settings
@@ -734,6 +734,7 @@ class ProcessingService:
 
         update_fields = {
             "original_markdown_key": original_key,
+            "corrected_markdown_key": original_key,  # Initially same as original, updated after corrections
             "page_image_urls": ",".join(page_image_urls),
             "review_items": review_items,
             "correction_expires_at": correction_expires_at.isoformat(),

@@ -16,7 +16,7 @@ export function Dashboard() {
         className="text-center mb-8"
       >
         <h1 className="text-4xl md:text-5xl font-bold text-uic-blue mb-4 tracking-tight">
-          PDF Accessibility Converter
+          Equalify PDF Tool
         </h1>
         <p className="text-xl text-gray-600 font-light max-w-2xl mx-auto">
           Transform PDF documents into{' '}

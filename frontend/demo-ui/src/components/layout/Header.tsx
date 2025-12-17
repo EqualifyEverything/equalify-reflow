@@ -21,20 +21,15 @@ export function Header() {
             </Link>
 
             {/* Divider */}
-            <div className="hidden md:block w-px h-8 bg-gray-300" />
+            <div className="hidden md:block w-px h-10 bg-gray-300" />
 
-            {/* Title - links to dashboard */}
-            <Link to="/" className="flex flex-col hover:opacity-80 transition-opacity">
-              <h1 className="text-xl font-bold text-uic-blue">
-                Equalify PDF Converter
-              </h1>
-              <span className="text-xs text-gray-500 hidden sm:block">
-                Technology Solutions
-              </span>
+            {/* Technology Solutions - links to dashboard (matches UIC OSF pattern) */}
+            <Link to="/" className="hidden md:block text-xl font-bold text-uic-blue hover:underline">
+              Technology Solutions
             </Link>
 
             {/* Demo badge */}
-            <span className="demo-badge ml-2">
+            <span className="demo-badge">
               Demo
             </span>
           </motion.div>

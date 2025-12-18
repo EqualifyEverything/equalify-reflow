@@ -9,7 +9,11 @@ from datetime import UTC, datetime
 from typing import Any, Literal
 
 from ..shared.constants.queues import APPROVAL_TIMEOUT_KEY, PROCESSING_QUEUE
-from ..shared.constants.statuses import STATUS_DENIED, STATUS_PROCESSING
+from ..shared.constants.statuses import (
+    STATUS_DENIED,
+    STATUS_PROCESSING,
+    STATUS_PROCESSING_QUEUED,
+)
 from ..shared.models.queue import ProcessingQueuePayload
 from .cleanup_service import CleanupService
 from .job_service import JobService
@@ -24,22 +28,39 @@ class ApprovalService:
     def __init__(
         self,
         redis_client: Any,
-        s3_client: Any,
+        s3_client: Any | None,
         job_service: JobService,
-        queue_service: QueueService
+        queue_service: QueueService,
     ):
         """Initialize approval service with dependencies.
 
         Args:
             redis_client: Redis async client instance
-            s3_client: Boto3 S3 async client instance
+            s3_client: Boto3 S3 client instance (optional, lazy-loaded for denial path)
             job_service: Job status management service
             queue_service: Redis queue operations service
         """
         self.redis = redis_client
         self.job_service = job_service
         self.queue_service = queue_service
-        self.cleanup_service = CleanupService(s3_client)
+        self._s3_client = s3_client
+        self._cleanup_service: CleanupService | None = None
+
+    @property
+    def cleanup_service(self) -> CleanupService:
+        """Lazy-load CleanupService only when needed (denial path).
+
+        Returns:
+            CleanupService instance for S3 file cleanup
+        """
+        if self._cleanup_service is None:
+            if self._s3_client is None:
+                # Get S3 client if not provided
+                from ..dependencies import _get_s3_client_singleton
+
+                self._s3_client = _get_s3_client_singleton()
+            self._cleanup_service = CleanupService(self._s3_client)
+        return self._cleanup_service
 
     async def validate_approval_token(self, token: str) -> dict[str, Any] | None:
         """Find job by approval token and validate expiration.
@@ -90,10 +111,7 @@ class ApprovalService:
                     return None
 
             except (ValueError, AttributeError):
-                logger.error(
-                    f"Invalid expiration timestamp for job {job_id}: {expires_at_str}",
-                    exc_info=True
-                )
+                logger.error(f"Invalid expiration timestamp for job {job_id}: {expires_at_str}", exc_info=True)
                 return None
 
             now = datetime.now(UTC)
@@ -110,11 +128,7 @@ class ApprovalService:
             return None
 
     async def process_approval_decision(
-        self,
-        job_id: str,
-        decision: Literal["approved", "denied"],
-        justification: str,
-        reviewed_by: str
+        self, job_id: str, decision: Literal["approved", "denied"], justification: str, reviewed_by: str
     ) -> None:
         """Process approval or denial decision and route accordingly.
 
@@ -162,7 +176,7 @@ class ApprovalService:
             "decision": decision,
             "justification": justification,
             "reviewed_by": reviewed_by,
-            "reviewed_at": reviewed_at
+            "reviewed_at": reviewed_at,
         }
 
         if decision == "approved":
@@ -170,12 +184,7 @@ class ApprovalService:
         else:
             await self._process_denial(job_id, s3_key, decision_metadata)
 
-    async def _process_approval(
-        self,
-        job_id: str,
-        s3_key: str,
-        decision_metadata: dict[str, Any]
-    ) -> None:
+    async def _process_approval(self, job_id: str, s3_key: str, decision_metadata: dict[str, Any]) -> None:
         """Handle approved decision - route to processing queue.
 
         Uses Redis atomic lock to prevent duplicate queue entries
@@ -195,14 +204,13 @@ class ApprovalService:
                 lock_key,
                 "processing",
                 nx=True,  # Only set if not exists (atomic)
-                ex=60  # Expire after 60 seconds (safety cleanup)
+                ex=60,  # Expire after 60 seconds (safety cleanup)
             )
 
             if not lock_acquired:
                 # Another approval is already processing or completed
                 logger.info(
-                    f"Job {job_id} approval already in progress or completed - "
-                    "ignoring duplicate approval attempt"
+                    f"Job {job_id} approval already in progress or completed - ignoring duplicate approval attempt"
                 )
                 return
 
@@ -222,26 +230,16 @@ class ApprovalService:
 
                 # If job is in any other non-awaiting state, abort
                 if current_status not in ["awaiting_approval", "pii_scanning"]:
-                    logger.warning(
-                        f"Job {job_id} in unexpected status '{current_status}' during approval"
-                    )
+                    logger.warning(f"Job {job_id} in unexpected status '{current_status}' during approval")
                     raise ValueError(f"Job {job_id} cannot be approved from status '{current_status}'")
 
                 # Enqueue to processing queue
-                queue_payload = ProcessingQueuePayload(
-                    job_id=job_id,
-                    s3_key=s3_key,
-                    approved_at=datetime.now(UTC)
-                )
+                queue_payload = ProcessingQueuePayload(job_id=job_id, s3_key=s3_key, approved_at=datetime.now(UTC))
                 await self.queue_service.enqueue(PROCESSING_QUEUE, queue_payload)
                 logger.info(f"Job {job_id} approved - queued for processing")
 
                 # Update job status
-                await self.job_service.update_job_status(
-                    job_id,
-                    STATUS_PROCESSING,
-                    approval_decision=decision_metadata
-                )
+                await self.job_service.update_job_status(job_id, STATUS_PROCESSING, approval_decision=decision_metadata)
                 logger.info(f"Job {job_id} status updated to processing")
 
             finally:
@@ -253,12 +251,7 @@ class ApprovalService:
             logger.error(f"Failed to process approval for job {job_id}: {str(e)}", exc_info=True)
             raise
 
-    async def _process_denial(
-        self,
-        job_id: str,
-        s3_key: str,
-        decision_metadata: dict[str, Any]
-    ) -> None:
+    async def _process_denial(self, job_id: str, s3_key: str, decision_metadata: dict[str, Any]) -> None:
         """Handle denied decision - cleanup files and update status.
 
         Args:
@@ -275,13 +268,183 @@ class ApprovalService:
                 logger.warning(f"Job {job_id} denied - S3 cleanup failed (non-critical)")
 
             # Update job status to denied
-            await self.job_service.update_job_status(
-                job_id,
-                STATUS_DENIED,
-                denial_decision=decision_metadata
-            )
+            await self.job_service.update_job_status(job_id, STATUS_DENIED, denial_decision=decision_metadata)
             logger.info(f"Job {job_id} status updated to denied")
 
         except Exception as e:
             logger.error(f"Failed to process denial for job {job_id}: {str(e)}", exc_info=True)
             raise
+
+    # -------------------------------------------------------------------------
+    # Instant Response Methods (for reduced API latency)
+    # -------------------------------------------------------------------------
+
+    async def quick_approve(self, job_id: str) -> None:
+        """Minimal approval - update status and return immediately.
+
+        Sets job to 'processing_queued' status for instant user feedback.
+        Full processing (lock, enqueue, status update) happens in background.
+
+        Args:
+            job_id: Job identifier
+
+        Example:
+            >>> await service.quick_approve("abc-123")
+            # Returns immediately, status = "processing_queued"
+        """
+        await self.job_service.update_job_status(
+            job_id,
+            STATUS_PROCESSING_QUEUED,
+            approved_at=datetime.now(UTC).isoformat(),
+        )
+        logger.info(f"Job {job_id} quick-approved, status set to processing_queued")
+
+    async def quick_deny(self, job_id: str) -> None:
+        """Minimal denial - update status and return immediately.
+
+        Sets job to 'denied' status for instant user feedback.
+        S3 cleanup and metadata storage happen in background.
+
+        Args:
+            job_id: Job identifier
+
+        Example:
+            >>> await service.quick_deny("abc-123")
+            # Returns immediately, status = "denied"
+        """
+        await self.job_service.update_job_status(
+            job_id,
+            STATUS_DENIED,
+            denied_at=datetime.now(UTC).isoformat(),
+        )
+        logger.info(f"Job {job_id} quick-denied, status set to denied")
+
+    async def process_approval_background(
+        self,
+        job_id: str,
+        s3_key: str,
+        justification: str,
+        reviewed_by: str,
+    ) -> None:
+        """Background processing after quick approval response.
+
+        Handles locking, enqueueing, and final status update.
+        Called via FastAPI BackgroundTasks after response sent.
+
+        Args:
+            job_id: Job identifier
+            s3_key: S3 object key for the document
+            justification: Reviewer's justification for approval
+            reviewed_by: Reviewer identifier (email or user ID)
+        """
+        try:
+            # Remove from timeout tracking
+            try:
+                await self.redis.zrem(APPROVAL_TIMEOUT_KEY, job_id)
+                logger.debug(f"Removed job {job_id} from approval timeout tracking")
+            except Exception as e:
+                logger.warning(f"Failed to remove job {job_id} from timeout tracking: {e}")
+                # Continue - not critical
+
+            # Acquire atomic lock to prevent duplicates
+            lock_key = f"eq-pdf:approval-lock:{job_id}"
+            lock_acquired = await self.redis.set(lock_key, "processing", nx=True, ex=60)
+
+            if not lock_acquired:
+                logger.info(f"Job {job_id} approval already in progress - skipping background")
+                return
+
+            try:
+                # Double-check status
+                current_job = await self.job_service.get_job(job_id)
+                if not current_job:
+                    logger.warning(f"Job {job_id} disappeared during background approval")
+                    return
+
+                current_status = current_job.get("status")
+                if current_status not in [STATUS_PROCESSING_QUEUED, "awaiting_approval"]:
+                    logger.info(f"Job {job_id} in status '{current_status}' - skipping background")
+                    return
+
+                # Enqueue to processing queue
+                queue_payload = ProcessingQueuePayload(
+                    job_id=job_id,
+                    s3_key=s3_key,
+                    approved_at=datetime.now(UTC),
+                )
+                await self.queue_service.enqueue(PROCESSING_QUEUE, queue_payload)
+                logger.info(f"Job {job_id} enqueued for processing")
+
+                # Update to full processing status with decision metadata
+                decision_metadata = {
+                    "decision": "approved",
+                    "justification": justification,
+                    "reviewed_by": reviewed_by,
+                    "reviewed_at": datetime.now(UTC).isoformat(),
+                }
+                await self.job_service.update_job_status(
+                    job_id,
+                    STATUS_PROCESSING,
+                    approval_decision=decision_metadata,
+                )
+                logger.info(f"Job {job_id} background approval complete - now processing")
+
+            finally:
+                await self.redis.delete(lock_key)
+                logger.debug(f"Released approval lock for job {job_id}")
+
+        except Exception as e:
+            logger.error(f"Background approval failed for {job_id}: {e}", exc_info=True)
+            # Job remains in processing_queued - timeout worker can handle cleanup
+
+    async def process_denial_background(
+        self,
+        job_id: str,
+        s3_key: str,
+        justification: str,
+        reviewed_by: str,
+    ) -> None:
+        """Background processing after quick denial response.
+
+        Handles S3 cleanup and stores decision metadata.
+        Called via FastAPI BackgroundTasks after response sent.
+
+        Args:
+            job_id: Job identifier
+            s3_key: S3 object key for the document
+            justification: Reviewer's justification for denial
+            reviewed_by: Reviewer identifier (email or user ID)
+        """
+        try:
+            # Remove from timeout tracking
+            try:
+                await self.redis.zrem(APPROVAL_TIMEOUT_KEY, job_id)
+                logger.debug(f"Removed job {job_id} from approval timeout tracking")
+            except Exception as e:
+                logger.warning(f"Failed to remove job {job_id} from timeout tracking: {e}")
+                # Continue - not critical
+
+            # Cleanup S3 files (best-effort)
+            cleanup_success = await self.cleanup_service.cleanup_job_files(s3_key)
+            if cleanup_success:
+                logger.info(f"Job {job_id} S3 files cleaned up")
+            else:
+                logger.warning(f"Job {job_id} S3 cleanup failed (non-critical)")
+
+            # Store decision metadata (job already marked as denied)
+            decision_metadata = {
+                "decision": "denied",
+                "justification": justification,
+                "reviewed_by": reviewed_by,
+                "reviewed_at": datetime.now(UTC).isoformat(),
+            }
+            await self.job_service.update_job_status(
+                job_id,
+                STATUS_DENIED,
+                denial_decision=decision_metadata,
+            )
+            logger.info(f"Job {job_id} background denial complete")
+
+        except Exception as e:
+            logger.error(f"Background denial failed for {job_id}: {e}", exc_info=True)
+            # Job already marked as denied - cleanup can be retried later by timeout worker

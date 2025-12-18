@@ -69,7 +69,7 @@ async def test_validate_approval_token_valid(approval_service, mock_redis_client
     """Test successful token validation."""
     # Arrange
     token = "valid-token-abc123"
-    job_id = "test-job-123"
+    job_id = "550e8400-e29b-41d4-a716-446655440010"
     expires_at = (datetime.now(UTC) + timedelta(hours=2)).isoformat()
 
     # Mock O(1) token lookup
@@ -98,7 +98,7 @@ async def test_validate_approval_token_expired(approval_service, mock_redis_clie
 
     # Mock O(1) token lookup
     mock_job_service.get_job_by_approval_token.return_value = {
-        "job_id": "test-job-456",
+        "job_id": "550e8400-e29b-41d4-a716-446655440011",
         "approval_token": token,
         "approval_expires_at": expires_at,
     }
@@ -134,7 +134,7 @@ async def test_validate_approval_token_missing_expires_at(approval_service, mock
 
     # Mock O(1) token lookup
     mock_job_service.get_job_by_approval_token.return_value = {
-        "job_id": "test-job-789",
+        "job_id": "550e8400-e29b-41d4-a716-446655440012",
         "approval_token": token,
         # Missing approval_expires_at
     }
@@ -155,7 +155,7 @@ async def test_validate_approval_token_handles_string_keys(approval_service, moc
 
     # Mock O(1) token lookup
     mock_job_service.get_job_by_approval_token.return_value = {
-        "job_id": "test-job-999",
+        "job_id": "550e8400-e29b-41d4-a716-446655440013",
         "approval_token": token,
         "approval_expires_at": expires_at,
     }
@@ -165,7 +165,7 @@ async def test_validate_approval_token_handles_string_keys(approval_service, moc
 
     # Assert
     assert result is not None
-    assert result["job_id"] == "test-job-999"
+    assert result["job_id"] == "550e8400-e29b-41d4-a716-446655440013"
 
 
 # Approval Decision Tests
@@ -207,7 +207,7 @@ async def test_process_approval_decision_approved(
 async def test_process_approval_decision_denied(approval_service, mock_redis_client, mock_job_service, mock_s3_client):
     """Test processing denied decision."""
     # Arrange
-    job_id = "denied-job-456"
+    job_id = "550e8400-e29b-41d4-a716-446655440014"
     s3_key = "temp/denied-doc.pdf"
     mock_job_service.get_job.return_value = {"job_id": job_id, "s3_key": s3_key, "status": "awaiting_approval"}
     mock_s3_client.delete_object.return_value = {}
@@ -237,7 +237,10 @@ async def test_process_approval_decision_job_not_found(approval_service, mock_jo
     # Act & Assert
     with pytest.raises(ValueError, match="Job .* not found"):
         await approval_service.process_approval_decision(
-            job_id="nonexistent-job", decision="approved", justification="Test", reviewed_by="test@test.com"
+            job_id="550e8400-e29b-41d4-a716-446655440015",
+            decision="approved",
+            justification="Test",
+            reviewed_by="test@test.com",
         )
 
 
@@ -246,14 +249,17 @@ async def test_process_approval_decision_missing_s3_key(approval_service, mock_j
     """Test processing decision when job missing s3_key."""
     # Arrange
     mock_job_service.get_job.return_value = {
-        "job_id": "test-job"
+        "job_id": "550e8400-e29b-41d4-a716-446655440016"
         # Missing s3_key
     }
 
     # Act & Assert
     with pytest.raises(ValueError, match="missing s3_key"):
         await approval_service.process_approval_decision(
-            job_id="test-job", decision="approved", justification="Test", reviewed_by="test@test.com"
+            job_id="550e8400-e29b-41d4-a716-446655440016",
+            decision="approved",
+            justification="Test",
+            reviewed_by="test@test.com",
         )
 
 
@@ -288,7 +294,7 @@ async def test_process_denial_continues_on_cleanup_failure(
 ):
     """Test that denial continues even if S3 cleanup fails."""
     # Arrange
-    job_id = "cleanup-fail-job"
+    job_id = "550e8400-e29b-41d4-a716-446655440017"
     mock_job_service.get_job.return_value = {"job_id": job_id, "s3_key": "temp/fail.pdf", "status": "awaiting_approval"}
     # Simulate S3 cleanup failure
     mock_s3_client.delete_object.side_effect = Exception("S3 error")
@@ -311,7 +317,7 @@ async def test_process_denial_continues_on_cleanup_failure(
 async def test_quick_approve_sets_processing_queued_status(approval_service, mock_job_service):
     """Test quick_approve sets status to processing_queued immediately."""
     # Arrange
-    job_id = "quick-approve-job-123"
+    job_id = "550e8400-e29b-41d4-a716-446655440018"
 
     # Act
     await approval_service.quick_approve(job_id)
@@ -328,7 +334,7 @@ async def test_quick_approve_sets_processing_queued_status(approval_service, moc
 async def test_quick_deny_sets_denied_status(approval_service, mock_job_service):
     """Test quick_deny sets status to denied immediately."""
     # Arrange
-    job_id = "quick-deny-job-456"
+    job_id = "550e8400-e29b-41d4-a716-446655440019"
 
     # Act
     await approval_service.quick_deny(job_id)
@@ -350,7 +356,7 @@ async def test_process_approval_background_enqueues_job(
 ):
     """Test background approval enqueues job for processing."""
     # Arrange
-    job_id = "bg-approve-job-789"
+    job_id = "550e8400-e29b-41d4-a716-446655440020"
     s3_key = "temp/bg-test.pdf"
     mock_redis_client.set.return_value = True  # Lock acquired
     mock_job_service.get_job.return_value = {
@@ -387,7 +393,7 @@ async def test_process_approval_background_skips_if_lock_not_acquired(
 ):
     """Test background approval skips processing if lock already held."""
     # Arrange
-    job_id = "lock-conflict-job"
+    job_id = "550e8400-e29b-41d4-a716-446655440021"
     mock_redis_client.set.return_value = False  # Lock NOT acquired
 
     # Act
@@ -409,7 +415,7 @@ async def test_process_approval_background_skips_if_wrong_status(
 ):
     """Test background approval skips if job status changed."""
     # Arrange
-    job_id = "status-changed-job"
+    job_id = "550e8400-e29b-41d4-a716-446655440022"
     mock_redis_client.set.return_value = True  # Lock acquired
     mock_job_service.get_job.return_value = {
         "job_id": job_id,
@@ -436,7 +442,7 @@ async def test_process_denial_background_cleans_up_s3(
 ):
     """Test background denial cleans up S3 files."""
     # Arrange
-    job_id = "bg-deny-job-123"
+    job_id = "550e8400-e29b-41d4-a716-446655440023"
     s3_key = "temp/bg-deny-test.pdf"
     mock_s3_client.delete_object.return_value = {}
 
@@ -468,7 +474,7 @@ async def test_process_denial_background_continues_on_s3_failure(
 ):
     """Test background denial continues even if S3 cleanup fails."""
     # Arrange
-    job_id = "bg-s3-fail-job"
+    job_id = "550e8400-e29b-41d4-a716-446655440024"
     mock_s3_client.delete_object.side_effect = Exception("S3 error")
 
     # Act - Should not raise

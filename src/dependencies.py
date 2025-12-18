@@ -23,6 +23,7 @@ from .services.storage_service import StorageService
 # Singleton S3 client for connection reuse
 _s3_client = None
 
+
 @lru_cache
 def _get_s3_client_singleton() -> Any:
     """Create singleton S3 client for connection reuse across requests.
@@ -32,8 +33,8 @@ def _get_s3_client_singleton() -> Any:
     """
     retry_config = Config(
         retries={
-            'mode': 'adaptive',
-            'max_attempts': 3,
+            "mode": "adaptive",
+            "max_attempts": 3,
         },
         connect_timeout=10,
         read_timeout=60,
@@ -45,6 +46,7 @@ def _get_s3_client_singleton() -> Any:
 
     # Clear empty AWS_PROFILE to prevent boto3 profile lookup error
     import os
+
     if os.environ.get("AWS_PROFILE") == "":
         del os.environ["AWS_PROFILE"]
 
@@ -74,25 +76,42 @@ async def get_s3_client() -> AsyncGenerator[Any, None]:
     yield _get_s3_client_singleton()
 
 
+# Singleton Redis connection pool for connection reuse across requests
+_redis_pool: redis.ConnectionPool | None = None
+
+
+def _get_redis_pool() -> redis.ConnectionPool:
+    """Get or create singleton Redis connection pool.
+
+    Returns a shared connection pool that persists across requests,
+    eliminating per-request connection overhead.
+
+    Returns:
+        Singleton Redis ConnectionPool instance
+    """
+    global _redis_pool
+    if _redis_pool is None:
+        _redis_pool = redis.ConnectionPool.from_url(
+            settings.redis_url,
+            decode_responses=True,
+            max_connections=settings.redis_max_connections,
+        )
+    return _redis_pool
+
+
 async def get_redis_client() -> AsyncGenerator[Any, None]:
-    """Get Redis client with connection pool and cleanup.
+    """Get Redis client from singleton connection pool.
 
     Yields:
-        Configured Redis async client
+        Redis client using shared connection pool
 
     Note:
-        This is an async generator for FastAPI dependency injection.
-        The connection pool will be properly closed after the request completes.
+        Uses singleton connection pool for efficient connection reuse.
+        Connections return to pool automatically - no explicit close needed.
     """
-    client = redis.from_url(
-        settings.redis_url,
-        decode_responses=True,
-        max_connections=settings.redis_max_connections,
-    )
-    try:
-        yield client
-    finally:
-        await client.aclose()  # type: ignore[attr-defined]
+    client = redis.Redis(connection_pool=_get_redis_pool())
+    yield client
+    # No close - connection returns to pool automatically
 
 
 # Singleton StorageService for circuit breaker persistence
@@ -181,9 +200,7 @@ async def get_s3_cleanup_service() -> S3CleanupService:
     return _get_s3_cleanup_service_singleton()
 
 
-async def get_queue_service(
-    redis_client: Any = Depends(get_redis_client)
-) -> QueueService:
+async def get_queue_service(redis_client: Any = Depends(get_redis_client)) -> QueueService:
     """Get queue service instance.
 
     Args:
@@ -202,9 +219,7 @@ async def get_queue_service(
     return QueueService(redis_client=redis_client)
 
 
-async def get_job_service(
-    redis_client: Any = Depends(get_redis_client)
-) -> JobService:
+async def get_job_service(redis_client: Any = Depends(get_redis_client)) -> JobService:
     """Get job service instance.
 
     Args:
@@ -224,7 +239,7 @@ async def get_job_service(
 
 
 async def get_rate_limit_service(
-    redis_client: Any = Depends(get_redis_client)
+    redis_client: Any = Depends(get_redis_client),
 ) -> AsyncGenerator[RateLimitService, None]:
     """Get rate limit service instance.
 
@@ -248,7 +263,7 @@ async def get_rate_limit_service(
 async def get_correction_approval_service(
     redis: redis.Redis = Depends(get_redis_client),
     job_service: JobService = Depends(get_job_service),
-    storage: StorageService = Depends(get_storage_service)
+    storage: StorageService = Depends(get_storage_service),
 ) -> CorrectionApprovalService:
     """Get correction approval service instance.
 
@@ -279,11 +294,7 @@ async def get_correction_approval_service(
                 storage_service=storage_service
             )
     """
-    return CorrectionApprovalService(
-        redis_client=redis,
-        job_service=job_service,
-        storage_service=storage
-    )
+    return CorrectionApprovalService(redis_client=redis, job_service=job_service, storage_service=storage)
 
 
 async def get_remediation_storage(

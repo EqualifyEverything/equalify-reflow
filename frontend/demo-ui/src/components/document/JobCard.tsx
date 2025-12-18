@@ -25,13 +25,13 @@ export function JobCard({ job }: JobCardProps) {
 
   return (
     <Link to={`/job/${job.job_id}`} className="block group">
-      <div className="bg-white border border-gray-200 rounded-xl p-4 transition-all duration-300 hover:shadow-lg hover:border-uic-blue/30 hover:scale-[1.01]">
+      <div className="bg-card border border-border rounded-xl p-4 transition-all duration-300 hover:shadow-lg hover:border-primary/30 hover:scale-[1.01]">
         <div className="flex items-center justify-between">
           <div className="space-y-1 flex-1 min-w-0">
-            <p className="font-mono text-sm text-gray-600 truncate">
+            <p className="font-mono text-sm text-muted-foreground truncate">
               {job.job_id}
             </p>
-            <p className="text-xs text-gray-400">
+            <p className="text-xs text-muted-foreground/70">
               {formatDate(job.created_at)}
             </p>
             {job.error && (
@@ -43,12 +43,12 @@ export function JobCard({ job }: JobCardProps) {
 
           <div className="flex items-center gap-2 ml-4">
             {job.pii_findings && job.pii_findings.length > 0 && (
-              <Badge variant="outline" className="border-amber-300 bg-amber-50 text-amber-700 text-xs">
+              <Badge variant="outline" className="border-amber-300 bg-amber-50 text-amber-700 dark:bg-amber-900/30 dark:text-amber-400 dark:border-amber-700 text-xs">
                 PII ({job.pii_findings.length})
               </Badge>
             )}
             {job.correction_summary && (
-              <Badge variant="outline" className="border-purple-300 bg-purple-50 text-purple-700 text-xs">
+              <Badge variant="outline" className="border-purple-300 bg-purple-50 text-purple-700 dark:bg-purple-900/30 dark:text-purple-400 dark:border-purple-700 text-xs">
                 {job.correction_summary.total_corrections} fixes
               </Badge>
             )}
@@ -56,7 +56,7 @@ export function JobCard({ job }: JobCardProps) {
               <Icon className="h-3 w-3" />
               {config.label}
             </Badge>
-            <ArrowRight className="h-4 w-4 text-gray-400 group-hover:text-uic-blue group-hover:translate-x-1 transition-all" />
+            <ArrowRight className="h-4 w-4 text-muted-foreground group-hover:text-primary group-hover:translate-x-1 transition-all" />
           </div>
         </div>
       </div>

@@ -15,12 +15,12 @@ export function Dashboard() {
         transition={{ duration: 0.5 }}
         className="text-center mb-8"
       >
-        <h1 className="text-4xl md:text-5xl font-bold text-uic-blue mb-4 tracking-tight">
+        <h1 className="text-4xl md:text-5xl font-bold text-primary mb-4 tracking-tight">
           Equalify PDF Tool
         </h1>
-        <p className="text-xl text-gray-600 font-light max-w-2xl mx-auto">
+        <p className="text-xl text-muted-foreground font-light max-w-2xl mx-auto">
           Transform PDF documents into{' '}
-          <span className="font-semibold text-uic-blue">accessible, semantic markup</span>{' '}
+          <span className="font-semibold text-primary">accessible, semantic markup</span>{' '}
           for UIC course materials.
         </p>
       </motion.div>

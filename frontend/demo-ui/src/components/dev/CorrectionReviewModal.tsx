@@ -110,16 +110,16 @@ export function CorrectionReviewModal({
 
   const confidenceColor =
     correctionSummary.confidence_score >= 0.9
-      ? 'text-green-600'
+      ? 'text-green-600 dark:text-green-400'
       : correctionSummary.confidence_score >= 0.7
-      ? 'text-yellow-600'
-      : 'text-red-600'
+      ? 'text-yellow-600 dark:text-yellow-400'
+      : 'text-red-600 dark:text-red-400'
 
   return (
     <Dialog open={open} onOpenChange={handleClose}>
       <DialogContent className="max-w-4xl max-h-[90vh] overflow-hidden flex flex-col">
         <DialogHeader>
-          <DialogTitle className="flex items-center gap-2 text-uic-navy">
+          <DialogTitle className="flex items-center gap-2 text-primary">
             <FileCheck className="h-5 w-5" />
             Review AI Corrections
           </DialogTitle>
@@ -127,8 +127,8 @@ export function CorrectionReviewModal({
 
         {submitMutation.isSuccess ? (
           <div className="text-center py-8">
-            <CheckCircle2 className="h-16 w-16 text-green-500 mx-auto mb-4" />
-            <h3 className="text-xl font-semibold text-uic-navy mb-2">
+            <CheckCircle2 className="h-16 w-16 text-green-500 dark:text-green-400 mx-auto mb-4" />
+            <h3 className="text-xl font-semibold text-primary mb-2">
               Decision Submitted
             </h3>
             <p className="text-muted-foreground mb-4">
@@ -147,19 +147,19 @@ export function CorrectionReviewModal({
               </div>
               <div className="flex items-center gap-4">
                 <div className="text-center">
-                  <span className="text-2xl font-bold text-purple-600">
+                  <span className="text-2xl font-bold text-purple-600 dark:text-purple-400">
                     {correctionSummary.total_corrections}
                   </span>
                   <p className="text-xs text-muted-foreground">total</p>
                 </div>
                 <div className="text-center">
-                  <span className="text-2xl font-bold text-green-600">
+                  <span className="text-2xl font-bold text-green-600 dark:text-green-400">
                     {correctionSummary.auto_applied_count}
                   </span>
                   <p className="text-xs text-muted-foreground">auto-applied</p>
                 </div>
                 <div className="text-center">
-                  <span className="text-2xl font-bold text-amber-600">
+                  <span className="text-2xl font-bold text-amber-600 dark:text-amber-400">
                     {correctionSummary.manual_review_count}
                   </span>
                   <p className="text-xs text-muted-foreground">need review</p>
@@ -229,13 +229,13 @@ export function CorrectionReviewModal({
                     <div className="grid grid-cols-2 gap-4">
                       <div>
                         <h4 className="font-semibold mb-2 text-sm">Original</h4>
-                        <pre className="bg-red-50 border border-red-200 rounded p-3 text-xs overflow-auto max-h-64 whitespace-pre-wrap">
+                        <pre className="bg-red-50 dark:bg-red-900/30 border border-red-200 dark:border-red-800 rounded p-3 text-xs overflow-auto max-h-64 whitespace-pre-wrap">
                           {originalContent || 'Failed to load'}
                         </pre>
                       </div>
                       <div>
                         <h4 className="font-semibold mb-2 text-sm">Corrected</h4>
-                        <pre className="bg-green-50 border border-green-200 rounded p-3 text-xs overflow-auto max-h-64 whitespace-pre-wrap">
+                        <pre className="bg-green-50 dark:bg-green-900/30 border border-green-200 dark:border-green-800 rounded p-3 text-xs overflow-auto max-h-64 whitespace-pre-wrap">
                           {correctedContent || 'Failed to load'}
                         </pre>
                       </div>

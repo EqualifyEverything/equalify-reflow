@@ -38,19 +38,19 @@ export function JsonViewer({
     }))
 
   return (
-    <div className={cn('border rounded-lg bg-slate-50', className)}>
+    <div className={cn('border border-border rounded-lg bg-muted', className)}>
       {/* Header */}
       <div
-        className="flex items-center justify-between px-3 py-2 cursor-pointer hover:bg-slate-100 transition-colors"
+        className="flex items-center justify-between px-3 py-2 cursor-pointer hover:bg-muted/80 transition-colors"
         onClick={() => setExpanded(!expanded)}
       >
         <div className="flex items-center gap-2">
           {expanded ? (
-            <ChevronDown className="h-4 w-4 text-slate-500" />
+            <ChevronDown className="h-4 w-4 text-muted-foreground" />
           ) : (
-            <ChevronRight className="h-4 w-4 text-slate-500" />
+            <ChevronRight className="h-4 w-4 text-muted-foreground" />
           )}
-          <span className="text-sm font-medium text-slate-700">{title}</span>
+          <span className="text-sm font-medium text-foreground">{title}</span>
         </div>
 
         {/* Key info badges */}
@@ -60,7 +60,7 @@ export function JsonViewer({
               key={key}
               className={cn(
                 'text-xs px-2 py-0.5 rounded font-mono',
-                key === 'status' && typeof value === 'string' ? getStatusClasses(value) : 'bg-slate-200 text-slate-600'
+                key === 'status' && typeof value === 'string' ? getStatusClasses(value) : 'bg-background text-muted-foreground'
               )}
             >
               {key === 'status' ? String(value) : `${key}: ${truncate(String(value), 12)}`}
@@ -76,9 +76,9 @@ export function JsonViewer({
             }}
           >
             {copied ? (
-              <Check className="h-3 w-3 text-green-500" />
+              <Check className="h-3 w-3 text-green-500 dark:text-green-400" />
             ) : (
-              <Copy className="h-3 w-3 text-slate-400" />
+              <Copy className="h-3 w-3 text-muted-foreground" />
             )}
           </Button>
         </div>
@@ -86,8 +86,8 @@ export function JsonViewer({
 
       {/* Expanded JSON */}
       {expanded && (
-        <div className="border-t">
-          <pre className="p-3 text-xs font-mono overflow-x-auto max-h-96 overflow-y-auto">
+        <div className="border-t border-border">
+          <pre className="p-3 text-xs font-mono overflow-x-auto max-h-96 overflow-y-auto bg-background/50">
             <code>
               {formatJson(data)}
             </code>
@@ -121,7 +121,7 @@ function highlightLine(line: string): React.ReactNode {
     return (
       <>
         <span>{indent}</span>
-        <span className="text-purple-600">"{key}"</span>
+        <span className="text-purple-600 dark:text-purple-400">"{key}"</span>
         <span>{colon}</span>
         {highlightValue(rest)}
       </>
@@ -130,46 +130,46 @@ function highlightLine(line: string): React.ReactNode {
 
   // Standalone value (array item)
   if (stringMatch && !keyMatch) {
-    return <span className="text-green-600">{line}</span>
+    return <span className="text-green-600 dark:text-green-400">{line}</span>
   }
 
-  return <span className="text-slate-600">{line}</span>
+  return <span className="text-muted-foreground">{line}</span>
 }
 
 function highlightValue(value: string): React.ReactNode {
   const trimmed = value.trim()
 
   if (trimmed.startsWith('"')) {
-    return <span className="text-green-600">{value}</span>
+    return <span className="text-green-600 dark:text-green-400">{value}</span>
   }
   if (/^\d/.test(trimmed) || /^-\d/.test(trimmed)) {
-    return <span className="text-blue-600">{value}</span>
+    return <span className="text-blue-600 dark:text-blue-400">{value}</span>
   }
   if (trimmed.startsWith('true') || trimmed.startsWith('false')) {
-    return <span className="text-orange-600">{value}</span>
+    return <span className="text-orange-600 dark:text-orange-400">{value}</span>
   }
   if (trimmed.startsWith('null')) {
-    return <span className="text-red-600">{value}</span>
+    return <span className="text-red-600 dark:text-red-400">{value}</span>
   }
 
-  return <span className="text-slate-600">{value}</span>
+  return <span className="text-muted-foreground">{value}</span>
 }
 
 function getStatusClasses(status: string): string {
   switch (status) {
     case 'completed':
-      return 'bg-green-100 text-green-700'
+      return 'bg-green-100 dark:bg-green-900/50 text-green-700 dark:text-green-300'
     case 'processing':
     case 'pii_scanning':
-      return 'bg-blue-100 text-blue-700'
+      return 'bg-blue-100 dark:bg-blue-900/50 text-blue-700 dark:text-blue-300'
     case 'awaiting_approval':
     case 'awaiting_correction_approval':
-      return 'bg-yellow-100 text-yellow-700'
+      return 'bg-yellow-100 dark:bg-yellow-900/50 text-yellow-700 dark:text-yellow-300'
     case 'failed':
     case 'denied':
-      return 'bg-red-100 text-red-700'
+      return 'bg-red-100 dark:bg-red-900/50 text-red-700 dark:text-red-300'
     default:
-      return 'bg-slate-200 text-slate-600'
+      return 'bg-background text-muted-foreground'
   }
 }
 

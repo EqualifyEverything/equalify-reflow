@@ -12,18 +12,18 @@ const buttonVariants = cva(
         // Primary - UIC Red (main CTA)
         default:
           "bg-uic-red text-white hover:bg-red-700 shadow-lg hover:shadow-xl",
-        // Secondary - White with border
+        // Secondary - adapts to theme
         secondary:
-          "bg-white text-uic-blue border border-gray-200 hover:bg-gray-50 shadow-lg hover:shadow-xl",
+          "bg-secondary text-secondary-foreground border border-border hover:bg-secondary/80 shadow-lg hover:shadow-xl",
         // Destructive
         destructive:
-          "bg-red-600 text-white hover:bg-red-700",
-        // Outline
+          "bg-destructive text-destructive-foreground hover:bg-destructive/90",
+        // Outline - adapts to theme
         outline:
-          "border border-gray-300 bg-white text-gray-700 hover:bg-gray-50 hover:border-gray-400",
-        // Ghost
+          "border border-border bg-background text-foreground hover:bg-accent hover:text-accent-foreground",
+        // Ghost - adapts to theme
         ghost:
-          "text-gray-600 hover:bg-gray-100 hover:text-gray-900",
+          "text-muted-foreground hover:bg-accent hover:text-accent-foreground",
         // Link
         link:
           "text-uic-red underline-offset-4 hover:underline",

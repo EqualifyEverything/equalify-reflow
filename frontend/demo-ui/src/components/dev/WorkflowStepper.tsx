@@ -5,6 +5,7 @@ import {
   UserCheck,
   Cog,
   FileCheck,
+  ClipboardList,
   CheckCircle2,
   XCircle,
   Clock
@@ -17,6 +18,7 @@ const WORKFLOW_STEPS = [
   { id: 'pii_approval', label: 'PII Review', icon: UserCheck },
   { id: 'processing', label: 'Processing', icon: Cog },
   { id: 'correction_review', label: 'Correction Review', icon: FileCheck },
+  { id: 'human_review', label: 'Human Review', icon: ClipboardList },
   { id: 'completed', label: 'Completed', icon: CheckCircle2 },
 ] as const
 
@@ -34,6 +36,8 @@ function getStepFromStatus(status: string): { step: StepId; isActive: boolean; i
       return { step: 'processing', isActive: true, isFailed: false }
     case 'awaiting_correction_approval':
       return { step: 'correction_review', isActive: true, isFailed: false }
+    case 'needs_review':
+      return { step: 'human_review', isActive: true, isFailed: false }
     case 'completed':
       return { step: 'completed', isActive: false, isFailed: false }
     case 'failed':
@@ -99,9 +103,9 @@ export function WorkflowStepper({
                     compact ? 'w-8 h-8' : 'w-10 h-10',
                     {
                       'bg-green-500 text-white': stepState === 'complete',
-                      'bg-uic-navy text-white ring-4 ring-uic-navy/20 animate-pulse': stepState === 'active',
+                      'bg-primary text-primary-foreground ring-4 ring-primary/20 animate-pulse': stepState === 'active',
                       'bg-red-500 text-white': stepState === 'failed',
-                      'bg-gray-200 text-gray-400': stepState === 'pending',
+                      'bg-muted text-muted-foreground': stepState === 'pending',
                     }
                   )}
                 >
@@ -123,10 +127,10 @@ export function WorkflowStepper({
                       'text-center mt-1 whitespace-nowrap',
                       compact ? 'text-[10px]' : 'text-xs',
                       {
-                        'text-green-600 font-medium': stepState === 'complete',
-                        'text-uic-navy font-semibold': stepState === 'active',
-                        'text-red-600 font-medium': stepState === 'failed',
-                        'text-gray-400': stepState === 'pending',
+                        'text-green-600 dark:text-green-400 font-medium': stepState === 'complete',
+                        'text-primary font-semibold': stepState === 'active',
+                        'text-red-600 dark:text-red-400 font-medium': stepState === 'failed',
+                        'text-muted-foreground': stepState === 'pending',
                       }
                     )}
                   >
@@ -142,9 +146,9 @@ export function WorkflowStepper({
                     'flex-1 h-0.5 mx-2',
                     {
                       'bg-green-500': isComplete,
-                      'bg-gradient-to-r from-uic-navy to-gray-200': isCurrent && isActive,
+                      'bg-gradient-to-r from-primary to-muted': isCurrent && isActive,
                       'bg-red-500': isFailed && isCurrent,
-                      'bg-gray-200': !isComplete && !isCurrent,
+                      'bg-muted': !isComplete && !isCurrent,
                     }
                   )}
                 />
@@ -160,11 +164,12 @@ export function WorkflowStepper({
           <span className={cn(
             'text-sm font-medium px-3 py-1 rounded-full',
             {
-              'bg-green-100 text-green-700': status === 'completed',
-              'bg-blue-100 text-blue-700': ['pii_scanning', 'processing'].includes(status),
-              'bg-yellow-100 text-yellow-700': ['awaiting_approval', 'awaiting_correction_approval'].includes(status),
-              'bg-red-100 text-red-700': ['failed', 'denied'].includes(status),
-              'bg-gray-100 text-gray-700': status === 'pending',
+              'bg-green-100 dark:bg-green-900/50 text-green-700 dark:text-green-300': status === 'completed',
+              'bg-blue-100 dark:bg-blue-900/50 text-blue-700 dark:text-blue-300': ['pii_scanning', 'processing'].includes(status),
+              'bg-yellow-100 dark:bg-yellow-900/50 text-yellow-700 dark:text-yellow-300': ['awaiting_approval', 'awaiting_correction_approval'].includes(status),
+              'bg-purple-100 dark:bg-purple-900/50 text-purple-700 dark:text-purple-300': status === 'needs_review',
+              'bg-red-100 dark:bg-red-900/50 text-red-700 dark:text-red-300': ['failed', 'denied'].includes(status),
+              'bg-muted text-muted-foreground': status === 'pending',
             }
           )}>
             {formatStatusText(status)}
@@ -182,6 +187,7 @@ function formatStatusText(status: string): string {
     case 'awaiting_approval': return 'Awaiting PII Approval'
     case 'processing': return 'AI Processing...'
     case 'awaiting_correction_approval': return 'Awaiting Correction Review'
+    case 'needs_review': return 'Awaiting Human Review'
     case 'completed': return 'Completed'
     case 'failed': return 'Failed'
     case 'denied': return 'Denied'

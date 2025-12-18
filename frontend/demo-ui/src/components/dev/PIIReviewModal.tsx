@@ -73,7 +73,7 @@ export function PIIReviewModal({
     <Dialog open={open} onOpenChange={handleClose}>
       <DialogContent className="max-w-2xl max-h-[90vh] overflow-y-auto">
         <DialogHeader>
-          <DialogTitle className="flex items-center gap-2 text-uic-navy">
+          <DialogTitle className="flex items-center gap-2 text-primary">
             <Shield className="h-5 w-5" />
             PII Review Required
           </DialogTitle>
@@ -81,8 +81,8 @@ export function PIIReviewModal({
 
         {submitMutation.isSuccess ? (
           <div className="text-center py-8">
-            <CheckCircle2 className="h-16 w-16 text-green-500 mx-auto mb-4" />
-            <h3 className="text-xl font-semibold text-uic-navy mb-2">
+            <CheckCircle2 className="h-16 w-16 text-green-500 dark:text-green-400 mx-auto mb-4" />
+            <h3 className="text-xl font-semibold text-primary mb-2">
               Decision Submitted
             </h3>
             <p className="text-muted-foreground mb-4">

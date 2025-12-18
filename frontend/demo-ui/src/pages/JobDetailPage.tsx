@@ -25,7 +25,7 @@ export function JobDetailPage() {
             </Link>
           </Button>
           <div>
-            <h1 className="text-3xl font-bold text-uic-navy mb-2">Job Details</h1>
+            <h1 className="text-3xl font-bold text-primary mb-2">Job Details</h1>
             <p className="text-muted-foreground font-mono text-sm">{jobId}</p>
           </div>
         </div>

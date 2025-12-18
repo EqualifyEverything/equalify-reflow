@@ -6,6 +6,7 @@ import { JobDetailPage } from '@/pages/JobDetailPage'
 import { ApprovalReviewPage } from '@/pages/ApprovalReviewPage'
 import { CorrectionReviewPage } from '@/pages/CorrectionReviewPage'
 import { ProcessingPhasesPage } from '@/pages/ProcessingPhasesPage'
+import { ReviewChecklistPage } from '@/pages/ReviewChecklistPage'
 import { queryClient } from '@/lib/queryClient'
 
 // Base path for routing - must match Vite's base config
@@ -71,6 +72,16 @@ function App() {
             element={
               <DashboardLayout>
                 <ProcessingPhasesPage />
+              </DashboardLayout>
+            }
+          />
+
+          {/* Human review checklist - with dashboard layout */}
+          <Route
+            path="/job/:jobId/review"
+            element={
+              <DashboardLayout>
+                <ReviewChecklistPage />
               </DashboardLayout>
             }
           />

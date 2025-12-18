@@ -101,7 +101,7 @@ export interface JobStatus {
   approval_expires_at?: string
   approval_url?: string
 
-  // For awaiting_correction_approval status
+  // For awaiting_correction_approval status (legacy)
   correction_summary?: CorrectionSummary
   corrections?: CorrectionItem[]
   review_url?: string
@@ -109,6 +109,11 @@ export interface JobStatus {
   corrected_markdown_url?: string
   page_image_urls?: string[]
   llm_cost?: LLMCost
+
+  // For needs_review status (Phase 5)
+  review_item_count?: number
+  review_checklist_summary?: ChecklistSummary
+  processing_confidence?: number
 
   // For completed status
   markdown_url?: string
@@ -218,6 +223,16 @@ export interface PageFeatureSummary {
   complexity_score: number
 }
 
+// Phase 5: DocumentSummary - Glass-box transparency for analysis
+export interface DocumentSummary {
+  topic_summary: string
+  structure_summary: string
+  key_entities: string[]
+  domain_terms: string[]
+  audience_level: string
+  expected_elements: string[]
+}
+
 export interface AnalysisPhase {
   status: string
   document_title?: string
@@ -229,6 +244,10 @@ export interface AnalysisPhase {
   page_features: PageFeatureSummary[]
   heading_tree?: Record<string, unknown>
   raw_manifest?: Record<string, unknown>
+  // Phase 5: DocumentSummary for glass-box transparency
+  document_summary?: DocumentSummary
+  time_seconds?: number
+  cost_cents?: number
 }
 
 export interface ExtractionPhase {
@@ -236,6 +255,45 @@ export interface ExtractionPhase {
   markdown_url?: string
   confidence_score?: number
   extraction_model?: string
+  // Phase 5: Additional metrics
+  pages_extracted?: number
+  correction_iterations?: number
+  time_seconds?: number
+  cost_cents?: number
+}
+
+// Phase 5: Structure Verification Loop summary
+export interface StructureLoopSummary {
+  iterations: number
+  lint_issues_found: number
+  lint_issues_fixed: number
+  ocr_suggestions_processed: number
+  corrections_applied: number
+  final_lint_clean: boolean
+  time_seconds: number
+  cost_cents: number
+}
+
+// Phase 5: Agent summary for Refine phase
+export interface AgentSummary {
+  agent_name: string
+  observations_count: number
+  auto_corrections_count: number
+  review_items_count: number
+  reasoning_summary: string
+  confidence: number
+  time_seconds: number
+  cost_cents: number
+}
+
+// Phase 5: Refine phase (combines structure loop + agents)
+export interface RefinePhase {
+  status: string
+  structure_loop?: StructureLoopSummary
+  agents: AgentSummary[]
+  total_observations: number
+  total_auto_corrections: number
+  total_review_items: number
 }
 
 export interface ObservationSummary {
@@ -285,11 +343,240 @@ export interface ProcessingPhasesResponse {
   status: string
   created_at: string
   updated_at: string
-  analysis: AnalysisPhase
-  extraction: ExtractionPhase
-  agents: AgentsPhase
-  consolidation: ConsolidationPhase
+
+  // Phase 5 naming (preferred)
+  analyze?: AnalysisPhase
+  extract?: ExtractionPhase
+  refine?: RefinePhase
+  assemble?: RemediationPhase
+
+  // Legacy naming (backward compatibility)
+  analysis?: AnalysisPhase
+  extraction?: ExtractionPhase
+  agents?: AgentsPhase
+  consolidation?: ConsolidationPhase
+  remediation?: RemediationPhase
+
   total_llm_cost?: LLMCost
+}
+
+// Remediation Phase types (Phase 5 - auto corrections)
+export interface AutoCorrectionSummary {
+  id: string
+  observation_id: string
+  applied: boolean
+  page_num: number | null
+  search_preview: string
+  replace_preview: string
+  justification: string
+  confidence: number
+  agent: string
+}
+
+export interface RemediationPhase {
+  status: string
+  auto_correction_count: number
+  applied_count: number
+  pending_count: number
+  auto_corrections: AutoCorrectionSummary[]
+  raw_corrections?: Record<string, unknown>[]
+}
+
+// ============================================================================
+// Phase 5: Review Checklist Types (PRD-027)
+// ============================================================================
+
+/** One option in a review item (multiple choice) */
+export interface ReviewOption {
+  id: string
+  label: string
+  action: 'replace' | 'keep' | 'skip' | 'other'
+  replacement_text?: string | null
+  is_recommended: boolean
+}
+
+/** Item needing human decision - multiple choice with free input */
+export interface ReviewItem {
+  id: string
+  observation_id: string
+  agent: string
+  question: string
+  options: ReviewOption[]
+  search_text: string
+  context: string
+  page_num: number
+  visual_context_url?: string | null
+  agent_recommendation: string
+  agent_confidence: number
+  // Human's decision (filled after review)
+  selected_option_id?: string | null
+  custom_input?: string | null
+  reviewed_by?: string | null
+  reviewed_at?: string | null
+}
+
+/** Human review checklist - exposed via API */
+export interface ReviewChecklist {
+  items: ReviewItem[]
+  summary: string
+  by_category: Record<string, ReviewItem[]>
+  by_agent: Record<string, ReviewItem[]>
+  by_page: Record<number, ReviewItem[]>
+  total_items: number
+  critical_items: number
+  completed_items: number
+}
+
+/** Lightweight summary for list views */
+export interface ChecklistSummary {
+  job_id: string
+  total_items: number
+  completed_items: number
+  categories: string[]
+  agents: string[]
+  status: string
+}
+
+/** Request to submit a review for an item */
+export interface ReviewSubmission {
+  selected_option_id?: string | null
+  custom_input?: string | null
+  reviewed_by: string
+}
+
+/** Response after submitting a review */
+export interface ReviewSubmissionResponse {
+  status: string
+  item_id: string
+  remaining_items: number
+}
+
+/** Request to apply all reviews */
+export interface ApplyReviewsRequest {
+  force?: boolean
+}
+
+/** Response after applying reviews */
+export interface ApplyReviewsResponse {
+  status: string
+  reviews_applied: number
+  failed_replacements: number
+  markdown_url?: string | null
+  unreviewed_items: number
+}
+
+// ============================================================================
+// Phase 5: Processing Result Types (PRD-021)
+// ============================================================================
+
+/** Summary of Phase 1: Analysis */
+export interface ProcessingAnalysisSummary {
+  document_type: string
+  total_pages: number
+  key_entities: string[]
+  required_agents: string[]
+  confidence: number
+  time_seconds: number
+  cost_cents: number
+}
+
+/** Summary of Phase 2: Extraction */
+export interface ProcessingExtractionSummary {
+  confidence: number
+  pages_extracted: number
+  correction_iterations: number
+  time_seconds: number
+  cost_cents: number
+}
+
+/** Summary of Phase 3a: Structure Verification Loop */
+export interface ProcessingStructureSummary {
+  iterations: number
+  lint_issues_found: number
+  lint_issues_fixed: number
+  ocr_suggestions_processed: number
+  corrections_applied: number
+  final_lint_clean: boolean
+  time_seconds: number
+  cost_cents: number
+}
+
+/** Observation from an agent */
+export interface Observation {
+  id: string
+  job_id: string
+  agent: string
+  source: 'agent' | 'human'
+  visual_description: string
+  markup_description: string
+  location: {
+    location_type: string
+    value: string
+    page_num: number
+  }
+  affected_pages: number[]
+  confidence: number
+  severity: 'critical' | 'major' | 'minor'
+  category: string
+  status: 'open' | 'closed'
+  resolution?: 'fixed' | 'kept_original' | 'skipped' | null
+  created_at: string
+  human_comment?: string | null
+}
+
+/** Auto correction from an agent */
+export interface AutoCorrection {
+  id: string
+  observation_id: string
+  search: string
+  replace: string
+  justification: string
+  confidence: number
+  applied: boolean
+  applied_at?: string | null
+  agent: string
+  page_num?: number | null
+}
+
+/** What one agent did - full transparency */
+export interface AgentTrace {
+  agent_name: string
+  observations: Observation[]
+  auto_corrections: AutoCorrection[]
+  review_items: ReviewItem[]
+  reasoning_summary: string
+  confidence: number
+  cost_cents: number
+  time_seconds: number
+  iterations: number
+  started_at: string
+  completed_at: string
+}
+
+/** Glass box: Everything that happened during processing */
+export interface ProcessingTrace {
+  analysis: ProcessingAnalysisSummary
+  extraction: ProcessingExtractionSummary
+  structure: ProcessingStructureSummary
+  agents: AgentTrace[]
+  total_observations: number
+  auto_corrections_applied: number
+  review_items_generated: number
+  total_cost_cents: number
+  total_time_seconds: number
+  total_tokens: number
+}
+
+/** Complete result of document processing - exposed via API */
+export interface ProcessingResult {
+  job_id: string
+  status: 'completed' | 'needs_review' | 'failed'
+  markdown: string
+  confidence: number
+  processing_trace: ProcessingTrace
+  review_checklist: ReviewChecklist
+  created_at: string
+  processing_time_seconds: number
 }
 
 // ============================================================================
@@ -299,6 +586,7 @@ export interface ProcessingPhasesResponse {
 export interface SubmitOptions {
   skipPiiScan?: boolean
   skipReason?: string
+  generateDebugBundle?: boolean
 }
 
 export const api = {
@@ -311,6 +599,10 @@ export const api = {
       if (options.skipReason) {
         formData.append('skip_reason', options.skipReason)
       }
+    }
+
+    if (options?.generateDebugBundle) {
+      formData.append('generate_debug_bundle', 'true')
     }
 
     return request<SubmitResponse>('/api/documents/submit', {
@@ -371,5 +663,61 @@ export const api = {
   async getJobPhases(jobId: string, showRaw = false): Promise<ProcessingPhasesResponse> {
     const params = showRaw ? '?show_raw=true' : ''
     return request<ProcessingPhasesResponse>(`/api/documents/${jobId}/phases${params}`)
+  },
+
+  // ============================================================================
+  // Phase 5: Review Checklist API Methods
+  // ============================================================================
+
+  /** Get full processing result including trace and checklist */
+  async getProcessingResult(jobId: string): Promise<ProcessingResult> {
+    return request<ProcessingResult>(`/api/documents/${jobId}/result`)
+  },
+
+  /** Get review checklist with optional filters */
+  async getChecklist(
+    jobId: string,
+    filters?: {
+      category?: string
+      agent?: string
+      page?: number
+      status?: 'pending' | 'completed'
+    }
+  ): Promise<ReviewChecklist> {
+    const params = new URLSearchParams()
+    if (filters?.category) params.set('category', filters.category)
+    if (filters?.agent) params.set('agent', filters.agent)
+    if (filters?.page) params.set('page', String(filters.page))
+    if (filters?.status) params.set('status', filters.status)
+    const query = params.toString() ? `?${params.toString()}` : ''
+    return request<ReviewChecklist>(`/api/documents/${jobId}/checklist${query}`)
+  },
+
+  /** Get lightweight checklist summary */
+  async getChecklistSummary(jobId: string): Promise<ChecklistSummary> {
+    return request<ChecklistSummary>(`/api/documents/${jobId}/checklist/summary`)
+  },
+
+  /** Submit a review decision for a single item */
+  async submitReview(
+    jobId: string,
+    itemId: string,
+    submission: ReviewSubmission
+  ): Promise<ReviewSubmissionResponse> {
+    return request<ReviewSubmissionResponse>(
+      `/api/documents/${jobId}/checklist/${itemId}/review`,
+      {
+        method: 'POST',
+        body: JSON.stringify(submission),
+      }
+    )
+  },
+
+  /** Apply all completed reviews to generate final markdown */
+  async applyReviews(jobId: string, force = false): Promise<ApplyReviewsResponse> {
+    return request<ApplyReviewsResponse>(`/api/documents/${jobId}/apply-reviews`, {
+      method: 'POST',
+      body: JSON.stringify({ force }),
+    })
   },
 }

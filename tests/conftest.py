@@ -89,10 +89,10 @@ def reset_agent_singletons():
     """
     # Import agent modules that use singleton pattern
     from src.agents import (
-        extraction_agent,
         structure_agent,
         tables_agent,
     )
+    from src.agents.extraction import extractor as extraction_module
     from src.agents.figures import (
         classification_agent as figures_classification,
     )
@@ -102,7 +102,7 @@ def reset_agent_singletons():
 
     # Reset before test
     for agent_module in [
-        extraction_agent,
+        extraction_module,
         figures_classification,
         figures_generation,
         structure_agent,
@@ -115,7 +115,7 @@ def reset_agent_singletons():
 
     # Reset after test (cleanup)
     for agent_module in [
-        extraction_agent,
+        extraction_module,
         figures_classification,
         figures_generation,
         structure_agent,
@@ -169,16 +169,22 @@ def mock_storage_service():
     """
     mock = MagicMock()
     mock.download_temp_file = AsyncMock(return_value=b"fake_pdf_content")
-    mock.upload_result = AsyncMock(
-        return_value="s3://equalify-results/550e8400.../v20250101_120000/output.md"
-    )
+    mock.upload_result = AsyncMock(return_value="s3://equalify-results/550e8400.../v20250101_120000/output.md")
+    # PRD-027: save_processing_result for new review checklist workflow
+    mock.save_processing_result = AsyncMock(return_value="processing-results/550e8400.../result.json")
+    # PRD-027: load_processing_result for retrieving saved results
+    mock.load_processing_result = AsyncMock(return_value=None)
     return mock
 
 
 @pytest.fixture
 def mock_queue_service():
-    """Mock QueueService for unit tests."""
-    mock = AsyncMock()
+    """Mock QueueService for unit tests.
+
+    Uses MagicMock as container with AsyncMock for async methods.
+    This prevents unawaited coroutine warnings when tests access unmocked attributes.
+    """
+    mock = MagicMock()
     mock.enqueue = AsyncMock()
     mock.dequeue = AsyncMock()
     return mock
@@ -186,16 +192,25 @@ def mock_queue_service():
 
 @pytest.fixture
 def mock_job_service():
-    """Mock JobService for unit tests."""
-    mock = AsyncMock()
+    """Mock JobService for unit tests.
+
+    Uses MagicMock as container with AsyncMock for async methods.
+    This prevents unawaited coroutine warnings when tests access unmocked attributes.
+    """
+    mock = MagicMock()
     mock.update_job_status = AsyncMock()
     mock.get_job_status = AsyncMock(return_value="processing")
+    mock.get_job = AsyncMock(return_value=None)  # For debug service check
     return mock
 
 
 @pytest.fixture
 def mock_pdf_converter(sample_pdf_conversion_result):
-    """Mock PDFConverter for unit tests."""
-    mock = AsyncMock()
+    """Mock PDFConverter for unit tests.
+
+    Uses MagicMock as container with AsyncMock for async methods.
+    This prevents unawaited coroutine warnings when tests access unmocked attributes.
+    """
+    mock = MagicMock()
     mock.convert_with_page_images = AsyncMock(return_value=sample_pdf_conversion_result)
     return mock

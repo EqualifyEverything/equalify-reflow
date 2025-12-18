@@ -1,9 +1,10 @@
 import { motion } from 'framer-motion'
 import { Link } from 'react-router-dom'
+import { ThemeToggle } from '@/components/ui/ThemeToggle'
 
 export function Header() {
   return (
-    <header className="bg-white border-b border-gray-200">
+    <header className="bg-background border-b border-border">
       {/* Top accent bar (UIC Red) - matches UIC OSF */}
       <div className="bg-uic-red h-2 w-full" />
 
@@ -21,10 +22,10 @@ export function Header() {
             </Link>
 
             {/* Divider */}
-            <div className="hidden md:block w-px h-10 bg-gray-300" />
+            <div className="hidden md:block w-px h-10 bg-border" />
 
             {/* Technology Solutions - links to dashboard (matches UIC OSF pattern) */}
-            <Link to="/" className="hidden md:block text-xl font-bold text-uic-blue hover:underline">
+            <Link to="/" className="hidden md:block text-xl font-bold text-primary hover:underline">
               Technology Solutions
             </Link>
 
@@ -40,7 +41,8 @@ export function Header() {
             transition={{ duration: 0.5, delay: 0.1 }}
             className="flex items-center gap-4"
           >
-            <span className="text-sm text-gray-600 hidden md:block">
+            <ThemeToggle className="text-foreground hover:bg-muted" />
+            <span className="text-sm text-muted-foreground hidden md:block">
               Developer Testing Interface
             </span>
           </motion.div>

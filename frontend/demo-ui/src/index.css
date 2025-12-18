@@ -56,8 +56,58 @@
     --radius: 0.5rem;
   }
 
+  .dark {
+    /* Background & Foreground */
+    --background: 222 47% 11%;
+    --foreground: 210 40% 98%;
+
+    /* Card colors */
+    --card: 222 47% 14%;
+    --card-foreground: 210 40% 98%;
+
+    /* Primary (lighter blue for dark mode) */
+    --primary: 217 91% 60%;
+    --primary-foreground: 222 47% 11%;
+
+    /* Secondary */
+    --secondary: 217 33% 17%;
+    --secondary-foreground: 210 40% 98%;
+
+    /* Muted */
+    --muted: 217 33% 17%;
+    --muted-foreground: 215 20% 65%;
+
+    /* Accent */
+    --accent: 217 33% 17%;
+    --accent-foreground: 210 40% 98%;
+
+    /* Destructive (UIC Red - slightly lighter for dark) */
+    --destructive: 350 89% 60%;
+    --destructive-foreground: 0 0% 100%;
+
+    /* Borders & Inputs */
+    --border: 217 33% 25%;
+    --input: 217 33% 25%;
+    --ring: 217 91% 60%;
+
+    /* Sidebar (keep dark theme) */
+    --sidebar: 222 47% 8%;
+    --sidebar-foreground: 210 40% 98%;
+    --sidebar-primary: 350 89% 60%;
+    --sidebar-accent: 217 33% 17%;
+    --sidebar-border: 210 40% 98% / 10%;
+    --sidebar-ring: 350 89% 60%;
+
+    /* Chart colors (brighter for dark mode) */
+    --chart-1: 217 91% 60%;
+    --chart-2: 350 89% 60%;
+    --chart-3: 210 40% 70%;
+    --chart-4: 280 65% 70%;
+    --chart-5: 340 75% 65%;
+  }
+
   body {
-    @apply antialiased text-gray-900 bg-white font-sans;
+    @apply antialiased bg-background text-foreground font-sans;
   }
 }
 
@@ -110,4 +160,21 @@
   .text-balance {
     text-wrap: balance;
   }
+}
+
+/* Prevent scroll jumping when clicking form elements (Radix UI focus handling) */
+[data-radix-scroll-area-viewport] {
+  overflow-anchor: none;
+}
+
+/* Add scroll margin to cards to prevent jumping when focused elements are in view */
+[data-slot="card"],
+.space-y-4 > * {
+  scroll-margin-top: 1rem;
+}
+
+/* Prevent scroll restoration on radio/checkbox focus */
+[role="radio"]:focus,
+[role="checkbox"]:focus {
+  scroll-margin-top: 100px;
 }

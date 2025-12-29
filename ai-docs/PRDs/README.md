@@ -650,6 +650,174 @@ PRD-017 (Application Service)
 
 ---
 
+## Phase 5: Architecture Refactor
+
+> **Reference**: [PRD-020 3-Phase Architecture](phase-5-architecture/PRD-020-3-phase-architecture.md)
+
+Phase 5 refactors the agent infrastructure to a cleaner 4-phase architecture with standardized AgentResult output format.
+
+### PRD-021: Data Models ✅
+**Status**: Complete
+**File**: [phase-5-architecture/PRD-021-data-models.md](phase-5-architecture/PRD-021-data-models.md)
+**Dependencies**: PRD-011 (Remediation Data Models) ✅
+
+**Deliverables** (COMPLETE):
+- ✅ `src/shared/models/agent_trace.py` - AgentResult, AgentTrace models
+- ✅ `src/shared/models/auto_correction.py` - AutoCorrection model
+- ✅ `src/shared/models/review_checklist.py` - ReviewItem, ReviewOption, ReviewChecklist models
+- ✅ `src/shared/models/observation.py` - Updated Observation model
+
+---
+
+### PRD-023: Figures Agent ✅
+**Status**: Complete
+**File**: [phase-5-architecture/PRD-023-figures-agent.md](phase-5-architecture/PRD-023-figures-agent.md)
+**Completed**: 2025-12-17
+**Dependencies**: PRD-021 (Data Models) ✅
+
+**Deliverables** (COMPLETE):
+- ✅ `src/agents/figures/figures_agent.py` - FiguresAgent with AgentResult output
+- ✅ `src/agents/figures/classification_agent.py` - Image type classification (Haiku)
+- ✅ `src/agents/figures/generation_agent.py` - Alt text generation (Haiku)
+- ✅ `src/agents/figures/routing.py` - Image routing logic
+- ✅ `src/agents/figures/__init__.py` - Package exports
+- ✅ `config/agents/figures.yaml` - Comprehensive prompts
+- ✅ `tests/unit/agents/test_figures_agent.py` - 53 comprehensive tests
+
+**Implementation Notes**:
+- **Output Format**: Returns `AgentResult` directly
+- **Confidence Routing**: >=0.95 → auto_corrections, <0.95 → review_items
+- **Image Types**: Decorative, informative, complex, text
+- **Processing Pipeline**: Find placeholders → Classify → Generate alt → Route
+
+**Unblocks**: PRD-026 (Assembly Service)
+
+---
+
+### PRD-024: Tables Agent ✅
+**Status**: Complete
+**File**: [phase-5-architecture/PRD-024-tables-agent.md](phase-5-architecture/PRD-024-tables-agent.md)
+**Completed**: 2025-12-17
+**Dependencies**: PRD-021 (Data Models) ✅
+
+**Deliverables** (COMPLETE):
+- ✅ `src/agents/tables/tables_agent.py` - TablesAgent with validation loop and AgentResult output
+- ✅ `src/agents/tables/structure_agent.py` - Legacy structure detection
+- ✅ `src/agents/tables/accuracy_agent.py` - Legacy data accuracy
+- ✅ `src/agents/tables/routing.py` - Table routing logic
+- ✅ `src/agents/tables/__init__.py` - Package exports with legacy compatibility
+- ✅ `config/agents/tables.yaml` - Comprehensive prompts
+- ✅ `tests/unit/agents/test_tables_agent.py` - 17 comprehensive tests
+
+**Implementation Notes**:
+- **Output Format**: Returns `AgentResult` directly
+- **Validation Loop**: Max 2 iterations for table structure validation
+- **Confidence Routing**: >=0.95 + valid → auto_corrections, else → review_items
+- **Pure Python Validation**: Row count, column consistency, header separator
+
+**Unblocks**: PRD-026 (Assembly Service)
+
+---
+
+### PRD-025: Typography Agent Enhancement ✅
+**Status**: Complete
+**File**: [phase-5-architecture/PRD-025-typography-agent.md](phase-5-architecture/PRD-025-typography-agent.md)
+**Completed**: 2025-12-17
+**Effort**: ~4 hours (actual vs 2 days estimated)
+**Dependencies**: PRD-021 (Data Models) ✅, PRD-022 (Structure Loop - partial) ⚠️
+
+**Deliverables** (COMPLETE):
+- ✅ `src/agents/typography/typography_agent.py` - Enhanced agent returning AgentResult
+- ✅ `src/agents/typography/__init__.py` - Package exports
+- ✅ `config/agents/typography_enhanced.yaml` - Enhanced prompts with OCR integration
+- ✅ `tests/unit/agents/typography/test_typography_agent.py` - Comprehensive tests
+- ✅ Updated `src/agents/__init__.py` - New typography package imports
+- ✅ Updated `src/services/processing_service.py` - Uses new process() interface
+
+**Implementation Notes**:
+- **Output Format**: Returns `AgentResult` with observations, auto_corrections, review_items
+- **Confidence Routing**: >=0.95 → auto_corrections, <0.95 → review_items
+- **OCR Integration**: Accepts `OCRSuggestion` list via `custom_context["ocr_suggestions"]`
+- **Document-Type Rules**: Dynamic prompts via `@agent.instructions` for research_paper, syllabus, exam, lecture_notes, textbook_chapter
+- **DEPRECATED**: Old `src/agents/typography_agent.py` removed
+- **DEPRECATED**: Old `tests/unit/agents/test_typography_agent.py` removed
+
+**Unblocks**: PRD-026 (Assembly Service)
+
+---
+
+### PRD-026: Assembly Service ✅
+**Status**: Complete
+**File**: [phase-5-architecture/PRD-026-assembly-service.md](phase-5-architecture/PRD-026-assembly-service.md)
+**Completed**: 2025-12-17
+**Effort**: ~3 hours (actual vs 2 days estimated)
+**Dependencies**: PRD-021 (Data Models) ✅, PRD-023-025 (Agent Refactors) ✅
+
+**Deliverables** (COMPLETE):
+- ✅ `src/services/assembly_service.py` - Phase 4 assembly service
+- ✅ `tests/unit/services/test_assembly_service.py` - 24 comprehensive tests
+- ✅ Updated `src/services/processing_service.py` - Integrated assembly phase
+
+**Implementation Notes**:
+- **Phase 4: Assemble** - Pure Python assembly with no LLM cost
+- **Auto-Corrections**: Applies all auto_corrections to markdown
+- **Observation Closure**: Closes linked observations with resolution="fixed"
+- **ProcessingTrace**: Builds complete trace from all phases
+- **ReviewChecklist**: Groups review items by category, agent, page
+- **Confidence Scoring**: Weighted average (extraction 40%, structure 20%, agents 30%, review_penalty 10%)
+- **TablesAgent Integration**: Updated processing_service.py to use TablesAgent instead of chained_tables
+
+**Unblocks**: PRD-027 (Consolidation Agent), Phase 4 pipeline completion
+
+---
+
+### PRD-027: Review Checklist API ✅
+**Status**: Complete
+**File**: [phase-5-architecture/PRD-027-review-api.md](phase-5-architecture/PRD-027-review-api.md)
+**Completed**: 2025-12-17
+**Effort**: ~2 hours (actual vs 2 days estimated)
+**Dependencies**: PRD-021 (Data Models) ✅, PRD-026 (Assembly Service) ✅
+
+**Deliverables** (COMPLETE):
+- ✅ `src/api/review_checklist.py` - 5 API endpoints for review workflow
+- ✅ `src/services/storage_service.py` - ProcessingResult load/save/upload methods
+- ✅ `src/main.py` - Router registered
+- ✅ `tests/unit/api/test_review_checklist_api.py` - 25 comprehensive tests
+
+**Implementation Notes**:
+- **5 Endpoints**:
+  - `GET /{job_id}/result` - Full ProcessingResult with trace and checklist
+  - `GET /{job_id}/checklist` - ReviewChecklist with filters (category, agent, page)
+  - `GET /{job_id}/checklist/summary` - Lightweight summary for list views
+  - `POST /{job_id}/checklist/{item_id}/review` - Submit review for item
+  - `POST /{job_id}/apply-reviews` - Apply all reviews to generate final markdown
+- **Layered Matching**: Exact → whitespace-normalized → context-aware → fallback
+- **Observation Lifecycle**: Updates linked observations with `close(resolution)`
+- **Force Apply**: `force=true` skips unreviewed items with `resolution="skipped"`
+- **All 25 tests passing**
+
+**Unblocks**: Phase 5 Review Workflow completion
+
+---
+
+### Phase 5 Dependencies Graph
+```
+PRD-021 (Data Models) ✅
+    │
+    ├─► PRD-022 (Structure Loop) ⚠️ (partial)
+    ├─► PRD-023 (Figures Agent) ✅
+    ├─► PRD-024 (Tables Agent) ✅
+    ├─► PRD-025 (Typography Agent) ✅
+    │       │
+    │       ▼
+    └─► PRD-026 (Assembly Service) ✅
+            │
+            ▼
+    PRD-027 (Review Checklist API) ✅
+```
+
+---
+
 ## For AI Agents
 
 When implementing a PRD:

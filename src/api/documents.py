@@ -3,12 +3,16 @@
 import json
 from collections import Counter
 from datetime import UTC, datetime
-from typing import Any
+from io import BytesIO
+from typing import TYPE_CHECKING, Any
 
 from fastapi import APIRouter, Depends, File, Form, HTTPException, UploadFile, status
+from fastapi.responses import StreamingResponse
 from pydantic import BaseModel
 
 from ..config import settings
+
+
 from ..dependencies import (
     get_job_service,
     get_queue_service,
@@ -35,6 +39,7 @@ from .schemas import (
     ExtractionPhase,
     FailedResponse,
     LLMCostInfo,
+    NeedsReviewResponse,
     ObservationSummary,
     PageFeatureSummary,
     PIIFinding,
@@ -42,6 +47,8 @@ from .schemas import (
     ProcessingPhasesResponse,
     ProcessingResponse,
     RemediationPhase,
+    VerificationPageResult,
+    VerificationPhase,
 )
 
 router = APIRouter(prefix="/api/documents", tags=["Documents"])
@@ -84,13 +91,14 @@ class JobSubmissionResponse(BaseModel):
     created_at: str
 
 
-@router.post(
-    "/submit", response_model=JobSubmissionResponse, status_code=status.HTTP_201_CREATED
-)
+@router.post("/submit", response_model=JobSubmissionResponse, status_code=status.HTTP_201_CREATED)
 async def submit_document(
     file: UploadFile = File(...),
     skip_pii_scan: bool = Form(default=False, description="Skip PII scanning and queue directly for processing"),
     skip_reason: str | None = Form(default=None, description="Optional reason for skipping PII scan (for audit trail)"),
+    generate_debug_bundle: bool = Form(
+        default=False, description="Generate debug bundle with all agent prompts and responses"
+    ),
     storage: StorageService = Depends(get_storage_service),
     queue: QueueService = Depends(get_queue_service),
     job_service: JobService = Depends(get_job_service),
@@ -101,6 +109,7 @@ async def submit_document(
         file: PDF file to process
         skip_pii_scan: If True, bypass PII scanning and queue directly for processing
         skip_reason: Optional justification for skipping PII scan (recorded in audit trail)
+        generate_debug_bundle: If True, save all agent prompts/responses for debugging
     """
     job_id, s3_key = await storage.store_document(file)
 
@@ -112,12 +121,13 @@ async def submit_document(
             status="processing",
             original_filename=file.filename,
             pii_skipped=True,
-            pii_skip_reason=skip_reason or "User requested PII scan skip"
+            pii_skip_reason=skip_reason or "User requested PII scan skip",
+            debug_bundle_requested=generate_debug_bundle,
         )
         processing_payload = ProcessingQueuePayload(
             job_id=job_id,
             s3_key=s3_key,
-            approved_at=None  # No approval needed - PII scan skipped
+            approved_at=None,  # No approval needed - PII scan skipped
         )
         await queue.enqueue(PROCESSING_QUEUE, processing_payload)
 
@@ -130,7 +140,11 @@ async def submit_document(
     else:
         # Standard flow: PII scanning first
         await job_service.create_job(
-            job_id, s3_key, status="pii_scanning", original_filename=file.filename
+            job_id,
+            s3_key,
+            status="pii_scanning",
+            original_filename=file.filename,
+            debug_bundle_requested=generate_debug_bundle,
         )
         await queue.queue_pii_job(job_id, s3_key)
 
@@ -155,9 +169,7 @@ async def get_job(
     """
     job = await job_service.get_job(job_id)
     if not job:
-        raise HTTPException(
-            status_code=status.HTTP_404_NOT_FOUND, detail=f"Job {job_id} not found"
-        )
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail=f"Job {job_id} not found")
 
     base = {
         "job_id": job["job_id"],
@@ -165,6 +177,7 @@ async def get_job(
         "filename": job.get("original_filename"),
         "created_at": job["created_at"],
         "updated_at": job["updated_at"],
+        "debug_bundle_requested": job.get("debug_bundle_requested") == "true",
     }
 
     match job["status"]:
@@ -182,9 +195,7 @@ async def get_job(
             )
 
         case "awaiting_approval":
-            pii_findings = [
-                PIIFinding(**f) for f in (job.get("pii_findings") or [])
-            ]
+            pii_findings = [PIIFinding(**f) for f in (job.get("pii_findings") or [])]
             token = job.get("approval_token", "")
             return AwaitingPIIApprovalResponse(
                 **base,
@@ -215,15 +226,17 @@ async def get_job(
                     else:
                         manual_review += 1
 
-                    corrections_list.append(CorrectionItem(
-                        page=page_num,
-                        type=ctype,
-                        original_snippet=c.get("original", "")[:200],
-                        corrected_snippet=c.get("corrected", "")[:200],
-                        confidence=c.get("confidence", 0.0),
-                        explanation=c.get("explanation", ""),
-                        is_auto_applied=is_auto,
-                    ))
+                    corrections_list.append(
+                        CorrectionItem(
+                            page=page_num,
+                            type=ctype,
+                            original_snippet=c.get("original", "")[:200],
+                            corrected_snippet=c.get("corrected", "")[:200],
+                            confidence=c.get("confidence", 0.0),
+                            explanation=c.get("explanation", ""),
+                            is_auto_applied=is_auto,
+                        )
+                    )
 
             token = job.get("correction_approval_token", "")
             # page_image_urls is stored as comma-separated string in Redis
@@ -249,25 +262,46 @@ async def get_job(
                 corrected_markdown_url=await url_service.generate_url(
                     job["corrected_markdown_key"], bucket=url_service.results_bucket
                 ),
+                page_image_urls=[await url_service.generate_url(k, bucket=url_service.temp_bucket) for k in page_keys],
+                llm_cost=_build_llm_cost(job)
+                or LLMCostInfo(
+                    input_tokens=0, output_tokens=0, total_tokens=0, estimated_cost_cents=0, estimated_cost_dollars=0
+                ),
+            )
+
+        case "needs_review":
+            # PRD-027: New review checklist workflow
+            # page_image_urls is stored as comma-separated string in Redis
+            page_keys_raw = job.get("page_image_urls", "")
+            page_keys = page_keys_raw.split(",") if page_keys_raw else []
+            return NeedsReviewResponse(
+                **base,
+                confidence_score=float(job.get("confidence_score", 0.0)),
+                review_item_count=int(job.get("review_item_count", 0)),
+                processing_result_key=job.get("processing_result_key", ""),
+                review_url=f"/api/documents/{job_id}/result/checklist",
                 page_image_urls=[
                     await url_service.generate_url(k, bucket=url_service.temp_bucket)
                     for k in page_keys
+                    if k  # Skip empty strings
                 ],
-                llm_cost=_build_llm_cost(job) or LLMCostInfo(
-                    input_tokens=0,
-                    output_tokens=0,
-                    total_tokens=0,
-                    estimated_cost_cents=0,
-                    estimated_cost_dollars=0
+                llm_cost=_build_llm_cost(job)
+                or LLMCostInfo(
+                    input_tokens=0, output_tokens=0, total_tokens=0, estimated_cost_cents=0, estimated_cost_dollars=0
                 ),
             )
 
         case "completed":
+            # PRD-027: markdown_url must be saved in job record by apply_reviews
+            markdown_key = job.get("markdown_url")
+            if not markdown_key:
+                raise HTTPException(
+                    status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+                    detail="Job completed but markdown_url not set. This indicates a bug.",
+                )
             return CompletedResponse(
                 **base,
-                markdown_url=await url_service.generate_url(
-                    f"{job_id}.md", bucket=url_service.results_bucket
-                ),
+                markdown_url=await url_service.generate_url(markdown_key, bucket=url_service.results_bucket),
                 confidence_score=float(job.get("confidence_score", 0.0)),
                 correction_decision=CorrectionDecision(
                     # Default to "auto_completed" when no manual review was performed
@@ -276,12 +310,9 @@ async def get_job(
                     reviewed_at=job.get("correction_reviewed_at", ""),
                     justification=job.get("correction_justification", ""),
                 ),
-                llm_cost=_build_llm_cost(job) or LLMCostInfo(
-                    input_tokens=0,
-                    output_tokens=0,
-                    total_tokens=0,
-                    estimated_cost_cents=0,
-                    estimated_cost_dollars=0
+                llm_cost=_build_llm_cost(job)
+                or LLMCostInfo(
+                    input_tokens=0, output_tokens=0, total_tokens=0, estimated_cost_cents=0, estimated_cost_dollars=0
                 ),
             )
 
@@ -326,9 +357,7 @@ async def get_job_phases(
     """
     job = await job_service.get_job(job_id)
     if not job:
-        raise HTTPException(
-            status_code=status.HTTP_404_NOT_FOUND, detail=f"Job {job_id} not found"
-        )
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail=f"Job {job_id} not found")
 
     # Load artifacts from S3
     manifest = await remediation_storage.load_manifest(job_id)
@@ -339,15 +368,17 @@ async def get_job_phases(
     if manifest:
         page_features_list = []
         for pf in manifest.page_features:
-            page_features_list.append(PageFeatureSummary(
-                page_num=pf.page_num,
-                has_images=pf.has_images,
-                image_count=pf.image_count,
-                has_tables=pf.has_tables,
-                table_count=pf.table_count,
-                has_lists=pf.has_lists,
-                complexity_score=pf.complexity_score,
-            ))
+            page_features_list.append(
+                PageFeatureSummary(
+                    page_num=pf.page_num,
+                    has_images=pf.has_images,
+                    image_count=pf.image_count,
+                    has_tables=pf.has_tables,
+                    table_count=pf.table_count,
+                    has_lists=pf.has_lists,
+                    complexity_score=pf.complexity_score,
+                )
+            )
 
         # Build heading tree from manifest's heading_tree_json
         heading_tree = None
@@ -452,6 +483,32 @@ async def get_job_phases(
             raw_corrections=[c.model_dump(mode="json") for c in auto_corrections] if show_raw else None,
         )
 
+    # Build Verification Phase
+    verification_phase: VerificationPhase | None = None
+    verification_summary = job.get("verification_summary")
+    if verification_summary:
+        page_results = [
+            VerificationPageResult(
+                page_num=pr["page_num"],
+                is_accurate=pr["is_accurate"],
+                corrections_applied=pr.get("corrections_applied", 0),
+                corrections_failed=pr.get("corrections_failed", 0),
+                issues_count=pr.get("issues_count", 0),
+                summary=pr.get("summary", ""),
+            )
+            for pr in verification_summary.get("page_results", [])
+        ]
+        verification_phase = VerificationPhase(
+            status="completed",
+            total_pages=verification_summary.get("total_pages", 0),
+            corrections_applied=verification_summary.get("corrections_applied", 0),
+            corrections_failed=verification_summary.get("corrections_failed", 0),
+            issues_found=verification_summary.get("issues_found", 0),
+            all_pages_accurate=verification_summary.get("all_pages_accurate", True),
+            page_results=page_results,
+            cost_cents=verification_summary.get("cost_cents", 0.0),
+        )
+
     return ProcessingPhasesResponse(
         job_id=job["job_id"],
         filename=job.get("original_filename", ""),
@@ -462,5 +519,66 @@ async def get_job_phases(
         extraction=extraction_phase,
         agents=agents_phase,
         remediation=remediation_phase,
+        verification=verification_phase,
         total_llm_cost=_build_llm_cost(job),
+    )
+
+
+@router.get("/{job_id}/debug-bundle")
+async def download_debug_bundle(
+    job_id: str,
+    job_service: JobService = Depends(get_job_service),
+    storage: StorageService = Depends(get_storage_service),
+) -> StreamingResponse:
+    """Download debug bundle as a zip file.
+
+    Only available if job was submitted with generate_debug_bundle=true.
+    Contains all agent prompts, responses, page images, and outputs.
+
+    The bundle includes:
+    - README.md with analysis instructions
+    - input/original.pdf and input/pages/*.png
+    - phase_*/agent_name.json with prompts and responses
+    - output/manifest.json, observations.json, final_markdown.md
+
+    Args:
+        job_id: Job identifier
+
+    Returns:
+        Streaming zip file download
+
+    Raises:
+        HTTPException 404: Job not found or debug bundle not requested
+    """
+    from ..services.debug_bundle_service import DebugBundleService
+
+    # Get job and verify debug bundle was requested
+    job = await job_service.get_job(job_id)
+    if not job:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail=f"Job {job_id} not found")
+
+    if job.get("debug_bundle_requested") != "true":
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND,
+            detail="Debug bundle was not requested for this job. Submit with generate_debug_bundle=true to enable.",
+        )
+
+    # Generate bundle
+    debug_service = DebugBundleService(storage)
+    try:
+        zip_bytes = await debug_service.generate_bundle(job_id)
+    except Exception as e:
+        raise HTTPException(
+            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR, detail=f"Failed to generate debug bundle: {str(e)}"
+        )
+
+    # Return as streaming download
+    filename = f"debug_{job_id}.zip"
+    return StreamingResponse(
+        BytesIO(zip_bytes),
+        media_type="application/zip",
+        headers={
+            "Content-Disposition": f"attachment; filename={filename}",
+            "Content-Length": str(len(zip_bytes)),
+        },
     )

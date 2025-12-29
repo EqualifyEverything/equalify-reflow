@@ -12,7 +12,14 @@ import re
 
 from src.shared.models.remediation import DocumentManifest, HeadingTree
 
-from .models import ExtractionMetrics, ValidationIssue
+from .models import (
+    CONTINUATION_MARKER_FROM,
+    CONTINUATION_MARKER_TO,
+    ExtractionMetrics,
+    PageContext,
+    PageMetrics,
+    ValidationIssue,
+)
 
 logger = logging.getLogger(__name__)
 
@@ -25,12 +32,12 @@ UNCLEAR_MARKER_PATTERN = re.compile(r"\[\?\]")
 
 # Confidence calculation weights
 CONFIDENCE_WEIGHTS = {
-    "missing_page": -0.15,       # Per missing page
-    "unclear_marker": -0.02,    # Per [?] marker
+    "missing_page": -0.15,  # Per missing page
+    "unclear_marker": -0.02,  # Per [?] marker
     "heading_mismatch": -0.10,  # Per heading order issue
-    "short_page": -0.05,        # Per suspiciously short page
-    "no_headings": -0.10,       # If no headings found at all
-    "duplicate_content": -0.05, # Per duplicate paragraph found
+    "short_page": -0.05,  # Per suspiciously short page
+    "no_headings": -0.10,  # If no headings found at all
+    "duplicate_content": -0.05,  # Per duplicate paragraph found
 }
 
 # Duplicate detection settings
@@ -75,12 +82,14 @@ def validate_extraction(
 
     if pages_missing:
         for page in pages_missing:
-            issues.append(ValidationIssue(
-                issue_type="missing_page",
-                severity="critical",
-                message=f"Page {page} was not transcribed. Add <!-- Page {page} --> marker and content.",
-                page_num=page,
-            ))
+            issues.append(
+                ValidationIssue(
+                    issue_type="missing_page",
+                    severity="critical",
+                    message=f"Page {page} was not transcribed. Add <!-- Page {page} --> marker and content.",
+                    page_num=page,
+                )
+            )
 
     # 2. Check heading order
     extracted_headings = _extract_headings(markdown)
@@ -93,24 +102,23 @@ def validate_extraction(
     for page_num, content in page_contents.items():
         if len(content.strip()) < MIN_CHARS_PER_PAGE:
             # Check if page was expected to have content
-            page_features = next(
-                (pf for pf in manifest.page_features if pf.page_num == page_num),
-                None
-            )
+            page_features = next((pf for pf in manifest.page_features if pf.page_num == page_num), None)
             # Only flag if the page should have content (has features)
             if page_features and (
-                page_features.has_images or
-                page_features.has_tables or
-                page_features.has_lists or
-                page_features.has_code_blocks
+                page_features.has_images
+                or page_features.has_tables
+                or page_features.has_lists
+                or page_features.has_code_blocks
             ):
                 char_count = len(content.strip())
-                issues.append(ValidationIssue(
-                    issue_type="truncated_content",
-                    severity="warning",
-                    message=f"Page {page_num} has very little content ({char_count} chars). May be truncated.",
-                    page_num=page_num,
-                ))
+                issues.append(
+                    ValidationIssue(
+                        issue_type="truncated_content",
+                        severity="warning",
+                        message=f"Page {page_num} has very little content ({char_count} chars). May be truncated.",
+                        page_num=page_num,
+                    )
+                )
 
     # 4. Count quality indicators
     unclear_count = len(UNCLEAR_MARKER_PATTERN.findall(markdown))
@@ -120,29 +128,35 @@ def validate_extraction(
 
     # 5. Check for structural issues
     if heading_count == 0 and len(expected_headings) > 0:
-        issues.append(ValidationIssue(
-            issue_type="no_headings",
-            severity="warning",
-            message="No headings found in output, but document has headings in manifest.",
-        ))
+        issues.append(
+            ValidationIssue(
+                issue_type="no_headings",
+                severity="warning",
+                message="No headings found in output, but document has headings in manifest.",
+            )
+        )
 
     # 6. Check expected images are present
     expected_images = sum(pf.image_count for pf in manifest.page_features)
     if expected_images > 0 and image_count == 0:
-        issues.append(ValidationIssue(
-            issue_type="missing_images",
-            severity="warning",
-            message=f"Expected {expected_images} image placeholders, found 0.",
-        ))
+        issues.append(
+            ValidationIssue(
+                issue_type="missing_images",
+                severity="warning",
+                message=f"Expected {expected_images} image placeholders, found 0.",
+            )
+        )
 
     # 7. Check expected tables are present
     expected_tables = sum(pf.table_count for pf in manifest.page_features)
     if expected_tables > 0 and table_count == 0:
-        issues.append(ValidationIssue(
-            issue_type="missing_tables",
-            severity="warning",
-            message=f"Expected {expected_tables} tables, found 0.",
-        ))
+        issues.append(
+            ValidationIssue(
+                issue_type="missing_tables",
+                severity="warning",
+                message=f"Expected {expected_tables} tables, found 0.",
+            )
+        )
 
     # 8. Check for duplicate paragraphs
     duplicate_issues = _detect_duplicate_paragraphs(markdown)
@@ -150,9 +164,7 @@ def validate_extraction(
     duplicate_count = len(duplicate_issues)
 
     if duplicate_count > 0:
-        logger.warning(
-            f"Job {job_id}: Found {duplicate_count} duplicate paragraph(s) in extraction"
-        )
+        logger.warning(f"Job {job_id}: Found {duplicate_count} duplicate paragraph(s) in extraction")
 
     # Compute confidence heuristically
     confidence = _compute_confidence(
@@ -235,11 +247,13 @@ def _check_heading_order(
     prev_level = 0
     for level, text in extracted:
         if level > prev_level + 1 and prev_level > 0:
-            issues.append(ValidationIssue(
-                issue_type="heading_skip",
-                severity="warning",
-                message=f"Heading '{text[:30]}...' is H{level} but previous was H{prev_level}. Skipped level.",
-            ))
+            issues.append(
+                ValidationIssue(
+                    issue_type="heading_skip",
+                    severity="warning",
+                    message=f"Heading '{text[:30]}...' is H{level} but previous was H{prev_level}. Skipped level.",
+                )
+            )
         prev_level = level
 
     # Check if major headings are in correct order
@@ -269,11 +283,13 @@ def _check_heading_order(
                     break
 
             if prev_matching_idx is not None and prev_matching_idx > matching_idx:
-                issues.append(ValidationIssue(
-                    issue_type="heading_order",
-                    severity="critical",
-                    message=f"Heading '{exp_text[:30]}' should come after '{prev_exp[:30]}' but appears before it.",
-                ))
+                issues.append(
+                    ValidationIssue(
+                        issue_type="heading_order",
+                        severity="critical",
+                        message=f"Heading '{exp_text[:30]}' should come after '{prev_exp[:30]}' but appears before it.",
+                    )
+                )
 
     return issues
 
@@ -288,7 +304,7 @@ def _text_similarity(a: str, b: str) -> float:
 
     # Normalize: lowercase, remove punctuation, split into words
     def normalize(text: str) -> set[str]:
-        cleaned = re.sub(r'[^\w\s]', '', text.lower().strip())
+        cleaned = re.sub(r"[^\w\s]", "", text.lower().strip())
         return set(cleaned.split())
 
     words_a = normalize(a)
@@ -346,10 +362,7 @@ def _detect_duplicate_paragraphs(markdown: str) -> list[ValidationIssue]:
 
     # Split into paragraphs (double newline separated)
     # Filter to substantial paragraphs only
-    paragraphs = [
-        p.strip() for p in markdown.split('\n\n')
-        if len(p.strip()) >= MIN_PARAGRAPH_LENGTH
-    ]
+    paragraphs = [p.strip() for p in markdown.split("\n\n") if len(p.strip()) >= MIN_PARAGRAPH_LENGTH]
 
     # Track which paragraphs we've already flagged as duplicates
     flagged_indices: set[int] = set()
@@ -372,15 +385,17 @@ def _detect_duplicate_paragraphs(markdown: str) -> list[ValidationIssue]:
                 flagged_indices.add(j)
 
                 # Create a preview of the duplicate content
-                preview = p2[:80].replace('\n', ' ')
+                preview = p2[:80].replace("\n", " ")
                 if len(p2) > 80:
                     preview += "..."
 
-                issues.append(ValidationIssue(
-                    issue_type="duplicate_content",
-                    severity="warning",
-                    message=f"Duplicate paragraph detected: \"{preview}\" (appears to repeat earlier content)",
-                ))
+                issues.append(
+                    ValidationIssue(
+                        issue_type="duplicate_content",
+                        severity="warning",
+                        message=f'Duplicate paragraph detected: "{preview}" (appears to repeat earlier content)',
+                    )
+                )
 
     return issues
 
@@ -422,6 +437,122 @@ def _compute_confidence(
     return max(0.0, min(1.0, confidence))
 
 
+# =============================================================================
+# Page-by-Page Validation
+# =============================================================================
+
+
+def validate_page_extraction(
+    markdown: str,
+    ctx: PageContext,
+) -> PageMetrics:
+    """Validate a single page's extraction output.
+
+    This is used in page-by-page extraction to validate each page
+    independently before stitching them together.
+
+    Args:
+        markdown: The extracted markdown for this page
+        ctx: PageContext with expected headings and metadata
+
+    Returns:
+        PageMetrics with validation results
+    """
+    issues: list[ValidationIssue] = []
+
+    # 1. Check page marker is present
+    expected_marker = f"<!-- Page {ctx.page_num} -->"
+    has_marker = expected_marker in markdown
+
+    if not has_marker:
+        issues.append(
+            ValidationIssue(
+                issue_type="missing_page_marker",
+                severity="critical",
+                message=f"Missing page marker. Output must start with: {expected_marker}",
+                page_num=ctx.page_num,
+            )
+        )
+
+    # 2. Check word count (pages shouldn't be nearly empty)
+    # Remove markers and count actual content words
+    content = markdown.replace(expected_marker, "").strip()
+    content = content.replace(CONTINUATION_MARKER_FROM, "").replace(CONTINUATION_MARKER_TO, "")
+    word_count = len(content.split())
+
+    # Threshold depends on layout - two-column pages should have more content
+    min_words = 10 if ctx.layout_type == "single_column" else 20
+
+    if word_count < min_words:
+        issues.append(
+            ValidationIssue(
+                issue_type="sparse_content",
+                severity="critical",
+                message=f"Page has only {word_count} words. Expected at least {min_words} for {ctx.layout_type} layout.",
+                page_num=ctx.page_num,
+            )
+        )
+
+    # 3. Check expected headings are present
+    found_headings: list[str] = []
+    missing_headings: list[str] = []
+
+    for heading in ctx.headings_on_page:
+        # Normalize for comparison
+        heading_lower = heading.title.lower().strip()
+        markdown_lower = markdown.lower()
+
+        # Check if heading appears (fuzzy match)
+        if heading_lower in markdown_lower or _text_similarity(heading_lower, markdown_lower) > 0.5:
+            found_headings.append(heading.title)
+        else:
+            missing_headings.append(heading.title)
+            issues.append(
+                ValidationIssue(
+                    issue_type="missing_heading",
+                    severity="warning",
+                    message=f"Expected heading not found: '{heading.title}'",
+                    page_num=ctx.page_num,
+                )
+            )
+
+    # 4. Check continuation markers
+    has_continuation_from = CONTINUATION_MARKER_FROM in markdown
+    has_continuation_to = CONTINUATION_MARKER_TO in markdown
+
+    # 5. Check for basic markdown validity (not empty after marker)
+    post_marker_content = ""
+    if has_marker:
+        marker_pos = markdown.find(expected_marker)
+        post_marker_content = markdown[marker_pos + len(expected_marker) :].strip()
+
+    if has_marker and not post_marker_content:
+        issues.append(
+            ValidationIssue(
+                issue_type="empty_after_marker",
+                severity="critical",
+                message="Page marker present but no content follows",
+                page_num=ctx.page_num,
+            )
+        )
+
+    # Determine validity (no critical issues)
+    is_valid = not any(i.severity == "critical" for i in issues)
+
+    return PageMetrics(
+        page_num=ctx.page_num,
+        has_page_marker=has_marker,
+        word_count=word_count,
+        expected_headings_found=found_headings,
+        expected_headings_missing=missing_headings,
+        has_continuation_from=has_continuation_from,
+        has_continuation_to=has_continuation_to,
+        issues=issues,
+        is_valid=is_valid,
+    )
+
+
 __all__ = [
     "validate_extraction",
+    "validate_page_extraction",
 ]

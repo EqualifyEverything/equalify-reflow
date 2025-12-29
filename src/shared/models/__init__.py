@@ -15,6 +15,7 @@ detection, approval workflows, processing results, and remediation pipeline.
 from .agent_trace import AgentResult, AgentTrace
 from .approval import ApprovalDecision, ApprovalRequest
 from .auto_correction import AutoCorrection
+from .debug_bundle import DebugArtifact, DebugBundleManifest, DebugPhaseSummary
 from .document_context import DocumentSummary, ObservationContext
 from .job import VALID_TRANSITIONS, JobStatus, JobSubmission
 from .observation import Observation, ObservationLocation
@@ -60,25 +61,20 @@ __all__ = [
     "JobStatus",
     "JobSubmission",
     "VALID_TRANSITIONS",
-
     # PII models
     "PIIFinding",
     "PIIResult",
-
     # Approval models
     "ApprovalRequest",
     "ApprovalDecision",
-
     # Legacy processing models (keeping for backward compatibility)
     "LegacyProcessingResult",
     "ProcessingJob",
     "LLMUsage",
-
     # Queue models
     "PIIQueuePayload",
     "ApprovalQueuePayload",
     "ProcessingQueuePayload",
-
     # Remediation models
     "PageFeatures",
     "DocumentManifest",
@@ -89,7 +85,6 @@ __all__ = [
     "RemediationProgress",
     "VALID_SUBSTATUSES",
     "SubstatusType",
-
     # NEW: 4-phase architecture models (PRD-021)
     # Processing result (replaces LegacyProcessingResult for new pipeline)
     "ProcessingResult",
@@ -97,23 +92,18 @@ __all__ = [
     "AnalysisSummary",
     "ExtractionSummary",
     "StructureSummary",
-
     # Agent traces (glass box transparency)
     "AgentTrace",
     "AgentResult",
-
     # Auto-corrections (replaces Proposal)
     "AutoCorrection",
-
     # Review checklist (human review interface)
     "ReviewChecklist",
     "ReviewItem",
     "ReviewOption",
-
     # Document context (for downstream agents)
     "DocumentSummary",
     "ObservationContext",
-
     # Redis schema utilities
     "job_status_key",
     "queue_key",
@@ -125,4 +115,8 @@ __all__ = [
     "APPROVAL_TIMEOUTS",
     "DAILY_METRICS",
     "JOB_STATUS_PREFIX",
+    # Debug bundle models
+    "DebugArtifact",
+    "DebugBundleManifest",
+    "DebugPhaseSummary",
 ]

@@ -18,6 +18,7 @@ from src.agents.structure.structure_fix_agent import (
     OCRDecision,
     StructureFixOutput,
     StructureFixResult,
+    TextCorrection,
     _build_document_context,
     _format_heading_issues,
     _format_lint_issues,
@@ -190,39 +191,52 @@ class TestStructureFixOutput:
 
     def test_valid_output(self):
         """Test creating a valid StructureFixOutput."""
+        correction = TextCorrection(
+            search="### Section",
+            replace="## Section",
+            reason="Fixing skipped heading level",
+        )
         output = StructureFixOutput(
-            corrected_markdown="# Title\n\n## Section",
+            corrections=[correction],
             correction_summary="Fixed 1 heading hierarchy issue",
             ocr_decisions=[],
             heading_fixes="Adjusted H3 to H2 at line 10",
             other_fixes="None",
         )
-        assert "# Title" in output.corrected_markdown
+        assert len(output.corrections) == 1
+        assert output.corrections[0].search == "### Section"
         assert "Fixed 1" in output.correction_summary
 
     def test_output_with_ocr_decisions(self):
         """Test output with OCR decisions."""
-        decision = OCRDecision(
+        ocr_decision = OCRDecision(
             word="Pytbon",
             decision="fix",
             replacement="Python",
             reasoning="Test",
         )
+        correction = TextCorrection(
+            search="Pytbon",
+            replace="Python",
+            reason="OCR error fix",
+        )
         output = StructureFixOutput(
-            corrected_markdown="# Python Guide",
+            corrections=[correction],
             correction_summary="Fixed OCR error",
-            ocr_decisions=[decision],
+            ocr_decisions=[ocr_decision],
         )
         assert len(output.ocr_decisions) == 1
         assert output.ocr_decisions[0].word == "Pytbon"
+        assert len(output.corrections) == 1
 
     def test_output_defaults(self):
         """Test default values."""
         output = StructureFixOutput(
-            corrected_markdown="# Test",
+            corrections=[],
             correction_summary="No changes",
         )
         assert output.ocr_decisions == []
+        assert output.corrections == []
         assert output.heading_fixes == ""
         assert output.other_fixes == ""
 
@@ -536,6 +550,7 @@ class TestAgentInitialization:
 
             # Reset cached agent first
             import src.agents.structure.structure_fix_agent as agent_module
+
             agent_module._agent = None
 
             agent = get_agent()
@@ -551,6 +566,7 @@ class TestAgentInitialization:
 
             # Reset cached agent first
             import src.agents.structure.structure_fix_agent as agent_module
+
             agent_module._agent = None
 
             agent1 = get_agent()
@@ -575,6 +591,7 @@ class TestFixStructuralIssues:
     def reset_agent_cache(self):
         """Reset the agent cache before each test."""
         import src.agents.structure.structure_fix_agent as agent_module
+
         agent_module._agent = None
         yield
         agent_module._agent = None
@@ -585,12 +602,26 @@ class TestFixStructuralIssues:
         mock_manifest,
         sample_lint_issues,
     ):
-        """Test fixing lint issues."""
-        with patch("src.agents.structure.structure_fix_agent.get_agent") as mock_get_agent, \
-             patch("src.agents.structure.structure_fix_agent.run_agent") as mock_run:
+        """Test fixing lint issues with search/replace corrections."""
+        with (
+            patch("src.agents.structure.structure_fix_agent.get_agent") as mock_get_agent,
+            patch("src.agents.structure.structure_fix_agent.run_agent") as mock_run,
+        ):
             mock_get_agent.return_value = MagicMock()
+            # The agent now returns corrections, not full markdown
             mock_output = StructureFixOutput(
-                corrected_markdown="# Fixed Title\n\n## Section",
+                corrections=[
+                    TextCorrection(
+                        search="# Title",
+                        replace="# Fixed Title",
+                        reason="Fixing title",
+                    ),
+                    TextCorrection(
+                        search="#### Section",
+                        replace="## Section",
+                        reason="Fixing heading hierarchy",
+                    ),
+                ],
                 correction_summary="Fixed heading hierarchy",
                 heading_fixes="Adjusted heading at line 5",
             )
@@ -615,9 +646,12 @@ class TestFixStructuralIssues:
                     job_id="test-job",
                 )
 
+            # Corrections are applied programmatically
             assert result.corrected_markdown == "# Fixed Title\n\n## Section"
             assert "Fixed heading" in result.correction_summary
             assert result.cost_cents == 1.5
+            assert result.corrections_applied == 2
+            assert result.corrections_failed == 0
 
     @pytest.mark.asyncio
     async def test_fix_with_ocr_suggestions(
@@ -626,11 +660,19 @@ class TestFixStructuralIssues:
         sample_ocr_suggestions,
     ):
         """Test fixing OCR suggestions creates observations."""
-        with patch("src.agents.structure.structure_fix_agent.get_agent") as mock_get_agent, \
-             patch("src.agents.structure.structure_fix_agent.run_agent") as mock_run:
+        with (
+            patch("src.agents.structure.structure_fix_agent.get_agent") as mock_get_agent,
+            patch("src.agents.structure.structure_fix_agent.run_agent") as mock_run,
+        ):
             mock_get_agent.return_value = MagicMock()
             mock_output = StructureFixOutput(
-                corrected_markdown="# Python Guide",
+                corrections=[
+                    TextCorrection(
+                        search="Pytbon",
+                        replace="Python",
+                        reason="OCR error fix",
+                    ),
+                ],
                 correction_summary="Fixed OCR error: Pytbon -> Python",
                 ocr_decisions=[
                     OCRDecision(
@@ -678,11 +720,19 @@ class TestFixStructuralIssues:
         mock_manifest,
     ):
         """Test heading fixes create observations."""
-        with patch("src.agents.structure.structure_fix_agent.get_agent") as mock_get_agent, \
-             patch("src.agents.structure.structure_fix_agent.run_agent") as mock_run:
+        with (
+            patch("src.agents.structure.structure_fix_agent.get_agent") as mock_get_agent,
+            patch("src.agents.structure.structure_fix_agent.run_agent") as mock_run,
+        ):
             mock_get_agent.return_value = MagicMock()
             mock_output = StructureFixOutput(
-                corrected_markdown="# Title\n\n## Section",
+                corrections=[
+                    TextCorrection(
+                        search="#### Section",
+                        replace="## Section",
+                        reason="Fixing heading hierarchy",
+                    ),
+                ],
                 correction_summary="Fixed heading hierarchy",
                 heading_fixes="Adjusted H4 to H2 at line 5",
             )
@@ -725,11 +775,13 @@ class TestFixStructuralIssues:
         mock_manifest,
     ):
         """Test 'none' heading fixes don't create observations."""
-        with patch("src.agents.structure.structure_fix_agent.get_agent") as mock_get_agent, \
-             patch("src.agents.structure.structure_fix_agent.run_agent") as mock_run:
+        with (
+            patch("src.agents.structure.structure_fix_agent.get_agent") as mock_get_agent,
+            patch("src.agents.structure.structure_fix_agent.run_agent") as mock_run,
+        ):
             mock_get_agent.return_value = MagicMock()
             mock_output = StructureFixOutput(
-                corrected_markdown="# Title",
+                corrections=[],  # No corrections
                 correction_summary="No changes needed",
                 heading_fixes="None",  # No changes
             )
@@ -764,11 +816,13 @@ class TestFixStructuralIssues:
         mock_manifest_no_summary,
     ):
         """Test fix works without document summary."""
-        with patch("src.agents.structure.structure_fix_agent.get_agent") as mock_get_agent, \
-             patch("src.agents.structure.structure_fix_agent.run_agent") as mock_run:
+        with (
+            patch("src.agents.structure.structure_fix_agent.get_agent") as mock_get_agent,
+            patch("src.agents.structure.structure_fix_agent.run_agent") as mock_run,
+        ):
             mock_get_agent.return_value = MagicMock()
             mock_output = StructureFixOutput(
-                corrected_markdown="# Title",
+                corrections=[],  # No corrections
                 correction_summary="No changes",
             )
 

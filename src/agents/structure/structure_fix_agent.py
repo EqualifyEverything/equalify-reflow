@@ -9,6 +9,10 @@ tools (like mdformat). It makes decisions with full document context:
 
 Called by StructureLoop service in Phase 3a: Refine.
 Uses Haiku (EFFICIENT tier) for cost efficiency.
+
+IMPORTANT: This agent outputs search/replace corrections, NOT the full markdown.
+This prevents accidental content loss (like page markers) when the LLM regenerates
+large documents. Corrections are applied programmatically after the LLM call.
 """
 
 from __future__ import annotations
@@ -60,25 +64,43 @@ class OCRDecision(BaseModel):
     """
 
     word: str = Field(..., description="The word flagged as potential OCR error")
-    decision: Literal["fix", "keep", "uncertain"] = Field(
-        ...,
-        description="What to do: fix, keep, or uncertain"
-    )
-    replacement: str | None = Field(
-        default=None,
-        description="Replacement text (only if decision is 'fix')"
-    )
-    reasoning: str = Field(
-        ...,
-        description="Why this decision was made"
-    )
+    decision: Literal["fix", "keep", "uncertain"] = Field(..., description="What to do: fix, keep, or uncertain")
+    replacement: str | None = Field(default=None, description="Replacement text (only if decision is 'fix')")
+    reasoning: str = Field(..., description="Why this decision was made")
+
+
+class TextCorrection(BaseModel):
+    """A single search/replace correction.
+
+    The search text should be unique enough to match exactly once in the document.
+    Include surrounding context if needed to ensure uniqueness.
+
+    Attributes:
+        search: The exact text to find
+        replace: The replacement text
+        reason: Why this correction is needed (glass box)
+
+    Example:
+        >>> correction = TextCorrection(
+        ...     search="### Introduction",
+        ...     replace="## Introduction",
+        ...     reason="Fixing skipped heading level (H1 -> H3 should be H1 -> H2)"
+        ... )
+    """
+
+    search: str = Field(..., description="Exact text to find (include context for uniqueness)")
+    replace: str = Field(..., description="Replacement text")
+    reason: str = Field(..., description="Why this correction is needed")
 
 
 class StructureFixOutput(BaseModel):
     """Output from structure fix agent.
 
+    IMPORTANT: Uses search/replace corrections instead of full markdown output.
+    This prevents accidental content loss when the LLM regenerates large documents.
+
     Attributes:
-        corrected_markdown: The corrected markdown text
+        corrections: List of search/replace text corrections to apply
         correction_summary: Human-readable summary of corrections made
         ocr_decisions: Decisions on each OCR suggestion
         heading_fixes: Description of heading hierarchy fixes
@@ -86,34 +108,21 @@ class StructureFixOutput(BaseModel):
 
     Example:
         >>> output = StructureFixOutput(
-        ...     corrected_markdown="# Title\\n\\n## Section 1\\n...",
-        ...     correction_summary="Fixed 2 OCR errors, 1 heading hierarchy issue",
-        ...     ocr_decisions=[decision1, decision2],
-        ...     heading_fixes="Adjusted H3 to H2 at line 15",
+        ...     corrections=[TextCorrection(search="Exxon", replace="Enzo", reason="OCR")],
+        ...     correction_summary="Fixed 1 OCR error",
+        ...     ocr_decisions=[decision1],
+        ...     heading_fixes="None",
         ...     other_fixes="None"
         ... )
     """
 
-    corrected_markdown: str = Field(
-        ...,
-        description="The corrected markdown text"
+    corrections: list[TextCorrection] = Field(
+        default_factory=list, description="List of search/replace corrections to apply"
     )
-    correction_summary: str = Field(
-        ...,
-        description="Human-readable summary of corrections"
-    )
-    ocr_decisions: list[OCRDecision] = Field(
-        default_factory=list,
-        description="Decisions on each OCR suggestion"
-    )
-    heading_fixes: str = Field(
-        default="",
-        description="Description of heading hierarchy fixes"
-    )
-    other_fixes: str = Field(
-        default="",
-        description="Description of other structural fixes"
-    )
+    correction_summary: str = Field(..., description="Human-readable summary of corrections")
+    ocr_decisions: list[OCRDecision] = Field(default_factory=list, description="Decisions on each OCR suggestion")
+    heading_fixes: str = Field(default="", description="Description of heading hierarchy fixes")
+    other_fixes: str = Field(default="", description="Description of other structural fixes")
 
 
 class StructureFixResult(BaseModel):
@@ -122,8 +131,10 @@ class StructureFixResult(BaseModel):
     Extends StructureFixOutput with observations and cost tracking.
 
     Attributes:
-        corrected_markdown: The corrected markdown text
+        corrected_markdown: The corrected markdown text (after applying corrections)
         correction_summary: Summary of corrections
+        corrections_applied: Number of corrections successfully applied
+        corrections_failed: Number of corrections that failed to apply
         ocr_decisions: OCR decisions made
         observations: Observations generated for review
         cost_cents: LLM cost for this operation
@@ -131,6 +142,8 @@ class StructureFixResult(BaseModel):
 
     corrected_markdown: str
     correction_summary: str
+    corrections_applied: int = 0
+    corrections_failed: int = 0
     ocr_decisions: list[OCRDecision] = Field(default_factory=list)
     observations: list[Observation] = Field(default_factory=list)
     cost_cents: float = 0.0
@@ -163,6 +176,61 @@ def get_agent() -> Agent[None, StructureFixOutput]:
     return _agent
 
 
+def reset_agent() -> None:
+    """Reset the agent singleton (useful for testing)."""
+    global _agent, _prompts
+    _agent = None
+    _prompts = None
+
+
+def _apply_corrections(
+    markdown: str,
+    corrections: list[TextCorrection],
+    job_id: str,
+) -> tuple[str, int, int]:
+    """Apply search/replace corrections to markdown.
+
+    Args:
+        markdown: Original markdown text
+        corrections: List of corrections to apply
+        job_id: Job ID for logging
+
+    Returns:
+        Tuple of (corrected_markdown, applied_count, failed_count)
+    """
+    current_markdown = markdown
+    applied = 0
+    failed = 0
+
+    for correction in corrections:
+        if correction.search in current_markdown:
+            # Count occurrences
+            count = current_markdown.count(correction.search)
+            if count == 1:
+                # Safe to replace - unique match
+                current_markdown = current_markdown.replace(
+                    correction.search,
+                    correction.replace,
+                )
+                applied += 1
+                logger.debug(
+                    f"Job {job_id}: Applied correction: '{correction.search[:50]}...' -> '{correction.replace[:50]}...'"
+                )
+            else:
+                # Multiple matches - skip to avoid unintended replacements
+                logger.warning(
+                    f"Job {job_id}: Skipping correction - "
+                    f"'{correction.search[:50]}...' found {count} times (expected 1)"
+                )
+                failed += 1
+        else:
+            # Search string not found
+            logger.warning(f"Job {job_id}: Correction search string not found: '{correction.search[:50]}...'")
+            failed += 1
+
+    return current_markdown, applied, failed
+
+
 async def fix_structural_issues(
     markdown: str,
     lint_issues: list[LintIssue],
@@ -176,8 +244,9 @@ async def fix_structural_issues(
     This function:
     1. Builds context from document manifest (key terms, document type)
     2. Formats issues for the LLM prompt
-    3. Runs the agent to fix issues
-    4. Converts output to StructureFixResult with observations
+    3. Runs the agent to get corrections (search/replace pairs)
+    4. Applies corrections programmatically (preserves all content)
+    5. Converts output to StructureFixResult with observations
 
     Args:
         markdown: Current markdown text
@@ -233,37 +302,45 @@ async def fix_structural_issues(
     output: StructureFixOutput = result.output
     usage = extract_usage(result, _MODEL_TIER)
 
+    # Apply corrections programmatically (this preserves all content!)
+    corrected_markdown, applied, failed = _apply_corrections(markdown, output.corrections, job_id)
+
     # Generate observations from OCR decisions
     observations = _generate_ocr_observations(output.ocr_decisions, job_id)
 
     # Add observation for heading fixes if any
     if output.heading_fixes and output.heading_fixes.lower() != "none":
-        observations.append(Observation(
-            job_id=job_id,
-            agent="structure",
-            visual_description="Heading hierarchy issue detected",
-            markup_description=output.heading_fixes,
-            location=ObservationLocation(
-                location_type="region",
-                value="Heading hierarchy",
-                page_num=1,
-            ),
-            confidence=0.9,
-            severity="minor",
-            category="heading",
-            status="closed",
-            resolution="fixed",
-        ))
+        observations.append(
+            Observation(
+                job_id=job_id,
+                agent="structure",
+                visual_description="Heading hierarchy issue detected",
+                markup_description=output.heading_fixes,
+                location=ObservationLocation(
+                    location_type="region",
+                    value="Heading hierarchy",
+                    page_num=1,
+                ),
+                confidence=0.9,
+                severity="minor",
+                category="heading",
+                status="closed",
+                resolution="fixed",
+            )
+        )
 
     logger.info(
         f"Job {job_id}: Structure fix complete - "
+        f"corrections: {applied} applied, {failed} failed, "
         f"summary: {output.correction_summary[:100]}..., "
-        f"cost: ${usage.estimated_cost_cents/100:.4f}"
+        f"cost: ${usage.estimated_cost_cents / 100:.4f}"
     )
 
     return StructureFixResult(
-        corrected_markdown=output.corrected_markdown,
+        corrected_markdown=corrected_markdown,
         correction_summary=output.correction_summary,
+        corrections_applied=applied,
+        corrections_failed=failed,
         ocr_decisions=output.ocr_decisions,
         observations=observations,
         cost_cents=usage.estimated_cost_cents,
@@ -404,41 +481,45 @@ def _generate_ocr_observations(
 
     for decision in decisions:
         if decision.decision == "fix":
-            observations.append(Observation(
-                job_id=job_id,
-                agent="structure",
-                visual_description=f"OCR detected '{decision.word}' in text",
-                markup_description=f"Corrected to '{decision.replacement}'",
-                location=ObservationLocation(
-                    location_type="region",
-                    value=f"OCR correction: {decision.word} -> {decision.replacement}",
-                    page_num=1,
-                ),
-                confidence=0.9,
-                severity="minor",
-                category="ocr",
-                status="closed",
-                resolution="fixed",
-                human_comment=decision.reasoning,
-            ))
+            observations.append(
+                Observation(
+                    job_id=job_id,
+                    agent="structure",
+                    visual_description=f"OCR detected '{decision.word}' in text",
+                    markup_description=f"Corrected to '{decision.replacement}'",
+                    location=ObservationLocation(
+                        location_type="region",
+                        value=f"OCR correction: {decision.word} -> {decision.replacement}",
+                        page_num=1,
+                    ),
+                    confidence=0.9,
+                    severity="minor",
+                    category="ocr",
+                    status="closed",
+                    resolution="fixed",
+                    human_comment=decision.reasoning,
+                )
+            )
         elif decision.decision == "uncertain":
-            observations.append(Observation(
-                job_id=job_id,
-                agent="structure",
-                visual_description=f"Potential OCR error: '{decision.word}'",
-                markup_description="Uncertain if correction needed",
-                location=ObservationLocation(
-                    location_type="region",
-                    value=f"Potential OCR error: {decision.word}",
-                    page_num=1,
-                ),
-                confidence=0.5,
-                severity="minor",
-                category="ocr",
-                status="open",
-                resolution=None,
-                human_comment=decision.reasoning,
-            ))
+            observations.append(
+                Observation(
+                    job_id=job_id,
+                    agent="structure",
+                    visual_description=f"Potential OCR error: '{decision.word}'",
+                    markup_description="Uncertain if correction needed",
+                    location=ObservationLocation(
+                        location_type="region",
+                        value=f"Potential OCR error: {decision.word}",
+                        page_num=1,
+                    ),
+                    confidence=0.5,
+                    severity="minor",
+                    category="ocr",
+                    status="open",
+                    resolution=None,
+                    human_comment=decision.reasoning,
+                )
+            )
         # "keep" decisions don't need observations - the word was correct
 
     return observations
@@ -448,6 +529,8 @@ __all__ = [
     "fix_structural_issues",
     "StructureFixResult",
     "StructureFixOutput",
+    "TextCorrection",
     "OCRDecision",
     "get_agent",
+    "reset_agent",
 ]

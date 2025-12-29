@@ -13,9 +13,7 @@ from pydantic import BaseModel, Field
 class PIIFinding(BaseModel):
     """PII detection result."""
 
-    entity_type: str = Field(
-        ..., description="Type of PII entity (e.g., EMAIL_ADDRESS, PHONE_NUMBER)"
-    )
+    entity_type: str = Field(..., description="Type of PII entity (e.g., EMAIL_ADDRESS, PHONE_NUMBER)")
     text: str = Field(..., description="The detected PII text")
     score: float = Field(..., description="Confidence score (0.0 to 1.0)")
 
@@ -42,27 +40,22 @@ class JobStatusBase(BaseModel):
     filename: str | None = Field(None, description="Original filename")
     created_at: str = Field(..., description="ISO timestamp when job was created")
     updated_at: str = Field(..., description="ISO timestamp of last update")
+    debug_bundle_requested: bool = Field(False, description="Whether debug bundle generation was requested")
 
 
 class PIIScanningResponse(JobStatusBase):
     """Response when job is scanning for PII."""
 
     status: Literal["pii_scanning"] = "pii_scanning"
-    estimated_completion_minutes: int = Field(
-        ..., description="Estimated minutes until completion"
-    )
+    estimated_completion_minutes: int = Field(..., description="Estimated minutes until completion")
 
 
 class ProcessingResponse(JobStatusBase):
     """Response when job is processing (AI text correction)."""
 
     status: Literal["processing"] = "processing"
-    estimated_completion_minutes: int = Field(
-        ..., description="Estimated minutes until completion"
-    )
-    pii_skipped: bool | None = Field(
-        None, description="Whether PII scan was skipped (true if bypassed)"
-    )
+    estimated_completion_minutes: int = Field(..., description="Estimated minutes until completion")
+    pii_skipped: bool | None = Field(None, description="Whether PII scan was skipped (true if bypassed)")
 
 
 class AwaitingPIIApprovalResponse(JobStatusBase):
@@ -82,9 +75,7 @@ class CorrectionSummary(BaseModel):
     auto_applied_count: int = Field(..., description="Corrections auto-applied by AI")
     manual_review_count: int = Field(..., description="Corrections requiring manual review")
     confidence_score: float = Field(..., description="Overall confidence (0.0-1.0)")
-    corrections_by_type: dict[str, int] = Field(
-        ..., description="Count by correction type"
-    )
+    corrections_by_type: dict[str, int] = Field(..., description="Count by correction type")
 
 
 class CorrectionItem(BaseModel):
@@ -103,12 +94,8 @@ class AwaitingCorrectionApprovalResponse(JobStatusBase):
     """Response when job needs correction approval."""
 
     status: Literal["awaiting_correction_approval"] = "awaiting_correction_approval"
-    correction_summary: CorrectionSummary = Field(
-        ..., description="Summary of corrections"
-    )
-    corrections: list[CorrectionItem] = Field(
-        ..., description="All correction details"
-    )
+    correction_summary: CorrectionSummary = Field(..., description="Summary of corrections")
+    corrections: list[CorrectionItem] = Field(..., description="All correction details")
     approval_token: str = Field(..., description="Token for approval/rejection")
     approval_expires_at: str = Field(..., description="When approval token expires")
     review_url: str = Field(..., description="URL to review corrections in detail")
@@ -141,9 +128,7 @@ class CompletedResponse(JobStatusBase):
     status: Literal["completed"] = "completed"
     markdown_url: str = Field(..., description="URL to final markdown")
     confidence_score: float = Field(..., description="Overall confidence score")
-    correction_decision: CorrectionDecision = Field(
-        ..., description="How corrections were handled"
-    )
+    correction_decision: CorrectionDecision = Field(..., description="How corrections were handled")
     llm_cost: LLMCostInfo = Field(..., description="LLM usage and cost")
 
 
@@ -161,6 +146,22 @@ class DeniedResponse(JobStatusBase):
     reason: str = Field(..., description="Reason for denial")
 
 
+class NeedsReviewResponse(JobStatusBase):
+    """Response when job needs human review of AI suggestions (PRD-027).
+
+    This status indicates processing is complete but there are review items
+    that require human decision before the job can be finalized.
+    """
+
+    status: Literal["needs_review"] = "needs_review"
+    confidence_score: float = Field(..., description="Overall confidence score")
+    review_item_count: int = Field(..., description="Number of items requiring review")
+    processing_result_key: str = Field(..., description="S3 key to full ProcessingResult JSON")
+    review_url: str = Field(..., description="URL to access review checklist API")
+    page_image_urls: list[str] = Field(default_factory=list, description="URLs to page preview images")
+    llm_cost: LLMCostInfo = Field(..., description="LLM usage and cost")
+
+
 # Union type for OpenAPI documentation
 DocumentStatusResponse = (
     PIIScanningResponse
@@ -170,6 +171,7 @@ DocumentStatusResponse = (
     | CompletedResponse
     | FailedResponse
     | DeniedResponse
+    | NeedsReviewResponse
 )
 
 
@@ -260,6 +262,41 @@ class RemediationPhase(BaseModel):
     raw_corrections: list[dict] | None = Field(default=None, description="Full corrections when show_raw=true")
 
 
+class VerificationCorrectionSummary(BaseModel):
+    """Summary of a single verification correction."""
+
+    search_preview: str = Field(..., description="First 100 chars of search text")
+    replace_preview: str = Field(..., description="First 100 chars of replace text")
+    issue_type: str = Field(..., description="ocr_error, double_word, missing_text, etc.")
+    confidence: float = Field(..., ge=0.0, le=1.0)
+    reasoning: str
+
+
+class VerificationPageResult(BaseModel):
+    """Result of verifying a single page."""
+
+    page_num: int
+    is_accurate: bool
+    corrections_applied: int = 0
+    corrections_failed: int = 0
+    issues_count: int = 0
+    summary: str
+
+
+class VerificationPhase(BaseModel):
+    """Phase 5: Final verification against source images."""
+
+    status: str = Field(..., description="completed, skipped, or error")
+    total_pages: int = Field(default=0, description="Number of pages verified")
+    corrections_applied: int = Field(default=0, description="Total corrections successfully applied")
+    corrections_failed: int = Field(default=0, description="Corrections that couldn't be applied")
+    issues_found: int = Field(default=0, description="Issues flagged for review")
+    all_pages_accurate: bool = Field(default=True, description="Whether all pages passed verification")
+    page_results: list[VerificationPageResult] = Field(default_factory=list)
+    cost_cents: float = Field(default=0.0, description="LLM cost for verification")
+    time_seconds: float | None = Field(default=None, description="Verification duration")
+
+
 class ProcessingPhasesResponse(BaseModel):
     """Response containing all processing phase outputs."""
 
@@ -273,5 +310,6 @@ class ProcessingPhasesResponse(BaseModel):
     extraction: ExtractionPhase
     agents: AgentsPhase
     remediation: RemediationPhase
+    verification: VerificationPhase | None = Field(default=None, description="Phase 5: Final verification")
 
     total_llm_cost: LLMCostInfo | None = None

@@ -337,6 +337,28 @@ export interface ConsolidationPhase {
   raw_proposals?: Record<string, unknown>[]
 }
 
+// Verification Phase types (Phase 5: Final verification)
+export interface VerificationPageResult {
+  page_num: number
+  is_accurate: boolean
+  corrections_applied: number
+  corrections_failed: number
+  issues_count: number
+  summary: string
+}
+
+export interface VerificationPhase {
+  status: string
+  total_pages: number
+  corrections_applied: number
+  corrections_failed: number
+  issues_found: number
+  all_pages_accurate: boolean
+  page_results: VerificationPageResult[]
+  cost_cents: number
+  time_seconds?: number
+}
+
 export interface ProcessingPhasesResponse {
   job_id: string
   filename: string
@@ -349,6 +371,7 @@ export interface ProcessingPhasesResponse {
   extract?: ExtractionPhase
   refine?: RefinePhase
   assemble?: RemediationPhase
+  verification?: VerificationPhase
 
   // Legacy naming (backward compatibility)
   analysis?: AnalysisPhase

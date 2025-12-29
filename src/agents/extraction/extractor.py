@@ -1,23 +1,25 @@
-"""Extraction with plain text output and validation-driven correction loop.
+"""Page-by-page parallel extraction with validation-driven correction loop.
 
-This module implements a simplified extraction approach:
-1. Plain text output (output_type=str) - No JSON escaping overhead
-2. Required page markers (<!-- Page N -->) for validation
-3. Pure Python validation after each attempt
-4. Correction loop with specific feedback on validation failures
-5. Max 2 correction attempts before returning with issues flagged
+This module implements page-by-page extraction for improved accuracy:
+1. Each page extracted independently with parallel processing (semaphore-controlled)
+2. Continuation markers for cross-page sentence handling (no hallucination)
+3. Per-page validation with retry on failure
+4. Deterministic stitching of pages in post-processing
+5. Scales to any document size (no page limit)
 
-Cost/Quality improvements over the old approach:
-- No Reasoned[T] wrapper overhead
-- Haiku focuses on transcription, not JSON formatting
-- Heuristic confidence is more reliable than AI-provided values
-- Specific correction guidance improves retry success rate
+Key improvements over single-call extraction:
+- Focused attention on single page prevents context overload
+- Two-column reading order handled per-page with explicit guidance
+- Parallel processing maintains reasonable latency
+- Independent retry per page doesn't waste work on successful pages
 """
 
 from __future__ import annotations
 
+import asyncio
 import base64
 import logging
+from collections import defaultdict
 from typing import Any
 
 from opentelemetry import trace
@@ -33,13 +35,22 @@ from src.agents.factory import (
     load_prompts,
 )
 from src.agents.model_tiers import MODEL_TIER_MAP, ModelTier
+from src.config import settings
 from src.services.pdf_converter import PageData
 from src.shared.models.processing import LLMUsage
-from src.shared.models.remediation import DocumentManifest, HeadingTree, PageFeatures
-from src.utils.prompt_sanitizer import sanitize_for_prompt
+from src.shared.models.remediation import DocumentManifest, HeadingNode, HeadingTree
 
-from .models import ExtractionMetrics, ExtractionResult
-from .validator import validate_extraction
+from .models import (
+    CONTINUATION_MARKER_FROM,
+    CONTINUATION_MARKER_TO,
+    ExtractionMetrics,
+    ExtractionResult,
+    PageContext,
+    PageExtractionResult,
+    PageMetrics,
+    ValidationIssue,
+)
+from .validator import validate_extraction, validate_page_extraction
 
 logger = logging.getLogger(__name__)
 
@@ -47,70 +58,78 @@ logger = logging.getLogger(__name__)
 # Constants
 # =============================================================================
 
-MAX_CORRECTION_ATTEMPTS = 2
 MODEL_TIER = ModelTier.EFFICIENT
 
 # =============================================================================
-# Agent Setup
+# Custom Exception
 # =============================================================================
 
-_agent: Agent[AgentDependencies, str] | None = None
+
+class ExtractionError(Exception):
+    """Raised when extraction fails after all retry attempts."""
+
+    def __init__(
+        self,
+        message: str,
+        page_num: int | None = None,
+        issues: list[ValidationIssue] | None = None,
+    ):
+        self.page_num = page_num
+        self.issues = issues or []
+        super().__init__(message)
+
+    def __str__(self) -> str:
+        base = super().__str__()
+        if self.issues:
+            issue_details = "\n".join(f"  - {i.message}" for i in self.issues)
+            return f"{base}\nValidation issues:\n{issue_details}"
+        return base
+
+
+# =============================================================================
+# Agent Setup (Page-by-Page)
+# =============================================================================
+
+_page_agent: Agent[AgentDependencies, str] | None = None
 _prompts: dict[str, Any] | None = None
 
 
-def get_agent() -> Agent[AgentDependencies, str]:
-    """Get or create the extraction agent with plain text output."""
-    global _agent, _prompts
+def get_page_agent() -> Agent[AgentDependencies, str]:
+    """Get or create the page extraction agent."""
+    global _page_agent, _prompts
 
-    if _agent is None:
+    if _page_agent is None:
         _prompts = load_prompts("extraction.yaml")
         model = BedrockConverseModel(MODEL_TIER_MAP[MODEL_TIER])
 
         # Plain text output - no structured JSON
-        _agent = Agent(
+        _page_agent = Agent(
             model,
             deps_type=AgentDependencies,
             output_type=str,  # Plain text markdown output
-            system_prompt=_prompts["system_prompt"],
+            system_prompt=_prompts["page_system_prompt"],
             retries=1,  # We handle retries ourselves with specific feedback
         )
-        _register_dynamic_instructions(_agent)
-        logger.info(f"Extraction agent initialized with plain text output, model tier {MODEL_TIER.value}")
+        logger.info(
+            f"Page extraction agent initialized with plain text output, "
+            f"model tier {MODEL_TIER.value}, "
+            f"concurrency={settings.extraction_concurrency}"
+        )
 
-    return _agent
+    return _page_agent
 
 
 def reset_agent() -> None:
     """Reset agent singleton for testing."""
-    global _agent, _prompts
-    _agent = None
+    global _page_agent, _prompts
+    _page_agent = None
     _prompts = None
 
 
-def _register_dynamic_instructions(agent: Agent[AgentDependencies, str]) -> None:
-    """Register dynamic instruction generators."""
-    from pydantic_ai import RunContext
-
-    @agent.instructions
-    def layout_guidance(ctx: RunContext[AgentDependencies]) -> str:
-        """Provide layout-specific guidance from manifest."""
-        if not ctx.deps.manifest:
-            return ""
-
-        two_column_pages = [
-            pf.page_num
-            for pf in ctx.deps.manifest.page_features
-            if pf.layout_type == "two_column"
-        ]
-
-        if two_column_pages:
-            pages_str = ", ".join(str(p) for p in two_column_pages)
-            return f"""
-<layout_warning>
-CRITICAL: Pages {pages_str} have two-column layout.
-For these pages: transcribe LEFT column completely (top to bottom), THEN right column.
-</layout_warning>"""
-        return ""
+# Backward compatibility alias
+def get_agent() -> Agent[AgentDependencies, str]:
+    """Alias for get_page_agent for backward compatibility."""
+    return get_page_agent()
 
 
 # =============================================================================
@@ -123,13 +142,14 @@ async def extract_with_validation(
     manifest: DocumentManifest,
     job_id: str,
 ) -> tuple[ExtractionResult, LLMUsage]:
-    """Extract markdown with validation-driven correction loop.
+    """Extract markdown with page-by-page parallel processing.
 
     Pipeline:
-    1. Initial extraction (plain text output)
-    2. Validate with pure Python heuristics
-    3. If critical issues found, re-prompt with correction guidance
-    4. Max 2 correction attempts before accepting with issues flagged
+    1. Build page contexts with headings and layout info
+    2. Extract pages in parallel (semaphore-controlled)
+    3. Validate each page, retry on failure
+    4. Stitch pages together handling continuation markers
+    5. Final validation of complete document
 
     Args:
         pages: List of page images from PDF conversion
@@ -141,12 +161,12 @@ async def extract_with_validation(
 
     Raises:
         ValueError: If no pages provided
+        ExtractionError: If any page fails validation after retries
     """
     if not pages:
         raise ValueError("No pages provided for extraction")
 
     tracer = get_tracer()
-    usages: list[LLMUsage] = []
 
     with tracer.start_as_current_span(
         "extraction.extract_with_validation",
@@ -154,256 +174,422 @@ async def extract_with_validation(
     ) as span:
         span.set_attribute("job_id", job_id)
         span.set_attribute("total_pages", manifest.total_pages)
+        span.set_attribute("extraction_mode", "page_by_page")
+        span.set_attribute("concurrency", settings.extraction_concurrency)
 
         logger.info(
-            f"Job {job_id}: Starting extraction for {manifest.total_pages} pages, "
-            f"document: '{manifest.document_title}'"
+            f"Job {job_id}: Starting page-by-page extraction for {manifest.total_pages} pages, "
+            f"document: '{manifest.document_title}', concurrency={settings.extraction_concurrency}"
         )
 
-        # Create dependencies
-        deps = AgentDependencies(
-            job_id=job_id,
-            manifest=manifest,
-            document_type=manifest.document_type,
+        # 1. Build page contexts
+        page_contexts = _build_page_contexts(pages, manifest)
+
+        # 2. Parallel extraction with semaphore
+        semaphore = asyncio.Semaphore(settings.extraction_concurrency)
+
+        async def extract_with_semaphore(ctx: PageContext) -> PageExtractionResult:
+            async with semaphore:
+                return await _extract_single_page(ctx, manifest, job_id)
+
+        # Run all extractions in parallel
+        results = await asyncio.gather(
+            *[extract_with_semaphore(ctx) for ctx in page_contexts],
+            return_exceptions=True,
         )
 
-        # Build initial prompt
-        agent = get_agent()
-        global _prompts
-        if _prompts is None:
-            _prompts = load_prompts("extraction.yaml")
+        # 3. Check for failures
+        page_results: list[PageExtractionResult] = []
+        for i, raw_result in enumerate(results):
+            page_num = i + 1
 
-        messages = _build_messages(pages, manifest, _prompts)
-
-        # Track attempts
-        attempt = 0
-        correction_applied = False
-        current_markdown = ""
-        current_metrics: ExtractionMetrics | None = None
-
-        while attempt <= MAX_CORRECTION_ATTEMPTS:
-            attempt += 1
-            span.set_attribute(f"attempt_{attempt}.started", True)
-
-            with tracer.start_as_current_span(f"extraction.attempt_{attempt}"):
-                # Run extraction
-                try:
-                    result = await agent.run(messages, deps=deps)
-                    current_markdown = result.output
-                    usage = extract_usage(result, MODEL_TIER)
-                    usages.append(usage)
-
-                    span.set_attribute(f"attempt_{attempt}.tokens", usage.total_tokens)
-
-                except Exception as e:
-                    logger.error(f"Job {job_id}: Extraction attempt {attempt} failed: {e}")
-                    span.set_attribute(f"attempt_{attempt}.error", str(e))
-                    raise
-
-                # Validate output
-                current_metrics = validate_extraction(
-                    markdown=current_markdown,
-                    manifest=manifest,
-                    job_id=job_id,
+            if isinstance(raw_result, Exception):
+                logger.error(f"Job {job_id}: Page {page_num} extraction raised exception: {raw_result}")
+                raise ExtractionError(
+                    f"Page {page_num} extraction failed with exception: {raw_result}",
+                    page_num=page_num,
                 )
 
-                span.set_attribute(f"attempt_{attempt}.valid", current_metrics.is_valid)
-                span.set_attribute(f"attempt_{attempt}.confidence", current_metrics.confidence)
-                span.set_attribute(f"attempt_{attempt}.issues", len(current_metrics.issues))
+            # Type narrowing: after exception check, result is PageExtractionResult
+            result: PageExtractionResult = raw_result
 
-                if current_metrics.is_valid:
-                    logger.info(
-                        f"Job {job_id}: Extraction validated on attempt {attempt}, "
-                        f"confidence={current_metrics.confidence:.2f}"
-                    )
-                    break
-
-                # Check if we have more attempts
-                if attempt > MAX_CORRECTION_ATTEMPTS:
-                    logger.warning(
-                        f"Job {job_id}: Extraction has issues after {attempt} attempts, "
-                        f"returning with {len(current_metrics.critical_issues)} critical issues"
-                    )
-                    break
-
-                # Build correction prompt and retry
-                correction_guidance = current_metrics.get_correction_guidance()
-                logger.info(
-                    f"Job {job_id}: Attempt {attempt} had {len(current_metrics.critical_issues)} "
-                    f"critical issues, attempting correction"
+            if not result.metrics.is_valid:
+                logger.error(
+                    f"Job {job_id}: Page {result.page_num} failed validation after {result.attempt_count} attempts"
+                )
+                raise ExtractionError(
+                    f"Page {result.page_num} failed validation after {result.attempt_count} attempts",
+                    page_num=result.page_num,
+                    issues=result.metrics.issues,
                 )
 
-                # Add correction guidance to messages
-                correction_message = _build_correction_prompt(
-                    previous_markdown=current_markdown,
-                    correction_guidance=correction_guidance,
-                    manifest=manifest,
-                )
-                messages = _build_messages(pages, manifest, _prompts) + [correction_message]
-                correction_applied = True
+            page_results.append(result)
 
-        # Build final result
-        assert current_metrics is not None  # Should always be set after loop
+        # 4. Stitch pages together
+        final_markdown = _stitch_pages([r.markdown for r in page_results])
 
-        total_usage = aggregate_usage(usages)
+        # 5. Final validation of complete document
+        total_usage = aggregate_usage([r.usage for r in page_results])
+        final_metrics = validate_extraction(final_markdown, manifest, job_id)
 
-        result = ExtractionResult(
-            markdown=current_markdown,
-            metrics=current_metrics,
-            attempt_count=attempt,
-            correction_applied=correction_applied,
+        # Calculate aggregate stats
+        max_attempts = max(r.attempt_count for r in page_results)
+        any_correction = any(r.attempt_count > 1 for r in page_results)
+
+        final_result = ExtractionResult(
+            markdown=final_markdown,
+            metrics=final_metrics,
+            attempt_count=max_attempts,
+            correction_applied=any_correction,
         )
 
-        # Record final metrics
-        span.set_attribute("final.valid", current_metrics.is_valid)
-        span.set_attribute("final.confidence", current_metrics.confidence)
-        span.set_attribute("final.attempts", attempt)
+        # Record telemetry
+        span.set_attribute("final.valid", final_metrics.is_valid)
+        span.set_attribute("final.confidence", final_metrics.confidence)
+        span.set_attribute("final.max_page_attempts", max_attempts)
         span.set_attribute("final.tokens_total", total_usage.total_tokens)
         span.set_attribute("final.cost_cents", total_usage.estimated_cost_cents)
 
         logger.info(
             f"Job {job_id}: Extraction complete - "
-            f"valid={current_metrics.is_valid}, "
-            f"confidence={current_metrics.confidence:.2f}, "
-            f"attempts={attempt}, "
-            f"cost=${total_usage.estimated_cost_cents/100:.4f}"
+            f"valid={final_metrics.is_valid}, "
+            f"confidence={final_metrics.confidence:.2f}, "
+            f"max_attempts={max_attempts}, "
+            f"cost=${total_usage.estimated_cost_cents / 100:.4f}"
         )
 
-        return result, total_usage
+        return final_result, total_usage
 
 
 # =============================================================================
-# Message Building
+# Page Context Building
 # =============================================================================
 
 
-def _build_messages(
+def _build_page_contexts(
     pages: list[PageData],
     manifest: DocumentManifest,
-    prompts: dict[str, Any],
-) -> list[str | BinaryContent]:
-    """Build the message list with page images and extraction prompt."""
-    messages: list[str | BinaryContent] = []
+) -> list[PageContext]:
+    """Build extraction context for each page.
 
-    # Add page images
-    for page in pages:
-        messages.append(f"[Page {page.page_num}]")
-        if page.image_base64:
-            image_bytes = base64.b64decode(page.image_base64)
-            messages.append(
-                BinaryContent(data=image_bytes, media_type="image/png")
-            )
+    Args:
+        pages: List of page images
+        manifest: Document manifest with structure info
 
-    # Parse heading tree
+    Returns:
+        List of PageContext objects, one per page
+    """
     heading_tree = HeadingTree.model_validate_json(manifest.heading_tree_json)
 
-    # Build user prompt
-    user_prompt = prompts["user_prompt"].format(
-        total_pages=manifest.total_pages,
-        document_title=sanitize_for_prompt(
-            manifest.document_title,
-            max_length=200,
-            context="document_title",
-        ),
-        document_type=sanitize_for_prompt(
-            manifest.document_type,
-            max_length=50,
-            context="document_type",
-        ),
-        heading_tree=_format_heading_tree(heading_tree),
-        page_features=_format_page_features(manifest.page_features),
-        layout_notes=sanitize_for_prompt(
-            manifest.analysis_notes or "No additional notes.",
-            max_length=500,
-            context="layout_notes",
-        ),
+    # Group headings by page
+    headings_by_page: dict[int, list[HeadingNode]] = defaultdict(list)
+    for section in heading_tree.sections:
+        headings_by_page[section.page].append(section)
+
+    # Build document summary (medium context level)
+    summary = _build_document_summary(manifest, heading_tree)
+
+    # Create context for each page
+    contexts: list[PageContext] = []
+    for page in pages:
+        # Get page features for layout type
+        page_features = next(
+            (pf for pf in manifest.page_features if pf.page_num == page.page_num),
+            None,
+        )
+        layout_type = page_features.layout_type if page_features else "single_column"
+
+        contexts.append(
+            PageContext(
+                page_num=page.page_num,
+                image_base64=page.image_base64,
+                layout_type=layout_type,
+                headings_on_page=headings_by_page.get(page.page_num, []),
+                document_summary=summary,
+                document_title=manifest.document_title,
+                document_type=manifest.document_type,
+                total_pages=manifest.total_pages,
+            )
+        )
+
+    return contexts
+
+
+def _build_document_summary(manifest: DocumentManifest, heading_tree: HeadingTree) -> str:
+    """Build medium-level context summary for page extraction.
+
+    Provides enough context to prevent hallucination on key terms
+    without overwhelming the model.
+    """
+    # Key entities from summary
+    entities: list[str] = []
+    if manifest.summary and manifest.summary.key_entities:
+        entities = list(manifest.summary.key_entities[:5])  # Top 5
+
+    # High-level section structure (H1 and H2 only)
+    sections = [s.title for s in heading_tree.sections if s.level <= 2][:10]
+
+    lines = [
+        f'Document: "{manifest.document_title}"',
+        f"Type: {manifest.document_type}",
+        f"Total pages: {manifest.total_pages}",
+    ]
+
+    if entities:
+        lines.append(f"Key entities: {', '.join(entities)}")
+
+    if sections:
+        lines.append(f"Main sections: {', '.join(sections)}")
+
+    return "\n".join(lines)
+
+
+# =============================================================================
+# Single Page Extraction
+# =============================================================================
+
+
+async def _extract_single_page(
+    ctx: PageContext,
+    manifest: DocumentManifest,
+    job_id: str,
+) -> PageExtractionResult:
+    """Extract a single page with retry logic.
+
+    Args:
+        ctx: Page context with image and hints
+        manifest: Document manifest
+        job_id: Job identifier
+
+    Returns:
+        PageExtractionResult with markdown and metrics
+    """
+    tracer = get_tracer()
+    agent = get_page_agent()
+    global _prompts
+    if _prompts is None:
+        _prompts = load_prompts("extraction.yaml")
+
+    usages: list[LLMUsage] = []
+    max_retries = settings.max_page_retries
+
+    with tracer.start_as_current_span(
+        f"extraction.page_{ctx.page_num}",
+        kind=trace.SpanKind.INTERNAL,
+    ) as span:
+        span.set_attribute("page_num", ctx.page_num)
+        span.set_attribute("layout_type", ctx.layout_type)
+        span.set_attribute("expected_headings", len(ctx.headings_on_page))
+
+        current_markdown = ""
+        current_metrics: PageMetrics | None = None
+        attempt = 0  # Track which attempt we're on
+
+        for attempt in range(1, max_retries + 1):
+            span.set_attribute(f"attempt_{attempt}.started", True)
+
+            # Build prompt (with correction guidance on retry)
+            prompt = _build_page_prompt(ctx, _prompts, attempt)
+            messages = _build_page_messages(ctx, prompt)
+
+            # Create deps for this extraction
+            deps = AgentDependencies(
+                job_id=job_id,
+                manifest=manifest,
+                document_type=manifest.document_type,
+            )
+
+            try:
+                result = await agent.run(messages, deps=deps)
+                current_markdown = result.output
+                usage = extract_usage(result, MODEL_TIER)
+                usages.append(usage)
+
+                span.set_attribute(f"attempt_{attempt}.tokens", usage.total_tokens)
+
+            except Exception as e:
+                logger.error(f"Job {job_id}: Page {ctx.page_num} attempt {attempt} failed: {e}")
+                span.set_attribute(f"attempt_{attempt}.error", str(e))
+                raise
+
+            # Validate page output
+            current_metrics = validate_page_extraction(current_markdown, ctx)
+
+            span.set_attribute(f"attempt_{attempt}.valid", current_metrics.is_valid)
+            span.set_attribute(f"attempt_{attempt}.word_count", current_metrics.word_count)
+            span.set_attribute(f"attempt_{attempt}.issues", len(current_metrics.issues))
+
+            if current_metrics.is_valid:
+                logger.debug(
+                    f"Job {job_id}: Page {ctx.page_num} validated on attempt {attempt}, "
+                    f"word_count={current_metrics.word_count}"
+                )
+                break
+
+            # Prepare for retry
+            if attempt < max_retries:
+                logger.info(
+                    f"Job {job_id}: Page {ctx.page_num} attempt {attempt} had "
+                    f"{len(current_metrics.critical_issues)} critical issues, retrying"
+                )
+                # Store issues for next attempt's correction prompt
+                ctx.previous_issues = current_metrics.issues
+            else:
+                logger.warning(f"Job {job_id}: Page {ctx.page_num} failed after {attempt} attempts")
+
+        assert current_metrics is not None
+
+        total_usage = aggregate_usage(usages)
+
+        return PageExtractionResult(
+            page_num=ctx.page_num,
+            markdown=current_markdown,
+            metrics=current_metrics,
+            attempt_count=attempt,
+            usage=total_usage,
+        )
+
+
+def _build_page_prompt(
+    ctx: PageContext,
+    prompts: dict[str, Any],
+    attempt: int,
+) -> str:
+    """Build prompt for page extraction.
+
+    On first attempt, uses standard prompt.
+    On retry, uses correction prompt with issue details.
+    """
+    # Format headings for this page
+    if ctx.headings_on_page:
+        headings_text = "\n".join(
+            f"{'#' * h.level} {h.section_number + ' ' if h.section_number else ''}{h.title}"
+            for h in ctx.headings_on_page
+        )
+    else:
+        headings_text = "(No headings expected on this page - continues previous section)"
+
+    # Reading order hint based on layout
+    reading_order_hints = {
+        "single_column": "Read top to bottom",
+        "two_column": "Read LEFT column completely (top to bottom), THEN right column completely",
+        "mixed": "Main content first, then sidebars",
+    }
+    reading_order_hint = reading_order_hints.get(ctx.layout_type, "Read top to bottom")
+
+    if attempt > 1 and ctx.previous_issues:
+        # Correction prompt
+        issues_text = "\n".join(f"- {i.message}" for i in ctx.previous_issues)
+        return prompts["page_correction_prompt"].format(
+            page_num=ctx.page_num,
+            issues=issues_text,
+            layout_type=ctx.layout_type,
+            reading_order_hint=reading_order_hint,
+        )
+
+    # Standard prompt
+    return prompts["page_user_prompt"].format(
+        page_num=ctx.page_num,
+        total_pages=ctx.total_pages,
+        document_type=ctx.document_type,
+        document_summary=ctx.document_summary,
+        layout_type=ctx.layout_type,
+        headings_for_page=headings_text,
     )
-    messages.append(user_prompt)
+
+
+def _build_page_messages(
+    ctx: PageContext,
+    prompt: str,
+) -> list[str | BinaryContent]:
+    """Build message list with single page image and prompt."""
+    messages: list[str | BinaryContent] = []
+
+    # Add page image
+    if ctx.image_base64:
+        image_bytes = base64.b64decode(ctx.image_base64)
+        messages.append(BinaryContent(data=image_bytes, media_type="image/png"))
+
+    # Add prompt
+    messages.append(prompt)
 
     return messages
 
 
-def _build_correction_prompt(
-    previous_markdown: str,
-    correction_guidance: str,
-    manifest: DocumentManifest,
-) -> str:
-    """Build the correction prompt for retry attempts."""
-    # Show a preview of the previous output (first 500 chars)
-    preview = previous_markdown[:500]
-    if len(previous_markdown) > 500:
-        preview += "..."
-
-    return f"""
-<correction_required>
-Your previous extraction had issues that need to be fixed.
-
-{correction_guidance}
-
-<your_previous_output_preview>
-{preview}
-</your_previous_output_preview>
-
-Please provide a CORRECTED extraction that addresses ALL the issues listed above.
-
-CRITICAL REQUIREMENTS:
-1. Include <!-- Page N --> markers for ALL {manifest.total_pages} pages
-2. Follow the heading structure exactly as specified
-3. Include image placeholders in format: ![TODO: describe](image-page-X-N.png)
-
-Begin your corrected markdown now:
-</correction_required>
-"""
+# =============================================================================
+# Page Stitching
+# =============================================================================
 
 
-def _format_heading_tree(tree: HeadingTree) -> str:
-    """Format heading tree as readable text."""
-    lines = [
-        f"Document Title: {tree.document_title}",
-        f"Layout: {tree.layout_type}",
-        f"Total Pages: {tree.total_pages}",
-        "",
-        "Heading Structure (follow this exactly):",
-    ]
+def _stitch_pages(page_markdowns: list[str]) -> str:
+    """Stitch page markdowns together, handling continuation markers.
 
-    for section in tree.sections:
-        indent = "  " * (section.level - 1)
-        number = f"{section.section_number} " if section.section_number else ""
-        lines.append(
-            f"{indent}{'#' * section.level} {number}{section.title} (page {section.page})"
-        )
+    Continuation markers allow cross-page sentences without hallucination:
+    - [CONTINUES_FROM_PREVIOUS] at page start = continues sentence from previous page
+    - [CONTINUES_ON_NEXT] at page end = sentence continues to next page
 
-    return "\n".join(lines)
+    Args:
+        page_markdowns: List of markdown strings, one per page in order
+
+    Returns:
+        Combined markdown with markers removed and sentences joined
+    """
+    if not page_markdowns:
+        return ""
+
+    result_parts: list[str] = []
+
+    for i, markdown in enumerate(page_markdowns):
+        text = markdown
+
+        # Handle continuation from previous page
+        if i > 0 and CONTINUATION_MARKER_FROM in text:
+            # Remove the marker
+            text = text.replace(CONTINUATION_MARKER_FROM, "")
+
+            # Check if previous page ended with continuation marker
+            if result_parts:
+                prev = result_parts[-1]
+                if CONTINUATION_MARKER_TO in prev:
+                    # Remove trailing marker from previous
+                    result_parts[-1] = prev.replace(CONTINUATION_MARKER_TO, "").rstrip()
+                    # Append continuation directly to previous part (join with space)
+                    result_parts[-1] += " " + text.lstrip()
+                    continue  # Don't add as separate part
+
+        # Handle standalone continuation-to marker (without matching from marker)
+        # Just remove it, the next page will handle its continuation-from
+        if CONTINUATION_MARKER_TO in text and i < len(page_markdowns) - 1:
+            # Check if next page has matching marker
+            next_page = page_markdowns[i + 1]
+            if CONTINUATION_MARKER_FROM not in next_page:
+                # Next page doesn't expect continuation, just remove marker
+                text = text.replace(CONTINUATION_MARKER_TO, "")
+
+        result_parts.append(text)
+
+    # Join with double newlines (standard markdown paragraph separation)
+    combined = "\n\n".join(result_parts)
+
+    # Clean up any remaining markers that weren't handled
+    combined = combined.replace(CONTINUATION_MARKER_FROM, "")
+    combined = combined.replace(CONTINUATION_MARKER_TO, "")
+
+    # Clean up excessive newlines
+    while "\n\n\n" in combined:
+        combined = combined.replace("\n\n\n", "\n\n")
+
+    return combined.strip()
 
 
-def _format_page_features(features: list[PageFeatures]) -> str:
-    """Format page features for the prompt."""
-    lines = ["Page-by-Page Content:"]
-
-    for pf in features:
-        parts = [f"Page {pf.page_num}:"]
-
-        if pf.has_images:
-            parts.append(f"{pf.image_count} image(s)")
-        if pf.has_tables:
-            parts.append(f"{pf.table_count} table(s)")
-        if pf.has_lists:
-            parts.append("lists")
-        if pf.has_code_blocks:
-            parts.append("code")
-        if pf.has_math:
-            parts.append("math")
-
-        parts.append(f"[{pf.layout_type}]")
-
-        lines.append("  " + ", ".join(parts))
-
-    return "\n".join(lines)
-
+# =============================================================================
+# Exports
+# =============================================================================
 
 __all__ = [
     "extract_with_validation",
     "get_agent",
+    "get_page_agent",
     "reset_agent",
-    "MAX_CORRECTION_ATTEMPTS",
+    "ExtractionError",
 ]

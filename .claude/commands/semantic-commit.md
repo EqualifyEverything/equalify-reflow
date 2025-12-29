@@ -4,8 +4,7 @@ Understand the files in the `Read` section, and execute the `Run` commands then 
 
 ## Read
 
-- README.md
-- Makefile
+- Documentation pertaining to your edit to confirm implementation matches expectations.
 
 ## Execute
 

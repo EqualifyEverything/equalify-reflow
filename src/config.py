@@ -54,7 +54,7 @@ class Settings(BaseSettings):
     metrics_port: int = Field(ge=1, le=65535, default=8001)
 
     # Application Settings
-    max_upload_size: int = Field(gt=0, le=1024*1024*1024, default=100*1024*1024)  # 100MB, max 1GB
+    max_upload_size: int = Field(gt=0, le=1024 * 1024 * 1024, default=100 * 1024 * 1024)  # 100MB, max 1GB
     max_file_size_mb: int = Field(gt=0, le=1000, default=100)
     job_ttl_days: int = Field(ge=1, le=365, default=30)
 
@@ -73,76 +73,61 @@ class Settings(BaseSettings):
     claude_temperature: float = Field(ge=0.0, le=2.0, default=0.2)
 
     # AI Processing Configuration
-    max_pages_full_context: int = Field(
-        ge=1, le=50, default=15,
-        description="Maximum pages for full-document extraction before chunking is needed"
-    )
     confidence_threshold_high: float = Field(ge=0.0, le=1.0, default=0.85)
     confidence_threshold_medium: float = Field(ge=0.0, le=1.0, default=0.60)
 
+    # Page-by-Page Extraction Configuration
+    extraction_concurrency: int = Field(
+        ge=1, le=10, default=5, description="Number of concurrent page extractions (AWS Bedrock limit aware)"
+    )
+    max_page_retries: int = Field(
+        ge=1, le=5, default=2, description="Maximum retry attempts per page on validation failure"
+    )
+
     # PDF Processing Configuration
     pdf_images_scale: float = Field(
-        ge=1.0, le=3.0, default=1.5,
+        ge=1.0,
+        le=3.0,
+        default=1.5,
         description="Scale factor for PDF page image generation. "
-                    "1.5x (108 DPI) is optimal for Claude vision API. "
-                    "2.0x (144 DPI) may be needed for complex diagrams."
+        "1.5x (108 DPI) is optimal for Claude vision API. "
+        "2.0x (144 DPI) may be needed for complex diagrams.",
     )
 
     # Multi-Agent Configuration
-    agent_prompts_dir: str = Field(
-        default="config/agents",
-        description="Directory containing agent YAML prompt files"
-    )
+    agent_prompts_dir: str = Field(default="config/agents", description="Directory containing agent YAML prompt files")
     agent_max_retries: int = Field(
-        ge=0, le=10, default=2,
-        description="Maximum retries for agent output validation failures"
+        ge=0, le=10, default=2, description="Maximum retries for agent output validation failures"
     )
     agent_default_temperature: float = Field(
-        ge=0.0, le=2.0, default=0.2,
-        description="Default temperature for agent LLM calls"
+        ge=0.0, le=2.0, default=0.2, description="Default temperature for agent LLM calls"
     )
     max_concurrent_agents: int = Field(
-        ge=1, le=4, default=4,
-        description="Maximum specialized agents to run concurrently"
+        ge=1, le=4, default=4, description="Maximum specialized agents to run concurrently"
     )
 
     # Deterministic Pre-Analysis Configuration
     # VeraPDF settings for PDF/UA-1 accessibility validation
-    verapdf_url: str = Field(
-        default="http://verapdf:8080",
-        description="VeraPDF REST API URL"
-    )
-    verapdf_timeout: int = Field(
-        ge=30, le=600, default=120,
-        description="VeraPDF request timeout in seconds"
-    )
-    verapdf_enabled: bool = Field(
-        default=True,
-        description="Enable VeraPDF PDF/UA-1 validation"
-    )
+    verapdf_url: str = Field(default="http://verapdf:8080", description="VeraPDF REST API URL")
+    verapdf_timeout: int = Field(ge=30, le=600, default=120, description="VeraPDF request timeout in seconds")
+    verapdf_enabled: bool = Field(default=True, description="Enable VeraPDF PDF/UA-1 validation")
 
     # PyMarkdown settings for markdown structure validation
-    pymarkdown_enabled: bool = Field(
-        default=True,
-        description="Enable PyMarkdown structure linting"
-    )
+    pymarkdown_enabled: bool = Field(default=True, description="Enable PyMarkdown structure linting")
     pymarkdown_rules: str = Field(
-        default="MD001,MD025,MD036,MD045",
-        description="Comma-separated list of PyMarkdown rules to enable"
+        default="MD001,MD025,MD036,MD045", description="Comma-separated list of PyMarkdown rules to enable"
     )
 
     # Document Context Extraction Configuration
     context_extraction_enabled: bool = Field(
-        default=True,
-        description="Enable document context extraction for agent grounding"
+        default=True, description="Enable document context extraction for agent grounding"
     )
-    context_max_headings: int = Field(
-        ge=10, le=500, default=100,
-        description="Maximum headings to track per document"
-    )
+    context_max_headings: int = Field(ge=10, le=500, default=100, description="Maximum headings to track per document")
     context_recurring_threshold: float = Field(
-        ge=0.1, le=1.0, default=0.5,
-        description="Minimum page occurrence rate to consider element recurring (0.5 = 50%)"
+        ge=0.1,
+        le=1.0,
+        default=0.5,
+        description="Minimum page occurrence rate to consider element recurring (0.5 = 50%)",
     )
 
     # Timeout Worker Configuration
@@ -154,6 +139,9 @@ class Settings(BaseSettings):
 
     # Retention Policies
     temp_file_retention_hours: int = Field(ge=1, le=720, default=24)  # Delete temp files after 24 hours, max 30 days
+    debug_artifact_retention_hours: int = Field(
+        ge=1, le=168, default=24
+    )  # Delete debug artifacts after 24 hours, max 7 days
     job_retention_days: int = Field(ge=1, le=365, default=30)  # Keep completed/failed jobs for 30 days
     metrics_retention_days: int = Field(ge=1, le=730, default=90)  # Keep metrics for 90 days, max 2 years
     max_processing_hours: int = Field(ge=1, le=24, default=2)  # Mark jobs as stuck after 2 hours in processing
@@ -168,20 +156,18 @@ class Settings(BaseSettings):
         ge=0.0,
         le=1.0,
         description="Confidence threshold for auto vs manual routing. "
-                    "Observations/proposals >= this go to auto queue (batch approval), "
-                    "< this go to manual queue (individual review). "
-                    "Set to 0.0 to auto-approve all, 1.0 to require manual review for all."
+        "Observations/proposals >= this go to auto queue (batch approval), "
+        "< this go to manual queue (individual review). "
+        "Set to 0.0 to auto-approve all, 1.0 to require manual review for all.",
     )
 
     # Correction review workflow
     always_require_correction_review: bool = Field(
-        default=True,
-        description="Always route to correction review (True for demo/testing)"
+        default=True, description="Always route to correction review (True for demo/testing)"
     )
 
     correction_approval_timeout_hours: int = Field(
-        ge=1, le=168, default=4,
-        description="Hours until correction approval expires"
+        ge=1, le=168, default=4, description="Hours until correction approval expires"
     )
 
     @property
@@ -202,45 +188,32 @@ class Settings(BaseSettings):
 
     # Worker Queue Configuration
     pii_worker_queue_timeout_seconds: int = Field(
-        ge=1, le=300, default=30,
-        description="PII worker queue blocking timeout in seconds"
+        ge=1, le=300, default=30, description="PII worker queue blocking timeout in seconds"
     )
     processing_worker_queue_timeout_seconds: int = Field(
-        ge=1, le=300, default=60,
-        description="Processing worker queue blocking timeout in seconds"
+        ge=1, le=300, default=60, description="Processing worker queue blocking timeout in seconds"
     )
     worker_error_sleep_seconds: int = Field(
-        ge=1, le=300, default=5,
-        description="Sleep duration after worker error to avoid tight error loops"
+        ge=1, le=300, default=5, description="Sleep duration after worker error to avoid tight error loops"
     )
     timeout_worker_check_interval_seconds: int = Field(
-        ge=1, le=300, default=10,
-        description="Timeout worker loop check interval in seconds"
+        ge=1, le=300, default=10, description="Timeout worker loop check interval in seconds"
     )
     timeout_worker_error_sleep_seconds: int = Field(
-        ge=1, le=300, default=60,
-        description="Timeout worker sleep duration on error"
+        ge=1, le=300, default=60, description="Timeout worker sleep duration on error"
     )
 
     # Testing Configuration
     disable_workers: bool = False  # Set to True to disable background workers (for testing)
 
     # Telemetry Configuration (OpenTelemetry)
-    telemetry_enabled: bool = Field(
-        default=False,
-        description="Enable OpenTelemetry tracing and metrics"
-    )
-    telemetry_console_export: bool = Field(
-        default=False,
-        description="Export spans to console (for development)"
-    )
+    telemetry_enabled: bool = Field(default=False, description="Enable OpenTelemetry tracing and metrics")
+    telemetry_console_export: bool = Field(default=False, description="Export spans to console (for development)")
     telemetry_otlp_endpoint: str | None = Field(
-        default=None,
-        description="OTLP endpoint for trace export (e.g., 'localhost:4317' for Jaeger)"
+        default=None, description="OTLP endpoint for trace export (e.g., 'localhost:4317' for Jaeger)"
     )
     telemetry_log_prompts: bool = Field(
-        default=False,
-        description="Log full LLM prompts and outputs in traces (WARNING: may contain document content)"
+        default=False, description="Log full LLM prompts and outputs in traces (WARNING: may contain document content)"
     )
 
 

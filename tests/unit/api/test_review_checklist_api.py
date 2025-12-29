@@ -241,19 +241,13 @@ class TestGetProcessingResult:
     """Tests for GET /{job_id}/result endpoint."""
 
     @pytest.mark.asyncio
-    async def test_get_result_success(
-        self, client, api_key_headers, sample_processing_result
-    ):
+    async def test_get_result_success(self, client, api_key_headers, sample_processing_result):
         """Test getting full processing result."""
         mock_storage = MagicMock()
-        mock_storage.load_processing_result = AsyncMock(
-            return_value=sample_processing_result
-        )
+        mock_storage.load_processing_result = AsyncMock(return_value=sample_processing_result)
 
         mock_job_service = MagicMock()
-        mock_job_service.get_job = AsyncMock(
-            return_value={"job_id": "job-123", "status": "processing"}
-        )
+        mock_job_service.get_job = AsyncMock(return_value={"job_id": "job-123", "status": "processing"})
 
         app.dependency_overrides[get_storage_service] = lambda: mock_storage
         app.dependency_overrides[get_job_service] = lambda: mock_job_service
@@ -302,9 +296,7 @@ class TestGetProcessingResult:
         mock_storage.load_processing_result = AsyncMock(return_value=None)
 
         mock_job_service = MagicMock()
-        mock_job_service.get_job = AsyncMock(
-            return_value={"job_id": "job-123", "status": "processing"}
-        )
+        mock_job_service.get_job = AsyncMock(return_value={"job_id": "job-123", "status": "processing"})
 
         app.dependency_overrides[get_storage_service] = lambda: mock_storage
         app.dependency_overrides[get_job_service] = lambda: mock_job_service
@@ -325,14 +317,10 @@ class TestGetReviewChecklist:
     """Tests for GET /{job_id}/checklist endpoint."""
 
     @pytest.mark.asyncio
-    async def test_get_checklist_all(
-        self, client, api_key_headers, sample_processing_result
-    ):
+    async def test_get_checklist_all(self, client, api_key_headers, sample_processing_result):
         """Test getting full checklist without filters."""
         mock_storage = MagicMock()
-        mock_storage.load_processing_result = AsyncMock(
-            return_value=sample_processing_result
-        )
+        mock_storage.load_processing_result = AsyncMock(return_value=sample_processing_result)
 
         app.dependency_overrides[get_storage_service] = lambda: mock_storage
 
@@ -353,14 +341,10 @@ class TestGetReviewChecklist:
             app.dependency_overrides.clear()
 
     @pytest.mark.asyncio
-    async def test_get_checklist_filter_by_agent(
-        self, client, api_key_headers, sample_processing_result
-    ):
+    async def test_get_checklist_filter_by_agent(self, client, api_key_headers, sample_processing_result):
         """Test filtering checklist by agent."""
         mock_storage = MagicMock()
-        mock_storage.load_processing_result = AsyncMock(
-            return_value=sample_processing_result
-        )
+        mock_storage.load_processing_result = AsyncMock(return_value=sample_processing_result)
 
         app.dependency_overrides[get_storage_service] = lambda: mock_storage
 
@@ -379,14 +363,10 @@ class TestGetReviewChecklist:
             app.dependency_overrides.clear()
 
     @pytest.mark.asyncio
-    async def test_get_checklist_filter_by_page(
-        self, client, api_key_headers, sample_processing_result
-    ):
+    async def test_get_checklist_filter_by_page(self, client, api_key_headers, sample_processing_result):
         """Test filtering checklist by page number."""
         mock_storage = MagicMock()
-        mock_storage.load_processing_result = AsyncMock(
-            return_value=sample_processing_result
-        )
+        mock_storage.load_processing_result = AsyncMock(return_value=sample_processing_result)
 
         app.dependency_overrides[get_storage_service] = lambda: mock_storage
 
@@ -404,14 +384,10 @@ class TestGetReviewChecklist:
             app.dependency_overrides.clear()
 
     @pytest.mark.asyncio
-    async def test_get_checklist_filter_by_category(
-        self, client, api_key_headers, sample_processing_result
-    ):
+    async def test_get_checklist_filter_by_category(self, client, api_key_headers, sample_processing_result):
         """Test filtering checklist by category."""
         mock_storage = MagicMock()
-        mock_storage.load_processing_result = AsyncMock(
-            return_value=sample_processing_result
-        )
+        mock_storage.load_processing_result = AsyncMock(return_value=sample_processing_result)
 
         app.dependency_overrides[get_storage_service] = lambda: mock_storage
 
@@ -428,14 +404,10 @@ class TestGetReviewChecklist:
             app.dependency_overrides.clear()
 
     @pytest.mark.asyncio
-    async def test_get_checklist_multiple_filters(
-        self, client, api_key_headers, sample_processing_result
-    ):
+    async def test_get_checklist_multiple_filters(self, client, api_key_headers, sample_processing_result):
         """Test filtering checklist with multiple filters (AND logic)."""
         mock_storage = MagicMock()
-        mock_storage.load_processing_result = AsyncMock(
-            return_value=sample_processing_result
-        )
+        mock_storage.load_processing_result = AsyncMock(return_value=sample_processing_result)
 
         app.dependency_overrides[get_storage_service] = lambda: mock_storage
 
@@ -477,19 +449,13 @@ class TestGetChecklistSummary:
     """Tests for GET /{job_id}/checklist/summary endpoint."""
 
     @pytest.mark.asyncio
-    async def test_get_summary_success(
-        self, client, api_key_headers, sample_processing_result
-    ):
+    async def test_get_summary_success(self, client, api_key_headers, sample_processing_result):
         """Test getting checklist summary."""
         mock_storage = MagicMock()
-        mock_storage.load_processing_result = AsyncMock(
-            return_value=sample_processing_result
-        )
+        mock_storage.load_processing_result = AsyncMock(return_value=sample_processing_result)
 
         mock_job_service = MagicMock()
-        mock_job_service.get_job = AsyncMock(
-            return_value={"job_id": "job-123", "status": "processing"}
-        )
+        mock_job_service.get_job = AsyncMock(return_value={"job_id": "job-123", "status": "processing"})
 
         app.dependency_overrides[get_storage_service] = lambda: mock_storage
         app.dependency_overrides[get_job_service] = lambda: mock_job_service
@@ -536,14 +502,10 @@ class TestSubmitReview:
     """Tests for POST /{job_id}/checklist/{item_id}/review endpoint."""
 
     @pytest.mark.asyncio
-    async def test_submit_review_with_option(
-        self, client, api_key_headers, sample_processing_result
-    ):
+    async def test_submit_review_with_option(self, client, api_key_headers, sample_processing_result):
         """Test submitting review with selected option."""
         mock_storage = MagicMock()
-        mock_storage.load_processing_result = AsyncMock(
-            return_value=sample_processing_result
-        )
+        mock_storage.load_processing_result = AsyncMock(return_value=sample_processing_result)
         mock_storage.save_processing_result = AsyncMock()
 
         app.dependency_overrides[get_storage_service] = lambda: mock_storage
@@ -571,14 +533,10 @@ class TestSubmitReview:
             app.dependency_overrides.clear()
 
     @pytest.mark.asyncio
-    async def test_submit_review_with_custom_input(
-        self, client, api_key_headers, sample_processing_result
-    ):
+    async def test_submit_review_with_custom_input(self, client, api_key_headers, sample_processing_result):
         """Test submitting review with custom input."""
         mock_storage = MagicMock()
-        mock_storage.load_processing_result = AsyncMock(
-            return_value=sample_processing_result
-        )
+        mock_storage.load_processing_result = AsyncMock(return_value=sample_processing_result)
         mock_storage.save_processing_result = AsyncMock()
 
         app.dependency_overrides[get_storage_service] = lambda: mock_storage
@@ -602,14 +560,10 @@ class TestSubmitReview:
             app.dependency_overrides.clear()
 
     @pytest.mark.asyncio
-    async def test_submit_review_missing_input(
-        self, client, api_key_headers, sample_processing_result
-    ):
+    async def test_submit_review_missing_input(self, client, api_key_headers, sample_processing_result):
         """Test submit review fails without option or custom input."""
         mock_storage = MagicMock()
-        mock_storage.load_processing_result = AsyncMock(
-            return_value=sample_processing_result
-        )
+        mock_storage.load_processing_result = AsyncMock(return_value=sample_processing_result)
 
         app.dependency_overrides[get_storage_service] = lambda: mock_storage
 
@@ -630,14 +584,10 @@ class TestSubmitReview:
             app.dependency_overrides.clear()
 
     @pytest.mark.asyncio
-    async def test_submit_review_invalid_option(
-        self, client, api_key_headers, sample_processing_result
-    ):
+    async def test_submit_review_invalid_option(self, client, api_key_headers, sample_processing_result):
         """Test submit review fails with invalid option ID."""
         mock_storage = MagicMock()
-        mock_storage.load_processing_result = AsyncMock(
-            return_value=sample_processing_result
-        )
+        mock_storage.load_processing_result = AsyncMock(return_value=sample_processing_result)
 
         app.dependency_overrides[get_storage_service] = lambda: mock_storage
 
@@ -659,14 +609,10 @@ class TestSubmitReview:
             app.dependency_overrides.clear()
 
     @pytest.mark.asyncio
-    async def test_submit_review_item_not_found(
-        self, client, api_key_headers, sample_processing_result
-    ):
+    async def test_submit_review_item_not_found(self, client, api_key_headers, sample_processing_result):
         """Test submit review fails for non-existent item."""
         mock_storage = MagicMock()
-        mock_storage.load_processing_result = AsyncMock(
-            return_value=sample_processing_result
-        )
+        mock_storage.load_processing_result = AsyncMock(return_value=sample_processing_result)
 
         app.dependency_overrides[get_storage_service] = lambda: mock_storage
 
@@ -686,20 +632,14 @@ class TestSubmitReview:
             app.dependency_overrides.clear()
 
     @pytest.mark.asyncio
-    async def test_submit_review_already_reviewed(
-        self, client, api_key_headers, sample_processing_result
-    ):
+    async def test_submit_review_already_reviewed(self, client, api_key_headers, sample_processing_result):
         """Test submit review fails if already reviewed."""
         # Mark the first item as already reviewed
-        sample_processing_result.review_checklist.items[0].reviewed_at = datetime.now(
-            UTC
-        )
+        sample_processing_result.review_checklist.items[0].reviewed_at = datetime.now(UTC)
         sample_processing_result.review_checklist.items[0].reviewed_by = "previous-user"
 
         mock_storage = MagicMock()
-        mock_storage.load_processing_result = AsyncMock(
-            return_value=sample_processing_result
-        )
+        mock_storage.load_processing_result = AsyncMock(return_value=sample_processing_result)
 
         app.dependency_overrides[get_storage_service] = lambda: mock_storage
 
@@ -725,9 +665,7 @@ class TestApplyReviews:
     """Tests for POST /{job_id}/apply-reviews endpoint."""
 
     @pytest.mark.asyncio
-    async def test_apply_reviews_success(
-        self, client, api_key_headers, sample_processing_result
-    ):
+    async def test_apply_reviews_success(self, client, api_key_headers, sample_processing_result):
         """Test applying all reviews successfully."""
         # Mark all items as reviewed
         for item in sample_processing_result.review_checklist.items:
@@ -736,18 +674,12 @@ class TestApplyReviews:
             item.selected_option_id = item.options[0].id
 
         mock_storage = MagicMock()
-        mock_storage.load_processing_result = AsyncMock(
-            return_value=sample_processing_result
-        )
+        mock_storage.load_processing_result = AsyncMock(return_value=sample_processing_result)
         mock_storage.save_processing_result = AsyncMock()
-        mock_storage.upload_final_markdown = AsyncMock(
-            return_value="jobs/job-123/final.md"
-        )
+        mock_storage.upload_final_markdown = AsyncMock(return_value="jobs/job-123/final.md")
 
         mock_job_service = MagicMock()
-        mock_job_service.get_job = AsyncMock(
-            return_value={"job_id": "job-123", "status": "processing"}
-        )
+        mock_job_service.get_job = AsyncMock(return_value={"job_id": "job-123", "status": "processing"})
         mock_job_service.update_job_status = AsyncMock()
 
         app.dependency_overrides[get_storage_service] = lambda: mock_storage
@@ -770,19 +702,13 @@ class TestApplyReviews:
             app.dependency_overrides.clear()
 
     @pytest.mark.asyncio
-    async def test_apply_reviews_unreviewed_items_fails(
-        self, client, api_key_headers, sample_processing_result
-    ):
+    async def test_apply_reviews_unreviewed_items_fails(self, client, api_key_headers, sample_processing_result):
         """Test applying reviews fails with unreviewed items (without force)."""
         mock_storage = MagicMock()
-        mock_storage.load_processing_result = AsyncMock(
-            return_value=sample_processing_result
-        )
+        mock_storage.load_processing_result = AsyncMock(return_value=sample_processing_result)
 
         mock_job_service = MagicMock()
-        mock_job_service.get_job = AsyncMock(
-            return_value={"job_id": "job-123", "status": "processing"}
-        )
+        mock_job_service.get_job = AsyncMock(return_value={"job_id": "job-123", "status": "processing"})
 
         app.dependency_overrides[get_storage_service] = lambda: mock_storage
         app.dependency_overrides[get_job_service] = lambda: mock_job_service
@@ -801,32 +727,22 @@ class TestApplyReviews:
             app.dependency_overrides.clear()
 
     @pytest.mark.asyncio
-    async def test_apply_reviews_with_force(
-        self, client, api_key_headers, sample_processing_result
-    ):
+    async def test_apply_reviews_with_force(self, client, api_key_headers, sample_processing_result):
         """Test applying reviews with force=true skips unreviewed items."""
         # Mark only one item as reviewed
-        sample_processing_result.review_checklist.items[0].reviewed_at = datetime.now(
-            UTC
-        )
+        sample_processing_result.review_checklist.items[0].reviewed_at = datetime.now(UTC)
         sample_processing_result.review_checklist.items[0].reviewed_by = "test-user"
         sample_processing_result.review_checklist.items[0].selected_option_id = (
             sample_processing_result.review_checklist.items[0].options[0].id
         )
 
         mock_storage = MagicMock()
-        mock_storage.load_processing_result = AsyncMock(
-            return_value=sample_processing_result
-        )
+        mock_storage.load_processing_result = AsyncMock(return_value=sample_processing_result)
         mock_storage.save_processing_result = AsyncMock()
-        mock_storage.upload_final_markdown = AsyncMock(
-            return_value="jobs/job-123/final.md"
-        )
+        mock_storage.upload_final_markdown = AsyncMock(return_value="jobs/job-123/final.md")
 
         mock_job_service = MagicMock()
-        mock_job_service.get_job = AsyncMock(
-            return_value={"job_id": "job-123", "status": "processing"}
-        )
+        mock_job_service.get_job = AsyncMock(return_value={"job_id": "job-123", "status": "processing"})
         mock_job_service.update_job_status = AsyncMock()
 
         app.dependency_overrides[get_storage_service] = lambda: mock_storage
@@ -871,33 +787,23 @@ class TestApplyReviews:
             app.dependency_overrides.clear()
 
     @pytest.mark.asyncio
-    async def test_apply_reviews_keep_action(
-        self, client, api_key_headers, sample_processing_result
-    ):
+    async def test_apply_reviews_keep_action(self, client, api_key_headers, sample_processing_result):
         """Test applying reviews with 'keep' action doesn't modify markdown."""
         # Mark all items as reviewed with 'keep' action
         for item in sample_processing_result.review_checklist.items:
             item.reviewed_at = datetime.now(UTC)
             item.reviewed_by = "test-user"
             # Find the 'keep' option
-            keep_option = next(
-                (o for o in item.options if o.action == "keep"), item.options[-1]
-            )
+            keep_option = next((o for o in item.options if o.action == "keep"), item.options[-1])
             item.selected_option_id = keep_option.id
 
         mock_storage = MagicMock()
-        mock_storage.load_processing_result = AsyncMock(
-            return_value=sample_processing_result
-        )
+        mock_storage.load_processing_result = AsyncMock(return_value=sample_processing_result)
         mock_storage.save_processing_result = AsyncMock()
-        mock_storage.upload_final_markdown = AsyncMock(
-            return_value="jobs/job-123/final.md"
-        )
+        mock_storage.upload_final_markdown = AsyncMock(return_value="jobs/job-123/final.md")
 
         mock_job_service = MagicMock()
-        mock_job_service.get_job = AsyncMock(
-            return_value={"job_id": "job-123", "status": "processing"}
-        )
+        mock_job_service.get_job = AsyncMock(return_value={"job_id": "job-123", "status": "processing"})
         mock_job_service.update_job_status = AsyncMock()
 
         app.dependency_overrides[get_storage_service] = lambda: mock_storage
@@ -924,9 +830,7 @@ class TestApplyReviews:
         mock_storage = MagicMock()
 
         mock_job_service = MagicMock()
-        mock_job_service.get_job = AsyncMock(
-            return_value={"job_id": "job-123", "status": "completed"}
-        )
+        mock_job_service.get_job = AsyncMock(return_value={"job_id": "job-123", "status": "completed"})
 
         app.dependency_overrides[get_storage_service] = lambda: mock_storage
         app.dependency_overrides[get_job_service] = lambda: mock_job_service
@@ -953,9 +857,7 @@ class TestObservationLifecycle:
     ):
         """Verify observation is closed with 'fixed' when replace selected."""
         mock_storage = MagicMock()
-        mock_storage.load_processing_result = AsyncMock(
-            return_value=sample_processing_result
-        )
+        mock_storage.load_processing_result = AsyncMock(return_value=sample_processing_result)
         mock_storage.save_processing_result = AsyncMock()
 
         app.dependency_overrides[get_storage_service] = lambda: mock_storage
@@ -987,9 +889,7 @@ class TestObservationLifecycle:
     ):
         """Verify observation is closed with 'kept_original' when keep selected."""
         mock_storage = MagicMock()
-        mock_storage.load_processing_result = AsyncMock(
-            return_value=sample_processing_result
-        )
+        mock_storage.load_processing_result = AsyncMock(return_value=sample_processing_result)
         mock_storage.save_processing_result = AsyncMock()
 
         app.dependency_overrides[get_storage_service] = lambda: mock_storage
@@ -998,9 +898,8 @@ class TestObservationLifecycle:
             item_id = sample_processing_result.review_checklist.items[0].id
             # Find the 'keep' option (second option)
             keep_option = next(
-                (o for o in sample_processing_result.review_checklist.items[0].options
-                 if o.action == "keep"),
-                sample_processing_result.review_checklist.items[0].options[-1]
+                (o for o in sample_processing_result.review_checklist.items[0].options if o.action == "keep"),
+                sample_processing_result.review_checklist.items[0].options[-1],
             )
 
             response = client.post(
@@ -1018,9 +917,7 @@ class TestObservationLifecycle:
             app.dependency_overrides.clear()
 
     @pytest.mark.asyncio
-    async def test_apply_reviews_verifies_storage_operations(
-        self, client, api_key_headers, sample_processing_result
-    ):
+    async def test_apply_reviews_verifies_storage_operations(self, client, api_key_headers, sample_processing_result):
         """Verify save_processing_result and upload_final_markdown are called."""
         # Mark all items as reviewed
         for item in sample_processing_result.review_checklist.items:
@@ -1029,18 +926,12 @@ class TestObservationLifecycle:
             item.selected_option_id = item.options[0].id
 
         mock_storage = MagicMock()
-        mock_storage.load_processing_result = AsyncMock(
-            return_value=sample_processing_result
-        )
+        mock_storage.load_processing_result = AsyncMock(return_value=sample_processing_result)
         mock_storage.save_processing_result = AsyncMock()
-        mock_storage.upload_final_markdown = AsyncMock(
-            return_value="jobs/job-123/final.md"
-        )
+        mock_storage.upload_final_markdown = AsyncMock(return_value="jobs/job-123/final.md")
 
         mock_job_service = MagicMock()
-        mock_job_service.get_job = AsyncMock(
-            return_value={"job_id": "job-123", "status": "processing"}
-        )
+        mock_job_service.get_job = AsyncMock(return_value={"job_id": "job-123", "status": "processing"})
         mock_job_service.update_job_status = AsyncMock()
 
         app.dependency_overrides[get_storage_service] = lambda: mock_storage
@@ -1059,11 +950,12 @@ class TestObservationLifecycle:
             mock_storage.save_processing_result.assert_called_once()
             mock_storage.upload_final_markdown.assert_called_once()
 
-            # Verify job status was updated
+            # Verify job status was updated (includes markdown_url from upload_final_markdown)
             mock_job_service.update_job_status.assert_called_once_with(
                 "job-123",
                 status="completed",
                 substatus="reviews_applied",
+                markdown_url="jobs/job-123/final.md",
             )
         finally:
             app.dependency_overrides.clear()

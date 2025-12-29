@@ -4,9 +4,12 @@ Provides factory functions for creating PydanticAI agents with
 standard configuration (YAML prompts, model tiers, cost tracking).
 """
 
+from __future__ import annotations
+
 import logging
+import time
 from pathlib import Path
-from typing import Any, TypeVar
+from typing import TYPE_CHECKING, Any, TypeVar
 
 import yaml
 from opentelemetry import trace
@@ -18,6 +21,9 @@ from src.agents.model_tiers import MODEL_TIER_MAP, ModelTier
 from src.config import settings
 from src.shared.llm_cost import calculate_estimated_cost, get_pricing_for_tier
 from src.shared.models.processing import LLMUsage
+
+if TYPE_CHECKING:
+    from src.services.debug_bundle_service import DebugBundleService
 
 logger = logging.getLogger(__name__)
 
@@ -76,6 +82,7 @@ def create_agent(
 
     if use_deps:
         from src.agents.dependencies import AgentDependencies
+
         return Agent(
             model,
             deps_type=AgentDependencies,
@@ -146,11 +153,15 @@ async def run_agent(
     agent_name: str,
     model_tier: ModelTier,
     system_prompt: str | None = None,
+    phase: str | None = None,
+    debug_service: "DebugBundleService | None" = None,
+    input_summary: str | None = None,
     **run_kwargs: Any,
 ) -> Any:
-    """Run agent with OpenTelemetry tracing.
+    """Run agent with OpenTelemetry tracing and optional debug artifact saving.
 
     Creates a span for the agent execution with relevant attributes.
+    If debug_service is provided, saves complete prompt/response artifacts.
 
     Args:
         agent: PydanticAI agent instance
@@ -159,12 +170,16 @@ async def run_agent(
         agent_name: Name of the calling agent (e.g., "typography", "analysis")
         model_tier: Model tier for pricing info
         system_prompt: Optional system prompt text for telemetry logging
+        phase: Pipeline phase for debug artifacts (analyze, extract, refine, assemble)
+        debug_service: Optional DebugBundleService for saving artifacts
+        input_summary: Optional JSON description of input for debug artifacts
         **run_kwargs: Additional kwargs passed to agent.run()
 
     Returns:
         PydanticAI AgentRunResult
     """
     tracer = get_tracer()
+    start_time = time.perf_counter()
 
     with tracer.start_as_current_span(
         f"agent.{agent_name}",
@@ -180,8 +195,7 @@ async def run_agent(
         if settings.telemetry_log_prompts and system_prompt:
             max_len = 32000
             span.set_attribute(
-                "system_prompt.content",
-                system_prompt[:max_len] + ("..." if len(system_prompt) > max_len else "")
+                "system_prompt.content", system_prompt[:max_len] + ("..." if len(system_prompt) > max_len else "")
             )
             span.set_attribute("system_prompt.length", len(system_prompt))
 
@@ -208,13 +222,13 @@ async def run_agent(
         if settings.telemetry_log_prompts:
             # Truncate very long prompts to avoid span size limits (64KB typical)
             max_len = 32000
-            span.set_attribute(
-                "prompt.content",
-                prompt_text[:max_len] + ("..." if len(prompt_text) > max_len else "")
-            )
+            span.set_attribute("prompt.content", prompt_text[:max_len] + ("..." if len(prompt_text) > max_len else ""))
 
         try:
             result = await agent.run(prompt, **run_kwargs)
+
+            # Calculate duration
+            duration_ms = (time.perf_counter() - start_time) * 1000
 
             # Add usage metrics to span
             usage = result.usage()
@@ -231,16 +245,45 @@ async def run_agent(
             span.set_attribute("cost.cents", cost)
 
             # Log output if enabled
+            output_str = str(result.output)
             if settings.telemetry_log_prompts:
-                output_str = str(result.output)
                 max_len = 32000
                 span.set_attribute(
-                    "output.content",
-                    output_str[:max_len] + ("..." if len(output_str) > max_len else "")
+                    "output.content", output_str[:max_len] + ("..." if len(output_str) > max_len else "")
                 )
                 span.set_attribute("output.length", len(output_str))
 
             span.set_status(trace.Status(trace.StatusCode.OK))
+
+            # Save debug artifact if debug service provided
+            if debug_service and phase:
+                try:
+                    # Build full prompt with system prompt for debug
+                    full_prompt = prompt_text
+                    if system_prompt:
+                        full_prompt = f"[SYSTEM PROMPT]\n{system_prompt}\n\n[USER PROMPT]\n{prompt_text}"
+
+                    await debug_service.save_artifact_from_agent_run(
+                        job_id=job_id,
+                        phase=phase,
+                        agent_name=agent_name,
+                        input_data=input_summary or "No input summary provided",
+                        prompt=full_prompt,
+                        response_raw=output_str,
+                        output_parsed=result.output,
+                        tokens={
+                            "input": input_tokens,
+                            "output": output_tokens,
+                            "total": input_tokens + output_tokens,
+                        },
+                        cost_cents=cost,
+                        model_id=MODEL_TIER_MAP[model_tier],
+                        duration_ms=duration_ms,
+                    )
+                except Exception as debug_error:
+                    # Don't fail the agent run if debug saving fails
+                    logger.warning(f"Failed to save debug artifact for {agent_name}: {debug_error}")
+
             return result
 
         except Exception as e:

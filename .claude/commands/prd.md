@@ -14,14 +14,8 @@ Example: `/prd 003`
 
 ### Read Core Documentation
 1. `README.md` - Project overview and architecture
-2. `CLAUDE.md` - Project instructions and architecture pattern
-3. `IMPLEMENTATION_ORDER.md` - PRD implementation order
-4. `docs/architecture.md` - Detailed monolith architecture
-5. `docs/ARCHITECTURE_CLARIFICATION.md` - Architecture Q&A
-6. `ai-docs/PRDs/README.md` - PRD index
 
 ### Read Dependency Context
-1. Check `ai-docs/PRDs/README.md` for PRD dependencies
 2. Verify all dependency PRDs are marked complete
 3. If dependencies incomplete: **STOP** and report missing dependencies
 

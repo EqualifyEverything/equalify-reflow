@@ -81,15 +81,9 @@ class JobService:
 
         try:
             await self.redis.expire(key, ttl)
-            logger.debug(
-                f"Set TTL for job {job_id} to {ttl}s "
-                f"({ttl / 86400:.1f} days) for status '{status}'"
-            )
+            logger.debug(f"Set TTL for job {job_id} to {ttl}s ({ttl / 86400:.1f} days) for status '{status}'")
         except Exception as e:
-            logger.error(
-                f"Failed to set TTL for job {job_id}: {str(e)}",
-                exc_info=True
-            )
+            logger.error(f"Failed to set TTL for job {job_id}: {str(e)}", exc_info=True)
             raise Exception(f"Failed to set TTL for job {job_id}: {str(e)}")
 
     async def create_job(
@@ -99,7 +93,8 @@ class JobService:
         status: str = "pii_scanning",
         original_filename: str | None = None,
         pii_skipped: bool = False,
-        pii_skip_reason: str | None = None
+        pii_skip_reason: str | None = None,
+        debug_bundle_requested: bool = False,
     ) -> None:
         """
         Create a new job in Redis with automatic TTL.
@@ -114,6 +109,7 @@ class JobService:
             original_filename: Original filename from upload
             pii_skipped: Whether PII scan was skipped (for audit trail)
             pii_skip_reason: Reason PII scan was skipped
+            debug_bundle_requested: Whether to generate debug bundle artifacts
 
         Example:
             >>> await job_service.create_job("job-123", "temp/file.pdf", original_filename="doc.pdf")
@@ -134,7 +130,7 @@ class JobService:
             "s3_key": s3_key,
             "status": status,
             "created_at": created_at,
-            "updated_at": created_at
+            "updated_at": created_at,
         }
         if original_filename:
             mapping["original_filename"] = original_filename
@@ -145,10 +141,11 @@ class JobService:
             if pii_skip_reason:
                 mapping["pii_skip_reason"] = pii_skip_reason
 
-        await self.redis.hset(
-            f"{self.status_prefix}{job_id}",
-            mapping=mapping
-        )
+        # Add debug bundle flag
+        if debug_bundle_requested:
+            mapping["debug_bundle_requested"] = "true"
+
+        await self.redis.hset(f"{self.status_prefix}{job_id}", mapping=mapping)
 
         # Set TTL based on initial status (prevents memory leaks)
         await self._set_job_ttl(job_id, status)
@@ -174,9 +171,10 @@ class JobService:
         # Parse JSON array/object fields only
         # These fields are stored as JSON strings and need to be parsed
         json_fields = [
-            "pii_findings",         # Array of PII findings
-            "correction_results",   # Array of correction results per page
-            "page_image_keys",      # Array of S3 keys for page images
+            "pii_findings",  # Array of PII findings
+            "correction_results",  # Array of correction results per page
+            "page_image_keys",  # Array of S3 keys for page images
+            "verification_summary",  # Object with verification phase results
         ]
 
         for field in json_fields:
@@ -188,12 +186,7 @@ class JobService:
 
         return job_data
 
-    async def update_job_status(
-        self,
-        job_id: str,
-        status: str,
-        **additional_fields: Any
-    ) -> None:
+    async def update_job_status(self, job_id: str, status: str, **additional_fields: Any) -> None:
         """
         Update job status and additional fields with automatic TTL adjustment.
 
@@ -214,7 +207,7 @@ class JobService:
         """
         update_data: dict[str | bytes, bytes | float | int | str] = {
             "status": status,
-            "updated_at": datetime.now(UTC).isoformat()
+            "updated_at": datetime.now(UTC).isoformat(),
         }
 
         # Serialize complex fields as JSON
@@ -224,19 +217,12 @@ class JobService:
             else:
                 update_data[key] = str(value)
 
-        await self.redis.hset(
-            f"{self.status_prefix}{job_id}",
-            mapping=update_data
-        )
+        await self.redis.hset(f"{self.status_prefix}{job_id}", mapping=update_data)
 
         # Adjust TTL based on new status (critical for memory management)
         await self._set_job_ttl(job_id, status)
 
-    async def add_pii_findings(
-        self,
-        job_id: str,
-        findings: list[dict[str, Any]]
-    ) -> None:
+    async def add_pii_findings(self, job_id: str, findings: list[dict[str, Any]]) -> None:
         """
         Store PII scan results for a job and maintain TTL.
 
@@ -254,19 +240,11 @@ class JobService:
         """
         await self.redis.hset(
             f"{self.status_prefix}{job_id}",
-            mapping={
-                "pii_findings": json.dumps(findings),
-                "updated_at": datetime.now(UTC).isoformat()
-            }
+            mapping={"pii_findings": json.dumps(findings), "updated_at": datetime.now(UTC).isoformat()},
         )
         # Note: TTL maintained from previous status, will be updated on next status change
 
-    async def add_processing_result(
-        self,
-        job_id: str,
-        result_url: str,
-        confidence: float
-    ) -> None:
+    async def add_processing_result(self, job_id: str, result_url: str, confidence: float) -> None:
         """
         Store processing completion data and maintain TTL.
 
@@ -289,8 +267,8 @@ class JobService:
                 "result_url": result_url,
                 "confidence_score": str(confidence),
                 "completed_at": datetime.now(UTC).isoformat(),
-                "updated_at": datetime.now(UTC).isoformat()
-            }
+                "updated_at": datetime.now(UTC).isoformat(),
+            },
         )
         # Note: TTL maintained from previous status, will be updated on next status change
 
@@ -331,10 +309,7 @@ class JobService:
             ttl_seconds: Time-to-live in seconds
         """
         try:
-            await self.redis.expire(
-                f"{self.status_prefix}{job_id}",
-                ttl_seconds
-            )
+            await self.redis.expire(f"{self.status_prefix}{job_id}", ttl_seconds)
         except Exception as e:
             raise Exception(f"Failed to set expiration for job {job_id}: {str(e)}")
 
@@ -359,11 +334,7 @@ class JobService:
 
             cursor = 0
             while True:
-                cursor, keys = await self.redis.scan(
-                    cursor=cursor,
-                    match=pattern,
-                    count=100
-                )
+                cursor, keys = await self.redis.scan(cursor=cursor, match=pattern, count=100)
 
                 # Extract job IDs from keys (remove prefix)
                 for key in keys:
@@ -427,36 +398,24 @@ class JobService:
 
             # Get job status for logging before deletion
             job_data = await self.redis.hgetall(key)
-            job_status = job_data.get('status', 'unknown') if job_data else 'unknown'
+            job_status = job_data.get("status", "unknown") if job_data else "unknown"
 
             # Delete the job hash
             deleted_count = await self.redis.delete(key)
 
             if deleted_count > 0:
-                logger.info(
-                    f"Cleaned up old job {job_id} (status: {job_status})"
-                )
+                logger.info(f"Cleaned up old job {job_id} (status: {job_status})")
                 return True
             else:
-                logger.warning(
-                    f"Failed to delete job {job_id} (delete returned 0)"
-                )
+                logger.warning(f"Failed to delete job {job_id} (delete returned 0)")
                 return False
 
         except Exception as e:
-            logger.error(
-                f"Error cleaning up job {job_id}: {str(e)}",
-                exc_info=True
-            )
+            logger.error(f"Error cleaning up job {job_id}: {str(e)}", exc_info=True)
             # Return False on error (job not cleaned up)
             return False
 
-    async def store_approval_token_mapping(
-        self,
-        approval_token: str,
-        job_id: str,
-        ttl_hours: int = 4
-    ) -> None:
+    async def store_approval_token_mapping(self, approval_token: str, job_id: str, ttl_hours: int = 4) -> None:
         """Store approval token to job ID mapping for O(1) lookup.
 
         Creates a Redis key: eq-pdf:approval-token:{token} → job_id
@@ -482,15 +441,10 @@ class JobService:
             # Store mapping with expiration
             await self.redis.set(token_key, job_id, ex=ttl_seconds)
 
-            logger.debug(
-                f"Stored approval token mapping: {approval_token[:8]}... → {job_id}"
-            )
+            logger.debug(f"Stored approval token mapping: {approval_token[:8]}... → {job_id}")
 
         except Exception as e:
-            logger.error(
-                f"Failed to store approval token mapping: {str(e)}",
-                exc_info=True
-            )
+            logger.error(f"Failed to store approval token mapping: {str(e)}", exc_info=True)
             raise Exception(f"Failed to store token mapping: {str(e)}")
 
     async def get_job_by_approval_token(self, token: str) -> dict[str, Any] | None:
@@ -522,14 +476,11 @@ class JobService:
 
             # Decode if bytes
             if isinstance(job_id, bytes):
-                job_id = job_id.decode('utf-8')
+                job_id = job_id.decode("utf-8")
 
             # Fetch full job data
             return await self.get_job(job_id)
 
         except Exception as e:
-            logger.error(
-                f"Error fetching job by token: {str(e)}",
-                exc_info=True
-            )
+            logger.error(f"Error fetching job by token: {str(e)}", exc_info=True)
             return None

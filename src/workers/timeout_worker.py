@@ -58,22 +58,14 @@ class TimeoutWorker:
         # Derived services
         self.cleanup_service = CleanupService(storage_service)
 
-        self.timeout_service = TimeoutService(
-            queue_service,
-            job_service,
-            self.cleanup_service,
-            metrics_service
-        )
+        self.timeout_service = TimeoutService(queue_service, job_service, self.cleanup_service, metrics_service)
 
-        self.orphan_service = OrphanService(
-            job_service,
-            self.s3_cleanup_service,
-            metrics_service
-        )
+        self.orphan_service = OrphanService(job_service, self.s3_cleanup_service, metrics_service)
 
         # Task scheduling state
         self.last_approval_check: datetime | None = None
         self.last_temp_cleanup: datetime | None = None
+        self.last_debug_cleanup: datetime | None = None
         self.last_orphan_cleanup: datetime | None = None
         self.last_metrics_cleanup: datetime | None = None
 
@@ -98,34 +90,27 @@ class TimeoutWorker:
                     current_time = datetime.now(UTC)
 
                     # Task 1: Approval timeout monitoring (every 30 seconds)
-                    if self._should_run_task(
-                        self.last_approval_check,
-                        settings.approval_check_interval_seconds
-                    ):
+                    if self._should_run_task(self.last_approval_check, settings.approval_check_interval_seconds):
                         await self._run_approval_check()
                         self.last_approval_check = current_time
 
                     # Task 2: S3 temp file cleanup (every hour)
-                    if self._should_run_task(
-                        self.last_temp_cleanup,
-                        settings.temp_cleanup_interval_hours * 3600
-                    ):
+                    if self._should_run_task(self.last_temp_cleanup, settings.temp_cleanup_interval_hours * 3600):
                         await self._run_temp_cleanup()
                         self.last_temp_cleanup = current_time
 
-                    # Task 3: Orphaned job cleanup (every 4 hours)
-                    if self._should_run_task(
-                        self.last_orphan_cleanup,
-                        settings.orphan_cleanup_interval_hours * 3600
-                    ):
+                    # Task 3: Debug artifact cleanup (every hour, same as temp cleanup)
+                    if self._should_run_task(self.last_debug_cleanup, settings.temp_cleanup_interval_hours * 3600):
+                        await self._run_debug_cleanup()
+                        self.last_debug_cleanup = current_time
+
+                    # Task 4: Orphaned job cleanup (every 4 hours)
+                    if self._should_run_task(self.last_orphan_cleanup, settings.orphan_cleanup_interval_hours * 3600):
                         await self._run_orphan_cleanup()
                         self.last_orphan_cleanup = current_time
 
-                    # Task 4: Metrics cleanup (daily)
-                    if self._should_run_task(
-                        self.last_metrics_cleanup,
-                        settings.metrics_cleanup_interval_hours * 3600
-                    ):
+                    # Task 5: Metrics cleanup (daily)
+                    if self._should_run_task(self.last_metrics_cleanup, settings.metrics_cleanup_interval_hours * 3600):
                         await self._run_metrics_cleanup()
                         self.last_metrics_cleanup = current_time
 
@@ -135,9 +120,7 @@ class TimeoutWorker:
                 except Exception as e:
                     logger.error(f"Error in timeout worker loop: {e}", exc_info=True)
                     # Track error
-                    worker_errors_total.labels(
-                        worker_name="timeout", error_type=type(e).__name__
-                    ).inc()
+                    worker_errors_total.labels(worker_name="timeout", error_type=type(e).__name__).inc()
                     # Sleep longer on error to avoid rapid error loops
                     await asyncio.sleep(settings.timeout_worker_error_sleep_seconds)
 
@@ -150,11 +133,7 @@ class TimeoutWorker:
             worker_active_gauge.labels(worker_name="timeout").set(0)
             logger.info("Timeout worker shutting down gracefully")
 
-    def _should_run_task(
-        self,
-        last_run: datetime | None,
-        interval_seconds: int
-    ) -> bool:
+    def _should_run_task(self, last_run: datetime | None, interval_seconds: int) -> bool:
         """Check if enough time has elapsed to run a scheduled task.
 
         Args:
@@ -200,6 +179,21 @@ class TimeoutWorker:
             logger.error(f"Error in temp file cleanup: {e}", exc_info=True)
             await self.metrics_service.increment_metric("worker_task_errors", 1)
 
+    async def _run_debug_cleanup(self) -> None:
+        """Run debug artifact cleanup task."""
+        try:
+            logger.info("Running debug artifact cleanup...")
+            result = await self.s3_cleanup_service.cleanup_expired_debug_artifacts()
+
+            logger.info(
+                f"Debug cleanup complete: {result['files_deleted']} files deleted, "
+                f"{result['bytes_freed']} bytes freed, {result['errors']} errors"
+            )
+
+        except Exception as e:
+            logger.error(f"Error in debug artifact cleanup: {e}", exc_info=True)
+            await self.metrics_service.increment_metric("worker_task_errors", 1)
+
     async def _run_orphan_cleanup(self) -> None:
         """Run orphaned job cleanup tasks."""
         try:
@@ -208,15 +202,13 @@ class TimeoutWorker:
             # Task 1: Cleanup old completed/failed jobs
             old_jobs_result = await self.orphan_service.cleanup_old_completed_jobs()
             logger.info(
-                f"Old jobs cleanup: {old_jobs_result['jobs_cleaned']} cleaned, "
-                f"{old_jobs_result['errors']} errors"
+                f"Old jobs cleanup: {old_jobs_result['jobs_cleaned']} cleaned, {old_jobs_result['errors']} errors"
             )
 
             # Task 2: Detect and fail stuck processing jobs
             stuck_jobs_result = await self.orphan_service.cleanup_stuck_processing_jobs()
             logger.info(
-                f"Stuck jobs detection: {stuck_jobs_result['jobs_failed']} failed, "
-                f"{stuck_jobs_result['errors']} errors"
+                f"Stuck jobs detection: {stuck_jobs_result['jobs_failed']} failed, {stuck_jobs_result['errors']} errors"
             )
 
         except Exception as e:

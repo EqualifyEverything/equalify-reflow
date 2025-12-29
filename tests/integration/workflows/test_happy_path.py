@@ -108,15 +108,22 @@ class TestHappyPathWorkflow:
         await processing_worker.processing_service.process_document(processing_job)
 
         # 7. Verify final state
+        # PRD-027: New workflow routes to needs_review before completion
+        # The review checklist must be approved via API before reaching completed
         final_job = await job_service.get_job(job_id)
-        assert final_job["status"] == STATUS_COMPLETED, "Job should be completed"
+        assert final_job["status"] in [STATUS_COMPLETED, "needs_review"], \
+            f"Job should be completed or needs_review, got {final_job['status']}"
         assert "confidence_score" in final_job, "Should have confidence score"
         assert float(final_job["confidence_score"]) > 0, "Confidence score should be positive"
 
         # 8. Verify result stored in S3
         # The processing service should have uploaded the result
-        # We verify the job has the expected completion markers
+        # For needs_review status, processing_result_key points to the JSON result
+        # For completed status, markdown_url points to the markdown file
         assert final_job["updated_at"] is not None, "Should have updated_at timestamp"
+        if final_job["status"] == "needs_review":
+            assert "processing_result_key" in final_job, \
+                "needs_review jobs should have processing_result_key"
 
     @pytest.mark.asyncio
     async def test_workflow_handles_empty_queues_gracefully(

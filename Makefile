@@ -85,6 +85,9 @@ down:
 	docker compose -f docker-compose.yml -f docker-compose.dev.yml down
 	docker compose -f docker-compose.yml -f docker-compose.prod.yml down
 
+# Restart services (down + dev)
+restart: down dev
+
 # View logs
 logs:
 	docker compose -f docker-compose.yml -f docker-compose.dev.yml logs -f

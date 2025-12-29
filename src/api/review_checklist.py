@@ -524,11 +524,12 @@ async def apply_reviews(
     # Upload final markdown to S3
     markdown_key = await storage.upload_final_markdown(job_id, markdown)
 
-    # Update job status
+    # Update job status with markdown URL
     await job_service.update_job_status(
         job_id,
         status="completed",
         substatus="reviews_applied",
+        markdown_url=markdown_key,
     )
 
     logger.info(

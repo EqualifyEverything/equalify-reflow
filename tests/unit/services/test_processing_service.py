@@ -59,9 +59,13 @@ def mock_storage_service_extended():
     """
     mock = MagicMock()
     mock.download_temp_file = AsyncMock(return_value=b"fake_pdf_content")
-    mock.upload_result = AsyncMock(
-        return_value="s3://equalify-results/550e8400.../v20250101_120000/output.md"
-    )
+    mock.upload_result = AsyncMock(return_value="s3://equalify-results/550e8400.../v20250101_120000/output.md")
+    # PRD-027: save_processing_result for new review checklist workflow
+    mock.save_processing_result = AsyncMock(return_value="processing-results/550e8400.../result.json")
+    # upload_page_image for review checklist with page thumbnails
+    mock.upload_page_image = AsyncMock(return_value="s3://equalify-results/550e8400.../pages/page_1.png")
+    # upload_final_markdown for completed processing
+    mock.upload_final_markdown = AsyncMock(return_value="jobs/550e8400.../final.md")
     return mock
 
 
@@ -174,24 +178,25 @@ async def test_process_document_happy_path(
     sample_pdf_conversion_result_no_markdown,
 ):
     """Test successful end-to-end document processing with analysis + extraction."""
-    mock_pdf_converter.convert_with_page_images.return_value = (
-        sample_pdf_conversion_result_no_markdown
-    )
+    mock_pdf_converter.convert_with_page_images.return_value = sample_pdf_conversion_result_no_markdown
 
     mock_extraction_result = make_extraction_result(
         markdown="# Test Document\n\nContent here.",
         confidence=0.88,
     )
 
-    with patch(
-        "src.services.processing_service.analyze_document",
-        new_callable=AsyncMock,
-        return_value=(mock_analysis_manifest, [], mock_analysis_usage),
-    ) as mock_analyze_document, patch(
-        "src.services.processing_service.extract_with_validation",
-        new_callable=AsyncMock,
-        return_value=(mock_extraction_result, mock_llm_usage),
-    ) as mock_extract:
+    with (
+        patch(
+            "src.services.processing_service.analyze_document",
+            new_callable=AsyncMock,
+            return_value=(mock_analysis_manifest, [], mock_analysis_usage),
+        ) as mock_analyze_document,
+        patch(
+            "src.services.processing_service.extract_with_validation",
+            new_callable=AsyncMock,
+            return_value=(mock_extraction_result, mock_llm_usage),
+        ) as mock_extract,
+    ):
         service = ProcessingService(
             storage_service=mock_storage_service_extended,
             queue_service=mock_queue_service,
@@ -213,8 +218,10 @@ async def test_process_document_happy_path(
     mock_pdf_converter.convert_with_page_images.assert_called_once()
     mock_analyze_document.assert_called_once()  # Analysis phase
     mock_extract.assert_called_once()  # Extraction phase
-    # Should upload both v0 and final markdown
-    assert mock_storage_service_extended.upload_result.call_count >= 2
+    # Should upload v0 markdown (original extraction)
+    mock_storage_service_extended.upload_result.assert_called()
+    # PRD-027: New flow saves ProcessingResult via save_processing_result
+    mock_storage_service_extended.save_processing_result.assert_called_once()
 
 
 @pytest.mark.asyncio
@@ -237,23 +244,24 @@ async def test_process_document_confidence_from_assembly(
     - agents: 30%
     - review_penalty: 10%
     """
-    mock_pdf_converter.convert_with_page_images.return_value = (
-        sample_pdf_conversion_result_no_markdown
-    )
+    mock_pdf_converter.convert_with_page_images.return_value = sample_pdf_conversion_result_no_markdown
 
     mock_extraction_result = make_extraction_result(
         markdown="# Test",
         confidence=0.85,
     )
 
-    with patch(
-        "src.services.processing_service.analyze_document",
-        new_callable=AsyncMock,
-        return_value=(mock_analysis_manifest, [], mock_analysis_usage),
-    ), patch(
-        "src.services.processing_service.extract_with_validation",
-        new_callable=AsyncMock,
-        return_value=(mock_extraction_result, mock_llm_usage),
+    with (
+        patch(
+            "src.services.processing_service.analyze_document",
+            new_callable=AsyncMock,
+            return_value=(mock_analysis_manifest, [], mock_analysis_usage),
+        ),
+        patch(
+            "src.services.processing_service.extract_with_validation",
+            new_callable=AsyncMock,
+            return_value=(mock_extraction_result, mock_llm_usage),
+        ),
     ):
         service = ProcessingService(
             storage_service=mock_storage_service_extended,
@@ -284,9 +292,7 @@ async def test_process_document_handles_generic_exception(
     mock_pdf_converter,
 ):
     """Test generic exceptions are caught and return failed result."""
-    mock_pdf_converter.convert_with_page_images.side_effect = RuntimeError(
-        "Docling internal error"
-    )
+    mock_pdf_converter.convert_with_page_images.side_effect = RuntimeError("Docling internal error")
 
     service = ProcessingService(
         storage_service=mock_storage_service,
@@ -347,18 +353,19 @@ async def test_process_document_handles_extraction_error(
     sample_pdf_conversion_result_no_markdown,
 ):
     """Test handling when extraction fails."""
-    mock_pdf_converter.convert_with_page_images.return_value = (
-        sample_pdf_conversion_result_no_markdown
-    )
+    mock_pdf_converter.convert_with_page_images.return_value = sample_pdf_conversion_result_no_markdown
 
-    with patch(
-        "src.services.processing_service.analyze_document",
-        new_callable=AsyncMock,
-        return_value=(mock_analysis_manifest, [], mock_analysis_usage),
-    ), patch(
-        "src.services.processing_service.extract_with_validation",
-        new_callable=AsyncMock,
-        side_effect=ValueError("No pages provided for extraction"),
+    with (
+        patch(
+            "src.services.processing_service.analyze_document",
+            new_callable=AsyncMock,
+            return_value=(mock_analysis_manifest, [], mock_analysis_usage),
+        ),
+        patch(
+            "src.services.processing_service.extract_with_validation",
+            new_callable=AsyncMock,
+            side_effect=ValueError("No pages provided for extraction"),
+        ),
     ):
         service = ProcessingService(
             storage_service=mock_storage_service_extended,
@@ -416,9 +423,7 @@ async def test_process_document_s3_upload_failure(
     sample_pdf_conversion_result_no_markdown,
 ):
     """Test handling of S3 upload failures."""
-    mock_pdf_converter.convert_with_page_images.return_value = (
-        sample_pdf_conversion_result_no_markdown
-    )
+    mock_pdf_converter.convert_with_page_images.return_value = sample_pdf_conversion_result_no_markdown
     mock_storage_service.upload_result.side_effect = Exception("S3 bucket full")
 
     mock_extraction_result = make_extraction_result(
@@ -426,14 +431,17 @@ async def test_process_document_s3_upload_failure(
         confidence=0.9,
     )
 
-    with patch(
-        "src.services.processing_service.analyze_document",
-        new_callable=AsyncMock,
-        return_value=(mock_analysis_manifest, [], mock_analysis_usage),
-    ), patch(
-        "src.services.processing_service.extract_with_validation",
-        new_callable=AsyncMock,
-        return_value=(mock_extraction_result, mock_llm_usage),
+    with (
+        patch(
+            "src.services.processing_service.analyze_document",
+            new_callable=AsyncMock,
+            return_value=(mock_analysis_manifest, [], mock_analysis_usage),
+        ),
+        patch(
+            "src.services.processing_service.extract_with_validation",
+            new_callable=AsyncMock,
+            return_value=(mock_extraction_result, mock_llm_usage),
+        ),
     ):
         service = ProcessingService(
             storage_service=mock_storage_service,

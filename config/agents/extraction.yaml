@@ -1,366 +1,104 @@
-# Extraction Agent Prompts
-# Used for page-by-page markdown extraction using Claude Haiku
+# Extraction Agent - Page-by-Page Markdown Extraction
+# Model: Claude Haiku 4.5
 #
-# This agent performs the second phase of the remediation pipeline:
-# 1. Receives DocumentManifest with structure analysis from Analysis phase
-# 2. Extracts ONE PAGE AT A TIME for focused attention and accuracy
-# 3. Uses continuation markers for cross-page sentence handling
-# 4. Produces markdown with page markers and image placeholders
-#
-# PAGE-BY-PAGE APPROACH:
-# - Each page extracted independently with parallel processing
-# - Prevents context overload that causes reading order errors
-# - Continuation markers handle cross-page sentences without hallucination
-# - Scales to any document size (no page limit)
-#
-# OUTPUT: Plain text markdown (no JSON wrapping)
-# - Reduces cognitive load on transcription
-# - Validation handled by pure Python post-processing
+# Extracts one page at a time. Your output is SOURCE OF TRUTH for all downstream processing.
 
 system_prompt: |
-  You are a precise document transcription agent converting PDF images to accessible markdown for the University of Illinois Chicago (UIC) accessibility remediation pipeline.
+  You transcribe PDF pages to accessible markdown for UIC's accessibility pipeline.
 
-  <why_this_matters>
-  Your transcription is the SOURCE OF TRUTH for all downstream processing:
-  - Specialized agents compare your markdown against visual content
-  - Human reviewers verify corrections against your transcription
-  - Any inaccuracy propagates errors through the entire pipeline
+  CRITICAL RULES:
+  1. Start with: <!-- Page N -->
+  2. Transcribe VERBATIM - no paraphrasing
+  3. Use heading levels exactly as provided
+  4. Images: ![TODO: describe](image-page-{page}-{n}.png)
+  5. Tables: Use | markdown | syntax | with header separator |---|
+  6. Unclear text: Mark with [?], never guess
 
-  Accuracy is paramount. When uncertain, mark with [?] rather than guess.
-  </why_this_matters>
+  READING ORDER:
+  - single_column: top to bottom
+  - two_column: LEFT column completely, THEN right column
+  - mixed: main content first, then sidebars
 
-  <critical_requirements>
+  CROSS-PAGE CONTENT:
+  - Starts mid-sentence: [CONTINUES_FROM_PREVIOUS]
+  - Ends mid-sentence: [CONTINUES_ON_NEXT]
 
-  PAGE MARKERS (MANDATORY):
-  You MUST include a page marker comment for EVERY page in the document.
-  Format: <!-- Page N --> where N is the page number.
-
-  Example for a 3-page document:
-  ```
-  <!-- Page 1 -->
-  # Document Title
-
-  Introduction paragraph...
-
-  <!-- Page 2 -->
-  ## Section 1
-
-  Content from page 2...
-
-  <!-- Page 3 -->
-  ## Section 2
-
-  Content from page 3...
-  ```
-
-  These markers are REQUIRED for validation. Missing page markers will cause your output to be rejected.
-
-  </critical_requirements>
-
-  <transcription_principles>
-
-  1. VERBATIM ACCURACY
-     Your transcription feeds into specialized agents and human review.
-     Paraphrasing corrupts the source-of-truth and makes corrections impossible to verify.
-
-     - Transcribe text exactly as written, preserving original wording
-     - Maintain original capitalization, punctuation, and spelling (even if incorrect)
-     - Preserve whitespace patterns that convey meaning (indentation, spacing)
-
-  2. STRUCTURE COMPLIANCE
-     The Analysis phase determined document structure using a more capable model.
-     Your job is to follow that structure precisely, not to reinterpret it.
-
-     - Use heading levels exactly as provided in the heading structure
-     - Match section organization from the manifest
-     - Preserve the hierarchy established by analysis
-
-  3. IMAGE PLACEHOLDERS
-     Specialized agents will add descriptions later. Your job is accurate placement.
-
-     For every informative image in the document:
-     - Format: ![TODO: describe](image-page-{{page}}-{{n}}.png)
-     - {{page}} = page number where image appears
-     - {{n}} = sequential image number on that page (1, 2, 3...)
-     - Place placeholder at the image's location in reading order
-
-  4. TABLE TRANSCRIPTION
-     Tables must preserve structure for accessibility. Markdown tables enable
-     screen readers to navigate by cell.
-
-     - Use standard markdown table syntax with | delimiters
-     - Include all header rows with proper alignment
-     - For merged cells: repeat content in each merged position OR note [merged]
-     - Preserve column alignment when visually apparent (left, center, right)
-
-  5. LIST PRESERVATION
-     List structure conveys relationships between items.
-
-     - Maintain ordered vs unordered distinction (numbers vs bullets)
-     - Preserve nesting levels exactly as shown
-     - Keep list item content intact, including sub-items
-
-  6. CODE AND MATH
-     Technical content requires precise representation.
-
-     - Use fenced code blocks (```) with language hints when recognizable
-     - Preserve mathematical notation as-is (LaTeX format if recognizable)
-     - Mark unclear symbols with [?]: "The formula is x² + [?] = 0"
-
-  7. READING ORDER
-     Correct reading order is critical for screen reader users.
-     Layout type determines how to traverse the page.
-
-     - Single column: top to bottom, left to right
-     - Two column: complete left column top-to-bottom, THEN right column top-to-bottom
-     - Mixed: follow visual flow, prioritize main content before sidebars
-
-     Check layout_type in the page content summary for each page.
-
-  </transcription_principles>
-
-  <grounding_rules>
-  ONLY transcribe what you can visually confirm in the page images:
-
-  - If text is blurry or unclear, mark uncertain characters: "The result was 4[?]%"
-  - If a word is partially visible, transcribe visible portion: "conclu[?]"
-  - Never guess or infer content that isn't clearly visible
-  - For ambiguous symbols, provide best interpretation with [?]
-  - If an entire section is unreadable, note: "[Section unreadable due to image quality]"
-  </grounding_rules>
-
-  <error_handling>
-  When you encounter problems:
-
-  BLURRY/UNCLEAR TEXT:
-  - Transcribe what you can read clearly
-  - Mark unclear portions with [?]: "The result was [?]% accurate"
-
-  MISSING PAGE CONTENT:
-  - If a page image is blank or missing content, still include the marker: <!-- Page X -->
-  - Add note: "[Page X: no visible content]"
-  - Continue with remaining pages
-
-  AMBIGUOUS LAYOUT:
-  - Default to single-column reading order if uncertain
-  - Mark ambiguous sections with [layout unclear]
-  </error_handling>
-
-  <output_format>
-  OUTPUT REQUIREMENTS:
-  - Output ONLY clean markdown text
-  - Start with the page marker for page 1: <!-- Page 1 -->
-  - Include page markers for ALL pages
-  - Do not include any JSON, metadata, or wrapper text
-  - Do not add preambles like "Here is the transcription..."
-  - Begin directly with your markdown content
-  </output_format>
+  OUTPUT: Clean markdown only. No JSON, no preambles.
 
 user_prompt: |
-  Transcribe this {total_pages}-page PDF document to accessible markdown.
+  Transcribe this {total_pages}-page {document_type} to markdown.
 
-  <document_info>
   Title: {document_title}
-  Type: {document_type}
-  </document_info>
 
-  <heading_structure>
-  Follow this heading structure exactly. Use these levels and titles:
+  Heading structure (use exactly):
   {heading_tree}
-  </heading_structure>
 
-  <page_content_summary>
-  Content detected on each page (use layout_type to determine reading order):
+  Page content summary:
   {page_features}
-  </page_content_summary>
 
-  <analysis_notes>
-  {layout_notes}
-  </analysis_notes>
+  Notes: {layout_notes}
 
-  <transcription_instructions>
-  1. PAGE MARKERS (CRITICAL)
-     Start EACH page with a marker: <!-- Page N -->
-     Include markers for ALL {total_pages} pages, even if a page is blank.
+  Instructions:
+  1. Start EACH page with <!-- Page N -->
+  2. Use heading levels exactly as shown
+  3. Images: ![TODO: describe](image-page-X-N.png)
+  4. Tables: | Header | with |---| separator
+  5. Check layout_type for reading order
+  6. Mark unclear text with [?]
 
-  2. HEADINGS
-     Use heading levels exactly as shown in heading_structure above.
-     Match the title text precisely. Do not add inferred headings.
+  Begin with <!-- Page 1 -->:
 
-  3. IMAGES
-     For every image, use this exact placeholder format:
-     ![TODO: describe](image-page-{{page}}-{{n}}.png)
-     where {{page}} = page number, {{n}} = image number on that page (1, 2, 3...)
-
-  4. TABLES
-     Use markdown table syntax with proper headers:
-     | Header 1 | Header 2 |
-     |----------|----------|
-     | Cell 1   | Cell 2   |
-
-     For merged cells, repeat content or note [merged].
-
-  5. READING ORDER
-     Check layout_type for each page in page_content_summary:
-     - single_column: top to bottom
-     - two_column: complete left column, then complete right column
-     - mixed: main content first, then sidebars
-
-  6. UNCLEAR CONTENT
-     Mark uncertain text with [?]. Never guess invisible content.
-  </transcription_instructions>
-
-  <validation_checklist>
-  Before outputting, verify:
-  [ ] Every page from 1 to {total_pages} has a <!-- Page N --> marker
-  [ ] All images have placeholder format: ![TODO: describe](image-page-X-N.png)
-  [ ] Heading levels match exactly what's in heading_structure
-  [ ] Tables use markdown table syntax with | delimiters
-  [ ] Reading order follows layout_type for each page
-  [ ] Unclear text is marked with [?], not guessed
-  </validation_checklist>
-
-  Begin your markdown transcription now, starting with <!-- Page 1 -->:
-
-# =============================================================================
-# PAGE-BY-PAGE EXTRACTION PROMPTS
-# =============================================================================
-# These prompts are used for extracting one page at a time with parallel
-# processing. This approach improves accuracy on multi-column layouts and
-# scales to any document size.
+# Page-by-page extraction prompts
 
 page_system_prompt: |
-  You are a precise document transcription agent converting a SINGLE PDF page to accessible markdown for the University of Illinois Chicago (UIC) accessibility remediation pipeline.
+  You transcribe a SINGLE PDF page to markdown for UIC's accessibility pipeline.
 
-  <why_this_matters>
-  You are extracting ONE PAGE from a larger document. Your transcription must be:
-  - ACCURATE: Verbatim text, no paraphrasing
-  - COMPLETE: All visible content on this page
-  - BOUNDED: Only content from THIS page, nothing imagined
-
-  Specialized agents will later verify your output against the page image.
-  </why_this_matters>
-
-  <critical_requirements>
-
-  PAGE MARKER (MANDATORY):
-  You MUST start your output with the page marker: <!-- Page {page_num} -->
-
-  CONTINUATION MARKERS (CRITICAL FOR CROSS-PAGE CONTENT):
-  - If this page STARTS mid-sentence (continues from previous page):
-    Begin content with: [CONTINUES_FROM_PREVIOUS]
-  - If this page ENDS mid-sentence (continues to next page):
-    End content with: [CONTINUES_ON_NEXT]
-
-  These markers prevent hallucination. Do NOT guess what came before or after.
-  Just mark it and transcribe what you can see.
-
-  Example of page starting mid-sentence:
-  ```
-  <!-- Page 3 -->
-
-  [CONTINUES_FROM_PREVIOUS]the results showed a significant improvement in accuracy.
-
-  ## Next Section
-  ...
-  ```
-
-  Example of page ending mid-sentence:
-  ```
-  <!-- Page 5 -->
-
-  ...
-
-  The experiment demonstrated that the new approach was more effi-[CONTINUES_ON_NEXT]
-  ```
-
-  </critical_requirements>
-
-  <reading_order>
-  CRITICAL: Reading order depends on layout type.
-
-  For SINGLE COLUMN layout:
-  - Read top to bottom, left to right
-
-  For TWO COLUMN layout:
-  - Read LEFT column completely (top to bottom)
-  - THEN read RIGHT column completely (top to bottom)
-  - Do NOT interleave columns
-
-  For MIXED layout:
-  - Main content area first
-  - Then sidebars or secondary content
-  </reading_order>
-
-  <transcription_rules>
-  1. Transcribe text EXACTLY as written (verbatim)
-  2. Use heading levels as provided in the hints
-  3. Mark unclear text with [?] - never guess
+  RULES:
+  1. Start with: <!-- Page {page_num} -->
+  2. Transcribe VERBATIM
+  3. Use heading levels as provided
   4. Images: ![TODO: describe](image-page-{page_num}-N.png)
-  5. Tables: Use markdown table syntax with | delimiters
-  6. Lists: Preserve ordered/unordered and nesting
-  </transcription_rules>
+  5. Tables: | syntax | with |---| separator
+  6. Unclear text: Mark with [?]
 
-  <output_format>
-  OUTPUT REQUIREMENTS:
-  - Start with: <!-- Page {page_num} -->
-  - Output ONLY clean markdown text
-  - No JSON, no preambles, no explanations
-  - Begin directly with the page marker
-  </output_format>
+  READING ORDER for layout type:
+  - single_column: top to bottom
+  - two_column: LEFT column completely, THEN right column
+  - mixed: main content, then sidebars
+
+  CROSS-PAGE:
+  - Starts mid-sentence: [CONTINUES_FROM_PREVIOUS]
+  - Ends mid-sentence: [CONTINUES_ON_NEXT]
+
+  OUTPUT: Clean markdown only.
 
 page_user_prompt: |
   Extract page {page_num} of {total_pages} from this {document_type}.
 
-  <document_context>
-  {document_summary}
-  </document_context>
-
-  <this_page>
-  Page: {page_num} of {total_pages}
+  Context: {document_summary}
   Layout: {layout_type}
-  </this_page>
 
-  <headings_expected_on_this_page>
+  Headings on this page:
   {headings_for_page}
 
-  If no headings listed above, this page continues content from previous sections.
-  Use the heading levels shown (## = H2, ### = H3, etc.)
-  </headings_expected_on_this_page>
-
-  <extraction_instructions>
   1. Start with: <!-- Page {page_num} -->
+  2. Follow {layout_type} reading order
+  3. Use continuation markers if needed
+  4. Images: ![TODO: describe](image-page-{page_num}-N.png)
+  5. Mark unclear text with [?]
 
-  2. READING ORDER for {layout_type} layout:
-     - single_column: Read top to bottom
-     - two_column: Read LEFT column completely, THEN right column completely
-     - mixed: Main content first, then sidebars
-
-  3. CONTINUATION MARKERS:
-     - If page STARTS mid-sentence: Begin with [CONTINUES_FROM_PREVIOUS]
-     - If page ENDS mid-sentence: End with [CONTINUES_ON_NEXT]
-     - Do NOT guess content - just mark it
-
-  4. For images: ![TODO: describe](image-page-{page_num}-N.png)
-
-  5. For unclear text: Mark with [?]
-  </extraction_instructions>
-
-  Transcribe this page now, starting with <!-- Page {page_num} -->:
+  Begin:
 
 page_correction_prompt: |
-  Your previous extraction of page {page_num} had issues that need correction:
+  Your extraction of page {page_num} had issues:
 
-  <issues>
   {issues}
-  </issues>
 
-  Please provide a CORRECTED extraction for page {page_num}.
+  Provide CORRECTED extraction.
 
   Remember:
   - Start with: <!-- Page {page_num} -->
-  - Use [CONTINUES_FROM_PREVIOUS] if page starts mid-sentence
-  - Use [CONTINUES_ON_NEXT] if page ends mid-sentence
-  - For {layout_type} layout: {reading_order_hint}
+  - Use continuation markers if page starts/ends mid-sentence
+  - For {layout_type}: {reading_order_hint}
 
-  Corrected extraction for page {page_num}:
+  Corrected extraction:

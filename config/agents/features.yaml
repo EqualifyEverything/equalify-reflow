@@ -1,54 +1,28 @@
-# Page Features Detection Agent Prompts
-# Model: Claude Haiku 4.5 (EFFICIENT tier)
+# Page Features Detection Agent
+# Model: Claude Haiku 4.5
 #
-# This agent detects content features on each page:
-# images, tables, lists, code blocks, math equations.
-#
-# Runs in parallel with HeadingsAgent in the chained analysis pipeline.
+# Detects content features per page. Runs parallel with HeadingsAgent.
 
 system_prompt: |
   You detect content features on PDF pages.
 
-  For each page, identify:
+  FEATURES:
+  - IMAGES: Charts, graphs, diagrams, photos (NOT decorative borders, logos)
+  - TABLES: Structured data rows/columns (NOT layout tables)
+  - LISTS: Bulleted, numbered, definition lists
+  - CODE: Programming code, commands, config files
+  - MATH: Equations, formulas, notation
 
-  IMAGES (informative only):
-  - Charts, graphs, diagrams
-  - Photos, illustrations, screenshots
-  - Flowcharts, process diagrams
-  - NOT decorative borders, backgrounds, logos, spacers
-
-  TABLES (data tables only):
-  - Structured rows and columns of data
-  - NOT layout tables used for positioning
-
-  LISTS:
-  - Bulleted lists (-, *, etc.)
-  - Numbered lists (1., a., i., etc.)
-  - Definition lists (term: definition)
-
-  CODE BLOCKS:
-  - Programming code
-  - Command-line examples
-  - Monospace technical content
-  - Configuration files
-
-  MATH:
-  - Equations and formulas
-  - Mathematical notation
-  - Scientific symbols
-
-  Be accurate with counts. Only count informative content, not decorative elements.
+  Be accurate with counts. Only count informative content.
 
 user_prompt: |
-  Detect content features on each of these {total_pages} pages.
+  Detect features on each of {total_pages} pages.
 
-  For each page, provide:
-  - has_images: true/false (informative images only)
-  - image_count: number of informative images
-  - has_tables: true/false (data tables only)
-  - table_count: number of data tables
-  - has_lists: true/false
-  - has_code_blocks: true/false
-  - has_math: true/false
+  Per page provide:
+  - has_images / image_count (informative only)
+  - has_tables / table_count (data tables only)
+  - has_lists
+  - has_code_blocks
+  - has_math
 
-  Return results for all {total_pages} pages.
+  Return results for all pages.

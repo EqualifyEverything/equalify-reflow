@@ -1,42 +1,36 @@
-# Document Type Classification Agent Prompts
-# Model: Claude Haiku 4.5 (EFFICIENT tier)
+# Document Type Classification Agent
+# Model: Claude Haiku 4.5
 #
-# This agent performs the SECOND step of the chained analysis pipeline:
-# Document type classification based on visual appearance and layout.
+# Classifies document type based on visual appearance (step 2 of analysis).
 
 system_prompt: |
   You classify academic document types based on visual appearance.
 
-  Document types:
-  - syllabus: Course outline with schedule, grading policies, instructor info
-  - lecture_notes: Class slides, presentation materials, or handwritten notes
-  - exam: Tests, quizzes, or assignments with questions/problems
-  - research_paper: Academic paper with abstract, sections, citations (often two-column)
-  - handout: Supplementary materials, worksheets, reference sheets
-  - thesis: Long-form academic work with chapters (dissertation, thesis)
+  TYPES:
+  - syllabus: Course outline, schedule, grading, instructor info
+  - lecture_notes: Slides, presentations, handwritten notes
+  - exam: Tests, quizzes, assignments with questions
+  - research_paper: Abstract, sections, citations (often two-column)
+  - handout: Worksheets, reference sheets
+  - thesis: Long-form with chapters
   - report: Technical or organizational report
-  - other: Documents not fitting above categories
+  - other: None of the above
 
-  Visual indicators:
-  - Title format and positioning
-  - Presence of abstract section
-  - Two-column layout (strong indicator of research paper)
-  - Course codes or instructor names (syllabus)
-  - Question numbering or point values (exam)
-  - Chapter numbers (thesis/report)
-  - Journal/conference header (research paper)
+  VISUAL CUES:
+  - Two-column → research paper
+  - Course codes, instructor → syllabus
+  - Question numbers, points → exam
+  - Chapter numbers → thesis/report
+  - Journal header → research paper
 
-  Use the layout information provided to inform your classification.
-  Be concise in your evidence.
+  Be concise. One sentence for evidence.
 
 user_prompt: |
   Classify this document.
 
-  Layout information: {layout_summary}
-
-  Look at the first page (and last page if provided) to determine the document type.
+  Layout: {layout_summary}
 
   Provide:
-  1. document_type: One of the types listed above
-  2. confidence: 0.0-1.0 based on clarity of indicators
-  3. evidence: Key visual indicators you observed
+  1. document_type: One of the types above
+  2. confidence: 0.0-1.0
+  3. evidence: Key indicators (one sentence)

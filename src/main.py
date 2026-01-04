@@ -147,11 +147,19 @@ app.include_router(corrections.router)
 app.include_router(review.router)
 app.include_router(review_checklist.router)
 
-# Conditionally import dev monitoring endpoints (only in development)
+# Conditionally import dev-only endpoints (only in development)
 if settings.environment == "dev":
-    from .api import dev_monitoring
+    from .api import dev_monitoring, experiments, experiments_v2, experiments_v3, v5
     app.include_router(dev_monitoring.router)
+    app.include_router(experiments.router)
+    app.include_router(experiments_v2.router)
+    app.include_router(experiments_v3.router)
+    app.include_router(v5.router)
     logger.info("✅ Dev monitoring endpoints enabled at /api/dev/monitoring/queues")
+    logger.info("✅ Experimental endpoints enabled at /api/experiments")
+    logger.info("✅ Pipeline experiments enabled at /api/experiments/v2")
+    logger.info("✅ V3 pipeline enabled at /api/experiments/v3")
+    logger.info("✅ V5 pipeline enabled at /api/v5")
 
 
 def custom_openapi() -> dict[str, object]:
@@ -220,3 +228,26 @@ if _demo_ui_path.exists():
 
     app.mount("/demo", StaticFiles(directory=_demo_ui_path, html=True), name="demo-ui")
     logger.info("✅ Demo UI mounted at /demo")
+
+
+# Mount V5 Pipeline Viewer (standalone viewer app)
+_viewer_path = Path(__file__).parent.parent / "static" / "v5-viewer"
+if _viewer_path.exists():
+    from fastapi.responses import FileResponse
+
+    @app.get("/viewer/{full_path:path}")
+    async def serve_viewer_spa(full_path: str) -> FileResponse:
+        """Serve index.html for V5 Viewer routes (SPA fallback)."""
+        if "." in full_path.split("/")[-1]:
+            file_path = _viewer_path / full_path
+            if file_path.exists():
+                return FileResponse(file_path)
+        return FileResponse(_viewer_path / "index.html")
+
+    @app.get("/viewer")
+    async def serve_viewer_root() -> FileResponse:
+        """Serve V5 Viewer root."""
+        return FileResponse(_viewer_path / "index.html")
+
+    app.mount("/viewer", StaticFiles(directory=_viewer_path, html=True), name="v5-viewer")
+    logger.info("✅ V5 Pipeline Viewer mounted at /viewer")

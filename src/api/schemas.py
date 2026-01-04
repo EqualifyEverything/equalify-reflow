@@ -313,3 +313,120 @@ class ProcessingPhasesResponse(BaseModel):
     verification: VerificationPhase | None = Field(default=None, description="Phase 5: Final verification")
 
     total_llm_cost: LLMCostInfo | None = None
+
+
+# =============================================================================
+# V2 Pipeline Response Models
+# =============================================================================
+
+
+class Transformation(BaseModel):
+    """Single LLM transformation for human review.
+
+    Tracks what the AI changed and why, enabling humans to:
+    - Review specific changes before approval
+    - Provide feedback on AI decisions
+    - Approve/reject individual transformations
+    """
+
+    element_id: str = Field(..., description="Unique ID e.g. 'heading-3', 'figure-p5-1'")
+    element_type: str = Field(..., description="heading, figure, table, formula, code, list")
+    transformation_type: str = Field(
+        ..., description="heading_level_adjusted, alt_text_generated, table_semantics_added, etc."
+    )
+    page: int = Field(..., ge=1, description="Page number (1-indexed)")
+
+    # Before/after for review
+    original: dict = Field(..., description="Original values, e.g. {'level': 1, 'text': 'Abstract'}")
+    transformed: dict = Field(..., description="New values, e.g. {'level': 2, 'text': 'Abstract'}")
+
+    # LLM reasoning
+    reason: str = Field(..., description="LLM's explanation for the change")
+    confidence: float = Field(..., ge=0.0, le=1.0, description="LLM confidence in the change")
+
+    # Review status (for future human-in-the-loop workflow)
+    status: str = Field(default="pending", description="pending, approved, rejected")
+
+
+class ImageAsset(BaseModel):
+    """Extracted image asset with S3 URL.
+
+    Images are cropped from page images using bounding boxes,
+    uploaded to S3, and referenced by URL in the markdown output.
+    """
+
+    asset_id: str = Field(..., description="Unique ID e.g. 'figure-p5-1', 'table-p8-2'")
+    s3_url: str = Field(..., description="Public S3 URL to the image")
+    page: int = Field(..., ge=1, description="Source page number (1-indexed)")
+    element_type: str = Field(..., description="figure or table")
+    alt_text: str | None = Field(default=None, description="Generated alt text for figures")
+    caption: str | None = Field(default=None, description="Caption text if available")
+    bbox: tuple[float, float, float, float] | None = Field(
+        default=None, description="Bounding box (x0, y0, x1, y1) in page coordinates"
+    )
+
+
+class FootnoteLink(BaseModel):
+    """Linked footnote reference.
+
+    Connects footnote markers in the text to their definitions,
+    enabling proper footnote rendering and navigation.
+    """
+
+    marker: str = Field(..., description="Footnote marker e.g. '1', '2', '*', '†'")
+    reference_text: str = Field(..., description="Text containing the marker (truncated)")
+    reference_page: int = Field(..., ge=1, description="Page where marker appears")
+    definition_page: int = Field(..., ge=1, description="Page where definition is")
+    definition_text: str = Field(..., description="The footnote definition text")
+
+
+class PipelineV2Response(BaseModel):
+    """Enhanced pipeline response with structured transformations and assets.
+
+    This response model supports human-in-the-loop review by exposing:
+    - All LLM transformations with before/after for review
+    - Image assets with S3 URLs for proper rendering
+    - Linked footnotes for document navigation
+    """
+
+    success: bool = Field(..., description="True if processing completed without failures")
+    markdown: str = Field(default="", description="Final markdown with S3 image URLs")
+    markdown_clean: str = Field(default="", description="Markdown without provenance comments")
+
+    # Stats
+    total_elements: int = Field(default=0, description="Total document elements processed")
+    figures_processed: int = Field(default=0, description="Figures with generated alt text")
+    tables_processed: int = Field(default=0, description="Tables with semantic analysis")
+    headings_validated: int = Field(default=0, description="Headings with validated levels")
+    formulas_transcribed: int = Field(default=0, description="Formulas transcribed to LaTeX")
+    code_blocks_transcribed: int = Field(default=0, description="Code blocks transcribed")
+    llm_calls: int = Field(default=0, description="Total LLM API calls made")
+    llm_failures: int = Field(default=0, description="Failed LLM calls (used fallbacks)")
+
+    # Analysis results
+    document_type: str = Field(default="", description="Detected document type")
+    pages_with_code: list[int] = Field(default_factory=list, description="Pages with code blocks")
+    pages_with_equations: list[int] = Field(default_factory=list, description="Pages with equations")
+
+    # NEW: Structured transformations for human review
+    transformations: list[Transformation] = Field(
+        default_factory=list, description="All LLM transformations with before/after"
+    )
+
+    # NEW: Image assets with S3 URLs
+    assets: dict[str, ImageAsset] = Field(
+        default_factory=dict, description="Mapping of asset_id to ImageAsset"
+    )
+
+    # NEW: Linked footnotes
+    footnotes: list[FootnoteLink] = Field(
+        default_factory=list, description="Footnote markers linked to definitions"
+    )
+
+    # Citation/footnote style from analysis
+    citation_style: str = Field(default="unknown", description="Detected citation style (APA, IEEE, etc.)")
+    footnote_style: str = Field(default="none", description="Detected footnote style")
+
+    # Errors
+    errors: list[str] = Field(default_factory=list, description="Non-fatal errors during processing")
+    error: str | None = Field(default=None, description="Fatal error message if success=False")

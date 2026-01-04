@@ -1,4 +1,4 @@
-.PHONY: help dev prod up down logs health test test-fast test-unit test-integration test-concurrent test-e2e test-large-files test-slow test-all clean build build-demo-ui build-demo-ui-dev shell test-docker logs-api grafana-url prometheus-url metrics-url coverage coverage-html coverage-report aws-health aws-logs aws-status aws-deploy aws-shell localstack-debug
+.PHONY: help dev prod up down logs health test test-fast test-unit test-integration test-concurrent test-e2e test-large-files test-slow test-all clean build build-demo-ui build-demo-ui-dev build-viewer build-viewer-dev shell test-docker logs-api grafana-url prometheus-url metrics-url coverage coverage-html coverage-report aws-health aws-logs aws-status aws-deploy aws-shell localstack-debug
 
 # Default target
 help:
@@ -29,6 +29,7 @@ help:
 	@echo "Docker:"
 	@echo "  make build        - Build Docker images"
 	@echo "  make build-demo-ui - Build demo UI (for dev, then restart)"
+	@echo "  make build-viewer - Build V5 pipeline viewer (for dev, then restart)"
 	@echo "  make shell        - Access API container shell"
 	@echo "  make test-docker  - Run tests inside container"
 	@echo ""
@@ -55,7 +56,7 @@ help:
 	@echo ""
 
 # Development environment
-dev: build-demo-ui-dev
+dev: build-demo-ui-dev build-viewer-dev
 	@AWS_PROFILE=$${AWS_PROFILE:-uic}; \
 	if aws sts get-caller-identity --profile $$AWS_PROFILE > /dev/null 2>&1; then \
 		echo "✅ AWS credentials valid for profile $$AWS_PROFILE, exporting for Docker..."; \
@@ -75,6 +76,10 @@ dev: build-demo-ui-dev
 # Build demo UI (used by dev target)
 build-demo-ui-dev:
 	@cd frontend/demo-ui && pnpm install --silent 2>/dev/null && pnpm run build
+
+# Build V5 viewer (used by dev target)
+build-viewer-dev:
+	@cd frontend/demo-ui && pnpm run build:viewer 2>/dev/null || echo "V5 viewer build skipped"
 
 # Production environment
 prod:
@@ -170,6 +175,15 @@ build-demo-ui:
 	@echo "✅ Demo UI built to frontend/demo-ui/dist/"
 	@echo "   Restart with: make down && make dev"
 	@echo "   Then access: http://localhost:8080/demo"
+
+# Build V5 pipeline viewer (standalone viewer at /viewer)
+build-viewer:
+	@echo "Building V5 pipeline viewer..."
+	cd frontend/demo-ui && pnpm install && pnpm run build:viewer
+	@echo ""
+	@echo "✅ V5 viewer built to frontend/demo-ui/dist-viewer/"
+	@echo "   Restart with: make down && make dev"
+	@echo "   Then access: http://localhost:8080/viewer"
 
 # Access API container shell for debugging
 shell:

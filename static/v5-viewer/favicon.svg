@@ -1,0 +1,5 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 100 100">
+  <circle cx="50" cy="50" r="45" fill="#001E62"/>
+  <text x="50" y="62" font-family="Arial, sans-serif" font-size="28" font-weight="bold" fill="white" text-anchor="middle">UIC</text>
+  <circle cx="78" cy="22" r="12" fill="#D50032"/>
+</svg>

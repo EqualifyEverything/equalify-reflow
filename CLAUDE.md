@@ -28,6 +28,20 @@ The Equalify PDF Converter transforms PDF documents into accessible, semantic ma
 - ❌ DO NOT use `localhost:6379` in code (use `redis:6379`)
 - ❌ DO NOT run `python` or `pytest` directly on host
 
+## Default Ports
+
+**API Gateway:** `http://localhost:8080`
+- FastAPI docs: `http://localhost:8080/docs`
+- Demo UI: `http://localhost:8080/demo`
+- V5 Viewer: `http://localhost:8080/viewer`
+
+**Other Services:**
+- Redis: `localhost:6379`
+- LocalStack: `localhost:4566`
+- Prometheus: `http://localhost:9090`
+- Grafana: `http://localhost:3000`
+- Jaeger: `http://localhost:16686`
+
 ## Quick Architecture
 
 **Pattern:** Monolith with Background Task Queue

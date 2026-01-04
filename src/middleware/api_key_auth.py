@@ -134,6 +134,10 @@ class APIKeyAuthMiddleware(BaseHTTPMiddleware):
         if path == "/demo" or path.startswith("/demo/"):
             return True
 
+        # V5 Viewer static files (have separate HTTP Basic auth)
+        if path == "/viewer" or path.startswith("/viewer/"):
+            return True
+
         # Development monitoring endpoints (public only in dev environment)
         if settings.environment == "dev" and path.startswith("/api/dev/monitoring"):
             return True
@@ -167,9 +171,9 @@ class APIKeyAuthMiddleware(BaseHTTPMiddleware):
         if request.headers.get(settings.api_key_header_name):
             return False
 
-        # Check Referer header for demo UI origin
+        # Check Referer header for demo UI or viewer origin
         referer = request.headers.get("Referer", "")
-        if "/demo" in referer:
+        if "/demo" in referer or "/viewer" in referer:
             return True
 
         # Check Origin header as fallback (for some browsers/requests)

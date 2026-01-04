@@ -1,0 +1,55 @@
+#!/bin/bash
+# V5 Pipeline Viewer - Shortcut script
+#
+# Usage:
+#   ./cli/v5 <pdf-file>           # Process a new PDF
+#   ./cli/v5 --watch <job-id>     # Watch existing job
+#
+# Examples:
+#   ./cli/v5 project-docs/pdfs/docling-arxiv-paper.pdf
+#   ./cli/v5 --watch abc123-def456
+
+set -e
+
+# Default API URL and key (can be overridden with env vars)
+API_URL="${V5_API_URL:-http://localhost:8080}"
+API_KEY="${V5_API_KEY:-}"
+
+# Check for API key
+if [ -z "$API_KEY" ]; then
+    echo "Error: V5_API_KEY environment variable not set"
+    echo ""
+    echo "Set it with:"
+    echo "  export V5_API_KEY=your-api-key"
+    exit 1
+fi
+
+# Parse arguments
+if [ "$1" = "--watch" ] || [ "$1" = "-w" ]; then
+    if [ -z "$2" ]; then
+        echo "Error: Job ID required"
+        echo "Usage: $0 --watch <job-id>"
+        exit 1
+    fi
+    uv run python cli/viewer.py --job-id "$2" --api-key "$API_KEY" --api-url "$API_URL"
+elif [ -n "$1" ]; then
+    if [ ! -f "$1" ]; then
+        echo "Error: File not found: $1"
+        exit 1
+    fi
+    uv run python cli/viewer.py --file "$1" --api-key "$API_KEY" --api-url "$API_URL"
+else
+    echo "V5 Pipeline Viewer"
+    echo ""
+    echo "Usage:"
+    echo "  $0 <pdf-file>           Process a new PDF"
+    echo "  $0 --watch <job-id>     Watch existing job"
+    echo ""
+    echo "Examples:"
+    echo "  $0 project-docs/pdfs/docling-arxiv-paper.pdf"
+    echo "  $0 --watch abc123-def456"
+    echo ""
+    echo "Environment:"
+    echo "  V5_API_KEY    API key (required)"
+    echo "  V5_API_URL    API URL (default: http://localhost:8080)"
+fi

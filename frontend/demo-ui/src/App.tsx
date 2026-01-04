@@ -7,6 +7,7 @@ import { ApprovalReviewPage } from '@/pages/ApprovalReviewPage'
 import { CorrectionReviewPage } from '@/pages/CorrectionReviewPage'
 import { ProcessingPhasesPage } from '@/pages/ProcessingPhasesPage'
 import { ReviewChecklistPage } from '@/pages/ReviewChecklistPage'
+import { V5ViewerPage } from '@/pages/V5ViewerPage'
 import { queryClient } from '@/lib/queryClient'
 
 // Base path for routing - must match Vite's base config
@@ -85,6 +86,9 @@ function App() {
               </DashboardLayout>
             }
           />
+
+          {/* V5 Pipeline Viewer - standalone page (full screen) */}
+          <Route path="/v5" element={<V5ViewerPage />} />
         </Routes>
       </BrowserRouter>
     </QueryClientProvider>

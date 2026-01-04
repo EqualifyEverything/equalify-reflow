@@ -248,3 +248,222 @@ This document provides a visual overview of the complete PDF processing pipeline
 - [PRD-020: 4-Phase Architecture](PRDs/phase-5-architecture/PRD-020-3-phase-architecture.md)
 - [PRD-028: Review API v2](PRDs/phase-5-architecture/PRD-028-review-api-v2.md)
 - [CLAUDE.md](../CLAUDE.md) - Quick reference for developers
+
+---
+
+# Experimental Pipeline Architecture
+
+The experimental endpoint (`POST /api/experiments/process`) implements a simplified architecture
+with a single unified refine agent replacing the specialized agents.
+
+```
+┌─────────────────────────────────────────────────────────────────────────────┐
+│                    EXPERIMENTAL PIPELINE (NEW)                              │
+│                  POST /api/experiments/process                              │
+└─────────────────────────────────────────────────────────────────────────────┘
+
+                                    INPUT
+                                      │
+                                      ▼
+                              ┌───────────────┐
+                              │   PDF File    │
+                              │   (upload)    │
+                              └───────────────┘
+                                      │
+══════════════════════════════════════════════════════════════════════════════
+                      PHASE 1: INGEST (Docling - FREE)
+══════════════════════════════════════════════════════════════════════════════
+                                      │
+                                      ▼
+                           ┌─────────────────────┐
+                           │   PDFConverter      │
+                           │                     │
+                           │  • Page images      │
+                           │  • Element bboxes   │
+                           │  • Docling markdown │◀── NEW: Native text extraction
+                           │  • is_scanned flag  │◀── NEW: Scanned detection
+                           └─────────────────────┘
+                                      │
+                                      ▼
+                           ┌─────────────────────┐
+                           │ PDFConversionResult │
+                           │ ├─ pages[]          │
+                           │ ├─ extracted_images │
+                           │ ├─ docling_markdown │
+                           │ └─ is_scanned       │
+                           └─────────────────────┘
+                                      │
+══════════════════════════════════════════════════════════════════════════════
+                      PHASE 2: ANALYZE (Haiku - 1 LLM call)
+══════════════════════════════════════════════════════════════════════════════
+                                      │
+                                      ▼
+                           ┌─────────────────────┐
+                           │  _analyze_document  │
+                           │                     │
+                           │  Input: first page  │
+                           │  Output:            │
+                           │  • document_type    │
+                           │  • expected_headings│
+                           │  • expected_figures │
+                           │  • expected_tables  │
+                           │  • key_terms        │
+                           │  • hotspots[]       │
+                           └─────────────────────┘
+                                      │
+                                      ▼
+                           ┌─────────────────────┐
+                           │    Requirements     │
+                           │    (drives refine)  │
+                           └─────────────────────┘
+                                      │
+══════════════════════════════════════════════════════════════════════════════
+                 PHASE 3: EXTRACT (Docling-first, LLM fallback)
+══════════════════════════════════════════════════════════════════════════════
+                                      │
+                              ┌───────┴───────┐
+                              ▼               ▼
+                       ┌────────────┐  ┌────────────┐
+                       │ is_scanned │  │ is_scanned │
+                       │  = False   │  │  = True    │
+                       │ (digital)  │  │ (scanned)  │
+                       └────────────┘  └────────────┘
+                              │               │
+                              ▼               ▼
+                    ┌─────────────────┐ ┌─────────────────┐
+                    │ Use Docling     │ │ Use LLM Vision  │
+                    │ markdown        │ │ per page        │
+                    │                 │ │                 │
+                    │ Cost: FREE      │ │ Cost: 9 calls   │
+                    │ Time: instant   │ │ Time: ~2-3 min  │
+                    └─────────────────┘ └─────────────────┘
+                              │               │
+                              └───────┬───────┘
+                                      ▼
+                           ┌─────────────────────┐
+                           │  page_markdowns{}   │
+                           │  (per-page content) │
+                           └─────────────────────┘
+                                      │
+══════════════════════════════════════════════════════════════════════════════
+              PHASE 4: REFINE (Single Agent with Tool Use)
+══════════════════════════════════════════════════════════════════════════════
+                                      │
+                                      ▼
+                    ┌─────────────────────────────────┐
+                    │     FOR EACH PAGE (sequential)  │
+                    │                                 │
+                    │  ┌───────────────────────────┐  │
+                    │  │  1. PREPROCESS (FREE)     │  │
+                    │  │     • run_lint()          │  │
+                    │  │     • spell_check()       │  │
+                    │  │     • Auto-apply fixes    │  │
+                    │  └───────────────────────────┘  │
+                    │              │                  │
+                    │              ▼                  │
+                    │  ┌───────────────────────────┐  │
+                    │  │  2. REFINE (Haiku Agent)  │  │
+                    │  │     with tool use:        │  │
+                    │  │                           │  │
+                    │  │  ┌─────────────────────┐  │  │
+                    │  │  │ describe_figure()   │  │  │
+                    │  │  │ → subagent call     │  │  │
+                    │  │  │ → cropped + highlight│  │  │
+                    │  │  └─────────────────────┘  │  │
+                    │  │                           │  │
+                    │  │  ┌─────────────────────┐  │  │
+                    │  │  │ describe_table()    │  │  │
+                    │  │  │ → subagent call     │  │  │
+                    │  │  │ → cropped + highlight│  │  │
+                    │  │  └─────────────────────┘  │  │
+                    │  │                           │  │
+                    │  │  ┌─────────────────────┐  │  │
+                    │  │  │ check_against_image │  │  │
+                    │  │  │ → verify vs source  │  │  │
+                    │  │  └─────────────────────┘  │  │
+                    │  │                           │  │
+                    │  │  ┌─────────────────────┐  │  │
+                    │  │  │ apply_edit()        │  │  │
+                    │  │  │ → search/replace    │  │  │
+                    │  │  │ → full provenance   │  │  │
+                    │  │  └─────────────────────┘  │  │
+                    │  └───────────────────────────┘  │
+                    │              │                  │
+                    │              ▼                  │
+                    │  ┌───────────────────────────┐  │
+                    │  │  3. VALIDATE             │  │
+                    │  │     • Must pass lint     │  │
+                    │  │     • Max 3 iterations   │  │
+                    │  └───────────────────────────┘  │
+                    │                                 │
+                    │         (loop per page)         │
+                    └─────────────────────────────────┘
+                                      │
+                                      ▼
+                           ┌─────────────────────┐
+                           │  ProcessingTrace    │
+                           │  ├─ phases[]        │
+                           │  ├─ total_llm_calls │
+                           │  ├─ page_results[]  │
+                           │  └─ edit_history[]  │
+                           └─────────────────────┘
+                                      │
+══════════════════════════════════════════════════════════════════════════════
+                           PHASE 5: OUTPUT
+══════════════════════════════════════════════════════════════════════════════
+                                      │
+                                      ▼
+                           ┌─────────────────────┐
+                           │ ExperimentResponse  │
+                           │                     │
+                           │  • success: bool    │
+                           │  • markdown: str    │
+                           │  • requirements     │
+                           │  • trace            │
+                           │  • edit_history[]   │◀── Full provenance
+                           │  • edit_summary{}   │◀── Counts by type
+                           └─────────────────────┘
+```
+
+## Experimental vs Production Comparison
+
+| Aspect | Production Pipeline | Experimental Pipeline |
+|--------|--------------------|-----------------------|
+| **Extraction** | LLM vision (always) | Docling-first (born-digital = FREE) |
+| **Specialized Agents** | 4 (Figures, Tables, Typography, Structure) | 1 unified agent with tools |
+| **Edit Tracking** | Limited | Full provenance (reasoning, type, source) |
+| **PII Scanning** | Yes (Presidio) | Skipped (for experimentation) |
+| **Endpoint** | `POST /api/documents/submit` | `POST /api/experiments/process` |
+
+## Edit Types Tracked
+
+| Type | Description | Source |
+|------|-------------|--------|
+| `lint_fix` | Auto-applied formatting fixes | mdformat |
+| `spell_fix` | OCR artifact corrections | spell_check |
+| `figure_alt` | Alt-text for figures | describe_figure subagent |
+| `table_transcription` | Markdown table | describe_table subagent |
+| `heading_fix` | Heading level corrections | refine_agent |
+| `content_fix` | General content corrections | refine_agent |
+| `verification_fix` | Fixes from image verification | check_against_image |
+
+## Cost Comparison (9-page document)
+
+| Phase | Production | Experimental (digital) | Experimental (scanned) |
+|-------|------------|------------------------|------------------------|
+| Analyze | - | 1 call | 1 call |
+| Extract | 9 calls | **0 calls** | 9 calls |
+| Refine | ~20 calls | ~15 calls | ~15 calls |
+| **Total** | ~29 calls | **~16 calls** | ~25 calls |
+
+## Files
+
+| File | Purpose |
+|------|---------|
+| `src/api/experiments.py` | Endpoint + phase orchestration |
+| `src/agents/refine/refine_agent.py` | Unified refine agent |
+| `src/agents/refine/tools.py` | Tool implementations |
+| `src/agents/refine/subagents.py` | Figure/table/verify subagents |
+| `src/agents/refine/models.py` | Requirements, EditPatch, ProcessingTrace |
+| `src/utils/image_utils.py` | crop_element, highlight_element |
+| `config/agents/refine.yaml` | Agent prompts |

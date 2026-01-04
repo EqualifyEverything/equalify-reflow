@@ -116,6 +116,9 @@ class DocsAuthMiddleware(BaseHTTPMiddleware):
         # Prefix match for demo UI (includes /demo, /demo/, /demo/assets/*, etc.)
         if path == "/demo" or path.startswith("/demo/"):
             return True
+        # Prefix match for V5 viewer (includes /viewer, /viewer/, /viewer/assets/*, etc.)
+        if path == "/viewer" or path.startswith("/viewer/"):
+            return True
         return False
 
     def _decode_credentials(self, auth_header: str) -> tuple[str, str] | None:

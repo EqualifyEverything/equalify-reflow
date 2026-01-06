@@ -163,7 +163,6 @@ async def process_in_background(
     from src.agents.v5.orchestrator import process_document_v5
     from src.agents.v5.orchestrator_optimized import process_document_v5_optimized
     from src.services.vision_extraction_service import (
-        SCANNED_THRESHOLD_CHARS_PER_PAGE,
         extract_all_pages_vision,
         is_scanned_pdf,
     )
@@ -207,9 +206,10 @@ async def process_in_background(
         )
 
         # Convert from bytes using DocumentStream
+        # Run in thread pool to avoid blocking event loop (Docling is synchronous)
         pdf_stream = BytesIO(file_content)
         doc_stream = DocumentStream(name=filename, stream=pdf_stream)
-        result = converter.convert(source=doc_stream)
+        result = await asyncio.to_thread(converter.convert, source=doc_stream)
         doc = result.document
 
         logger.info(f"Docling conversion: {len(doc.pages)} pages")
@@ -525,7 +525,7 @@ async def stream_events(job_id: str):
             if state.event_bus:
                 for event in state.event_bus.events:
                     yield f"event: {event.event_type}\ndata: {event.model_dump_json()}\n\n"
-            yield f"event: done\ndata: {{}}\n\n"
+            yield "event: done\ndata: {}\n\n"
             return
 
         # Wait for event bus to be available
@@ -541,7 +541,7 @@ async def stream_events(job_id: str):
                 state.status = new_state.status
 
         if state.event_bus is None:
-            yield f"event: error\ndata: {{\"message\": \"Event bus not available\"}}\n\n"
+            yield "event: error\ndata: {\"message\": \"Event bus not available\"}\n\n"
             return
 
         # Subscribe to events
@@ -562,9 +562,9 @@ async def stream_events(job_id: str):
                     if event.event_type in ("processing:complete", "processing:error"):
                         break
 
-                except asyncio.TimeoutError:
+                except TimeoutError:
                     # Send keepalive
-                    yield f": keepalive\n\n"
+                    yield ": keepalive\n\n"
 
                     # Check if job is done
                     new_state = get_job(job_id)
@@ -574,7 +574,7 @@ async def stream_events(job_id: str):
         finally:
             state.event_bus.unsubscribe(queue)
 
-        yield f"event: done\ndata: {{}}\n\n"
+        yield "event: done\ndata: {}\n\n"
 
     return StreamingResponse(
         event_generator(),

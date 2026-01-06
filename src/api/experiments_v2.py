@@ -15,6 +15,7 @@ Key differences from v1:
 
 from __future__ import annotations
 
+import asyncio
 import logging
 import uuid
 from io import BytesIO
@@ -34,7 +35,7 @@ from src.agents.pipeline import (
     process_document,
 )
 from src.agents.pipeline.analyzer import DocumentAnalysis, PageAnalysis, analyze_document
-from src.api.schemas import ImageAsset, PipelineV2Response
+from src.api.schemas import PipelineV2Response
 
 logger = logging.getLogger(__name__)
 
@@ -132,10 +133,10 @@ async def process_pipeline(
             }
         )
 
-        # Convert PDF
+        # Convert PDF (run in thread pool to avoid blocking event loop)
         pdf_stream = BytesIO(pdf_content)
         doc_stream = DocumentStream(name="document.pdf", stream=pdf_stream)
-        result = converter.convert(source=doc_stream)
+        result = await asyncio.to_thread(converter.convert, source=doc_stream)
         doc = result.document
 
         logger.info(f"Docling conversion: {len(doc.pages)} pages")
@@ -288,10 +289,10 @@ async def analyze_pdf(
             }
         )
 
-        # Convert PDF
+        # Convert PDF (run in thread pool to avoid blocking event loop)
         pdf_stream = BytesIO(pdf_content)
         doc_stream = DocumentStream(name="document.pdf", stream=pdf_stream)
-        result = converter.convert(source=doc_stream)
+        result = await asyncio.to_thread(converter.convert, source=doc_stream)
         doc = result.document
 
         logger.info(f"Docling conversion: {len(doc.pages)} pages")
@@ -398,10 +399,10 @@ async def process_pipeline_enhanced(
             }
         )
 
-        # Convert PDF
+        # Convert PDF (run in thread pool to avoid blocking event loop)
         pdf_stream = BytesIO(pdf_content)
         doc_stream = DocumentStream(name="document.pdf", stream=pdf_stream)
-        result = converter.convert(source=doc_stream)
+        result = await asyncio.to_thread(converter.convert, source=doc_stream)
         doc = result.document
 
         logger.info(f"Docling conversion: {len(doc.pages)} pages")

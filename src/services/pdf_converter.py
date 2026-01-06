@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import asyncio
 import base64
 import logging
 import re
@@ -116,8 +117,9 @@ class PDFConverter:
                 stream=pdf_stream,
             )
 
-            # Convert document
-            result = self.converter.convert(source=doc_stream)
+            # Convert document (run in thread pool to avoid blocking event loop)
+            # Docling's convert() is synchronous and CPU-intensive
+            result = await asyncio.to_thread(self.converter.convert, source=doc_stream)
             doc = result.document
 
             logger.info(f"Docling conversion complete: {len(doc.pages)} pages")

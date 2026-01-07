@@ -116,8 +116,12 @@ class DocsAuthMiddleware(BaseHTTPMiddleware):
         # Prefix match for demo UI (includes /demo, /demo/, /demo/assets/*, etc.)
         if path == "/demo" or path.startswith("/demo/"):
             return True
-        # Prefix match for V5 viewer (includes /viewer, /viewer/, /viewer/assets/*, etc.)
+        # Prefix match for viewer - but allow static assets without auth
+        # (favicon, JS, CSS files should load without requiring credentials)
         if path == "/viewer" or path.startswith("/viewer/"):
+            # Allow static assets without auth (files with common extensions)
+            if any(path.endswith(ext) for ext in ['.js', '.css', '.svg', '.ico', '.png', '.jpg', '.woff', '.woff2']):
+                return False
             return True
         return False
 

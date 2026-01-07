@@ -147,7 +147,7 @@ class DocumentProcessingService:
         try:
             # Download PDF from S3
             logger.info(f"Downloading PDF from S3: {s3_key}")
-            file_content = await self.storage.download_file(s3_key)
+            file_content = await self.storage.download_temp_file(s3_key)
 
             # Emit Docling started event
             event_bus.emit(
@@ -374,18 +374,14 @@ class DocumentProcessingService:
             # Store final markdown to S3
             markdown_s3_key = await self._store_markdown(job_id, processing_result.final_markdown)
 
-            # Generate URLs
-            markdown_url = await self.s3_url.generate_presigned_url(markdown_s3_key)
-            ledger_url = await self.s3_url.generate_presigned_url(ledger_s3_key) if review_mode == "human" else None
-
-            # Update final job state
+            # Update final job state (store S3 key, not presigned URL - API generates URLs on demand)
             await self._update_job_state(
                 job_id,
                 status="completed",
                 processing_phase="complete",
                 jobs_total=processing_result.total_jobs,
                 jobs_complete=processing_result.total_jobs,
-                result_url=markdown_url,
+                result_url=markdown_s3_key,
                 ledger_s3_key=ledger_s3_key,
                 confidence_score=0.85,  # TODO: Calculate from verification
                 total_edits=processing_result.total_edits,

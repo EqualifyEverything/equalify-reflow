@@ -204,38 +204,14 @@ async def root() -> dict[str, str]:
     }
 
 
-# Mount demo UI static files (if present in production build)
-# The static files are built and copied during Docker image creation
-_demo_ui_path = Path(__file__).parent.parent / "static" / "demo-ui"
-if _demo_ui_path.exists():
-    from fastapi.responses import FileResponse
-
-    # Serve index.html for SPA client-side routes
-    # This must be defined BEFORE the StaticFiles mount
-    @app.get("/demo/{full_path:path}")
-    async def serve_spa(full_path: str) -> FileResponse:
-        """Serve index.html for all demo UI routes (SPA fallback)."""
-        # Check if requesting a static asset (has file extension)
-        if "." in full_path.split("/")[-1]:
-            # Let StaticFiles handle actual files
-            file_path = _demo_ui_path / full_path
-            if file_path.exists():
-                return FileResponse(file_path)
-        # For all other paths, serve index.html (SPA routing)
-        return FileResponse(_demo_ui_path / "index.html")
-
-    app.mount("/demo", StaticFiles(directory=_demo_ui_path, html=True), name="demo-ui")
-    logger.info("✅ Demo UI mounted at /demo")
-
-
-# Mount V5 Pipeline Viewer (standalone viewer app)
-_viewer_path = Path(__file__).parent.parent / "static" / "v5-viewer"
+# Mount Pipeline Viewer (standalone viewer app)
+_viewer_path = Path(__file__).parent.parent / "static" / "viewer"
 if _viewer_path.exists():
     from fastapi.responses import FileResponse
 
     @app.get("/viewer/{full_path:path}")
     async def serve_viewer_spa(full_path: str) -> FileResponse:
-        """Serve index.html for V5 Viewer routes (SPA fallback)."""
+        """Serve index.html for Pipeline Viewer routes (SPA fallback)."""
         if "." in full_path.split("/")[-1]:
             file_path = _viewer_path / full_path
             if file_path.exists():
@@ -244,8 +220,8 @@ if _viewer_path.exists():
 
     @app.get("/viewer")
     async def serve_viewer_root() -> FileResponse:
-        """Serve V5 Viewer root."""
+        """Serve Pipeline Viewer root."""
         return FileResponse(_viewer_path / "index.html")
 
-    app.mount("/viewer", StaticFiles(directory=_viewer_path, html=True), name="v5-viewer")
-    logger.info("✅ V5 Pipeline Viewer mounted at /viewer")
+    app.mount("/viewer", StaticFiles(directory=_viewer_path, html=True), name="pipeline-viewer")
+    logger.info("✅ Pipeline Viewer mounted at /viewer")

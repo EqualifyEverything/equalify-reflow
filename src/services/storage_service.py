@@ -646,6 +646,68 @@ class StorageService:
                 detail=f"Failed to upload final markdown: {str(e)}"
             )
 
+    async def upload_file(
+        self,
+        key: str,
+        content: bytes,
+        content_type: str = "application/octet-stream",
+    ) -> str:
+        """Upload a file to the results bucket.
 
+        Generic method for uploading any file to S3 results bucket.
 
+        Args:
+            key: S3 key (path) for the file
+            content: File content as bytes
+            content_type: MIME type of the content
 
+        Returns:
+            S3 key where file was saved
+
+        Raises:
+            HTTPException: If upload fails
+            CircuitBreakerOpenError: If S3 upload circuit breaker is open
+        """
+        # Check circuit breaker
+        self.upload_circuit.check_state()
+        if self.upload_circuit.is_open:
+            raise CircuitBreakerOpenError(
+                "S3 upload circuit breaker is open due to repeated failures"
+            )
+
+        try:
+            await retry_with_backoff_for_sync_func(
+                lambda: self.s3_client.put_object(
+                    Bucket=self.results_bucket,
+                    Key=key,
+                    Body=content,
+                    ContentType=content_type,
+                ),
+                max_attempts=3,
+                base_delay=1.0,
+                operation_name=f"upload file {key}"
+            )
+
+            # Record success
+            self.upload_circuit.record_success()
+
+            logger.info(f"Uploaded file to {key}")
+            return key
+
+        except CircuitBreakerOpenError:
+            raise
+        except ClientError as e:
+            # Record failure
+            self.upload_circuit.record_failure()
+            error_code = e.response.get('Error', {}).get('Code', 'Unknown')
+            raise HTTPException(
+                status_code=500,
+                detail=f"Failed to upload file: {error_code}"
+            ) from e
+        except Exception as e:
+            # Record failure
+            self.upload_circuit.record_failure()
+            raise HTTPException(
+                status_code=500,
+                detail=f"Failed to upload file: {str(e)}"
+            )

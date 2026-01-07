@@ -695,60 +695,67 @@ async def stream_events(
 
     async def event_generator():
         """Generate SSE events."""
-        # Get event bus from registry
-        event_bus = get_event_bus(job_id)
-
-        # If job is already complete or failed, send final event and close
-        if job["status"] in ("completed", "failed"):
-            if event_bus:
-                for event in event_bus.events:
-                    yield f"event: {event.event_type}\ndata: {event.model_dump_json()}\n\n"
-            yield "event: done\ndata: {}\n\n"
-            return
-
-        # Wait for event bus to be available (up to 30 seconds)
-        max_wait = 30
-        waited = 0
-        while event_bus is None and waited < max_wait:
-            await asyncio.sleep(0.5)
-            waited += 0.5
+        try:
+            # Get event bus from registry
             event_bus = get_event_bus(job_id)
 
-        if event_bus is None:
-            yield 'event: error\ndata: {"message": "Event bus not available"}\n\n'
-            return
+            # If job is already complete or failed, send final event and close
+            if job["status"] in ("completed", "failed"):
+                if event_bus:
+                    for event in event_bus.events:
+                        yield f"event: {event.event_type}\ndata: {event.model_dump_json()}\n\n"
+                yield "event: done\ndata: {}\n\n"
+                return
 
-        # Subscribe to events
-        queue = event_bus.subscribe()
+            # Wait for event bus to be available (up to 30 seconds)
+            max_wait = 30
+            waited = 0
+            while event_bus is None and waited < max_wait:
+                await asyncio.sleep(0.5)
+                waited += 0.5
+                event_bus = get_event_bus(job_id)
 
-        try:
-            # First, send any events that already happened
-            for event in event_bus.events:
-                yield f"event: {event.event_type}\ndata: {event.model_dump_json()}\n\n"
+            if event_bus is None:
+                yield 'event: error\ndata: {"message": "Event bus not available"}\n\n'
+                yield "event: done\ndata: {}\n\n"
+                return
 
-            # Then stream new events
-            while True:
-                try:
-                    event = await asyncio.wait_for(queue.get(), timeout=30.0)
+            # Subscribe to events
+            queue = event_bus.subscribe()
+
+            try:
+                # First, send any events that already happened
+                for event in event_bus.events:
                     yield f"event: {event.event_type}\ndata: {event.model_dump_json()}\n\n"
 
-                    # Check if processing is complete
-                    if event.event_type in ("processing:complete", "processing:error"):
-                        break
+                # Then stream new events
+                while True:
+                    try:
+                        event = await asyncio.wait_for(queue.get(), timeout=30.0)
+                        yield f"event: {event.event_type}\ndata: {event.model_dump_json()}\n\n"
 
-                except TimeoutError:
-                    # Send keepalive
-                    yield ": keepalive\n\n"
+                        # Check if processing is complete
+                        if event.event_type in ("processing:complete", "processing:error"):
+                            break
 
-                    # Check if job is done by refreshing status
-                    refreshed_job = await job_service.get_job(job_id)
-                    if refreshed_job and refreshed_job["status"] in ("completed", "failed"):
-                        break
+                    except TimeoutError:
+                        # Send keepalive
+                        yield ": keepalive\n\n"
 
-        finally:
-            event_bus.unsubscribe(queue)
+                        # Check if job is done by refreshing status
+                        refreshed_job = await job_service.get_job(job_id)
+                        if refreshed_job and refreshed_job["status"] in ("completed", "failed"):
+                            break
 
-        yield "event: done\ndata: {}\n\n"
+            finally:
+                event_bus.unsubscribe(queue)
+
+            yield "event: done\ndata: {}\n\n"
+
+        except Exception as e:
+            logger.error(f"SSE stream error for job {job_id}: {e}")
+            yield f'event: error\ndata: {{"message": "Stream error: {str(e)}"}}\n\n'
+            yield "event: done\ndata: {}\n\n"
 
     return StreamingResponse(
         event_generator(),

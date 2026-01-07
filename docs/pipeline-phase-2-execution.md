@@ -32,7 +32,7 @@ Worker Agent → propose_edit() → Validation Gate
 - Complete audit trail in ledger
 - Agents get feedback for rejected edits
 
-**Location:** `src/agents/v5/worker.py`, `src/agents/v5/validation.py`
+**Location:** `src/agents/worker.py`, `src/agents/validation.py`
 
 ---
 
@@ -452,7 +452,7 @@ async def propose_edit_tool(
 
 ## Validation Gate
 
-**Location:** `src/agents/v5/validation.py`
+**Location:** `src/agents/validation.py`
 
 **Function:** `validate_edit()`
 

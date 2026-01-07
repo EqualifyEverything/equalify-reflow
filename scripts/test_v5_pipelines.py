@@ -82,7 +82,7 @@ async def run_original_pipeline(
     page_width: float,
 ) -> dict:
     """Run the original V5 pipeline."""
-    from src.agents.v5 import process_document_v5
+    from src.agents import process_document_v5
 
     print("\n" + "="*60)
     print("RUNNING ORIGINAL PIPELINE")
@@ -121,7 +121,7 @@ async def run_optimized_pipeline(
     page_images: dict,
 ) -> dict:
     """Run the optimized V5 pipeline."""
-    from src.agents.v5 import process_document_v5_optimized
+    from src.agents import process_document_v5_optimized
 
     print("\n" + "="*60)
     print("RUNNING OPTIMIZED PIPELINE")

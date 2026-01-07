@@ -28,7 +28,7 @@ If failed + < 50% pages passed → Mark as FAILED
 If passed → Mark as COMPLETE
 ```
 
-**Location:** `src/agents/v5/plan_verification.py`, `src/agents/v5/orchestrator.py`
+**Location:** `src/agents/plan_verification.py`, `src/agents/orchestrator.py`
 
 ---
 

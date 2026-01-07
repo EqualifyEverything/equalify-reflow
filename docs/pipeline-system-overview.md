@@ -55,16 +55,16 @@ Final Result (markdown + ledger + report)
 | Component | Location |
 |-----------|----------|
 | **API Endpoints** | `src/api/v5.py` |
-| **Main Orchestrator** | `src/agents/v5/orchestrator.py` |
-| **Data Models** | `src/agents/v5/models.py` |
-| **Events** | `src/agents/v5/events.py` |
-| **Planner** | `src/agents/v5/planner.py` |
-| **Page Chain** | `src/agents/v5/page_chain.py` |
-| **Worker** | `src/agents/v5/worker.py` |
-| **Validation** | `src/agents/v5/validation.py` |
-| **Verification** | `src/agents/v5/plan_verification.py` |
-| **Recovery** | `src/agents/v5/recovery.py` |
-| **Issue Fixing** | `src/agents/v5/issue_fixer.py` |
+| **Main Orchestrator** | `src/agents/orchestrator.py` |
+| **Data Models** | `src/agents/models.py` |
+| **Events** | `src/agents/events.py` |
+| **Planner** | `src/agents/planner.py` |
+| **Page Chain** | `src/agents/page_chain.py` |
+| **Worker** | `src/agents/worker.py` |
+| **Validation** | `src/agents/validation.py` |
+| **Verification** | `src/agents/plan_verification.py` |
+| **Recovery** | `src/agents/recovery.py` |
+| **Issue Fixing** | `src/agents/issue_fixer.py` |
 
 ## Documentation Structure
 

@@ -62,7 +62,7 @@ def document_processing_service(mock_redis_client, mock_storage_service, mock_s3
 @pytest.fixture
 def mock_processing_result():
     """Create a mock ProcessingResult for testing."""
-    from src.agents.v5.models import (
+    from src.agents.models import (
         Ledger,
         LedgerEntry,
         ProcessingResult,
@@ -332,11 +332,11 @@ class TestStoreEventBus:
     @pytest.mark.asyncio
     async def test_store_event_bus_registers_bus(self, document_processing_service):
         """Test that event bus is registered globally."""
-        from src.agents.v5.events import EventBus
+        from src.agents.events import EventBus
 
         event_bus = EventBus("job-123")
 
-        with patch("src.agents.v5.events.register_event_bus") as mock_register:
+        with patch("src.agents.events.register_event_bus") as mock_register:
             await document_processing_service._store_event_bus("job-123", event_bus)
             mock_register.assert_called_once_with("job-123", event_bus)
 
@@ -460,9 +460,9 @@ class TestProcessDocumentIntegration:
              patch("docling.document_converter.PdfFormatOption"), \
              patch("docling.datamodel.base_models.InputFormat") as mock_input_format, \
              patch("docling.datamodel.document.DocumentStream"), \
-             patch("src.agents.v5.events.EventBus") as mock_event_bus_class, \
-             patch("src.agents.v5.events.register_event_bus"), \
-             patch("src.agents.v5.orchestrator.process_document_v5") as mock_process_v5, \
+             patch("src.agents.events.EventBus") as mock_event_bus_class, \
+             patch("src.agents.events.register_event_bus"), \
+             patch("src.agents.orchestrator.process_document_v5") as mock_process_v5, \
              patch("src.services.vision_extraction_service.is_scanned_pdf", return_value=False), \
              patch("asyncio.to_thread") as mock_to_thread:
 
@@ -533,9 +533,9 @@ class TestProcessDocumentIntegration:
              patch("docling.document_converter.PdfFormatOption"), \
              patch("docling.datamodel.base_models.InputFormat") as mock_input_format, \
              patch("docling.datamodel.document.DocumentStream"), \
-             patch("src.agents.v5.events.EventBus") as mock_event_bus_class, \
-             patch("src.agents.v5.events.register_event_bus"), \
-             patch("src.agents.v5.orchestrator.process_document_v5") as mock_process_v5, \
+             patch("src.agents.events.EventBus") as mock_event_bus_class, \
+             patch("src.agents.events.register_event_bus"), \
+             patch("src.agents.orchestrator.process_document_v5") as mock_process_v5, \
              patch("src.services.vision_extraction_service.is_scanned_pdf", return_value=False), \
              patch("asyncio.to_thread") as mock_to_thread:
 
@@ -593,9 +593,9 @@ class TestProcessDocumentPhaseUpdates:
              patch("docling.document_converter.PdfFormatOption"), \
              patch("docling.datamodel.base_models.InputFormat") as mock_input_format, \
              patch("docling.datamodel.document.DocumentStream"), \
-             patch("src.agents.v5.events.EventBus") as mock_event_bus_class, \
-             patch("src.agents.v5.events.register_event_bus"), \
-             patch("src.agents.v5.orchestrator.process_document_v5") as mock_process_v5, \
+             patch("src.agents.events.EventBus") as mock_event_bus_class, \
+             patch("src.agents.events.register_event_bus"), \
+             patch("src.agents.orchestrator.process_document_v5") as mock_process_v5, \
              patch("src.services.vision_extraction_service.is_scanned_pdf", return_value=False), \
              patch("asyncio.to_thread") as mock_to_thread:
 
@@ -658,9 +658,9 @@ class TestProcessDocumentEventEmission:
              patch("docling.document_converter.PdfFormatOption"), \
              patch("docling.datamodel.base_models.InputFormat") as mock_input_format, \
              patch("docling.datamodel.document.DocumentStream"), \
-             patch("src.agents.v5.events.EventBus") as mock_event_bus_class, \
-             patch("src.agents.v5.events.register_event_bus"), \
-             patch("src.agents.v5.orchestrator.process_document_v5") as mock_process_v5, \
+             patch("src.agents.events.EventBus") as mock_event_bus_class, \
+             patch("src.agents.events.register_event_bus"), \
+             patch("src.agents.orchestrator.process_document_v5") as mock_process_v5, \
              patch("src.services.vision_extraction_service.is_scanned_pdf", return_value=False), \
              patch("asyncio.to_thread") as mock_to_thread:
 
@@ -721,9 +721,9 @@ class TestProcessDocumentScannedPdfHandling:
              patch("docling.document_converter.PdfFormatOption"), \
              patch("docling.datamodel.base_models.InputFormat") as mock_input_format, \
              patch("docling.datamodel.document.DocumentStream"), \
-             patch("src.agents.v5.events.EventBus") as mock_event_bus_class, \
-             patch("src.agents.v5.events.register_event_bus"), \
-             patch("src.agents.v5.orchestrator.process_document_v5") as mock_process_v5, \
+             patch("src.agents.events.EventBus") as mock_event_bus_class, \
+             patch("src.agents.events.register_event_bus"), \
+             patch("src.agents.orchestrator.process_document_v5") as mock_process_v5, \
              patch("src.services.vision_extraction_service.is_scanned_pdf", return_value=True) as mock_is_scanned, \
              patch("src.services.vision_extraction_service.detect_visual_document_type") as mock_detect_visual, \
              patch("src.services.vision_extraction_service.extract_all_pages_vision") as mock_extract_vision, \

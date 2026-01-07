@@ -10,7 +10,7 @@ Tests for:
 
 import pytest
 
-from src.agents.v5.models import (
+from src.agents.models import (
     IssueCategory,
     PageVerification,
     ProcessingStatus,
@@ -18,7 +18,7 @@ from src.agents.v5.models import (
     RecoveryReport,
     VerificationReport,
 )
-from src.agents.v5.recovery import (
+from src.agents.recovery import (
     calculate_pass_threshold,
     categorize_issues,
     determine_final_status,

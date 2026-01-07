@@ -30,7 +30,7 @@ DocumentPlan (complete plan)
 - Context chaining between pages
 - Deterministic job generation
 
-**Location:** `src/agents/v5/planner.py`, `src/agents/v5/page_chain.py`
+**Location:** `src/agents/planner.py`, `src/agents/page_chain.py`
 
 ---
 

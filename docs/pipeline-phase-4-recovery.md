@@ -38,7 +38,7 @@ RecoveryReport (recovered/escalated/unrecoverable)
 - Max 2 attempts per page
 - Document caveats clearly
 
-**Location:** `src/agents/v5/recovery.py`
+**Location:** `src/agents/recovery.py`
 
 ---
 

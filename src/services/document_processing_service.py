@@ -31,7 +31,7 @@ from ..config import settings
 if TYPE_CHECKING:
     from PIL import Image
 
-    from ..agents.v5.models import ProcessingResult
+    from ..agents.models import ProcessingResult
 
 logger = logging.getLogger(__name__)
 
@@ -111,7 +111,7 @@ class DocumentProcessingService:
         from docling.document_converter import DocumentConverter, PdfFormatOption
         from PIL import Image
 
-        from ..agents.v5.events import (
+        from ..agents.events import (
             DoclingCompleteEvent,
             DoclingStartedEvent,
             EventBus,
@@ -119,7 +119,7 @@ class DocumentProcessingService:
             VisionExtractionStartedEvent,
             VisionPageExtractedEvent,
         )
-        from ..agents.v5.orchestrator import process_document_v5
+        from ..agents.orchestrator import process_document_v5
         from ..services.vision_extraction_service import (
             VisualDocumentType,
             detect_visual_document_type,
@@ -512,7 +512,7 @@ class DocumentProcessingService:
             event_bus: EventBus instance
         """
         # Import the global event bus registry
-        from ..agents.v5.events import register_event_bus
+        from ..agents.events import register_event_bus
 
         register_event_bus(job_id, event_bus)
 

@@ -8,14 +8,14 @@ import pytest
 from dataclasses import dataclass
 from unittest.mock import MagicMock, AsyncMock
 
-from src.agents.v5.worker import (
+from src.agents.worker import (
     FindTextResult,
     ViewResult,
     WorkerDeps,
     TableMarkdownResult,
     _find_table_blocks,
 )
-from src.agents.v5.models import Job, JobContext, JobType, Task, TaskType, DocumentType
+from src.agents.models import Job, JobContext, JobType, Task, TaskType, DocumentType
 
 
 # =============================================================================

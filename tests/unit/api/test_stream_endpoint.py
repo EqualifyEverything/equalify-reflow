@@ -15,7 +15,7 @@ import pytest
 from fastapi import status
 from fastapi.testclient import TestClient
 
-from src.agents.v5 import events as events_module
+from src.agents import events as events_module
 from src.dependencies import get_job_service
 from src.main import app
 

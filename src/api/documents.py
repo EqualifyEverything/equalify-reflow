@@ -686,7 +686,7 @@ async def stream_events(
     Raises:
         HTTPException 404: Job not found
     """
-    from ..agents.v5.events import get_event_bus
+    from ..agents.events import get_event_bus
 
     # Verify job exists
     job = await job_service.get_job(job_id)

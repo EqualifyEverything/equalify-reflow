@@ -84,7 +84,7 @@ def mock_s3_url_service():
 @pytest.fixture
 def mock_processing_result():
     """Create mock ProcessingResult from V5 pipeline."""
-    from src.agents.v5.models import (
+    from src.agents.models import (
         Ledger,
         LedgerEntry,
         ProcessingResult,
@@ -132,7 +132,7 @@ def mock_processing_result():
 @pytest.fixture
 def mock_event_bus():
     """Create mock EventBus for streaming tests."""
-    from src.agents.v5.events import (
+    from src.agents.events import (
         DoclingCompleteEvent,
         DoclingStartedEvent,
         EventBus,
@@ -384,7 +384,7 @@ async def test_stream_endpoint_for_completed_job(
     2. Events are delivered for completed jobs
     3. Final 'done' event is sent
     """
-    from src.agents.v5.events import register_event_bus
+    from src.agents.events import register_event_bus
     from src.services.job_service import JobService
 
     job_service = JobService(redis_client=real_redis_client)
@@ -429,7 +429,7 @@ async def test_stream_endpoint_for_completed_job(
     finally:
         app.dependency_overrides.clear()
         # Clean up event bus registry
-        from src.agents.v5.events import unregister_event_bus
+        from src.agents.events import unregister_event_bus
         unregister_event_bus(job_id)
 
 

@@ -9,7 +9,7 @@ Tests for verifying document output against the document plan:
 
 import pytest
 
-from src.agents.v5.models import (
+from src.agents.models import (
     DocumentPlan,
     DocumentStructure,
     DocumentType,
@@ -18,7 +18,7 @@ from src.agents.v5.models import (
     PagePlan,
     TableContext,
 )
-from src.agents.v5.plan_verification import (
+from src.agents.plan_verification import (
     verify_figure_completeness,
     verify_heading_structure,
     verify_spelling,

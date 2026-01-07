@@ -399,27 +399,9 @@ async def pii_worker(storage_service, queue_service, job_service, mock_pii_analy
     return worker
 
 
-@pytest_asyncio.fixture
-async def processing_service(storage_service, queue_service, job_service, mock_pdf_converter, real_redis_client):
-    """Create ProcessingService instance with REAL services and MOCKED PDF converter.
-
-    The ProcessingService uses the new analysis+extraction pipeline which
-    calls various AI agents. These are mocked via mock_ai_agents autouse fixture.
-
-    Note: ProcessingWorker has been removed as part of the agentic pipeline refactor.
-    Processing is now triggered directly via ProcessingService, not through a queue worker.
-    """
-    from src.services.processing_service import ProcessingService
-
-    # Create ProcessingService with mocked PDF converter
-    # AI agents are mocked via the mock_ai_agents autouse fixture
-    return ProcessingService(
-        storage_service=storage_service,
-        queue_service=queue_service,
-        job_service=job_service,
-        redis_client=real_redis_client,
-        pdf_converter=mock_pdf_converter,
-    )
+# OLD ProcessingService fixture removed - system now uses DocumentProcessingService
+# with agentic pipeline. Integration tests that need processing service should
+# create their own fixtures using DocumentProcessingService.
 
 
 # ============================================================================

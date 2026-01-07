@@ -2,7 +2,7 @@
 
 Complete reference for all data structures used in the V5 pipeline.
 
-**Location:** `src/agents/v5/models.py`
+**Location:** `src/agents/models.py`
 
 ---
 
@@ -117,7 +117,7 @@ Final processing status after recovery attempts.
 
 **Purpose:** Quick page analysis without LLM (regex/heuristics)
 
-**Location:** `src/agents/v5/models.py:78-111`
+**Location:** `src/agents/models.py:78-111`
 
 ```python
 class PageSkeleton(BaseModel):
@@ -159,7 +159,7 @@ PageSkeleton(
 
 **Purpose:** Hierarchical document outline (TOC structure)
 
-**Location:** `src/agents/v5/models.py:118-134`
+**Location:** `src/agents/models.py:118-134`
 
 ```python
 class OutlineEntry(BaseModel):
@@ -204,7 +204,7 @@ OutlineEntry(
 
 **Purpose:** Record a heading that needs level correction
 
-**Location:** `src/agents/v5/models.py:136-145`
+**Location:** `src/agents/models.py:136-145`
 
 ```python
 class HeadingFix(BaseModel):
@@ -234,7 +234,7 @@ HeadingFix(
 
 **Purpose:** Complete document structure inference from Stage 2
 
-**Location:** `src/agents/v5/models.py:147-180`
+**Location:** `src/agents/models.py:147-180`
 
 ```python
 class DocumentStructure(BaseModel):
@@ -270,7 +270,7 @@ DocumentStructure(
 
 **Purpose:** Context for a figure needing alt-text
 
-**Location:** `src/agents/v5/models.py:187-207`
+**Location:** `src/agents/models.py:187-207`
 
 ```python
 class FigureContext(BaseModel):
@@ -298,7 +298,7 @@ FigureContext(
 
 **Purpose:** Context for a table needing transcription
 
-**Location:** `src/agents/v5/models.py:209-228`
+**Location:** `src/agents/models.py:209-228`
 
 ```python
 class TableContext(BaseModel):
@@ -333,7 +333,7 @@ TableContext(
 
 **Purpose:** Detailed analysis of a single page from Stage 3
 
-**Location:** `src/agents/v5/models.py:230-265`
+**Location:** `src/agents/models.py:230-265`
 
 ```python
 class PagePlan(BaseModel):
@@ -373,7 +373,7 @@ PagePlan(
 
 **Purpose:** Complete planning phase output (single source of truth)
 
-**Location:** `src/agents/v5/models.py:344-383`
+**Location:** `src/agents/models.py:344-383`
 
 ```python
 class DocumentPlan(BaseModel):
@@ -417,7 +417,7 @@ Quick Scan → Page Chain → Job Generation → DocumentPlan
 
 **Purpose:** Single unit of work within a job
 
-**Location:** `src/agents/v5/models.py:272-283`
+**Location:** `src/agents/models.py:272-283`
 
 ```python
 class Task(BaseModel):
@@ -445,7 +445,7 @@ Task(
 
 **Purpose:** Slim context slice for worker agent
 
-**Location:** `src/agents/v5/models.py:285-307`
+**Location:** `src/agents/models.py:285-307`
 
 ```python
 class JobContext(BaseModel):
@@ -477,7 +477,7 @@ JobContext(
 
 **Purpose:** Scoped unit of work for a worker agent
 
-**Location:** `src/agents/v5/models.py:309-337`
+**Location:** `src/agents/models.py:309-337`
 
 ```python
 class Job(BaseModel):
@@ -522,7 +522,7 @@ Job(
 
 **Purpose:** Result of executing a job
 
-**Location:** `src/agents/v5/worker.py` (not in models.py, defined inline)
+**Location:** `src/agents/worker.py` (not in models.py, defined inline)
 
 ```python
 class JobResult(BaseModel):
@@ -546,7 +546,7 @@ class JobResult(BaseModel):
 
 **Purpose:** Immutable record of a change
 
-**Location:** `src/agents/v5/models.py:390-421`
+**Location:** `src/agents/models.py:390-421`
 
 ```python
 class LedgerEntry(BaseModel):
@@ -599,7 +599,7 @@ LedgerEntry(
 
 **Purpose:** Append-only log of all changes
 
-**Location:** `src/agents/v5/models.py:423-449`
+**Location:** `src/agents/models.py:423-449`
 
 ```python
 class Ledger(BaseModel):
@@ -631,7 +631,7 @@ print(f"Total edits: {ledger.total_edits}")
 
 **Purpose:** Proposed edit from worker (not yet applied)
 
-**Location:** `src/agents/v5/models.py:456-464`
+**Location:** `src/agents/models.py:456-464`
 
 ```python
 class EditProposal(BaseModel):
@@ -659,7 +659,7 @@ EditProposal(
 
 **Purpose:** Spelling issue found during validation
 
-**Location:** `src/agents/v5/models.py:466-475`
+**Location:** `src/agents/models.py:466-475`
 
 ```python
 class SpellIssue(BaseModel):
@@ -683,7 +683,7 @@ SpellIssue(
 
 **Purpose:** Result of validating a proposed edit
 
-**Location:** `src/agents/v5/models.py:477-493`
+**Location:** `src/agents/models.py:477-493`
 
 ```python
 class ValidationResult(BaseModel):
@@ -731,7 +731,7 @@ ValidationResult(
 
 **Purpose:** Verification result for a single page
 
-**Location:** `src/agents/v5/models.py:500-510`
+**Location:** `src/agents/models.py:500-510`
 
 ```python
 class PageVerification(BaseModel):
@@ -760,7 +760,7 @@ PageVerification(
 
 **Purpose:** Final verification report for complete document
 
-**Location:** `src/agents/v5/models.py:512-532`
+**Location:** `src/agents/models.py:512-532`
 
 ```python
 class VerificationReport(BaseModel):
@@ -810,7 +810,7 @@ VerificationReport(
 
 **Purpose:** Status of recovery attempt
 
-**Location:** `src/agents/v5/models.py:539-547`
+**Location:** `src/agents/models.py:539-547`
 
 ```python
 class RecoveryAttemptStatus(str, Enum):
@@ -827,7 +827,7 @@ class RecoveryAttemptStatus(str, Enum):
 
 **Purpose:** Single recovery edit
 
-**Location:** `src/agents/v5/models.py:577-591`
+**Location:** `src/agents/models.py:577-591`
 
 ```python
 class RecoveryEdit(BaseModel):
@@ -861,7 +861,7 @@ RecoveryEdit(
 
 **Purpose:** Record of recovery attempt on a page
 
-**Location:** `src/agents/v5/models.py:593-617`
+**Location:** `src/agents/models.py:593-617`
 
 ```python
 class RecoveryAttempt(BaseModel):
@@ -900,7 +900,7 @@ RecoveryAttempt(
 
 **Purpose:** Complete recovery phase report
 
-**Location:** `src/agents/v5/models.py:619-651`
+**Location:** `src/agents/models.py:619-651`
 
 ```python
 class RecoveryReport(BaseModel):
@@ -938,7 +938,7 @@ RecoveryReport(
 
 **Purpose:** Final result of V5 pipeline
 
-**Location:** `src/agents/v5/models.py:790-822`
+**Location:** `src/agents/models.py:790-822`
 
 ```python
 class ProcessingResult(BaseModel):

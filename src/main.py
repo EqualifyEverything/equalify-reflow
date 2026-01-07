@@ -149,15 +149,9 @@ app.include_router(review_checklist.router)
 
 # Conditionally import dev-only endpoints (only in development)
 if settings.environment == "dev":
-    from .api import dev_monitoring, experiments, experiments_v2, experiments_v3
+    from .api import dev_monitoring
     app.include_router(dev_monitoring.router)
-    app.include_router(experiments.router)
-    app.include_router(experiments_v2.router)
-    app.include_router(experiments_v3.router)
     logger.info("✅ Dev monitoring endpoints enabled at /api/dev/monitoring/queues")
-    logger.info("✅ Experimental endpoints enabled at /api/experiments")
-    logger.info("✅ Pipeline experiments enabled at /api/experiments/v2")
-    logger.info("✅ V3 pipeline enabled at /api/experiments/v3")
 
 
 def custom_openapi() -> dict[str, object]:

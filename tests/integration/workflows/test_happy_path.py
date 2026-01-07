@@ -8,7 +8,10 @@ This test catches integration issues between:
 - Job Service → Redis
 - Queue Service → Redis
 - PII Worker → PII Service → Queue Service
-- Processing Worker → Processing Service → Job Service
+- Processing Service → Job Service (direct invocation, no queue worker)
+
+Note: The ProcessingWorker has been removed as part of the agentic pipeline refactor.
+Processing is now triggered directly via ProcessingService after PII scan passes.
 """
 
 import uuid
@@ -38,17 +41,22 @@ class TestHappyPathWorkflow:
         queue_service,
         job_service,
         pii_worker,
-        processing_worker,
+        processing_service,
         sample_pdf_content,
     ):
         """Full workflow: Upload → PII scan (clean) → Process → Result.
 
-        Catches: Integration issues between services, workers, and storage.
+        Catches: Integration issues between services and storage.
 
         Uses:
         - REAL Redis (testcontainer)
         - REAL S3 (LocalStack testcontainer)
         - MOCKED AI components (Presidio returns clean, Bedrock/Docling mocked)
+
+        Note: ProcessingWorker has been removed. Processing is now triggered
+        directly via ProcessingService after PII scan passes. The PROCESSING_QUEUE
+        is still used for backwards compatibility, but the new agentic pipeline
+        will eventually trigger processing inline without queue.
         """
         # 1. Simulate API: Upload PDF to S3 and create job
         job_id = str(uuid.uuid4())
@@ -100,12 +108,15 @@ class TestHappyPathWorkflow:
         processing_queue_depth = await queue_service.queue_depth(PROCESSING_QUEUE)
         assert processing_queue_depth == 1, "Processing queue should have 1 job"
 
-        # 6. Manually process the job (AI components mocked)
+        # 6. Process the job directly via ProcessingService (AI components mocked)
+        # Note: In the new agentic pipeline, processing is triggered directly,
+        # not through a worker consuming from the queue. We still dequeue to
+        # clear the queue for test cleanup.
         processing_job_data = await queue_service.dequeue(PROCESSING_QUEUE, timeout=1)
         assert processing_job_data is not None, "Should dequeue processing job"
 
         processing_job = ProcessingQueuePayload.model_validate(processing_job_data)
-        await processing_worker.processing_service.process_document(processing_job)
+        await processing_service.process_document(processing_job)
 
         # 7. Verify final state
         # PRD-027: New workflow routes to needs_review before completion

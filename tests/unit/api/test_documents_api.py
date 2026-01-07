@@ -62,7 +62,7 @@ def mock_url_service():
 
 
 class TestGetJobStatus:
-    """Tests for GET /api/documents/{job_id} endpoint."""
+    """Tests for GET /api/v1/documents/{job_id} endpoint."""
 
     @pytest.mark.asyncio
     async def test_get_job_status_needs_review(
@@ -90,7 +90,7 @@ class TestGetJobStatus:
 
         try:
             response = client.get(
-                f"/api/documents/{job_id}",
+                f"/api/v1/documents/{job_id}",
                 headers=api_key_headers
             )
 
@@ -101,7 +101,7 @@ class TestGetJobStatus:
             assert data["confidence_score"] == 0.95
             assert data["review_item_count"] == 3
             assert data["processing_result_key"] == f"jobs/{job_id}/processing_result.json"
-            assert data["review_url"] == f"/api/documents/{job_id}/result/checklist"
+            assert data["review_url"] == f"/api/v1/documents/{job_id}/result/checklist"
             assert "llm_cost" in data
             assert data["llm_cost"]["estimated_cost_cents"] == 5.25
         finally:
@@ -133,7 +133,7 @@ class TestGetJobStatus:
 
         try:
             response = client.get(
-                f"/api/documents/{job_id}",
+                f"/api/v1/documents/{job_id}",
                 headers=api_key_headers
             )
 
@@ -163,7 +163,7 @@ class TestGetJobStatus:
 
         try:
             response = client.get(
-                f"/api/documents/{job_id}",
+                f"/api/v1/documents/{job_id}",
                 headers=api_key_headers
             )
 
@@ -195,7 +195,7 @@ class TestGetJobStatus:
 
         try:
             response = client.get(
-                f"/api/documents/{job_id}",
+                f"/api/v1/documents/{job_id}",
                 headers=api_key_headers
             )
 
@@ -219,7 +219,7 @@ class TestGetJobStatus:
 
         try:
             response = client.get(
-                f"/api/documents/{job_id}",
+                f"/api/v1/documents/{job_id}",
                 headers=api_key_headers
             )
 
@@ -247,7 +247,7 @@ class TestGetJobStatus:
 
         try:
             response = client.get(
-                f"/api/documents/{job_id}",
+                f"/api/v1/documents/{job_id}",
                 headers=api_key_headers
             )
 
@@ -291,7 +291,7 @@ class TestNeedsReviewStatusValidation:
 
         try:
             response = client.get(
-                f"/api/documents/{job_id}",
+                f"/api/v1/documents/{job_id}",
                 headers=api_key_headers
             )
 

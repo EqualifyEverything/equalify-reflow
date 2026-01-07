@@ -62,7 +62,7 @@ async def test_rate_limit_fails_open_on_redis_error(middleware: RateLimitMiddlew
     )
 
     request = create_mock_request(
-        path="/api/documents/submit",
+        path="/api/v1/documents/submit",
         method="POST",
         rate_limiter=mock_rate_limiter,
     )
@@ -86,7 +86,7 @@ async def test_rate_limit_fails_open_when_not_configured(middleware: RateLimitMi
     """
     # Setup: no rate limiter configured
     request = create_mock_request(
-        path="/api/documents/submit",
+        path="/api/v1/documents/submit",
         method="POST",
         rate_limiter=None,  # Not configured
     )
@@ -114,7 +114,7 @@ async def test_rate_limit_blocks_after_threshold(middleware: RateLimitMiddleware
     )
 
     request = create_mock_request(
-        path="/api/documents/submit",
+        path="/api/v1/documents/submit",
         method="POST",
         rate_limiter=mock_rate_limiter,
     )
@@ -147,7 +147,7 @@ async def test_rate_limit_allows_request_under_threshold(middleware: RateLimitMi
     )
 
     request = create_mock_request(
-        path="/api/documents/submit",
+        path="/api/v1/documents/submit",
         method="POST",
         rate_limiter=mock_rate_limiter,
     )

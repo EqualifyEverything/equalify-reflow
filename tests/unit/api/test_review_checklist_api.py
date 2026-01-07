@@ -254,7 +254,7 @@ class TestGetProcessingResult:
 
         try:
             response = client.get(
-                "/api/documents/job-123/result",
+                "/api/v1/documents/job-123/result",
                 headers=api_key_headers,
             )
 
@@ -280,7 +280,7 @@ class TestGetProcessingResult:
 
         try:
             response = client.get(
-                "/api/documents/nonexistent/result",
+                "/api/v1/documents/nonexistent/result",
                 headers=api_key_headers,
             )
 
@@ -303,7 +303,7 @@ class TestGetProcessingResult:
 
         try:
             response = client.get(
-                "/api/documents/job-123/result",
+                "/api/v1/documents/job-123/result",
                 headers=api_key_headers,
             )
 
@@ -326,7 +326,7 @@ class TestGetReviewChecklist:
 
         try:
             response = client.get(
-                "/api/documents/job-123/checklist",
+                "/api/v1/documents/job-123/checklist",
                 headers=api_key_headers,
             )
 
@@ -350,7 +350,7 @@ class TestGetReviewChecklist:
 
         try:
             response = client.get(
-                "/api/documents/job-123/checklist?agent=figures",
+                "/api/v1/documents/job-123/checklist?agent=figures",
                 headers=api_key_headers,
             )
 
@@ -372,7 +372,7 @@ class TestGetReviewChecklist:
 
         try:
             response = client.get(
-                "/api/documents/job-123/checklist?page=3",
+                "/api/v1/documents/job-123/checklist?page=3",
                 headers=api_key_headers,
             )
 
@@ -393,7 +393,7 @@ class TestGetReviewChecklist:
 
         try:
             response = client.get(
-                "/api/documents/job-123/checklist?category=alt_text",
+                "/api/v1/documents/job-123/checklist?category=alt_text",
                 headers=api_key_headers,
             )
 
@@ -414,7 +414,7 @@ class TestGetReviewChecklist:
         try:
             # Filter by agent=figures AND page=1 should return 1 item
             response = client.get(
-                "/api/documents/job-123/checklist?agent=figures&page=1",
+                "/api/v1/documents/job-123/checklist?agent=figures&page=1",
                 headers=api_key_headers,
             )
 
@@ -436,7 +436,7 @@ class TestGetReviewChecklist:
 
         try:
             response = client.get(
-                "/api/documents/nonexistent/checklist",
+                "/api/v1/documents/nonexistent/checklist",
                 headers=api_key_headers,
             )
 
@@ -462,7 +462,7 @@ class TestGetChecklistSummary:
 
         try:
             response = client.get(
-                "/api/documents/job-123/checklist/summary",
+                "/api/v1/documents/job-123/checklist/summary",
                 headers=api_key_headers,
             )
 
@@ -489,7 +489,7 @@ class TestGetChecklistSummary:
 
         try:
             response = client.get(
-                "/api/documents/nonexistent/checklist/summary",
+                "/api/v1/documents/nonexistent/checklist/summary",
                 headers=api_key_headers,
             )
 
@@ -516,7 +516,7 @@ class TestSubmitReview:
             option_id = sample_processing_result.review_checklist.items[0].options[0].id
 
             response = client.post(
-                f"/api/documents/job-123/checklist/{item_id}/review",
+                f"/api/v1/documents/job-123/checklist/{item_id}/review",
                 json={
                     "selected_option_id": option_id,
                     "reviewed_by": "test-user@example.com",
@@ -545,7 +545,7 @@ class TestSubmitReview:
             item_id = sample_processing_result.review_checklist.items[0].id
 
             response = client.post(
-                f"/api/documents/job-123/checklist/{item_id}/review",
+                f"/api/v1/documents/job-123/checklist/{item_id}/review",
                 json={
                     "custom_input": "A detailed flowchart showing 5 processing steps",
                     "reviewed_by": "test-user@example.com",
@@ -571,7 +571,7 @@ class TestSubmitReview:
             item_id = sample_processing_result.review_checklist.items[0].id
 
             response = client.post(
-                f"/api/documents/job-123/checklist/{item_id}/review",
+                f"/api/v1/documents/job-123/checklist/{item_id}/review",
                 json={
                     "reviewed_by": "test-user@example.com",
                 },
@@ -595,7 +595,7 @@ class TestSubmitReview:
             item_id = sample_processing_result.review_checklist.items[0].id
 
             response = client.post(
-                f"/api/documents/job-123/checklist/{item_id}/review",
+                f"/api/v1/documents/job-123/checklist/{item_id}/review",
                 json={
                     "selected_option_id": "invalid-option-id",
                     "reviewed_by": "test-user@example.com",
@@ -618,7 +618,7 @@ class TestSubmitReview:
 
         try:
             response = client.post(
-                "/api/documents/job-123/checklist/nonexistent-item/review",
+                "/api/v1/documents/job-123/checklist/nonexistent-item/review",
                 json={
                     "selected_option_id": "opt-1",
                     "reviewed_by": "test-user@example.com",
@@ -647,7 +647,7 @@ class TestSubmitReview:
             item_id = sample_processing_result.review_checklist.items[0].id
 
             response = client.post(
-                f"/api/documents/job-123/checklist/{item_id}/review",
+                f"/api/v1/documents/job-123/checklist/{item_id}/review",
                 json={
                     "selected_option_id": "opt-1",
                     "reviewed_by": "test-user@example.com",
@@ -687,7 +687,7 @@ class TestApplyReviews:
 
         try:
             response = client.post(
-                "/api/documents/job-123/apply-reviews",
+                "/api/v1/documents/job-123/apply-reviews",
                 json={},
                 headers=api_key_headers,
             )
@@ -715,7 +715,7 @@ class TestApplyReviews:
 
         try:
             response = client.post(
-                "/api/documents/job-123/apply-reviews",
+                "/api/v1/documents/job-123/apply-reviews",
                 json={},
                 headers=api_key_headers,
             )
@@ -750,7 +750,7 @@ class TestApplyReviews:
 
         try:
             response = client.post(
-                "/api/documents/job-123/apply-reviews",
+                "/api/v1/documents/job-123/apply-reviews",
                 json={"force": True},
                 headers=api_key_headers,
             )
@@ -776,7 +776,7 @@ class TestApplyReviews:
 
         try:
             response = client.post(
-                "/api/documents/nonexistent/apply-reviews",
+                "/api/v1/documents/nonexistent/apply-reviews",
                 json={},
                 headers=api_key_headers,
             )
@@ -811,7 +811,7 @@ class TestApplyReviews:
 
         try:
             response = client.post(
-                "/api/documents/job-123/apply-reviews",
+                "/api/v1/documents/job-123/apply-reviews",
                 json={},
                 headers=api_key_headers,
             )
@@ -837,7 +837,7 @@ class TestApplyReviews:
 
         try:
             response = client.post(
-                "/api/documents/job-123/apply-reviews",
+                "/api/v1/documents/job-123/apply-reviews",
                 json={},
                 headers=api_key_headers,
             )
@@ -868,7 +868,7 @@ class TestObservationLifecycle:
             option_id = sample_processing_result.review_checklist.items[0].options[0].id
 
             response = client.post(
-                f"/api/documents/job-123/checklist/{item_id}/review",
+                f"/api/v1/documents/job-123/checklist/{item_id}/review",
                 json={
                     "selected_option_id": option_id,
                     "reviewed_by": "test-user@example.com",
@@ -903,7 +903,7 @@ class TestObservationLifecycle:
             )
 
             response = client.post(
-                f"/api/documents/job-123/checklist/{item_id}/review",
+                f"/api/v1/documents/job-123/checklist/{item_id}/review",
                 json={
                     "selected_option_id": keep_option.id,
                     "reviewed_by": "test-user@example.com",
@@ -939,7 +939,7 @@ class TestObservationLifecycle:
 
         try:
             response = client.post(
-                "/api/documents/job-123/apply-reviews",
+                "/api/v1/documents/job-123/apply-reviews",
                 json={},
                 headers=api_key_headers,
             )
@@ -1151,7 +1151,7 @@ class TestEdgeCases:
 
         try:
             response = client.get(
-                "/api/documents/job-empty/checklist",
+                "/api/v1/documents/job-empty/checklist",
                 headers=api_key_headers,
             )
 
@@ -1177,7 +1177,7 @@ class TestEdgeCases:
             too_long_input = "x" * (MAX_CUSTOM_INPUT_LENGTH + 1)
 
             response = client.post(
-                "/api/documents/job-123/checklist/item-1/review",
+                "/api/v1/documents/job-123/checklist/item-1/review",
                 json={
                     "custom_input": too_long_input,
                     "reviewed_by": "test-user",
@@ -1201,7 +1201,7 @@ class TestEdgeCases:
         try:
             # Try with invalid page number (0)
             response = client.get(
-                "/api/documents/job-123/checklist?page=0",
+                "/api/v1/documents/job-123/checklist?page=0",
                 headers=api_key_headers,
             )
 

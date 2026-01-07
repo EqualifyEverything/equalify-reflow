@@ -38,7 +38,7 @@ def expired_job_data():
 
 @pytest.mark.asyncio
 async def test_get_review_details_valid_token(valid_job_data, api_key_headers):
-    """Test GET /api/approval/{token}/review with valid token."""
+    """Test GET /api/v1/approval/{token}/review with valid token."""
     token = valid_job_data["approval_token"]
 
     with (
@@ -63,7 +63,7 @@ async def test_get_review_details_valid_token(valid_job_data, api_key_headers):
 
         # Make request with API key headers
         async with AsyncClient(transport=ASGITransport(app=app), base_url="http://test") as client:
-            response = await client.get(f"/api/approval/{token}/review", headers=api_key_headers)
+            response = await client.get(f"/api/v1/approval/{token}/review", headers=api_key_headers)
 
         # Assert
         assert response.status_code == 200
@@ -76,7 +76,7 @@ async def test_get_review_details_valid_token(valid_job_data, api_key_headers):
 
 @pytest.mark.asyncio
 async def test_get_review_details_invalid_token(api_key_headers):
-    """Test GET /api/approval/{token}/review with invalid token."""
+    """Test GET /api/v1/approval/{token}/review with invalid token."""
     with (
         patch("src.api.approval.get_redis_client") as mock_redis_dep,
         patch("src.api.approval.get_s3_client") as mock_s3_dep,
@@ -91,7 +91,7 @@ async def test_get_review_details_invalid_token(api_key_headers):
 
         # Make request with API key headers
         async with AsyncClient(transport=ASGITransport(app=app), base_url="http://test") as client:
-            response = await client.get("/api/approval/invalid-token-999/review", headers=api_key_headers)
+            response = await client.get("/api/v1/approval/invalid-token-999/review", headers=api_key_headers)
 
         # Assert
         assert response.status_code == 404
@@ -100,7 +100,7 @@ async def test_get_review_details_invalid_token(api_key_headers):
 
 @pytest.mark.asyncio
 async def test_get_review_details_expired_token(expired_job_data, api_key_headers):
-    """Test GET /api/approval/{token}/review with expired token."""
+    """Test GET /api/v1/approval/{token}/review with expired token."""
     token = expired_job_data["approval_token"]
 
     with (
@@ -123,7 +123,7 @@ async def test_get_review_details_expired_token(expired_job_data, api_key_header
 
         # Make request with API key headers
         async with AsyncClient(transport=ASGITransport(app=app), base_url="http://test") as client:
-            response = await client.get(f"/api/approval/{token}/review", headers=api_key_headers)
+            response = await client.get(f"/api/v1/approval/{token}/review", headers=api_key_headers)
 
         # Assert
         assert response.status_code == 404
@@ -132,7 +132,7 @@ async def test_get_review_details_expired_token(expired_job_data, api_key_header
 
 @pytest.mark.asyncio
 async def test_submit_approval_approved_decision(valid_job_data, api_key_headers):
-    """Test POST /api/approval/{token}/decision with approved decision."""
+    """Test POST /api/v1/approval/{token}/decision with approved decision."""
     import json
 
     from src.dependencies import get_redis_client, get_s3_client
@@ -183,7 +183,7 @@ async def test_submit_approval_approved_decision(valid_job_data, api_key_headers
         # Make request with API key headers
         async with AsyncClient(transport=ASGITransport(app=app), base_url="http://test") as client:
             response = await client.post(
-                f"/api/approval/{token}/decision", json=decision_payload, headers=api_key_headers
+                f"/api/v1/approval/{token}/decision", json=decision_payload, headers=api_key_headers
             )
 
         # Assert
@@ -202,7 +202,7 @@ async def test_submit_approval_approved_decision(valid_job_data, api_key_headers
 
 @pytest.mark.asyncio
 async def test_submit_approval_denied_decision(valid_job_data, api_key_headers):
-    """Test POST /api/approval/{token}/decision with denied decision."""
+    """Test POST /api/v1/approval/{token}/decision with denied decision."""
     token = valid_job_data["approval_token"]
     decision_payload = {
         "decision": "denied",
@@ -244,7 +244,7 @@ async def test_submit_approval_denied_decision(valid_job_data, api_key_headers):
         # Make request with API key headers
         async with AsyncClient(transport=ASGITransport(app=app), base_url="http://test") as client:
             response = await client.post(
-                f"/api/approval/{token}/decision", json=decision_payload, headers=api_key_headers
+                f"/api/v1/approval/{token}/decision", json=decision_payload, headers=api_key_headers
             )
 
         # Assert
@@ -260,7 +260,7 @@ async def test_submit_approval_denied_decision(valid_job_data, api_key_headers):
 
 @pytest.mark.asyncio
 async def test_submit_approval_invalid_token(api_key_headers):
-    """Test POST /api/approval/{token}/decision with invalid token."""
+    """Test POST /api/v1/approval/{token}/decision with invalid token."""
     decision_payload = {"decision": "approved", "justification": "Test justification", "reviewed_by": "test@test.com"}
 
     with (
@@ -278,7 +278,7 @@ async def test_submit_approval_invalid_token(api_key_headers):
         # Make request with API key headers
         async with AsyncClient(transport=ASGITransport(app=app), base_url="http://test") as client:
             response = await client.post(
-                "/api/approval/invalid-token/decision", json=decision_payload, headers=api_key_headers
+                "/api/v1/approval/invalid-token/decision", json=decision_payload, headers=api_key_headers
             )
 
         # Assert
@@ -288,7 +288,7 @@ async def test_submit_approval_invalid_token(api_key_headers):
 
 @pytest.mark.asyncio
 async def test_submit_approval_validation_errors(api_key_headers):
-    """Test POST /api/approval/{token}/decision with invalid payload."""
+    """Test POST /api/v1/approval/{token}/decision with invalid payload."""
     token = "valid-token-abc"
 
     # Missing required field
@@ -299,7 +299,7 @@ async def test_submit_approval_validation_errors(api_key_headers):
 
     # Make request with API key headers
     async with AsyncClient(transport=ASGITransport(app=app), base_url="http://test") as client:
-        response = await client.post(f"/api/approval/{token}/decision", json=invalid_payload, headers=api_key_headers)
+        response = await client.post(f"/api/v1/approval/{token}/decision", json=invalid_payload, headers=api_key_headers)
 
     # Assert validation error
     assert response.status_code == 422  # Unprocessable Entity

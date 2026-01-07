@@ -129,7 +129,7 @@ class TestListObservations:
         app.dependency_overrides[get_remediation_storage] = lambda: mock_storage
 
         try:
-            response = client.get("/api/documents/job-123/observations", headers=api_key_headers)
+            response = client.get("/api/v1/documents/job-123/observations", headers=api_key_headers)
 
             assert response.status_code == status.HTTP_200_OK
             data = response.json()
@@ -151,7 +151,7 @@ class TestListObservations:
 
         try:
             response = client.get(
-                "/api/documents/job-123/observations?status=open",
+                "/api/v1/documents/job-123/observations?status=open",
                 headers=api_key_headers,
             )
 
@@ -174,7 +174,7 @@ class TestListObservations:
 
         try:
             response = client.get(
-                "/api/documents/job-123/observations?agent=figures",
+                "/api/v1/documents/job-123/observations?agent=figures",
                 headers=api_key_headers,
             )
 
@@ -198,7 +198,7 @@ class TestListCorrections:
         app.dependency_overrides[get_remediation_storage] = lambda: mock_storage
 
         try:
-            response = client.get("/api/documents/job-123/corrections", headers=api_key_headers)
+            response = client.get("/api/v1/documents/job-123/corrections", headers=api_key_headers)
 
             assert response.status_code == status.HTTP_200_OK
             data = response.json()
@@ -221,7 +221,7 @@ class TestListCorrections:
 
         try:
             response = client.get(
-                "/api/documents/job-123/corrections?applied=false",
+                "/api/v1/documents/job-123/corrections?applied=false",
                 headers=api_key_headers,
             )
 
@@ -248,7 +248,7 @@ class TestCloseObservation:
 
         try:
             response = client.post(
-                "/api/documents/job-123/observations/obs-1/close",
+                "/api/v1/documents/job-123/observations/obs-1/close",
                 json={"resolution": "fixed", "reviewed_by": "test-user"},
                 headers=api_key_headers,
             )
@@ -274,7 +274,7 @@ class TestCloseObservation:
 
         try:
             response = client.post(
-                "/api/documents/job-123/observations/nonexistent/close",
+                "/api/v1/documents/job-123/observations/nonexistent/close",
                 json={"resolution": "fixed", "reviewed_by": "test-user"},
                 headers=api_key_headers,
             )
@@ -294,7 +294,7 @@ class TestCloseObservation:
         try:
             for resolution in ["fixed", "kept_original", "skipped"]:
                 response = client.post(
-                    "/api/documents/job-123/observations/obs-1/close",
+                    "/api/v1/documents/job-123/observations/obs-1/close",
                     json={"resolution": resolution, "reviewed_by": "test-user"},
                     headers=api_key_headers,
                 )
@@ -337,7 +337,7 @@ class TestTriggerApplication:
 
         try:
             response = client.post(
-                "/api/documents/job-123/apply",
+                "/api/v1/documents/job-123/apply",
                 headers=api_key_headers,
             )
 
@@ -360,7 +360,7 @@ class TestTriggerApplication:
 
         try:
             response = client.post(
-                "/api/documents/nonexistent/apply",
+                "/api/v1/documents/nonexistent/apply",
                 headers=api_key_headers,
             )
 
@@ -402,7 +402,7 @@ class TestTriggerApplication:
 
         try:
             response = client.post(
-                "/api/documents/job-123/apply",
+                "/api/v1/documents/job-123/apply",
                 headers=api_key_headers,
             )
 
@@ -445,7 +445,7 @@ class TestTriggerApplication:
 
         try:
             response = client.post(
-                "/api/documents/job-123/apply",
+                "/api/v1/documents/job-123/apply",
                 headers=api_key_headers,
             )
 
@@ -475,7 +475,7 @@ class TestTriggerApplication:
 
         try:
             response = client.post(
-                "/api/documents/job-123/apply",
+                "/api/v1/documents/job-123/apply",
                 headers=api_key_headers,
             )
 

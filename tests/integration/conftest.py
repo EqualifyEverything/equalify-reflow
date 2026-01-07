@@ -23,7 +23,6 @@ from src.services.queue_service import QueueService
 from src.services.storage_service import StorageService
 from src.shared.models.pii import PIIFinding
 from src.workers.pii_worker import PIIWorker
-from src.workers.processing_worker import ProcessingWorker
 from testcontainers.localstack import LocalStackContainer
 from testcontainers.redis import RedisContainer
 
@@ -401,34 +400,26 @@ async def pii_worker(storage_service, queue_service, job_service, mock_pii_analy
 
 
 @pytest_asyncio.fixture
-async def processing_worker(storage_service, queue_service, job_service, mock_pdf_converter, real_redis_client):
-    """Create ProcessingWorker instance with REAL services and MOCKED PDF converter.
+async def processing_service(storage_service, queue_service, job_service, mock_pdf_converter, real_redis_client):
+    """Create ProcessingService instance with REAL services and MOCKED PDF converter.
 
     The ProcessingService uses the new analysis+extraction pipeline which
-    calls various AI agents. These are mocked via mock_ai_settings.
+    calls various AI agents. These are mocked via mock_ai_agents autouse fixture.
+
+    Note: ProcessingWorker has been removed as part of the agentic pipeline refactor.
+    Processing is now triggered directly via ProcessingService, not through a queue worker.
     """
     from src.services.processing_service import ProcessingService
 
     # Create ProcessingService with mocked PDF converter
-    # AI agents are mocked via the mock_ai_settings autouse fixture
-    processing_service = ProcessingService(
+    # AI agents are mocked via the mock_ai_agents autouse fixture
+    return ProcessingService(
         storage_service=storage_service,
         queue_service=queue_service,
         job_service=job_service,
         redis_client=real_redis_client,
         pdf_converter=mock_pdf_converter,
     )
-
-    # Create worker and inject the pre-configured processing service
-    worker = ProcessingWorker(
-        storage_service=storage_service,
-        queue_service=queue_service,
-        job_service=job_service
-    )
-    # Replace the auto-created processing_service with our mocked one
-    worker.processing_service = processing_service
-
-    return worker
 
 
 # ============================================================================

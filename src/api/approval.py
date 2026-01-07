@@ -15,7 +15,7 @@ from ..services.job_service import JobService
 from ..services.queue_service import QueueService
 from .schemas import PIIFinding
 
-router = APIRouter(prefix="/api/approval", tags=["Approval"])
+router = APIRouter(prefix="/api/v1/approval", tags=["Approval"])
 
 
 class ApprovalDecisionInput(BaseModel):

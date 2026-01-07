@@ -1,12 +1,14 @@
 """Document processing endpoints."""
 
+import asyncio
 import json
+import logging
 from collections import Counter
 from datetime import UTC, datetime
 from io import BytesIO
-from typing import TYPE_CHECKING, Any
+from typing import TYPE_CHECKING, Any, Literal
 
-from fastapi import APIRouter, Depends, File, Form, HTTPException, UploadFile, status
+from fastapi import APIRouter, BackgroundTasks, Depends, File, Form, HTTPException, UploadFile, status
 from fastapi.responses import StreamingResponse
 from pydantic import BaseModel
 
@@ -16,15 +18,19 @@ from ..config import settings
 from ..dependencies import (
     get_job_service,
     get_queue_service,
+    get_redis_client,
     get_remediation_storage,
     get_s3_url_service,
     get_storage_service,
 )
 from ..services import JobService, QueueService, S3URLService, StorageService
+from ..services.document_processing_service import DocumentProcessingService
 from ..services.remediation_storage_service import RemediationStorageService
 from ..shared.constants.queues import PROCESSING_QUEUE
 from ..shared.models.queue import ProcessingQueuePayload
 from .schemas import (
+    AgenticCompletedResponse,
+    AgenticProcessingResponse,
     AgentsPhase,
     AnalysisPhase,
     AutoCorrectionSummary,
@@ -38,6 +44,9 @@ from .schemas import (
     DocumentStatusResponse,
     ExtractionPhase,
     FailedResponse,
+    LedgerEntryResponse,
+    LedgerPageGroup,
+    LedgerResponse,
     LLMCostInfo,
     NeedsReviewResponse,
     ObservationSummary,
@@ -51,7 +60,9 @@ from .schemas import (
     VerificationPhase,
 )
 
-router = APIRouter(prefix="/api/documents", tags=["Documents"])
+logger = logging.getLogger(__name__)
+
+router = APIRouter(prefix="/api/v1/documents", tags=["Documents"])
 
 
 def _build_llm_cost(job: dict[str, Any]) -> LLMCostInfo | None:
@@ -89,32 +100,41 @@ class JobSubmissionResponse(BaseModel):
     status: str
     estimated_completion_minutes: int
     created_at: str
+    stream_url: str | None = None
 
 
 @router.post("/submit", response_model=JobSubmissionResponse, status_code=status.HTTP_201_CREATED)
 async def submit_document(
+    background_tasks: BackgroundTasks,
     file: UploadFile = File(...),
-    skip_pii_scan: bool = Form(default=False, description="Skip PII scanning and queue directly for processing"),
+    skip_pii_scan: bool = Form(default=False, description="Skip PII scanning and use agentic pipeline directly"),
     skip_reason: str | None = Form(default=None, description="Optional reason for skipping PII scan (for audit trail)"),
+    review_mode: Literal["auto", "human"] = Form(
+        default="auto",
+        description="Review mode: 'auto' (immediate completion) or 'human' (ledger available for PR-like review)",
+    ),
     generate_debug_bundle: bool = Form(
         default=False, description="Generate debug bundle with all agent prompts and responses"
     ),
     storage: StorageService = Depends(get_storage_service),
     queue: QueueService = Depends(get_queue_service),
     job_service: JobService = Depends(get_job_service),
+    redis_client: Any = Depends(get_redis_client),
+    s3_url_service: S3URLService = Depends(get_s3_url_service),
 ) -> JobSubmissionResponse:
     """Submit a PDF document for processing.
 
     Args:
         file: PDF file to process
-        skip_pii_scan: If True, bypass PII scanning and queue directly for processing
+        skip_pii_scan: If True, bypass PII scanning and use agentic pipeline directly
         skip_reason: Optional justification for skipping PII scan (recorded in audit trail)
+        review_mode: 'auto' (immediate completion) or 'human' (ledger available for review)
         generate_debug_bundle: If True, save all agent prompts/responses for debugging
     """
     job_id, s3_key = await storage.store_document(file)
 
     if skip_pii_scan:
-        # Direct to processing queue (bypass PII scanning)
+        # Use agentic pipeline directly (bypass PII scanning)
         await job_service.create_job(
             job_id,
             s3_key,
@@ -123,19 +143,31 @@ async def submit_document(
             pii_skipped=True,
             pii_skip_reason=skip_reason or "User requested PII scan skip",
             debug_bundle_requested=generate_debug_bundle,
+            review_mode=review_mode,
         )
-        processing_payload = ProcessingQueuePayload(
+
+        # Use DocumentProcessingService for agentic pipeline
+        processing_service = DocumentProcessingService(
+            redis_client=redis_client,
+            storage_service=storage,
+            s3_url_service=s3_url_service,
+        )
+
+        # Run processing in background
+        background_tasks.add_task(
+            processing_service.process_document,
             job_id=job_id,
             s3_key=s3_key,
-            approved_at=None,  # No approval needed - PII scan skipped
+            filename=file.filename or "document.pdf",
+            review_mode=review_mode,
         )
-        await queue.enqueue(PROCESSING_QUEUE, processing_payload)
 
         return JobSubmissionResponse(
             job_id=job_id,
             status="processing",
             estimated_completion_minutes=settings.estimated_processing_minutes,
             created_at=datetime.now(UTC).isoformat().replace("+00:00", "Z"),
+            stream_url=f"/api/v1/documents/{job_id}/stream",
         )
     else:
         # Standard flow: PII scanning first
@@ -145,6 +177,7 @@ async def submit_document(
             status="pii_scanning",
             original_filename=file.filename,
             debug_bundle_requested=generate_debug_bundle,
+            review_mode=review_mode,
         )
         await queue.queue_pii_job(job_id, s3_key)
 
@@ -188,11 +221,28 @@ async def get_job(
             )
 
         case "processing":
-            return ProcessingResponse(
-                **base,
-                estimated_completion_minutes=settings.estimated_processing_minutes,
-                pii_skipped=job.get("pii_skipped") == "true" if job.get("pii_skipped") else None,
-            )
+            # Check if this is an agentic pipeline job (has review_mode set)
+            review_mode = job.get("review_mode")
+            processing_phase = job.get("processing_phase")
+
+            if review_mode:
+                # Agentic pipeline response
+                return AgenticProcessingResponse(
+                    **base,
+                    review_mode=review_mode,
+                    processing_phase=processing_phase or "initializing",
+                    jobs_total=int(job.get("jobs_total", 0)),
+                    jobs_complete=int(job.get("jobs_complete", 0)),
+                    stream_url=f"/api/v1/documents/{job_id}/stream",
+                    pii_skipped=job.get("pii_skipped") == "true" if job.get("pii_skipped") else None,
+                )
+            else:
+                # Legacy pipeline response
+                return ProcessingResponse(
+                    **base,
+                    estimated_completion_minutes=settings.estimated_processing_minutes,
+                    pii_skipped=job.get("pii_skipped") == "true" if job.get("pii_skipped") else None,
+                )
 
         case "awaiting_approval":
             pii_findings = [PIIFinding(**f) for f in (job.get("pii_findings") or [])]
@@ -202,7 +252,7 @@ async def get_job(
                 pii_findings=pii_findings,
                 approval_token=token,
                 approval_expires_at=job.get("approval_expires_at", ""),
-                approval_url=f"/api/approval/{token}/decision",
+                approval_url=f"/api/v1/approval/{token}/decision",
             )
 
         case "awaiting_correction_approval":
@@ -255,7 +305,7 @@ async def get_job(
                 corrections=corrections_list,
                 approval_token=token,
                 approval_expires_at=job.get("correction_expires_at", ""),
-                review_url=f"/api/corrections/{job_id}/review?token={token}",
+                review_url=f"/api/v1/corrections/{job_id}/review?token={token}",
                 original_markdown_url=await url_service.generate_url(
                     job["original_markdown_key"], bucket=url_service.results_bucket
                 ),
@@ -279,7 +329,7 @@ async def get_job(
                 confidence_score=float(job.get("confidence_score", 0.0)),
                 review_item_count=int(job.get("review_item_count", 0)),
                 processing_result_key=job.get("processing_result_key", ""),
-                review_url=f"/api/documents/{job_id}/result/checklist",
+                review_url=f"/api/v1/documents/{job_id}/result/checklist",
                 page_image_urls=[
                     await url_service.generate_url(k, bucket=url_service.temp_bucket)
                     for k in page_keys
@@ -292,29 +342,62 @@ async def get_job(
             )
 
         case "completed":
-            # PRD-027: markdown_url must be saved in job record by apply_reviews
-            markdown_key = job.get("markdown_url")
-            if not markdown_key:
-                raise HTTPException(
-                    status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
-                    detail="Job completed but markdown_url not set. This indicates a bug.",
+            # Check if this is an agentic pipeline job (has review_mode set)
+            review_mode = job.get("review_mode")
+
+            if review_mode:
+                # Agentic pipeline completed response
+                # Get result_url (markdown) - different field name for agentic pipeline
+                markdown_key = job.get("result_url") or job.get("markdown_url")
+                if not markdown_key:
+                    raise HTTPException(
+                        status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+                        detail="Job completed but result_url/markdown_url not set. This indicates a bug.",
+                    )
+
+                # Build ledger URL only for human review mode
+                ledger_url = None
+                if review_mode == "human":
+                    ledger_url = f"/api/v1/documents/{job_id}/ledger"
+
+                return AgenticCompletedResponse(
+                    **base,
+                    review_mode=review_mode,
+                    markdown_url=await url_service.generate_url(markdown_key, bucket=url_service.results_bucket),
+                    confidence_score=float(job.get("confidence_score", 0.0)),
+                    llm_cost=_build_llm_cost(job)
+                    or LLMCostInfo(
+                        input_tokens=0, output_tokens=0, total_tokens=0, estimated_cost_cents=0, estimated_cost_dollars=0
+                    ),
+                    ledger_url=ledger_url,
+                    total_pages=int(job.get("total_pages", 0)),
+                    total_edits=int(job.get("total_edits", 0)),
                 )
-            return CompletedResponse(
-                **base,
-                markdown_url=await url_service.generate_url(markdown_key, bucket=url_service.results_bucket),
-                confidence_score=float(job.get("confidence_score", 0.0)),
-                correction_decision=CorrectionDecision(
-                    # Default to "auto_completed" when no manual review was performed
-                    decision=job.get("correction_decision", "auto_completed"),
-                    reviewed_by=job.get("correction_reviewed_by", ""),
-                    reviewed_at=job.get("correction_reviewed_at", ""),
-                    justification=job.get("correction_justification", ""),
-                ),
-                llm_cost=_build_llm_cost(job)
-                or LLMCostInfo(
-                    input_tokens=0, output_tokens=0, total_tokens=0, estimated_cost_cents=0, estimated_cost_dollars=0
-                ),
-            )
+            else:
+                # Legacy pipeline completed response
+                # PRD-027: markdown_url must be saved in job record by apply_reviews
+                markdown_key = job.get("markdown_url")
+                if not markdown_key:
+                    raise HTTPException(
+                        status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+                        detail="Job completed but markdown_url not set. This indicates a bug.",
+                    )
+                return CompletedResponse(
+                    **base,
+                    markdown_url=await url_service.generate_url(markdown_key, bucket=url_service.results_bucket),
+                    confidence_score=float(job.get("confidence_score", 0.0)),
+                    correction_decision=CorrectionDecision(
+                        # Default to "auto_completed" when no manual review was performed
+                        decision=job.get("correction_decision", "auto_completed"),
+                        reviewed_by=job.get("correction_reviewed_by", ""),
+                        reviewed_at=job.get("correction_reviewed_at", ""),
+                        justification=job.get("correction_justification", ""),
+                    ),
+                    llm_cost=_build_llm_cost(job)
+                    or LLMCostInfo(
+                        input_tokens=0, output_tokens=0, total_tokens=0, estimated_cost_cents=0, estimated_cost_dollars=0
+                    ),
+                )
 
         case "failed":
             return FailedResponse(
@@ -581,4 +664,198 @@ async def download_debug_bundle(
             "Content-Disposition": f"attachment; filename={filename}",
             "Content-Length": str(len(zip_bytes)),
         },
+    )
+
+
+@router.get("/{job_id}/stream")
+async def stream_events(
+    job_id: str,
+    job_service: JobService = Depends(get_job_service),
+) -> StreamingResponse:
+    """Stream processing events via Server-Sent Events (SSE).
+
+    Connect to this endpoint to watch processing in real-time.
+    Events include: docling progress, planning progress, job creation, edits, etc.
+
+    Args:
+        job_id: Job identifier
+
+    Returns:
+        SSE stream with processing events
+
+    Raises:
+        HTTPException 404: Job not found
+    """
+    from ..agents.v5.events import get_event_bus
+
+    # Verify job exists
+    job = await job_service.get_job(job_id)
+    if not job:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail=f"Job {job_id} not found")
+
+    async def event_generator():
+        """Generate SSE events."""
+        # Get event bus from registry
+        event_bus = get_event_bus(job_id)
+
+        # If job is already complete or failed, send final event and close
+        if job["status"] in ("completed", "failed"):
+            if event_bus:
+                for event in event_bus.events:
+                    yield f"event: {event.event_type}\ndata: {event.model_dump_json()}\n\n"
+            yield "event: done\ndata: {}\n\n"
+            return
+
+        # Wait for event bus to be available (up to 30 seconds)
+        max_wait = 30
+        waited = 0
+        while event_bus is None and waited < max_wait:
+            await asyncio.sleep(0.5)
+            waited += 0.5
+            event_bus = get_event_bus(job_id)
+
+        if event_bus is None:
+            yield 'event: error\ndata: {"message": "Event bus not available"}\n\n'
+            return
+
+        # Subscribe to events
+        queue = event_bus.subscribe()
+
+        try:
+            # First, send any events that already happened
+            for event in event_bus.events:
+                yield f"event: {event.event_type}\ndata: {event.model_dump_json()}\n\n"
+
+            # Then stream new events
+            while True:
+                try:
+                    event = await asyncio.wait_for(queue.get(), timeout=30.0)
+                    yield f"event: {event.event_type}\ndata: {event.model_dump_json()}\n\n"
+
+                    # Check if processing is complete
+                    if event.event_type in ("processing:complete", "processing:error"):
+                        break
+
+                except TimeoutError:
+                    # Send keepalive
+                    yield ": keepalive\n\n"
+
+                    # Check if job is done by refreshing status
+                    refreshed_job = await job_service.get_job(job_id)
+                    if refreshed_job and refreshed_job["status"] in ("completed", "failed"):
+                        break
+
+        finally:
+            event_bus.unsubscribe(queue)
+
+        yield "event: done\ndata: {}\n\n"
+
+    return StreamingResponse(
+        event_generator(),
+        media_type="text/event-stream",
+        headers={
+            "Cache-Control": "no-cache",
+            "Connection": "keep-alive",
+            "X-Accel-Buffering": "no",
+        },
+    )
+
+
+@router.get("/{job_id}/ledger", response_model=LedgerResponse)
+async def get_ledger(
+    job_id: str,
+    job_service: JobService = Depends(get_job_service),
+    storage: StorageService = Depends(get_storage_service),
+    url_service: S3URLService = Depends(get_s3_url_service),
+) -> LedgerResponse:
+    """Get change ledger for PR-like review.
+
+    Returns the complete change ledger with all edits made by the pipeline,
+    grouped by page for easy review.
+
+    Args:
+        job_id: Job identifier
+
+    Returns:
+        LedgerResponse with all changes grouped by page
+
+    Raises:
+        HTTPException 404: Job not found or ledger not available
+        HTTPException 400: Job not yet complete
+    """
+    # Verify job exists
+    job = await job_service.get_job(job_id)
+    if not job:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail=f"Job {job_id} not found")
+
+    # Require job to be completed
+    if job["status"] != "completed":
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail=f"Job not yet complete (status: {job['status']})",
+        )
+
+    # Get ledger from S3 via DocumentProcessingService
+    processing_service = DocumentProcessingService(
+        redis_client=None,  # Not needed for get_ledger
+        storage_service=storage,
+        s3_url_service=url_service,
+    )
+
+    ledger_data = await processing_service.get_ledger(job_id)
+    if not ledger_data:
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND,
+            detail="Ledger not found for this job",
+        )
+
+    # Build grouped ledger response
+    entries_by_page: dict[int, list[LedgerEntryResponse]] = {}
+    for entry in ledger_data.get("entries", []):
+        page = entry.get("page", 1)
+        if page not in entries_by_page:
+            entries_by_page[page] = []
+
+        entries_by_page[page].append(
+            LedgerEntryResponse(
+                entry_id=entry.get("entry_id", ""),
+                page=page,
+                action=entry.get("action", ""),
+                target=entry.get("target", ""),
+                before=entry.get("before", ""),
+                after=entry.get("after", ""),
+                reasoning=entry.get("reasoning", ""),
+                confidence=float(entry.get("confidence", 0.0)),
+                timestamp=entry.get("timestamp", ""),
+            )
+        )
+
+    # Build page groups
+    pages = []
+    for page_num in sorted(entries_by_page.keys()):
+        page_entries = entries_by_page[page_num]
+        pages.append(
+            LedgerPageGroup(
+                page=page_num,
+                entries=page_entries,
+                edit_count=len(page_entries),
+            )
+        )
+
+    # Generate markdown URL
+    markdown_s3_key = job.get("result_url", f"results/{job_id}/result.md")
+    final_markdown_url = await url_service.generate_url(
+        markdown_s3_key,
+        bucket=url_service.results_bucket,
+    )
+
+    return LedgerResponse(
+        job_id=job_id,
+        document_title=job.get("original_filename", ""),
+        total_pages=int(job.get("total_pages", 0)),
+        pages_with_changes=len(pages),
+        total_edits=ledger_data.get("total_edits", 0),
+        pages=pages,
+        processing_duration_ms=0,
+        final_markdown_url=final_markdown_url,
     )

@@ -21,7 +21,7 @@ from ..services.s3_url_service import S3URLService
 
 logger = logging.getLogger(__name__)
 
-router = APIRouter(prefix="/api/corrections", tags=["Corrections"])
+router = APIRouter(prefix="/api/v1/corrections", tags=["Corrections"])
 
 
 class CorrectionSummary(BaseModel):

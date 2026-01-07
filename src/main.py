@@ -27,7 +27,6 @@ from .middleware.metrics import setup_metrics
 from .services.rate_limit_service import RateLimitService
 from .telemetry import init_telemetry, shutdown_telemetry
 from .workers.pii_worker import start_pii_worker
-from .workers.processing_worker import start_processing_worker
 from .workers.timeout_worker import start_timeout_worker
 
 # Configure logging
@@ -74,12 +73,13 @@ async def lifespan(app: FastAPI) -> AsyncIterator[None]:
         shutdown_event = asyncio.Event()
 
         # Pass shutdown event to workers
+        # Note: Processing Worker removed - DocumentProcessingService runs
+        # inline via BackgroundTasks instead of queue-based processing
         worker_tasks = [
             asyncio.create_task(start_pii_worker(shutdown_event)),
-            asyncio.create_task(start_processing_worker(shutdown_event)),
             asyncio.create_task(start_timeout_worker(shutdown_event)),
         ]
-        logger.info("PII, Processing, and Timeout worker tasks created")
+        logger.info("PII and Timeout worker tasks created")
 
     yield
 
@@ -149,17 +149,15 @@ app.include_router(review_checklist.router)
 
 # Conditionally import dev-only endpoints (only in development)
 if settings.environment == "dev":
-    from .api import dev_monitoring, experiments, experiments_v2, experiments_v3, v5
+    from .api import dev_monitoring, experiments, experiments_v2, experiments_v3
     app.include_router(dev_monitoring.router)
     app.include_router(experiments.router)
     app.include_router(experiments_v2.router)
     app.include_router(experiments_v3.router)
-    app.include_router(v5.router)
     logger.info("✅ Dev monitoring endpoints enabled at /api/dev/monitoring/queues")
     logger.info("✅ Experimental endpoints enabled at /api/experiments")
     logger.info("✅ Pipeline experiments enabled at /api/experiments/v2")
     logger.info("✅ V3 pipeline enabled at /api/experiments/v3")
-    logger.info("✅ V5 pipeline enabled at /api/v5")
 
 
 def custom_openapi() -> dict[str, object]:

@@ -95,6 +95,7 @@ class JobService:
         pii_skipped: bool = False,
         pii_skip_reason: str | None = None,
         debug_bundle_requested: bool = False,
+        review_mode: str | None = None,
     ) -> None:
         """
         Create a new job in Redis with automatic TTL.
@@ -110,6 +111,7 @@ class JobService:
             pii_skipped: Whether PII scan was skipped (for audit trail)
             pii_skip_reason: Reason PII scan was skipped
             debug_bundle_requested: Whether to generate debug bundle artifacts
+            review_mode: Review mode ('auto' | 'human') for agentic pipeline
 
         Example:
             >>> await job_service.create_job("job-123", "temp/file.pdf", original_filename="doc.pdf")
@@ -144,6 +146,10 @@ class JobService:
         # Add debug bundle flag
         if debug_bundle_requested:
             mapping["debug_bundle_requested"] = "true"
+
+        # Add review mode for agentic pipeline
+        if review_mode:
+            mapping["review_mode"] = review_mode
 
         await self.redis.hset(f"{self.status_prefix}{job_id}", mapping=mapping)
 

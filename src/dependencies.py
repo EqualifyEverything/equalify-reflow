@@ -12,6 +12,7 @@ from fastapi import Depends
 from .config import settings
 from .services.application_service import ApplicationService
 from .services.correction_approval_service import CorrectionApprovalService
+from .services.document_processing_service import DocumentProcessingService
 from .services.job_service import JobService
 from .services.queue_service import QueueService
 from .services.rate_limit_service import RateLimitService
@@ -350,4 +351,39 @@ async def get_application_service(
         remediation_storage=remediation_storage,
         storage=storage,
         job_service=job_service,
+    )
+
+
+async def get_document_processing_service(
+    redis_client: Any = Depends(get_redis_client),
+    storage: StorageService = Depends(get_storage_service),
+    s3_url: S3URLService = Depends(get_s3_url_service),
+) -> DocumentProcessingService:
+    """Get document processing service instance.
+
+    Orchestrates the agentic document processing pipeline including:
+    - Docling PDF extraction
+    - Planning phase (structure inference)
+    - Execution phase (parallel workers)
+    - Verification phase
+    - Recovery phase (if needed)
+
+    Args:
+        redis_client: Redis client (injected)
+        storage: Storage service for S3 operations (injected)
+        s3_url: S3 URL service for generating presigned URLs (injected)
+
+    Returns:
+        DocumentProcessingService instance
+
+    Note:
+        In FastAPI routes, use:
+            processing: DocumentProcessingService = Depends(
+                get_document_processing_service
+            )
+    """
+    return DocumentProcessingService(
+        redis_client=redis_client,
+        storage_service=storage,
+        s3_url_service=s3_url,
     )

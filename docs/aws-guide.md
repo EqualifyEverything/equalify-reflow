@@ -217,7 +217,7 @@ EOF
 
 # Submit it
 ALB_URL="http://equalify-pdf-alb-633052607.us-east-1.elb.amazonaws.com"
-RESPONSE=$(curl -s -X POST $ALB_URL/api/documents/submit -F "file=@/tmp/test.pdf")
+RESPONSE=$(curl -s -X POST $ALB_URL/api/v1/documents/submit -F "file=@/tmp/test.pdf")
 echo $RESPONSE | jq
 
 # Save job ID
@@ -230,14 +230,14 @@ echo "Job ID: $JOB_ID"
 ```bash
 # Poll status
 for i in {1..30}; do
-    STATUS=$(curl -s $ALB_URL/api/documents/$JOB_ID | jq -r '.status')
+    STATUS=$(curl -s $ALB_URL/api/v1/documents/$JOB_ID | jq -r '.status')
     echo "[$i] Status: $STATUS"
     [ "$STATUS" = "completed" ] || [ "$STATUS" = "failed" ] && break
     sleep 2
 done
 
 # Get result
-curl -s $ALB_URL/api/documents/$JOB_ID/result | jq
+curl -s $ALB_URL/api/v1/documents/$JOB_ID/result | jq
 ```
 
 **Expected timeline:** ~10-30 seconds for completion
@@ -436,8 +436,8 @@ Application-level rate limiting (Redis-based sliding window):
 
 | Endpoint | Limit | Window | Purpose |
 |----------|-------|--------|---------|
-| POST /api/documents/submit | 25/IP | 1 hour | Prevent individual abuse |
-| GET /api/documents/*/status | 100/IP | 1 hour | Prevent polling storms |
+| POST /api/v1/documents/submit | 25/IP | 1 hour | Prevent individual abuse |
+| GET /api/v1/documents/*/status | 100/IP | 1 hour | Prevent polling storms |
 | Global submissions | 1000 | 24 hours | System-wide cost control |
 
 At ~$0.20/document, the 1000/day global limit caps Bedrock spend at ~$200/day.

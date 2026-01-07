@@ -24,7 +24,7 @@ API_KEYS=uic-2bd2c716-bc67-4032-ba66-e4f35c441759
 
 ### Approval Endpoints Security
 
-Approval endpoints (`/api/approval/*`) require BOTH:
+Approval endpoints (`/api/v1/approval/*`) require BOTH:
 1. **API Key** (Layer 1) - Ensures only authorized systems (UIC infrastructure) can make requests
 2. **Approval Token** (Layer 2) - Ensures the requester has permission for the specific job
 
@@ -108,12 +108,12 @@ Middleware executes in reverse order of registration (last added = first execute
 make dev
 
 # Test API endpoint without key (should fail)
-curl http://localhost:8080/api/documents/test-id
+curl http://localhost:8080/api/v1/documents/test-id
 # → 401 Unauthorized
 
 # Test with valid key (should work or 404 if job not found)
 curl -H "X-API-Key: uic-2bd2c716-bc67-4032-ba66-e4f35c441759" \
-  http://localhost:8080/api/documents/test-id
+  http://localhost:8080/api/v1/documents/test-id
 
 # Test Swagger UI (should prompt for username/password)
 open http://localhost:8080/docs

@@ -74,11 +74,11 @@ The Equalify PDF Converter is a monolithic Python application with background ta
 │                  FASTAPI APPLICATION                         │
 │  ┌──────────────────────────────────────────────────────┐   │
 │  │              API ENDPOINTS                           │   │
-│  │  • POST /api/documents/submit                        │   │
-│  │  • GET  /api/documents/{id}                          │   │
-│  │  • GET  /api/documents/{id}/result                   │   │
-│  │  • GET  /api/approval/{token}/review                 │   │
-│  │  • POST /api/approval/{token}/decision               │   │
+│  │  • POST /api/v1/documents/submit                        │   │
+│  │  • GET  /api/v1/documents/{id}                          │   │
+│  │  • GET  /api/v1/documents/{id}/result                   │   │
+│  │  • GET  /api/v1/approval/{token}/review                 │   │
+│  │  • POST /api/v1/approval/{token}/decision               │   │
 │  │  • GET  /health                                      │   │
 │  └──────────────────────────────────────────────────────┘   │
 │  ┌──────────────────────────────────────────────────────┐   │
@@ -201,14 +201,14 @@ src/
 
 **`api/documents.py`** - Document lifecycle management
 
-- `POST /api/documents/submit` - Submit PDF for processing (returns job_id)
-- `GET /api/documents/{job_id}` - Check processing status
-- `GET /api/documents/{job_id}/result` - Retrieve processed HTML/MDX with presigned URLs
+- `POST /api/v1/documents/submit` - Submit PDF for processing (returns job_id)
+- `GET /api/v1/documents/{job_id}` - Check processing status
+- `GET /api/v1/documents/{job_id}/result` - Retrieve processed HTML/MDX with presigned URLs
 
 **`api/approval.py`** - Human approval workflow
 
-- `GET /api/approval/{token}/review` - Get job details for PII review (requires token)
-- `POST /api/approval/{token}/decision` - Submit approval/denial decision (requires token)
+- `GET /api/v1/approval/{token}/review` - Get job details for PII review (requires token)
+- `POST /api/v1/approval/{token}/decision` - Submit approval/denial decision (requires token)
 
 **`api/health.py`** - Health checks and metrics
 
@@ -539,7 +539,7 @@ LOCK_PREFIX = "eq-pdf:lock:"
 
 ### Stage 1: Document Submission
 
-**Endpoint:** `POST /api/documents/submit`
+**Endpoint:** `POST /api/v1/documents/submit`
 **Duration:** <100ms
 **Status:** `submitted` → `pii_scanning`
 
@@ -644,7 +644,7 @@ LOCK_PREFIX = "eq-pdf:lock:"
 
 ### Stage 3: Human Approval Workflow
 
-**Endpoint:** `POST /api/documents/{job_id}/approve` OR `/reject`
+**Endpoint:** `POST /api/v1/documents/{job_id}/approve` OR `/reject`
 **Duration:** Variable (human decision)
 **Status:** `awaiting_approval` → `processing` (approved) OR `denied` (rejected)
 
@@ -738,7 +738,7 @@ LOCK_PREFIX = "eq-pdf:lock:"
 
 ### Stage 5: Result Delivery
 
-**Endpoint:** `GET /api/documents/{job_id}/result`
+**Endpoint:** `GET /api/v1/documents/{job_id}/result`
 **Duration:** <50ms
 **Status:** `completed` (no change)
 

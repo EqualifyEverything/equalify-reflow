@@ -180,8 +180,8 @@ async def test_convert_with_page_images_no_markdown_extraction(sample_pdf, mock_
         with patch.object(converter, "_image_to_base64", return_value="img"):
             result = await converter.convert_with_page_images(sample_pdf)
 
-            # PageData should not have markdown attribute
-            assert not hasattr(result.pages[0], 'markdown')
+            # PageData markdown should be empty (images only, no text extraction)
+            assert result.pages[0].markdown == ""
             # PDFConversionResult should not have full_markdown
             assert not hasattr(result, 'full_markdown')
 

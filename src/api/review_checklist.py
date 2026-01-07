@@ -26,7 +26,7 @@ from ..shared.models.review_checklist import ReviewChecklist, ReviewItem
 
 logger = logging.getLogger(__name__)
 
-router = APIRouter(prefix="/api/documents", tags=["review"])
+router = APIRouter(prefix="/api/v1/documents", tags=["review"])
 
 # Constants
 MAX_CUSTOM_INPUT_LENGTH = 5000  # Maximum chars for custom review input

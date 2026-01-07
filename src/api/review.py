@@ -20,7 +20,7 @@ from src.services.application_service import ApplicationService
 from src.services.job_service import JobService
 from src.services.remediation_storage_service import RemediationStorageService
 
-router = APIRouter(prefix="/api/documents", tags=["review"])
+router = APIRouter(prefix="/api/v1/documents", tags=["review"])
 
 
 # --- Request/Response Models ---

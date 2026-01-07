@@ -164,6 +164,117 @@ async def test_processing_service_init_with_default_dependencies(
 # ============================================================================
 
 
+@pytest.fixture
+def mock_structure_loop_result():
+    """Mock result from StructureLoop.run()."""
+    from src.services.structure_loop import StructureLoopResult, StructureTrace
+
+    return StructureLoopResult(
+        markdown="# Test Document\n\nContent here.",
+        trace=StructureTrace(
+            iterations=1,
+            lint_issues_found=0,
+            lint_issues_fixed=0,
+            ocr_suggestions_processed=0,
+            final_lint_clean=True,
+            corrections=[],
+            observations=[],
+            time_seconds=0.5,
+            cost_cents=0.0,
+        ),
+    )
+
+
+@pytest.fixture
+def mock_figures_agent_result():
+    """Mock result from FiguresAgent.process()."""
+    from src.shared.models.agent_trace import AgentResult
+
+    return AgentResult(
+        agent_name="figures",
+        observations=[],
+        auto_corrections=[],
+        review_items=[],
+        reasoning_summary="No figure issues found",
+        confidence=0.95,
+        cost_cents=0.1,
+        time_seconds=1.0,
+    )
+
+
+@pytest.fixture
+def mock_assembly_result():
+    """Mock result from AssemblyService.assemble()."""
+    from src.shared.models.processing_result import (
+        AnalysisSummary,
+        ExtractionSummary,
+        ProcessingResult as FullProcessingResult,
+        ProcessingTrace,
+        StructureSummary,
+    )
+    from src.shared.models.review_checklist import ReviewChecklist
+
+    return FullProcessingResult(
+        job_id="550e8400-e29b-41d4-a716-446655440000",
+        markdown="# Test Document\n\nContent here.",
+        confidence=0.94,
+        status="completed",
+        processing_trace=ProcessingTrace(
+            analysis=AnalysisSummary(
+                document_type="lecture_notes",
+                total_pages=2,
+                key_entities=[],
+                required_agents=["figures"],
+                confidence=0.9,
+                time_seconds=1.0,
+                cost_cents=0.2,
+            ),
+            extraction=ExtractionSummary(
+                confidence=0.88,
+                pages_extracted=2,
+                correction_iterations=1,
+                time_seconds=1.0,
+                cost_cents=0.3,
+            ),
+            structure=StructureSummary(
+                iterations=1,
+                lint_issues_found=0,
+                lint_issues_fixed=0,
+                final_lint_clean=True,
+                time_seconds=0.5,
+                cost_cents=0.0,
+            ),
+            agents=[],
+            total_observations=0,
+            auto_corrections_applied=0,
+            review_items_generated=0,
+            total_cost_cents=0.6,
+        ),
+        review_checklist=ReviewChecklist(
+            total_items=0,
+            by_category={},
+            items=[],
+        ),
+        processing_time_seconds=5.0,
+    )
+
+
+@pytest.fixture
+def mock_verification_result():
+    """Mock result from verify_final_output()."""
+    from src.agents.verification import VerificationResult
+
+    return VerificationResult(
+        corrected_markdown="# Test Document\n\nContent here.",
+        page_results=[],
+        total_corrections_applied=0,
+        total_corrections_failed=0,
+        total_issues=0,
+        all_pages_accurate=True,
+        cost_cents=0.1,
+    )
+
+
 @pytest.mark.asyncio
 async def test_process_document_happy_path(
     sample_job_payload,
@@ -176,6 +287,10 @@ async def test_process_document_happy_path(
     mock_analysis_manifest,
     mock_analysis_usage,
     sample_pdf_conversion_result_no_markdown,
+    mock_structure_loop_result,
+    mock_figures_agent_result,
+    mock_assembly_result,
+    mock_verification_result,
 ):
     """Test successful end-to-end document processing with analysis + extraction."""
     mock_pdf_converter.convert_with_page_images.return_value = sample_pdf_conversion_result_no_markdown
@@ -196,7 +311,36 @@ async def test_process_document_happy_path(
             new_callable=AsyncMock,
             return_value=(mock_extraction_result, mock_llm_usage),
         ) as mock_extract,
+        patch(
+            "src.services.processing_service.StructureLoop"
+        ) as mock_structure_loop_cls,
+        patch(
+            "src.services.processing_service.FiguresAgent"
+        ) as mock_figures_agent_cls,
+        patch(
+            "src.services.processing_service.AssemblyService"
+        ) as mock_assembly_cls,
+        patch(
+            "src.services.processing_service.verify_final_output",
+            new_callable=AsyncMock,
+            return_value=(mock_verification_result, mock_llm_usage),
+        ),
     ):
+        # Configure StructureLoop mock
+        mock_structure_loop = MagicMock()
+        mock_structure_loop.run = AsyncMock(return_value=mock_structure_loop_result)
+        mock_structure_loop_cls.return_value = mock_structure_loop
+
+        # Configure FiguresAgent mock
+        mock_figures_agent = MagicMock()
+        mock_figures_agent.process = AsyncMock(return_value=mock_figures_agent_result)
+        mock_figures_agent_cls.return_value = mock_figures_agent
+
+        # Configure AssemblyService mock
+        mock_assembly = MagicMock()
+        mock_assembly.assemble = MagicMock(return_value=mock_assembly_result)
+        mock_assembly_cls.return_value = mock_assembly
+
         service = ProcessingService(
             storage_service=mock_storage_service_extended,
             queue_service=mock_queue_service,
@@ -235,6 +379,10 @@ async def test_process_document_confidence_from_assembly(
     mock_analysis_manifest,
     mock_analysis_usage,
     sample_pdf_conversion_result_no_markdown,
+    mock_structure_loop_result,
+    mock_figures_agent_result,
+    mock_assembly_result,
+    mock_verification_result,
 ):
     """Test confidence score is computed by AssemblyService.
 
@@ -262,7 +410,36 @@ async def test_process_document_confidence_from_assembly(
             new_callable=AsyncMock,
             return_value=(mock_extraction_result, mock_llm_usage),
         ),
+        patch(
+            "src.services.processing_service.StructureLoop"
+        ) as mock_structure_loop_cls,
+        patch(
+            "src.services.processing_service.FiguresAgent"
+        ) as mock_figures_agent_cls,
+        patch(
+            "src.services.processing_service.AssemblyService"
+        ) as mock_assembly_cls,
+        patch(
+            "src.services.processing_service.verify_final_output",
+            new_callable=AsyncMock,
+            return_value=(mock_verification_result, mock_llm_usage),
+        ),
     ):
+        # Configure StructureLoop mock
+        mock_structure_loop = MagicMock()
+        mock_structure_loop.run = AsyncMock(return_value=mock_structure_loop_result)
+        mock_structure_loop_cls.return_value = mock_structure_loop
+
+        # Configure FiguresAgent mock
+        mock_figures_agent = MagicMock()
+        mock_figures_agent.process = AsyncMock(return_value=mock_figures_agent_result)
+        mock_figures_agent_cls.return_value = mock_figures_agent
+
+        # Configure AssemblyService mock - confidence 0.94 matches the expected weighted average
+        mock_assembly = MagicMock()
+        mock_assembly.assemble = MagicMock(return_value=mock_assembly_result)
+        mock_assembly_cls.return_value = mock_assembly
+
         service = ProcessingService(
             storage_service=mock_storage_service_extended,
             queue_service=mock_queue_service,

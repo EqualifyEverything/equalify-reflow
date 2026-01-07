@@ -223,13 +223,16 @@ class LedgerResponse(BaseModel):
     final_markdown_url: str = Field(..., description="URL to final markdown")
 
 
-# Union type for OpenAPI documentation (legacy, excludes agentic responses)
+# Union type for OpenAPI documentation
+# Includes both legacy and agentic pipeline response types
 DocumentStatusResponse = (
     PIIScanningResponse
     | ProcessingResponse
+    | AgenticProcessingResponse
     | AwaitingPIIApprovalResponse
     | AwaitingCorrectionApprovalResponse
     | CompletedResponse
+    | AgenticCompletedResponse
     | FailedResponse
     | DeniedResponse
     | NeedsReviewResponse

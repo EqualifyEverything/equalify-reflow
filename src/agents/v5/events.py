@@ -707,3 +707,42 @@ class EventBus:
             elif event.event_id == event_id:
                 found = True
         return result
+
+
+# =============================================================================
+# Event Bus Registry
+# =============================================================================
+
+# Global registry for event buses, keyed by document/job ID
+_event_registry: dict[str, EventBus] = {}
+
+
+def register_event_bus(job_id: str, event_bus: EventBus) -> None:
+    """Register an event bus for a job.
+
+    Args:
+        job_id: The job/document ID
+        event_bus: The EventBus instance to register
+    """
+    _event_registry[job_id] = event_bus
+
+
+def get_event_bus(job_id: str) -> EventBus | None:
+    """Get the event bus for a job.
+
+    Args:
+        job_id: The job/document ID
+
+    Returns:
+        The EventBus instance if registered, None otherwise
+    """
+    return _event_registry.get(job_id)
+
+
+def unregister_event_bus(job_id: str) -> None:
+    """Unregister an event bus for a job.
+
+    Args:
+        job_id: The job/document ID to unregister
+    """
+    _event_registry.pop(job_id, None)

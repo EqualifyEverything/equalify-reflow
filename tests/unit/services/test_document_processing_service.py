@@ -34,7 +34,8 @@ def mock_redis_client(mocker):
 def mock_storage_service(mocker):
     """Create mock StorageService."""
     service = mocker.MagicMock()
-    service.download_file = mocker.AsyncMock(return_value=b"fake_pdf_content")
+    service.download_temp_file = mocker.AsyncMock(return_value=b"fake_pdf_content")
+    service.upload_results_file = mocker.AsyncMock(return_value=None)
     service.upload_file = mocker.AsyncMock(return_value=None)
     return service
 
@@ -255,7 +256,9 @@ class TestStoreLedger:
     """Tests for _store_ledger method."""
 
     @pytest.mark.asyncio
-    async def test_store_ledger_success(self, document_processing_service, mock_storage_service, mock_processing_result):
+    async def test_store_ledger_success(
+        self, document_processing_service, mock_storage_service, mock_processing_result
+    ):
         """Test successful ledger storage to S3."""
         s3_key = await document_processing_service._store_ledger("job-123", mock_processing_result)
 
@@ -276,7 +279,9 @@ class TestStoreLedger:
         assert ledger_data["entries"][0]["action"] == "alt_text"
 
     @pytest.mark.asyncio
-    async def test_store_ledger_preserves_entry_fields(self, document_processing_service, mock_storage_service, mock_processing_result):
+    async def test_store_ledger_preserves_entry_fields(
+        self, document_processing_service, mock_storage_service, mock_processing_result
+    ):
         """Test that all ledger entry fields are preserved."""
         await document_processing_service._store_ledger("job-123", mock_processing_result)
 
@@ -352,9 +357,7 @@ class TestGetLedger:
             "entries": [{"entry_id": "e1", "action": "alt_text"}],
             "total_edits": 1,
         }
-        mock_storage_service.download_file = AsyncMock(
-            return_value=json.dumps(ledger_data).encode("utf-8")
-        )
+        mock_storage_service.download_file = AsyncMock(return_value=json.dumps(ledger_data).encode("utf-8"))
 
         result = await document_processing_service.get_ledger("job-123")
 
@@ -375,9 +378,7 @@ class TestGetLedger:
     @pytest.mark.asyncio
     async def test_get_ledger_handles_invalid_json(self, document_processing_service, mock_storage_service):
         """Test ledger retrieval with invalid JSON content."""
-        mock_storage_service.download_file = AsyncMock(
-            return_value=b"not valid json {"
-        )
+        mock_storage_service.download_file = AsyncMock(return_value=b"not valid json {")
 
         result = await document_processing_service.get_ledger("job-123")
 
@@ -388,11 +389,11 @@ class TestProcessDocumentErrorHandling:
     """Tests for error handling in process_document method."""
 
     @pytest.mark.asyncio
-    async def test_process_document_download_failure(self, document_processing_service, mock_redis_client, mock_storage_service):
+    async def test_process_document_download_failure(
+        self, document_processing_service, mock_redis_client, mock_storage_service
+    ):
         """Test handling of S3 download failure."""
-        mock_storage_service.download_file = AsyncMock(
-            side_effect=Exception("S3 connection error")
-        )
+        mock_storage_service.download_temp_file = AsyncMock(side_effect=Exception("S3 connection error"))
 
         with pytest.raises(Exception) as exc_info:
             await document_processing_service.process_document(
@@ -410,12 +411,12 @@ class TestProcessDocumentErrorHandling:
         assert "S3 connection error" in mapping["error"]
 
     @pytest.mark.asyncio
-    async def test_process_document_sets_initial_state(self, document_processing_service, mock_redis_client, mock_storage_service):
+    async def test_process_document_sets_initial_state(
+        self, document_processing_service, mock_redis_client, mock_storage_service
+    ):
         """Test that initial processing state is set correctly."""
         # Make download fail early so we can check initial state
-        mock_storage_service.download_file = AsyncMock(
-            side_effect=Exception("Download failed")
-        )
+        mock_storage_service.download_temp_file = AsyncMock(side_effect=Exception("Download failed"))
 
         with pytest.raises(Exception):
             await document_processing_service.process_document(
@@ -455,17 +456,18 @@ class TestProcessDocumentIntegration:
     ):
         """Test successful document processing flow with all mocks."""
         # Mock the entire pipeline chain - patch source modules for late imports
-        with patch("docling.document_converter.DocumentConverter") as mock_converter_class, \
-             patch("docling.datamodel.pipeline_options.PdfPipelineOptions"), \
-             patch("docling.document_converter.PdfFormatOption"), \
-             patch("docling.datamodel.base_models.InputFormat") as mock_input_format, \
-             patch("docling.datamodel.document.DocumentStream"), \
-             patch("src.agents.events.EventBus") as mock_event_bus_class, \
-             patch("src.agents.events.register_event_bus"), \
-             patch("src.agents.orchestrator.process_document_v5") as mock_process_v5, \
-             patch("src.services.vision_extraction_service.is_scanned_pdf", return_value=False), \
-             patch("asyncio.to_thread") as mock_to_thread:
-
+        with (
+            patch("docling.document_converter.DocumentConverter") as mock_converter_class,
+            patch("docling.datamodel.pipeline_options.PdfPipelineOptions"),
+            patch("docling.document_converter.PdfFormatOption"),
+            patch("docling.datamodel.base_models.InputFormat") as mock_input_format,
+            patch("docling.datamodel.document.DocumentStream"),
+            patch("src.agents.events.EventBus") as mock_event_bus_class,
+            patch("src.agents.events.register_event_bus"),
+            patch("src.agents.orchestrator.process_document_v5") as mock_process_v5,
+            patch("src.services.vision_extraction_service.is_scanned_pdf", return_value=False),
+            patch("asyncio.to_thread") as mock_to_thread,
+        ):
             # Setup InputFormat.PDF enum value
             mock_input_format.PDF = "PDF"
 
@@ -527,18 +529,19 @@ class TestProcessDocumentIntegration:
         mock_s3_url_service,
         mock_processing_result,
     ):
-        """Test document processing with human review mode generates ledger URL."""
-        with patch("docling.document_converter.DocumentConverter") as mock_converter_class, \
-             patch("docling.datamodel.pipeline_options.PdfPipelineOptions"), \
-             patch("docling.document_converter.PdfFormatOption"), \
-             patch("docling.datamodel.base_models.InputFormat") as mock_input_format, \
-             patch("docling.datamodel.document.DocumentStream"), \
-             patch("src.agents.events.EventBus") as mock_event_bus_class, \
-             patch("src.agents.events.register_event_bus"), \
-             patch("src.agents.orchestrator.process_document_v5") as mock_process_v5, \
-             patch("src.services.vision_extraction_service.is_scanned_pdf", return_value=False), \
-             patch("asyncio.to_thread") as mock_to_thread:
-
+        """Test document processing with human review mode stores ledger S3 key."""
+        with (
+            patch("docling.document_converter.DocumentConverter") as mock_converter_class,
+            patch("docling.datamodel.pipeline_options.PdfPipelineOptions"),
+            patch("docling.document_converter.PdfFormatOption"),
+            patch("docling.datamodel.base_models.InputFormat") as mock_input_format,
+            patch("docling.datamodel.document.DocumentStream"),
+            patch("src.agents.events.EventBus") as mock_event_bus_class,
+            patch("src.agents.events.register_event_bus"),
+            patch("src.agents.orchestrator.process_document_v5") as mock_process_v5,
+            patch("src.services.vision_extraction_service.is_scanned_pdf", return_value=False),
+            patch("asyncio.to_thread") as mock_to_thread,
+        ):
             # Setup InputFormat.PDF enum value
             mock_input_format.PDF = "PDF"
 
@@ -571,9 +574,17 @@ class TestProcessDocumentIntegration:
                 review_mode="human",
             )
 
-            # Verify presigned URLs were generated for both markdown and ledger
-            # In human mode, ledger URL should also be generated
-            assert mock_s3_url_service.generate_presigned_url.call_count >= 2
+            # Verify review_mode was set in initial state
+            initial_hset_call = mock_redis_client.hset.call_args_list[0]
+            initial_mapping = initial_hset_call.kwargs["mapping"]
+            assert initial_mapping["review_mode"] == "human"
+
+            # Verify ledger S3 key is stored in final job state
+            # (presigned URLs are generated on-demand by the API, not during processing)
+            final_hset_call = mock_redis_client.hset.call_args_list[-1]
+            final_mapping = final_hset_call.kwargs["mapping"]
+            assert final_mapping["status"] == "completed"
+            assert "ledger_s3_key" in final_mapping
 
 
 class TestProcessDocumentPhaseUpdates:
@@ -588,17 +599,18 @@ class TestProcessDocumentPhaseUpdates:
         mock_processing_result,
     ):
         """Test that processing phases are updated in Redis."""
-        with patch("docling.document_converter.DocumentConverter") as mock_converter_class, \
-             patch("docling.datamodel.pipeline_options.PdfPipelineOptions"), \
-             patch("docling.document_converter.PdfFormatOption"), \
-             patch("docling.datamodel.base_models.InputFormat") as mock_input_format, \
-             patch("docling.datamodel.document.DocumentStream"), \
-             patch("src.agents.events.EventBus") as mock_event_bus_class, \
-             patch("src.agents.events.register_event_bus"), \
-             patch("src.agents.orchestrator.process_document_v5") as mock_process_v5, \
-             patch("src.services.vision_extraction_service.is_scanned_pdf", return_value=False), \
-             patch("asyncio.to_thread") as mock_to_thread:
-
+        with (
+            patch("docling.document_converter.DocumentConverter") as mock_converter_class,
+            patch("docling.datamodel.pipeline_options.PdfPipelineOptions"),
+            patch("docling.document_converter.PdfFormatOption"),
+            patch("docling.datamodel.base_models.InputFormat") as mock_input_format,
+            patch("docling.datamodel.document.DocumentStream"),
+            patch("src.agents.events.EventBus") as mock_event_bus_class,
+            patch("src.agents.events.register_event_bus"),
+            patch("src.agents.orchestrator.process_document_v5") as mock_process_v5,
+            patch("src.services.vision_extraction_service.is_scanned_pdf", return_value=False),
+            patch("asyncio.to_thread") as mock_to_thread,
+        ):
             mock_input_format.PDF = "PDF"
 
             # Setup mocks
@@ -653,17 +665,18 @@ class TestProcessDocumentEventEmission:
         mock_processing_result,
     ):
         """Test that Docling events are emitted."""
-        with patch("docling.document_converter.DocumentConverter") as mock_converter_class, \
-             patch("docling.datamodel.pipeline_options.PdfPipelineOptions"), \
-             patch("docling.document_converter.PdfFormatOption"), \
-             patch("docling.datamodel.base_models.InputFormat") as mock_input_format, \
-             patch("docling.datamodel.document.DocumentStream"), \
-             patch("src.agents.events.EventBus") as mock_event_bus_class, \
-             patch("src.agents.events.register_event_bus"), \
-             patch("src.agents.orchestrator.process_document_v5") as mock_process_v5, \
-             patch("src.services.vision_extraction_service.is_scanned_pdf", return_value=False), \
-             patch("asyncio.to_thread") as mock_to_thread:
-
+        with (
+            patch("docling.document_converter.DocumentConverter") as mock_converter_class,
+            patch("docling.datamodel.pipeline_options.PdfPipelineOptions"),
+            patch("docling.document_converter.PdfFormatOption"),
+            patch("docling.datamodel.base_models.InputFormat") as mock_input_format,
+            patch("docling.datamodel.document.DocumentStream"),
+            patch("src.agents.events.EventBus") as mock_event_bus_class,
+            patch("src.agents.events.register_event_bus"),
+            patch("src.agents.orchestrator.process_document_v5") as mock_process_v5,
+            patch("src.services.vision_extraction_service.is_scanned_pdf", return_value=False),
+            patch("asyncio.to_thread") as mock_to_thread,
+        ):
             mock_input_format.PDF = "PDF"
 
             # Setup mocks
@@ -716,19 +729,20 @@ class TestProcessDocumentScannedPdfHandling:
         mock_processing_result,
     ):
         """Test that scanned PDFs trigger vision extraction."""
-        with patch("docling.document_converter.DocumentConverter") as mock_converter_class, \
-             patch("docling.datamodel.pipeline_options.PdfPipelineOptions"), \
-             patch("docling.document_converter.PdfFormatOption"), \
-             patch("docling.datamodel.base_models.InputFormat") as mock_input_format, \
-             patch("docling.datamodel.document.DocumentStream"), \
-             patch("src.agents.events.EventBus") as mock_event_bus_class, \
-             patch("src.agents.events.register_event_bus"), \
-             patch("src.agents.orchestrator.process_document_v5") as mock_process_v5, \
-             patch("src.services.vision_extraction_service.is_scanned_pdf", return_value=True) as mock_is_scanned, \
-             patch("src.services.vision_extraction_service.detect_visual_document_type") as mock_detect_visual, \
-             patch("src.services.vision_extraction_service.extract_all_pages_vision") as mock_extract_vision, \
-             patch("asyncio.to_thread") as mock_to_thread:
-
+        with (
+            patch("docling.document_converter.DocumentConverter") as mock_converter_class,
+            patch("docling.datamodel.pipeline_options.PdfPipelineOptions"),
+            patch("docling.document_converter.PdfFormatOption"),
+            patch("docling.datamodel.base_models.InputFormat") as mock_input_format,
+            patch("docling.datamodel.document.DocumentStream"),
+            patch("src.agents.events.EventBus") as mock_event_bus_class,
+            patch("src.agents.events.register_event_bus"),
+            patch("src.agents.orchestrator.process_document_v5") as mock_process_v5,
+            patch("src.services.vision_extraction_service.is_scanned_pdf", return_value=True) as mock_is_scanned,
+            patch("src.services.vision_extraction_service.detect_visual_document_type") as mock_detect_visual,
+            patch("src.services.vision_extraction_service.extract_all_pages_vision") as mock_extract_vision,
+            patch("asyncio.to_thread") as mock_to_thread,
+        ):
             from src.services.vision_extraction_service import VisualDocumentType
 
             mock_input_format.PDF = "PDF"

@@ -98,6 +98,7 @@ from .plan_verification import (
     verify_figure_completeness,
     verify_heading_structure,
     verify_spelling,
+    verify_table_accuracy_vision,
     verify_table_completeness,
 )
 from .validation import auto_fix_minor_issues, validate_edit
@@ -141,6 +142,7 @@ __all__ = [
     "verify_heading_structure",
     "verify_figure_completeness",
     "verify_table_completeness",
+    "verify_table_accuracy_vision",
     "verify_spelling",
     # Recovery functions
     "run_recovery_phase",

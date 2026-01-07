@@ -86,41 +86,30 @@ def reset_agent_singletons():
 
     This ensures test isolation by clearing cached agent instances.
     Each test starts with a fresh agent state, preventing test pollution.
+
+    NOTE: The old multi-agent system was removed. The current V5 pipeline
+    uses lazy-loaded agents in worker.py, page_chain.py, etc. that have
+    module-level reset functions where needed.
     """
-    # Import agent modules that use singleton pattern
-    from src.agents import (
-        structure_agent,
-        tables_agent,
-    )
-    from src.agents.extraction import extractor as extraction_module
-    from src.agents.figures import (
-        classification_agent as figures_classification,
-    )
-    from src.agents.figures import (
-        generation_agent as figures_generation,
-    )
+    # Import V5 pipeline modules that use singleton/cached agents
+    from src.agents import worker, page_chain, issue_fixer
+
+    # List of modules with reset functions
+    modules_with_reset = [
+        worker,
+        page_chain,
+        issue_fixer,
+    ]
 
     # Reset before test
-    for agent_module in [
-        extraction_module,
-        figures_classification,
-        figures_generation,
-        structure_agent,
-        tables_agent,
-    ]:
+    for agent_module in modules_with_reset:
         if hasattr(agent_module, "reset_agent"):
             agent_module.reset_agent()
 
     yield
 
     # Reset after test (cleanup)
-    for agent_module in [
-        extraction_module,
-        figures_classification,
-        figures_generation,
-        structure_agent,
-        tables_agent,
-    ]:
+    for agent_module in modules_with_reset:
         if hasattr(agent_module, "reset_agent"):
             agent_module.reset_agent()
 

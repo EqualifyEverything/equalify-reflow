@@ -1,4 +1,4 @@
-"""V5 Pipeline Plan Verification.
+"""Plan Verification - Verify Processing Against Document Plan.
 
 This module provides verification functions that compare the final markdown
 against the original DocumentPlan to ensure processing completeness.
@@ -7,20 +7,25 @@ Verification checks:
     1. Heading structure - all outline headings exist at correct levels
     2. Figure completeness - all planned figures have alt-text
     3. Table completeness - all planned tables were transcribed
-    4. Spelling - no spelling issues using document dictionary
+    4. Table accuracy - transcribed tables match source (vision-based)
+    5. Spelling - no spelling issues using document dictionary
 """
 
 from __future__ import annotations
 
+import asyncio
 import logging
 import re
-from typing import TYPE_CHECKING
+from io import BytesIO
+from typing import TYPE_CHECKING, Any
+
+from pydantic import BaseModel, Field
 
 from .models import DocumentPlan, OutlineEntry, PagePlan
 from .validation import _check_spelling
 
 if TYPE_CHECKING:
-    pass
+    from PIL import Image
 
 logger = logging.getLogger(__name__)
 
@@ -145,9 +150,7 @@ def verify_heading_structure(
         normalized_expected = _normalize_heading(expected_text)
 
         if normalized_expected not in actual_lookup:
-            issues.append(
-                f"Missing heading: '{expected_text}' (expected H{expected_level})"
-            )
+            issues.append(f"Missing heading: '{expected_text}' (expected H{expected_level})")
         else:
             # Heading exists - check level
             matches = actual_lookup[normalized_expected]
@@ -156,8 +159,7 @@ def verify_heading_structure(
             if not level_matched:
                 actual_levels = [level for _, level in matches]
                 issues.append(
-                    f"Wrong heading level: '{expected_text}' "
-                    f"(expected H{expected_level}, found H{actual_levels[0]})"
+                    f"Wrong heading level: '{expected_text}' (expected H{expected_level}, found H{actual_levels[0]})"
                 )
 
     # Build normalized lookup for expected headings to find extras
@@ -179,9 +181,7 @@ def verify_heading_structure(
                 "acknowledgements",
             ]
             if normalized not in skip_patterns:
-                issues.append(
-                    f"Extra heading not in plan: '{text}' (H{level})"
-                )
+                issues.append(f"Extra heading not in plan: '{text}' (H{level})")
 
     logger.debug(f"Heading verification found {len(issues)} issues")
     return issues
@@ -240,13 +240,8 @@ def fix_heading_levels(
                     new_hashes = "#" * expected_level
                     new_line = f"{new_hashes} {heading_text}"
                     fixed_lines.append(new_line)
-                    fixes_applied.append(
-                        f"Fixed '{heading_text}': H{current_level} → H{expected_level}"
-                    )
-                    logger.info(
-                        f"Auto-fixed heading level: '{heading_text}' "
-                        f"H{current_level} → H{expected_level}"
-                    )
+                    fixes_applied.append(f"Fixed '{heading_text}': H{current_level} → H{expected_level}")
+                    logger.info(f"Auto-fixed heading level: '{heading_text}' H{current_level} → H{expected_level}")
                 else:
                     fixed_lines.append(line)
             else:
@@ -364,9 +359,7 @@ def verify_figure_completeness(
             continue
 
         # Count non-decorative figures expected
-        expected_count = sum(
-            1 for fig in page_plan.figures if not fig.is_decorative
-        )
+        expected_count = sum(1 for fig in page_plan.figures if not fig.is_decorative)
 
         if expected_count == 0:
             continue
@@ -374,9 +367,7 @@ def verify_figure_completeness(
         # Get page markdown
         page_md = page_markdowns.get(page_num, "")
         if not page_md:
-            issues.append(
-                f"Page {page_num}: missing markdown (expected {expected_count} figures)"
-            )
+            issues.append(f"Page {page_num}: missing markdown (expected {expected_count} figures)")
             continue
 
         # Count actual figures with alt text
@@ -393,9 +384,7 @@ def verify_figure_completeness(
             )
 
         if placeholder_count > 0:
-            issues.append(
-                f"Page {page_num}: {placeholder_count} unfilled figure placeholder(s)"
-            )
+            issues.append(f"Page {page_num}: {placeholder_count} unfilled figure placeholder(s)")
 
     logger.debug(f"Figure verification found {len(issues)} issues")
     return issues
@@ -482,9 +471,7 @@ def verify_table_completeness(
         # Get page markdown
         page_md = page_markdowns.get(page_num, "")
         if not page_md:
-            issues.append(
-                f"Page {page_num}: missing markdown (expected {expected_count} tables)"
-            )
+            issues.append(f"Page {page_num}: missing markdown (expected {expected_count} tables)")
             continue
 
         # Count actual markdown tables
@@ -496,16 +483,226 @@ def verify_table_completeness(
         if actual_count < expected_count:
             missing = expected_count - actual_count
             issues.append(
-                f"Page {page_num}: {missing} table(s) not transcribed "
-                f"(expected {expected_count}, found {actual_count})"
+                f"Page {page_num}: {missing} table(s) not transcribed (expected {expected_count}, found {actual_count})"
             )
 
         if placeholder_count > 0:
-            issues.append(
-                f"Page {page_num}: {placeholder_count} unfilled table placeholder(s)"
-            )
+            issues.append(f"Page {page_num}: {placeholder_count} unfilled table placeholder(s)")
 
     logger.debug(f"Table verification found {len(issues)} issues")
+    return issues
+
+
+# =============================================================================
+# Table Accuracy Verification (Vision-Based)
+# =============================================================================
+
+
+class TableMatchResult(BaseModel):
+    """Result from vision-based table comparison."""
+
+    matches: bool = Field(description="True if table data matches source image")
+    mismatches: list[str] = Field(
+        default_factory=list,
+        description="List of specific mismatches found (cell values, missing data, etc.)",
+    )
+    confidence: float = Field(
+        default=0.9,
+        description="Confidence level of the comparison (0-1)",
+    )
+
+
+def _extract_nth_table(markdown: str, n: int) -> str | None:
+    """Extract the nth markdown table from content (1-indexed).
+
+    Args:
+        markdown: The markdown content to search
+        n: The 1-indexed table number to extract
+
+    Returns:
+        The markdown table text, or None if not found
+    """
+    # Find all table blocks (sequences of lines starting/ending with |)
+    table_pattern = re.compile(
+        r"(?:^\|.+\|$\n?)+",
+        re.MULTILINE,
+    )
+
+    tables = table_pattern.findall(markdown)
+    if 1 <= n <= len(tables):
+        return tables[n - 1].strip()
+
+    return None
+
+
+async def verify_table_accuracy_vision(
+    page_markdowns: dict[int, str],
+    page_images: dict[int, Image.Image],
+    element_bboxes: dict[tuple[int, str, int], tuple[float, float, float, float]],
+    page_width: float,
+    plan: DocumentPlan,
+    max_concurrent: int = 3,
+) -> list[str]:
+    """Verify transcribed table content matches source PDF using vision model.
+
+    For each transcribed table, this function:
+    1. Crops the original table image from the page
+    2. Extracts the transcribed markdown table
+    3. Asks a vision model if the data matches
+
+    This catches errors like:
+    - Wrong cell values (numbers, dates, text)
+    - Missing rows or columns
+    - Data in wrong positions
+    - Truncated content
+
+    Args:
+        page_markdowns: Final markdown per page (1-indexed)
+        page_images: Source page images (1-indexed)
+        element_bboxes: Bounding boxes keyed by (page, "table", index)
+        page_width: Page width for coordinate scaling
+        plan: Document plan with table information
+        max_concurrent: Maximum parallel vision API calls
+
+    Returns:
+        List of issue strings for tables that don't match source
+    """
+    from pydantic_ai import Agent, BinaryContent
+    from pydantic_ai.models.bedrock import BedrockConverseModel
+
+    from src.agents.model_tiers import MODEL_TIER_MAP, ModelTier
+    from src.utils.image_utils import crop_element
+
+    issues: list[str] = []
+
+    # Collect tables to verify: (page_num, table_idx, table_md, cropped_image)
+    tables_to_verify: list[tuple[int, int, str, Image.Image]] = []
+
+    for page_num, page_plan in plan.pages.items():
+        if not page_plan.tables:
+            continue
+
+        page_md = page_markdowns.get(page_num, "")
+        page_img = page_images.get(page_num)
+
+        if not page_md or not page_img:
+            continue
+
+        for table in page_plan.tables:
+            # Extract the transcribed markdown table
+            table_md = _extract_nth_table(page_md, table.table_index)
+
+            if not table_md:
+                # No transcribed table - this is caught by completeness check
+                continue
+
+            # Get the bounding box for cropping
+            bbox_key = (page_num, "table", table.table_index)
+            if bbox_key not in element_bboxes:
+                logger.warning(f"No bounding box for table {table.table_index} on page {page_num}")
+                continue
+
+            # Crop the table from the source image
+            try:
+                cropped = crop_element(page_img, element_bboxes[bbox_key], page_width)
+                tables_to_verify.append((page_num, table.table_index, table_md, cropped))
+            except Exception as e:
+                logger.warning(f"Failed to crop table {table.table_index} on page {page_num}: {e}")
+
+    if not tables_to_verify:
+        logger.debug("No tables to verify for accuracy")
+        return issues
+
+    logger.info(f"Verifying accuracy of {len(tables_to_verify)} tables")
+
+    # Create the vision verification agent
+    model = BedrockConverseModel(MODEL_TIER_MAP[ModelTier.EFFICIENT])
+    agent = Agent(
+        model=model,
+        output_type=TableMatchResult,
+        system_prompt="""You are verifying that a markdown table accurately represents the data in a source image.
+
+Compare the markdown table with the source table image carefully.
+
+Check for:
+1. **Numeric accuracy**: All numbers, percentages, and values match exactly
+2. **Text accuracy**: All text content matches (accounting for OCR-style differences)
+3. **Completeness**: No missing rows or columns
+4. **Structure**: Data is in the correct cells/positions
+5. **Headers**: Column and row headers match
+
+Return:
+- matches=true if the table accurately represents the source data
+- matches=false with specific mismatches if there are errors
+
+Be lenient with:
+- Minor whitespace differences
+- Case differences in text (unless significant)
+- Formatting differences (bold, italic)
+
+Be strict with:
+- Numeric values (must be exact)
+- Missing or extra data
+- Data in wrong cells""",
+    )
+
+    # Run verification in parallel with semaphore
+    semaphore = asyncio.Semaphore(max_concurrent)
+
+    async def verify_single_table(
+        page_num: int,
+        table_idx: int,
+        table_md: str,
+        cropped: Image.Image,
+    ) -> str | None:
+        """Verify a single table. Returns issue string or None if OK."""
+        async with semaphore:
+            try:
+                # Convert image to BinaryContent
+                buffer = BytesIO()
+                cropped.save(buffer, format="PNG")
+                image_content = BinaryContent(
+                    data=buffer.getvalue(),
+                    media_type="image/png",
+                )
+
+                # Build the verification prompt
+                prompt = f"""Compare this transcribed markdown table with the source image:
+
+```markdown
+{table_md}
+```
+
+Does this table accurately represent the data shown in the image?
+Report any mismatches in cell values, missing data, or structural differences."""
+
+                result = await agent.run([image_content, prompt])
+
+                if not result.output.matches:
+                    # Build issue description
+                    mismatch_summary = "; ".join(result.output.mismatches[:3])
+                    if len(result.output.mismatches) > 3:
+                        mismatch_summary += f" (+{len(result.output.mismatches) - 3} more)"
+
+                    return f"Page {page_num} table {table_idx}: data mismatch - {mismatch_summary}"
+
+            except Exception as e:
+                logger.warning(f"Table accuracy verification failed for page {page_num} table {table_idx}: {e}")
+                # Don't fail the whole process for verification errors
+                return None
+
+        return None
+
+    # Run all verifications
+    tasks = [
+        verify_single_table(page_num, table_idx, table_md, cropped)
+        for page_num, table_idx, table_md, cropped in tables_to_verify
+    ]
+
+    results = await asyncio.gather(*tasks)
+    issues.extend([r for r in results if r is not None])
+
+    logger.debug(f"Table accuracy verification found {len(issues)} issues")
     return issues
 
 
@@ -538,10 +735,7 @@ def verify_spelling(
 
     for spell_issue in spell_issues:
         if spell_issue.suggestion:
-            issues.append(
-                f"Possible misspelling: '{spell_issue.word}' "
-                f"(suggestion: '{spell_issue.suggestion}')"
-            )
+            issues.append(f"Possible misspelling: '{spell_issue.word}' (suggestion: '{spell_issue.suggestion}')")
         else:
             issues.append(f"Unknown word: '{spell_issue.word}'")
 
@@ -598,12 +792,7 @@ def verify_against_plan(
         all_issues.append("=== Spelling Issues ===")
         all_issues.extend(spelling_issues)
 
-    total_issues = (
-        len(heading_issues)
-        + len(figure_issues)
-        + len(table_issues)
-        + len(spelling_issues)
-    )
+    total_issues = len(heading_issues) + len(figure_issues) + len(table_issues) + len(spelling_issues)
 
     logger.info(f"Plan verification complete: {total_issues} total issues found")
 

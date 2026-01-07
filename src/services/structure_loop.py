@@ -88,12 +88,7 @@ class StructureCorrection(BaseModel):
 
     model_config = ConfigDict(
         json_schema_extra={
-            "example": {
-                "type": "format",
-                "description": "Fixed 3 spacing issues",
-                "iteration": 0,
-                "auto": True
-            }
+            "example": {"type": "format", "description": "Fixed 3 spacing issues", "iteration": 0, "auto": True}
         }
     )
 
@@ -137,7 +132,7 @@ class StructureTrace(BaseModel):
                 "final_lint_clean": True,
                 "observations": [],
                 "time_seconds": 3.5,
-                "cost_cents": 1.2
+                "cost_cents": 1.2,
             }
         }
     )
@@ -177,21 +172,17 @@ ENABLED_LINT_RULES: set[str] = {
     "MD023",  # Headings must start at beginning of line
     "MD024",  # No duplicate heading text (siblings only)
     "MD025",  # Single H1 heading
-
     # Lists
     "MD004",  # Unordered list style consistency
     "MD005",  # List indentation consistency
     "MD007",  # Unordered list indentation
     "MD030",  # Spaces after list markers
-
     # Code
     "MD031",  # Fenced code blocks surrounded by blank lines
     "MD040",  # Fenced code blocks should have language
-
     # Tables
     "MD055",  # Table pipe style
     "MD056",  # Table column count
-
     # General
     "MD009",  # Trailing spaces
     "MD010",  # Hard tabs
@@ -285,9 +276,7 @@ class StructureLoop:
             logger.debug(f"Job {job_id}: Structure loop iteration {iteration + 1}")
 
             # Step 1: Detect issues (Python - free)
-            lint_issues, ocr_suggestions, heading_issues = self._detect_all_issues(
-                current_markdown, manifest
-            )
+            lint_issues, ocr_suggestions, heading_issues = self._detect_all_issues(current_markdown, manifest)
 
             total_lint_issues += len(lint_issues)
             total_ocr_suggestions += len(ocr_suggestions)
@@ -326,10 +315,7 @@ class StructureLoop:
 
             # Step 5: Re-check - if clean, exit loop
             if self._is_semantically_clean(current_markdown):
-                logger.info(
-                    f"Job {job_id}: Structure loop completed - "
-                    f"lint clean after {iteration + 1} iterations"
-                )
+                logger.info(f"Job {job_id}: Structure loop completed - lint clean after {iteration + 1} iterations")
                 break
 
         # Build final trace
@@ -349,7 +335,7 @@ class StructureLoop:
             f"{trace.iterations} iterations, "
             f"{trace.lint_issues_fixed}/{trace.lint_issues_found} issues fixed, "
             f"clean: {trace.final_lint_clean}, "
-            f"cost: ${total_cost_cents/100:.4f}"
+            f"cost: ${total_cost_cents / 100:.4f}"
         )
 
         return StructureLoopResult(markdown=current_markdown, trace=trace)
@@ -489,12 +475,7 @@ class StructureLoop:
         """
         try:
             # pymarkdown requires file path, so write to temp file
-            with tempfile.NamedTemporaryFile(
-                mode="w",
-                suffix=".md",
-                delete=False,
-                encoding="utf-8"
-            ) as f:
+            with tempfile.NamedTemporaryFile(mode="w", suffix=".md", delete=False, encoding="utf-8") as f:
                 f.write(markdown)
                 temp_path = f.name
 
@@ -517,12 +498,14 @@ class StructureLoop:
                             for item in scan_results:
                                 rule_id = item.get("rule_id", "")
                                 if rule_id in ENABLED_LINT_RULES:
-                                    issues.append(LintIssue(
-                                        rule=rule_id,
-                                        message=item.get("description", ""),
-                                        line=item.get("line_number", 1),
-                                        column=item.get("column_number", 1),
-                                    ))
+                                    issues.append(
+                                        LintIssue(
+                                            rule=rule_id,
+                                            message=item.get("description", ""),
+                                            line=item.get("line_number", 1),
+                                            column=item.get("column_number", 1),
+                                        )
+                                    )
                     except json.JSONDecodeError:
                         logger.debug("Could not parse pymarkdown JSON output")
 
@@ -587,21 +570,25 @@ class StructureLoop:
         # Check: Only one H1
         h1_headings = [h for h in headings if h.level == 1]
         if len(h1_headings) > 1:
-            issues.append(HeadingIssue(
-                type="multiple_h1",
-                description=f"Found {len(h1_headings)} H1 headings, should have only 1",
-                locations=[h.line for h in h1_headings],
-            ))
+            issues.append(
+                HeadingIssue(
+                    type="multiple_h1",
+                    description=f"Found {len(h1_headings)} H1 headings, should have only 1",
+                    locations=[h.line for h in h1_headings],
+                )
+            )
 
         # Check: No skipped levels
         prev_level = 0
         for heading in headings:
             if heading.level > prev_level + 1 and prev_level > 0:
-                issues.append(HeadingIssue(
-                    type="skipped_level",
-                    description=f"Skipped from H{prev_level} to H{heading.level} at line {heading.line}",
-                    locations=[heading.line],
-                ))
+                issues.append(
+                    HeadingIssue(
+                        type="skipped_level",
+                        description=f"Skipped from H{prev_level} to H{heading.level} at line {heading.line}",
+                        locations=[heading.line],
+                    )
+                )
             prev_level = heading.level
 
         return issues
@@ -681,97 +668,28 @@ class StructureLoop:
 
         Returns:
             _LLMFixResult with corrected markdown and metadata
+
+        Note:
+            LLM-based structural fixes are currently disabled. The structure_fix_agent
+            was removed as part of the dead code cleanup. This service will return
+            the original markdown unchanged. If LLM-based fixes are needed in the
+            future, the agent should be re-implemented.
         """
-        # Import here to avoid circular dependency
-        from src.agents.structure.structure_fix_agent import fix_structural_issues
-
-        corrections: list[StructureCorrection] = []
-        observations: list[Observation] = []
-
-        # If no issues to fix, return unchanged
-        if not lint_issues and not heading_issues and not ocr_suggestions:
-            return _LLMFixResult(
-                markdown=markdown,
-                corrections=[],
-                observations=[],
-                cost_cents=0.0,
+        # LLM-based structural fixes are currently disabled
+        # Return original markdown unchanged
+        if lint_issues or heading_issues or ocr_suggestions:
+            logger.warning(
+                f"Job {job_id}: LLM structural fixes disabled - "
+                f"{len(lint_issues)} lint issues, {len(heading_issues)} heading issues, "
+                f"{len(ocr_suggestions)} OCR suggestions will be skipped"
             )
 
-        try:
-            result = await fix_structural_issues(
-                markdown=markdown,
-                lint_issues=lint_issues,
-                heading_issues=heading_issues,
-                ocr_suggestions=ocr_suggestions,
-                manifest=manifest,
-                job_id=job_id,
-            )
-
-            # Track corrections
-            if result.corrected_markdown != markdown:
-                corrections.append(StructureCorrection(
-                    type="semantic",
-                    description=result.correction_summary,
-                    iteration=iteration,
-                    auto=False,
-                ))
-
-            # Convert OCR decisions to observations
-            for decision in result.ocr_decisions:
-                if decision.decision == "fix":
-                    observations.append(Observation(
-                        job_id=job_id,
-                        agent="structure",
-                        visual_description=f"OCR detected '{decision.word}' in text",
-                        markup_description=f"Corrected to '{decision.replacement}'",
-                        location=ObservationLocation(
-                            location_type="region",
-                            value=f"OCR correction: {decision.word} -> {decision.replacement}",
-                            page_num=1,  # OCR corrections are document-wide
-                        ),
-                        confidence=0.9,
-                        severity="minor",
-                        category="ocr",
-                        status="closed",
-                        resolution="fixed",
-                    ))
-                elif decision.decision == "uncertain":
-                    observations.append(Observation(
-                        job_id=job_id,
-                        agent="structure",
-                        visual_description=f"Potential OCR error: '{decision.word}'",
-                        markup_description=f"Uncertain if correction needed. Reasoning: {decision.reasoning}",
-                        location=ObservationLocation(
-                            location_type="region",
-                            value=f"Potential OCR error: {decision.word}",
-                            page_num=1,
-                        ),
-                        confidence=0.5,
-                        severity="minor",
-                        category="ocr",
-                        status="open",
-                        resolution=None,
-                    ))
-
-            # Add any observations from the agent
-            observations.extend(result.observations)
-
-            return _LLMFixResult(
-                markdown=result.corrected_markdown,
-                corrections=corrections,
-                observations=observations,
-                cost_cents=result.cost_cents,
-            )
-
-        except Exception as e:
-            logger.error(f"Job {job_id}: LLM fix failed: {e}")
-            # Return unchanged on error (graceful degradation)
-            return _LLMFixResult(
-                markdown=markdown,
-                corrections=[],
-                observations=[],
-                cost_cents=0.0,
-            )
+        return _LLMFixResult(
+            markdown=markdown,
+            corrections=[],
+            observations=[],
+            cost_cents=0.0,
+        )
 
 
 @dataclass

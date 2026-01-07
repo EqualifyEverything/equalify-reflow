@@ -524,6 +524,7 @@ class TestLintErrorHandling:
 
         with patch("src.services.structure_loop.subprocess.run") as mock_run:
             import subprocess
+
             mock_run.side_effect = subprocess.TimeoutExpired("pymarkdown", 30)
 
             issues = loop._run_lint("# Test markdown")
@@ -589,39 +590,39 @@ class TestLLMFixErrorHandling:
     """Test LLM fix error handling."""
 
     @pytest.mark.asyncio
-    async def test_llm_fix_error_returns_original(self, mock_manifest):
-        """Test that LLM errors return original markdown."""
+    async def test_llm_fix_returns_original_when_disabled(self, mock_manifest):
+        """Test that LLM fixes return original markdown (currently disabled).
+
+        Note: LLM-based structural fixes are currently disabled after the
+        structure_fix_agent was removed. This test verifies the graceful
+        degradation behavior.
+        """
         loop = StructureLoop()
         original_md = "# Original markdown\n\nWith content"
 
-        # Patch where fix_structural_issues is imported (inside _llm_fix)
-        with patch(
-            "src.agents.structure.structure_fix_agent.fix_structural_issues"
-        ) as mock_fix:
-            mock_fix.side_effect = Exception("LLM API error")
+        # LLM fixes are disabled, so issues are logged but not fixed
+        result = await loop._llm_fix(
+            markdown=original_md,
+            lint_issues=[LintIssue(rule="MD001", message="Test", line=1)],
+            heading_issues=[],
+            ocr_suggestions=[],
+            manifest=mock_manifest,
+            job_id="test-job",
+            iteration=0,
+        )
 
-            result = await loop._llm_fix(
-                markdown=original_md,
-                lint_issues=[LintIssue(rule="MD001", message="Test", line=1)],
-                heading_issues=[],
-                ocr_suggestions=[],
-                manifest=mock_manifest,
-                job_id="test-job",
-                iteration=0,
-            )
-
-            assert result.markdown == original_md
-            assert result.corrections == []
-            assert result.observations == []
-            assert result.cost_cents == 0.0
+        assert result.markdown == original_md
+        assert result.corrections == []
+        assert result.observations == []
+        assert result.cost_cents == 0.0
 
     @pytest.mark.asyncio
-    async def test_llm_fix_no_issues_skips_call(self, mock_manifest):
-        """Test that LLM is not called when no issues."""
+    async def test_llm_fix_no_issues_returns_original(self, mock_manifest):
+        """Test that no issues returns original unchanged."""
         loop = StructureLoop()
         original_md = "# Clean markdown"
 
-        # No issues to fix - LLM should not be called
+        # No issues to fix - should return unchanged
         result = await loop._llm_fix(
             markdown=original_md,
             lint_issues=[],
@@ -742,10 +743,7 @@ class TestOCRCheckerIntegration:
 
         # The OCRChecker should be initialized with key terms
         # Even if no suggestions are found, the method should work
-        suggestions = loop._check_ocr(
-            "Document about Enzo and yt frameworks",
-            mock_manifest
-        )
+        suggestions = loop._check_ocr("Document about Enzo and yt frameworks", mock_manifest)
 
         # Should return a list (empty or with suggestions)
         assert isinstance(suggestions, list)
@@ -764,9 +762,7 @@ class TestExtractedMethods:
         """Test _detect_all_issues returns tuple of issue lists."""
         loop = StructureLoop()
 
-        lint_issues, ocr_suggestions, heading_issues = loop._detect_all_issues(
-            sample_markdown, mock_manifest
-        )
+        lint_issues, ocr_suggestions, heading_issues = loop._detect_all_issues(sample_markdown, mock_manifest)
 
         assert isinstance(lint_issues, list)
         assert isinstance(ocr_suggestions, list)
@@ -833,10 +829,7 @@ class TestExtractedMethods:
         """Test _is_semantically_clean returns False with semantic issues."""
         loop = StructureLoop()
 
-        with patch.object(
-            loop, "_run_lint",
-            return_value=[LintIssue(rule="MD001", message="Test", line=1)]
-        ):
+        with patch.object(loop, "_run_lint", return_value=[LintIssue(rule="MD001", message="Test", line=1)]):
             assert loop._is_semantically_clean("# Test") is False
 
 

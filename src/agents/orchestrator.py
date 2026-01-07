@@ -43,6 +43,7 @@ from .plan_verification import (
     verify_figure_completeness,
     verify_heading_structure,
     verify_spelling,
+    verify_table_accuracy_vision,
     verify_table_completeness,
 )
 from .planner import plan_document
@@ -72,6 +73,8 @@ async def verify_document(
     plan: DocumentPlan,
     ledger: Ledger,
     event_bus: EventBus | None = None,
+    element_bboxes: dict[tuple[int, str, int], tuple[float, float, float, float]] | None = None,
+    page_width: float | None = None,
 ) -> VerificationReport:
     """Run final verification on the processed document.
 
@@ -80,7 +83,8 @@ async def verify_document(
     2. Plan verification: heading structure matches outline (V3.1)
     3. Figure completeness: all planned figures have alt-text (V3.2)
     4. Table completeness: all planned tables transcribed (V3.3)
-    5. Spelling verification: check against document dictionary (V3.4)
+    5. Table accuracy: transcribed tables match source images (V3.3.1) - NEW
+    6. Spelling verification: check against document dictionary (V3.4)
 
     Args:
         final_markdowns: Final markdown for each page
@@ -88,6 +92,8 @@ async def verify_document(
         plan: Document plan to verify against
         ledger: Ledger of all changes made
         event_bus: Optional event bus
+        element_bboxes: Bounding boxes for cropping elements (for table accuracy check)
+        page_width: Page width for coordinate scaling (for table accuracy check)
 
     Returns:
         VerificationReport with pass/fail and issues
@@ -137,9 +143,7 @@ async def verify_document(
         levels = [len(h) for h in headings]
         for i in range(1, len(levels)):
             if levels[i] > levels[i - 1] + 1:
-                issues.append(
-                    f"Page {page_num}: Heading skip H{levels[i-1]} -> H{levels[i]}"
-                )
+                issues.append(f"Page {page_num}: Heading skip H{levels[i - 1]} -> H{levels[i]}")
 
         passed = len(issues) == 0
         page_results.append(
@@ -168,39 +172,48 @@ async def verify_document(
     # =================================================================
 
     # Combine all pages into single markdown for structure checks
-    combined_markdown = "\n\n---\n\n".join(
-        final_markdowns[p] for p in sorted(final_markdowns.keys())
-    )
+    combined_markdown = "\n\n---\n\n".join(final_markdowns[p] for p in sorted(final_markdowns.keys()))
 
     # V3.1: Verify heading structure matches DocumentPlan outline
     heading_issues = verify_heading_structure(combined_markdown, plan)
     for issue in heading_issues:
         all_issues.append(f"[Structure] {issue}")
     # Missing or wrong-level headings are critical
-    critical_issues.extend(
-        f"[Structure] {issue}" for issue in heading_issues
-        if "Missing" in issue or "Wrong" in issue
-    )
+    critical_issues.extend(f"[Structure] {issue}" for issue in heading_issues if "Missing" in issue or "Wrong" in issue)
 
     # V3.2: Verify all planned figures have alt-text
     figure_issues = verify_figure_completeness(final_markdowns, plan)
     for issue in figure_issues:
         all_issues.append(f"[Figures] {issue}")
     # Missing alt-text is critical for accessibility
-    critical_issues.extend(
-        f"[Figures] {issue}" for issue in figure_issues
-        if "missing alt-text" in issue.lower()
-    )
+    critical_issues.extend(f"[Figures] {issue}" for issue in figure_issues if "missing alt-text" in issue.lower())
 
     # V3.3: Verify all planned tables were transcribed
     table_issues = verify_table_completeness(final_markdowns, plan)
     for issue in table_issues:
         all_issues.append(f"[Tables] {issue}")
     # Missing tables are critical
-    critical_issues.extend(
-        f"[Tables] {issue}" for issue in table_issues
-        if "not transcribed" in issue.lower()
-    )
+    critical_issues.extend(f"[Tables] {issue}" for issue in table_issues if "not transcribed" in issue.lower())
+
+    # V3.3.1: Vision-based table accuracy verification (NEW)
+    # Only run if bounding boxes are available (enables cropping tables from images)
+    table_accuracy_issues: list[str] = []
+    if element_bboxes and page_width and page_images:
+        try:
+            table_accuracy_issues = await verify_table_accuracy_vision(
+                page_markdowns=final_markdowns,
+                page_images=page_images,
+                element_bboxes=element_bboxes,
+                page_width=page_width,
+                plan=plan,
+            )
+            for issue in table_accuracy_issues:
+                all_issues.append(f"[TableAccuracy] {issue}")
+            # Table data mismatches are critical errors
+            critical_issues.extend(f"[TableAccuracy] {issue}" for issue in table_accuracy_issues)
+        except Exception as e:
+            logger.warning(f"Table accuracy verification failed: {e}")
+            # Don't fail the whole verification if this optional check errors
 
     # V3.4: Verify spelling using document dictionary
     # Only include a sample of spelling issues to avoid noise
@@ -211,9 +224,7 @@ async def verify_document(
         for issue in sample_issues:
             all_issues.append(f"[Spelling] {issue}")
         if len(spelling_issues) > 10:
-            all_issues.append(
-                f"[Spelling] ... and {len(spelling_issues) - 10} more spelling issues"
-            )
+            all_issues.append(f"[Spelling] ... and {len(spelling_issues) - 10} more spelling issues")
 
     # =================================================================
     # Final report
@@ -224,9 +235,7 @@ async def verify_document(
     pages_failed = len(page_results) - pages_passed
 
     # Overall pass if no critical issues and >80% pages pass
-    overall_passed = (
-        len(critical_issues) == 0 and pages_passed >= len(page_results) * 0.8
-    )
+    overall_passed = len(critical_issues) == 0 and pages_passed >= len(page_results) * 0.8
 
     report = VerificationReport(
         document_id=plan.document_id,
@@ -295,10 +304,7 @@ async def run_recovery_phase(
     document_id = verification.document_id
 
     # Find pages that need recovery
-    failed_pages = [
-        pv for pv in verification.pages
-        if not pv.passed and should_attempt_recovery(pv, 1)
-    ]
+    failed_pages = [pv for pv in verification.pages if not pv.passed and should_attempt_recovery(pv, 1)]
 
     if not failed_pages:
         # No pages need recovery
@@ -340,9 +346,7 @@ async def run_recovery_phase(
             continue
 
         # Build processing history (simplified for now)
-        processing_history = [
-            f"Initial processing completed with {len(page_verification.issues)} issues"
-        ]
+        processing_history = [f"Initial processing completed with {len(page_verification.issues)} issues"]
 
         # Attempt recovery up to MAX_RECOVERY_ATTEMPTS times
         for attempt_num in range(1, MAX_RECOVERY_ATTEMPTS + 1):
@@ -374,9 +378,7 @@ async def run_recovery_phase(
                 break
 
             # Add to history for next attempt
-            processing_history.append(
-                f"Recovery attempt {attempt_num}: {attempt.status.value}"
-            )
+            processing_history.append(f"Recovery attempt {attempt_num}: {attempt.status.value}")
 
         # If no successful recovery after all attempts
         if page_num not in pages_recovered and page_num not in pages_with_caveats:
@@ -507,14 +509,8 @@ async def process_document_v5(
                     final_markdowns[job.page] = result.updated_markdown
 
         # Aggregate execution stats
-        total_input_tokens = (
-            plan.planning_tokens_input
-            + sum(r.input_tokens for r in job_results)
-        )
-        total_output_tokens = (
-            plan.planning_tokens_output
-            + sum(r.output_tokens for r in job_results)
-        )
+        total_input_tokens = plan.planning_tokens_input + sum(r.input_tokens for r in job_results)
+        total_output_tokens = plan.planning_tokens_output + sum(r.output_tokens for r in job_results)
 
         # =================================================================
         # Phase 2.5: Structured Issue Detection & Fixing
@@ -545,6 +541,8 @@ async def process_document_v5(
             plan=plan,
             ledger=ledger,
             event_bus=event_bus,
+            element_bboxes=element_bboxes,  # For table accuracy verification
+            page_width=page_width,  # For table accuracy verification
         )
 
         # =================================================================
@@ -559,8 +557,7 @@ async def process_document_v5(
 
         if not verification.passed and pass_rate >= 0.5:
             logger.info(
-                f"Verification failed ({verification.pages_passed}/{total_pages} passed), "
-                "attempting recovery phase"
+                f"Verification failed ({verification.pages_passed}/{total_pages} passed), attempting recovery phase"
             )
 
             final_markdowns, recovery_report = await run_recovery_phase(
@@ -593,14 +590,10 @@ async def process_document_v5(
         total_duration_ms = int((time.time() - start_time) * 1000)
 
         # Combine all page markdowns
-        final_markdown = "\n\n---\n\n".join(
-            final_markdowns[p] for p in sorted(final_markdowns.keys())
-        )
+        final_markdown = "\n\n---\n\n".join(final_markdowns[p] for p in sorted(final_markdowns.keys()))
 
         # Calculate cost (Haiku pricing)
-        cost = (total_input_tokens * 0.00025 / 1000) + (
-            total_output_tokens * 0.00125 / 1000
-        )
+        cost = (total_input_tokens * 0.00025 / 1000) + (total_output_tokens * 0.00125 / 1000)
 
         result = ProcessingResult(
             document_id=doc_id,

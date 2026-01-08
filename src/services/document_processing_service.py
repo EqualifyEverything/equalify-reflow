@@ -29,8 +29,6 @@ from redis.asyncio import Redis
 from ..config import settings
 
 if TYPE_CHECKING:
-    from PIL import Image
-
     from ..agents.models import ProcessingResult
 
 logger = logging.getLogger(__name__)
@@ -383,7 +381,7 @@ class DocumentProcessingService:
                 jobs_complete=processing_result.total_jobs,
                 result_url=markdown_s3_key,
                 ledger_s3_key=ledger_s3_key,
-                confidence_score=0.85,  # TODO: Calculate from verification
+                confidence_score=processing_result.confidence_score,
                 total_edits=processing_result.total_edits,
                 total_pages=processing_result.total_pages,
                 total_input_tokens=processing_result.total_input_tokens,

@@ -7,6 +7,7 @@ Pure functions with no external dependencies.
 import pytest
 from src.utils.confidence_scoring import (
     aggregate_page_confidences,
+    calculate_confidence_from_verification,
     calculate_document_confidence,
     classify_confidence_level,
 )
@@ -109,3 +110,80 @@ def test_calculate_document_confidence_returns_tuple():
     score, level = calculate_document_confidence([])
     assert score == 0.0
     assert level == "low"
+
+
+# ============================================================================
+# calculate_confidence_from_verification Tests (8 tests)
+# ============================================================================
+
+
+def test_calculate_confidence_from_verification_empty():
+    """Test empty page list returns 0.0."""
+    assert calculate_confidence_from_verification([]) == 0.0
+
+
+def test_calculate_confidence_from_verification_all_passed():
+    """Test all pages passing gives high confidence."""
+    # All pages passed (0.9 each)
+    result = calculate_confidence_from_verification([0.9, 0.9, 0.9])
+    assert result == 0.9
+
+
+def test_calculate_confidence_from_verification_mixed():
+    """Test mixed pass/fail gives medium confidence."""
+    # Mix of passed (0.9) and failed (0.5)
+    result = calculate_confidence_from_verification([0.9, 0.5, 0.9, 0.5])
+    assert result == 0.7
+
+
+def test_calculate_confidence_from_verification_critical_penalty():
+    """Test critical issues reduce confidence."""
+    # Base: 0.9, with 2 critical issues (-0.10)
+    result = calculate_confidence_from_verification(
+        page_confidences=[0.9, 0.9, 0.9],
+        critical_issues_count=2,
+    )
+    # 0.9 - (2 * 0.05) = 0.8
+    assert result == 0.8
+
+
+def test_calculate_confidence_from_verification_critical_penalty_max():
+    """Test critical penalty caps at 0.30."""
+    result = calculate_confidence_from_verification(
+        page_confidences=[0.9],
+        critical_issues_count=10,  # Would be 0.50 but capped at 0.30
+    )
+    # 0.9 - 0.30 = 0.6
+    assert result == 0.6
+
+
+def test_calculate_confidence_from_verification_recovery_penalty():
+    """Test recovery edits reduce confidence."""
+    result = calculate_confidence_from_verification(
+        page_confidences=[0.9],
+        recovery_edits=3,
+    )
+    # 0.9 - (3 * 0.02) = 0.84
+    assert result == 0.84
+
+
+def test_calculate_confidence_from_verification_combined_penalties():
+    """Test both penalties apply together."""
+    result = calculate_confidence_from_verification(
+        page_confidences=[0.9],
+        critical_issues_count=2,
+        recovery_edits=5,
+    )
+    # 0.9 - 0.10 (critical) - 0.10 (recovery) = 0.7
+    assert result == 0.7
+
+
+def test_calculate_confidence_from_verification_clamps_to_zero():
+    """Test result is clamped to 0.0 minimum."""
+    result = calculate_confidence_from_verification(
+        page_confidences=[0.3],
+        critical_issues_count=6,
+        recovery_edits=5,
+    )
+    # 0.3 - 0.30 - 0.10 = -0.1 -> clamped to 0.0
+    assert result == 0.0

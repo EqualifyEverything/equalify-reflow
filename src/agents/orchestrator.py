@@ -17,6 +17,7 @@ import time
 from typing import TYPE_CHECKING
 from uuid import uuid4
 
+from ..utils.confidence_scoring import calculate_confidence_from_verification
 from .events import (
     EventBus,
     PageVerifiedEvent,
@@ -27,6 +28,7 @@ from .events import (
     VerificationCompleteEvent,
     VerificationStartedEvent,
 )
+from .issue_fixer import detect_and_fix_issues_async
 from .models import (
     DocumentPlan,
     Ledger,
@@ -37,9 +39,7 @@ from .models import (
     RecoveryReport,
     VerificationReport,
 )
-from .issue_fixer import detect_and_fix_issues, detect_and_fix_issues_async
 from .plan_verification import (
-    fix_heading_levels_per_page,
     verify_figure_completeness,
     verify_heading_structure,
     verify_spelling,
@@ -50,7 +50,6 @@ from .planner import plan_document
 from .recovery import (
     MAX_RECOVERY_ATTEMPTS,
     attempt_page_recovery,
-    calculate_pass_threshold,
     determine_final_status,
     should_attempt_recovery,
 )
@@ -549,7 +548,6 @@ async def process_document_v5(
         # Phase 4: Recovery (if needed)
         # =================================================================
         recovery_report: RecoveryReport | None = None
-        recovery_duration_ms = 0
 
         # Run recovery if verification failed but >= 50% passed
         total_pages = len(page_markdowns)
@@ -567,9 +565,6 @@ async def process_document_v5(
                 ledger=ledger,
                 event_bus=event_bus,
             )
-
-            if recovery_report:
-                recovery_duration_ms = recovery_report.recovery_duration_ms
 
         # Determine final status
         final_status = determine_final_status(
@@ -595,12 +590,29 @@ async def process_document_v5(
         # Calculate cost (Haiku pricing)
         cost = (total_input_tokens * 0.00025 / 1000) + (total_output_tokens * 0.00125 / 1000)
 
+        # Calculate confidence from verification data
+        page_confidences = [pv.confidence for pv in verification.pages]
+        recovery_edits = recovery_report.total_recovery_edits if recovery_report else 0
+
+        confidence_score = calculate_confidence_from_verification(
+            page_confidences=page_confidences,
+            critical_issues_count=len(verification.critical_issues),
+            recovery_edits=recovery_edits,
+        )
+
+        logger.info(
+            f"Calculated confidence: {confidence_score:.3f} "
+            f"(pages={len(page_confidences)}, critical={len(verification.critical_issues)}, "
+            f"recovery={recovery_edits})"
+        )
+
         result = ProcessingResult(
             document_id=doc_id,
             success=is_success,
             final_markdown=final_markdown,
             ledger=ledger,
             verification=verification,
+            confidence_score=confidence_score,
             total_pages=len(page_markdowns),
             total_edits=ledger.total_edits,
             total_jobs=len(plan.jobs),
@@ -713,7 +725,7 @@ async def process_document_v5_streaming(
             try:
                 event = await asyncio.wait_for(queue.get(), timeout=1.0)
                 yield event
-            except asyncio.TimeoutError:
+            except TimeoutError:
                 continue
 
         # Get any remaining events

@@ -76,3 +76,48 @@ def calculate_document_confidence(
     level = classify_confidence_level(aggregate_score)
 
     return aggregate_score, level
+
+
+def calculate_confidence_from_verification(
+    page_confidences: list[float],
+    critical_issues_count: int = 0,
+    recovery_edits: int = 0,
+) -> float:
+    """Calculate document confidence from verification data.
+
+    Uses a weighted approach combining page pass rates with penalties:
+    - Base: mean of page confidences (typically 0.9 for passed, 0.5 for failed)
+    - Penalty: -0.05 per critical issue (max -0.30)
+    - Penalty: -0.02 per recovery edit (max -0.10)
+
+    Args:
+        page_confidences: List of per-page confidence scores from verification
+        critical_issues_count: Number of critical issues found during verification
+        recovery_edits: Number of recovery edits applied
+
+    Returns:
+        Confidence score between 0.0 and 1.0, rounded to 3 decimals
+
+    Example:
+        >>> calculate_confidence_from_verification([0.9, 0.9, 0.9])
+        0.9
+        >>> calculate_confidence_from_verification([0.9, 0.5, 0.9], critical_issues_count=2)
+        0.667
+    """
+    if not page_confidences:
+        return 0.0
+
+    # Base: mean of page confidences
+    base_score = sum(page_confidences) / len(page_confidences)
+
+    # Critical issues penalty (max 30% reduction)
+    critical_penalty = min(0.30, critical_issues_count * 0.05)
+
+    # Recovery penalty (max 10% reduction) - needing recovery indicates issues
+    recovery_penalty = min(0.10, recovery_edits * 0.02)
+
+    # Calculate final score
+    final_score = base_score - critical_penalty - recovery_penalty
+
+    # Clamp to valid range and round
+    return round(max(0.0, min(1.0, final_score)), 3)

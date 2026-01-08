@@ -14,14 +14,10 @@ from __future__ import annotations
 
 from datetime import datetime
 from enum import Enum
-from typing import TYPE_CHECKING, Any, Literal
+from typing import Literal
 from uuid import uuid4
 
 from pydantic import BaseModel, Field
-
-if TYPE_CHECKING:
-    from PIL import Image
-
 
 # =============================================================================
 # Enums
@@ -797,6 +793,14 @@ class ProcessingResult(BaseModel):
     final_markdown: str = Field(..., description="Complete corrected markdown")
     ledger: Ledger = Field(..., description="Complete change ledger")
     verification: VerificationReport = Field(..., description="Verification report")
+
+    # Confidence
+    confidence_score: float = Field(
+        default=0.0,
+        ge=0.0,
+        le=1.0,
+        description="Document confidence score aggregated from verification",
+    )
 
     # Stats
     total_pages: int = Field(default=0)

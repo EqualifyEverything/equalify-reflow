@@ -1,4 +1,4 @@
-# V5 Phase 1: Planning
+# Phase 1: Planning
 
 Phase 1 analyzes the document structure and creates an execution plan without making any edits.
 
@@ -695,8 +695,8 @@ async def test_full_planning():
 
 ```python
 import logging
-logging.getLogger("src.agents.v5.planner").setLevel(logging.DEBUG)
-logging.getLogger("src.agents.v5.page_chain").setLevel(logging.DEBUG)
+logging.getLogger("src.agents.planner").setLevel(logging.DEBUG)
+logging.getLogger("src.agents.page_chain").setLevel(logging.DEBUG)
 ```
 
 ### Inspect PageChainState

@@ -1,4 +1,4 @@
-# V5 Phase 3: Verification
+# Phase 3: Verification
 
 Phase 3 performs quality checks on the processed document before declaring success.
 
@@ -422,7 +422,7 @@ VerificationReport(
 
 ```python
 import logging
-logging.getLogger("src.agents.v5.plan_verification").setLevel(logging.DEBUG)
+logging.getLogger("src.agents.plan_verification").setLevel(logging.DEBUG)
 ```
 
 ### Inspect Failed Pages

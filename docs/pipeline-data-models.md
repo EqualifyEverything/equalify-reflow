@@ -1,6 +1,6 @@
-# V5 Data Models Reference
+# Data Models Reference
 
-Complete reference for all data structures used in the V5 pipeline.
+Complete reference for all data structures used in the pipeline.
 
 **Location:** `src/agents/models.py`
 
@@ -936,7 +936,7 @@ RecoveryReport(
 
 ### ProcessingResult
 
-**Purpose:** Final result of V5 pipeline
+**Purpose:** Final result of the pipeline
 
 **Location:** `src/agents/models.py:790-822`
 

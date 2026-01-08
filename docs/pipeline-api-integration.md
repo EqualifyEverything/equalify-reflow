@@ -1,18 +1,18 @@
-# V5 API Integration Guide
+# API Integration Guide
 
-Complete guide for integrating with the V5 PDF processing API.
+Complete guide for integrating with the PDF processing API.
 
 ## API Endpoints
 
-Base URL: `http://localhost:8080/api/v5`
+Base URL: `http://localhost:8080/api/v1/documents`
 
-### POST /api/v5/process
+### POST /api/v1/documents/submit
 
 Submit a PDF for processing.
 
 **Request:**
 ```http
-POST /api/v5/process HTTP/1.1
+POST /api/v1/documents/submit HTTP/1.1
 Content-Type: multipart/form-data
 
 file: (binary PDF data)
@@ -21,7 +21,7 @@ optimized: false (optional query param)
 
 **cURL Example:**
 ```bash
-curl -X POST http://localhost:8080/api/v5/process \
+curl -X POST http://localhost:8080/api/v1/documents/submit \
   -F "file=@document.pdf" \
   -F "optimized=false"
 ```
@@ -32,7 +32,7 @@ import requests
 
 with open("document.pdf", "rb") as f:
     response = requests.post(
-        "http://localhost:8080/api/v5/process",
+        "http://localhost:8080/api/v1/documents/submit",
         files={"file": f},
         params={"optimized": False}
     )
@@ -46,8 +46,8 @@ print(f"Job started: {job_id}")
 {
   "job_id": "123e4567-e89b-12d3-a456-426614174000",
   "status": "pending",
-  "stream_url": "/api/v5/jobs/123e4567-e89b-12d3-a456-426614174000/stream",
-  "status_url": "/api/v5/jobs/123e4567-e89b-12d3-a456-426614174000"
+  "stream_url": "/api/v1/documents/123e4567-e89b-12d3-a456-426614174000/stream",
+  "status_url": "/api/v1/documents/123e4567-e89b-12d3-a456-426614174000"
 }
 ```
 
@@ -58,24 +58,24 @@ print(f"Job started: {job_id}")
 
 ---
 
-### GET /api/v5/jobs/{job_id}
+### GET /api/v1/documents/{job_id}
 
 Get current job status and progress.
 
 **Request:**
 ```http
-GET /api/v5/jobs/{job_id} HTTP/1.1
+GET /api/v1/documents/{job_id} HTTP/1.1
 ```
 
 **cURL Example:**
 ```bash
-curl http://localhost:8080/api/v5/jobs/123e4567-e89b-12d3-a456-426614174000
+curl http://localhost:8080/api/v1/documents/123e4567-e89b-12d3-a456-426614174000
 ```
 
 **Python Example:**
 ```python
 response = requests.get(
-    f"http://localhost:8080/api/v5/jobs/{job_id}"
+    f"http://localhost:8080/api/v1/documents/{job_id}"
 )
 status = response.json()
 print(f"Status: {status['status']} - Progress: {status['progress']*100:.1f}%")
@@ -112,25 +112,25 @@ print(f"Status: {status['status']} - Progress: {status['progress']*100:.1f}%")
 
 ---
 
-### GET /api/v5/jobs/{job_id}/stream
+### GET /api/v1/documents/{job_id}/stream
 
 Stream real-time processing events via Server-Sent Events (SSE).
 
 **Request:**
 ```http
-GET /api/v5/jobs/{job_id}/stream HTTP/1.1
+GET /api/v1/documents/{job_id}/stream HTTP/1.1
 Accept: text/event-stream
 ```
 
 **cURL Example:**
 ```bash
-curl -N http://localhost:8080/api/v5/jobs/123e4567-e89b-12d3-a456-426614174000/stream
+curl -N http://localhost:8080/api/v1/documents/123e4567-e89b-12d3-a456-426614174000/stream
 ```
 
 **JavaScript Example:**
 ```javascript
 const eventSource = new EventSource(
-  `http://localhost:8080/api/v5/jobs/${jobId}/stream`
+  `http://localhost:8080/api/v1/documents/${jobId}/stream`
 );
 
 eventSource.onmessage = (event) => {
@@ -169,7 +169,7 @@ eventSource.onerror = (error) => {
 ```python
 from sseclient import SSEClient
 
-messages = SSEClient(f'http://localhost:8080/api/v5/jobs/{job_id}/stream')
+messages = SSEClient(f'http://localhost:8080/api/v1/documents/{job_id}/stream')
 
 for msg in messages:
     if msg.data:
@@ -223,7 +223,7 @@ If the connection drops, you can reconnect and resume from the last event:
 ```javascript
 const lastEventId = localStorage.getItem('lastEventId');
 const eventSource = new EventSource(
-  `http://localhost:8080/api/v5/jobs/${jobId}/stream`,
+  `http://localhost:8080/api/v1/documents/${jobId}/stream`,
   { headers: { 'Last-Event-ID': lastEventId } }
 );
 
@@ -235,73 +235,24 @@ eventSource.onmessage = (event) => {
 
 ---
 
-### GET /api/v5/jobs/{job_id}/result
-
-Get final processing result (only available when status is `complete` or `failed`).
-
-**Request:**
-```http
-GET /api/v5/jobs/{job_id}/result HTTP/1.1
-```
-
-**cURL Example:**
-```bash
-curl http://localhost:8080/api/v5/jobs/123e4567-e89b-12d3-a456-426614174000/result | jq
-```
-
-**Python Example:**
-```python
-response = requests.get(
-    f"http://localhost:8080/api/v5/jobs/{job_id}/result"
-)
-result = response.json()
-
-print(f"Success: {result['success']}")
-print(f"Pages: {result['total_pages']}")
-print(f"Edits: {result['total_edits']}")
-print(f"Cost: ${result['total_cost']:.4f}")
-print(f"Duration: {result['total_duration_ms']/1000:.1f}s")
-```
-
-**Response (200 OK):**
-```json
-{
-  "document_id": "123e4567-e89b-12d3-a456-426614174000",
-  "success": true,
-  "final_markdown": "# Document Title\n\n## Introduction\n...",
-  "total_pages": 10,
-  "total_edits": 47,
-  "total_cost": 0.0823,
-  "total_duration_ms": 45230,
-  "verification_passed": true,
-  "verification_issues": []
-}
-```
-
-**Error Responses:**
-- `404 Not Found` - Job ID doesn't exist
-- `409 Conflict` - Job still processing (not complete/failed yet)
-
----
-
-### GET /api/v5/jobs/{job_id}/ledger
+### GET /api/v1/documents/{job_id}/ledger
 
 Get complete change ledger (all edits with reasoning).
 
 **Request:**
 ```http
-GET /api/v5/jobs/{job_id}/ledger HTTP/1.1
+GET /api/v1/documents/{job_id}/ledger HTTP/1.1
 ```
 
 **cURL Example:**
 ```bash
-curl http://localhost:8080/api/v5/jobs/123e4567-e89b-12d3-a456-426614174000/ledger | jq
+curl http://localhost:8080/api/v1/documents/123e4567-e89b-12d3-a456-426614174000/ledger | jq
 ```
 
 **Python Example:**
 ```python
 response = requests.get(
-    f"http://localhost:8080/api/v5/jobs/{job_id}/ledger"
+    f"http://localhost:8080/api/v1/documents/{job_id}/ledger"
 )
 ledger = response.json()
 
@@ -354,49 +305,6 @@ for entry in ledger['entries']:
 
 ---
 
-### GET /api/v5/jobs/{job_id}/markdown
-
-Download final markdown as plain text file.
-
-**Request:**
-```http
-GET /api/v5/jobs/{job_id}/markdown HTTP/1.1
-```
-
-**cURL Example:**
-```bash
-curl http://localhost:8080/api/v5/jobs/123e4567-e89b-12d3-a456-426614174000/markdown \
-  -o result.md
-```
-
-**Python Example:**
-```python
-response = requests.get(
-    f"http://localhost:8080/api/v5/jobs/{job_id}/markdown"
-)
-with open("result.md", "wb") as f:
-    f.write(response.content)
-```
-
-**Response (200 OK):**
-```http
-HTTP/1.1 200 OK
-Content-Type: text/markdown; charset=utf-8
-Content-Disposition: attachment; filename="document.md"; filename*=UTF-8''document.md
-
-# Document Title
-
-## Introduction
-
-This is the processed markdown content...
-```
-
-**Error Responses:**
-- `404 Not Found` - Job ID doesn't exist
-- `409 Conflict` - Job still processing
-
----
-
 ## Integration Patterns
 
 ### Pattern 1: Poll for Status
@@ -410,7 +318,7 @@ import requests
 def wait_for_completion(job_id, poll_interval=2):
     """Poll job status until complete or failed."""
     while True:
-        response = requests.get(f"http://localhost:8080/api/v5/jobs/{job_id}")
+        response = requests.get(f"http://localhost:8080/api/v1/documents/{job_id}")
         status_data = response.json()
 
         status = status_data["status"]
@@ -428,7 +336,8 @@ job_id = submit_document("document.pdf")
 final_status = wait_for_completion(job_id)
 
 if final_status == "complete":
-    result = requests.get(f"http://localhost:8080/api/v5/jobs/{job_id}/result")
+    # Result is included in the status response when complete
+    result = requests.get(f"http://localhost:8080/api/v1/documents/{job_id}")
     print(result.json())
 ```
 
@@ -442,7 +351,7 @@ async function processDocument(file: File): Promise<ProcessingResult> {
   const formData = new FormData();
   formData.append('file', file);
 
-  const submitResponse = await fetch('http://localhost:8080/api/v5/process', {
+  const submitResponse = await fetch('http://localhost:8080/api/v1/documents/submit', {
     method: 'POST',
     body: formData,
   });
@@ -452,7 +361,7 @@ async function processDocument(file: File): Promise<ProcessingResult> {
   // 2. Stream events
   return new Promise((resolve, reject) => {
     const eventSource = new EventSource(
-      `http://localhost:8080/api/v5/jobs/${job_id}/stream`
+      `http://localhost:8080/api/v1/documents/${job_id}/stream`
     );
 
     eventSource.onmessage = (event) => {
@@ -464,8 +373,8 @@ async function processDocument(file: File): Promise<ProcessingResult> {
       // Check for completion
       if (data.event_type === 'processing:complete') {
         eventSource.close();
-        // 3. Fetch final result
-        fetch(`http://localhost:8080/api/v5/jobs/${job_id}/result`)
+        // 3. Fetch final status (includes result when complete)
+        fetch(`http://localhost:8080/api/v1/documents/${job_id}`)
           .then(res => res.json())
           .then(resolve)
           .catch(reject);
@@ -495,7 +404,7 @@ def submit_with_callback(pdf_path, webhook_url):
     # Submit document
     with open(pdf_path, "rb") as f:
         response = requests.post(
-            "http://localhost:8080/api/v5/process",
+            "http://localhost:8080/api/v1/documents/submit",
             files={"file": f}
         )
     job_id = response.json()["job_id"]
@@ -508,20 +417,18 @@ def submit_with_callback(pdf_path, webhook_url):
 async def monitor_and_callback(job_id, webhook_url):
     """Monitor job and call webhook on completion."""
     while True:
-        response = requests.get(f"http://localhost:8080/api/v5/jobs/{job_id}")
+        response = requests.get(f"http://localhost:8080/api/v1/documents/{job_id}")
         status = response.json()["status"]
 
         if status in ["complete", "failed"]:
-            # Fetch result
-            result_response = requests.get(
-                f"http://localhost:8080/api/v5/jobs/{job_id}/result"
-            )
+            # Result is included in the status response
+            result_data = response.json()
 
             # Call webhook
             requests.post(webhook_url, json={
                 "job_id": job_id,
                 "status": status,
-                "result": result_response.json()
+                "result": result_data
             })
             break
 
@@ -544,7 +451,7 @@ async def process_document_async(session, file_path):
         data.add_field('file', f, filename=os.path.basename(file_path))
 
         async with session.post(
-            'http://localhost:8080/api/v5/process',
+            'http://localhost:8080/api/v1/documents/submit',
             data=data
         ) as response:
             submit_result = await response.json()
@@ -553,7 +460,7 @@ async def process_document_async(session, file_path):
     # Poll for completion
     while True:
         async with session.get(
-            f'http://localhost:8080/api/v5/jobs/{job_id}'
+            f'http://localhost:8080/api/v1/documents/{job_id}'
         ) as response:
             status_data = await response.json()
 
@@ -562,11 +469,8 @@ async def process_document_async(session, file_path):
 
         await asyncio.sleep(2)
 
-    # Fetch result
-    async with session.get(
-        f'http://localhost:8080/api/v5/jobs/{job_id}/result'
-    ) as response:
-        return await response.json()
+    # Result is included in the final status response
+    return status_data
 
 async def batch_process(file_paths, max_concurrent=5):
     """Process multiple documents with concurrency limit."""
@@ -635,7 +539,7 @@ def process_with_error_handling(pdf_path):
         # Submit
         with open(pdf_path, "rb") as f:
             response = session.post(
-                "http://localhost:8080/api/v5/process",
+                "http://localhost:8080/api/v1/documents/submit",
                 files={"file": f},
                 timeout=30
             )
@@ -647,20 +551,15 @@ def process_with_error_handling(pdf_path):
         for attempt in range(max_attempts):
             try:
                 response = session.get(
-                    f"http://localhost:8080/api/v5/jobs/{job_id}",
+                    f"http://localhost:8080/api/v1/documents/{job_id}",
                     timeout=10
                 )
                 response.raise_for_status()
                 status_data = response.json()
 
                 if status_data["status"] == "complete":
-                    # Fetch result
-                    result_response = session.get(
-                        f"http://localhost:8080/api/v5/jobs/{job_id}/result",
-                        timeout=30
-                    )
-                    result_response.raise_for_status()
-                    return result_response.json()
+                    # Result is included in the status response
+                    return status_data
 
                 elif status_data["status"] == "failed":
                     error_msg = status_data.get("error", "Unknown error")
@@ -702,7 +601,7 @@ import pytest
 import requests
 from pathlib import Path
 
-BASE_URL = "http://localhost:8080/api/v5"
+BASE_URL = "http://localhost:8080/api/v1/documents"
 FIXTURES_DIR = Path(__file__).parent / "fixtures"
 
 @pytest.fixture
@@ -713,7 +612,7 @@ def test_submit_document(sample_pdf):
     """Test document submission."""
     with open(sample_pdf, "rb") as f:
         response = requests.post(
-            f"{BASE_URL}/process",
+            f"{BASE_URL}/submit",
             files={"file": f}
         )
 
@@ -728,13 +627,13 @@ def test_get_job_status(sample_pdf):
     # Submit first
     with open(sample_pdf, "rb") as f:
         submit_response = requests.post(
-            f"{BASE_URL}/process",
+            f"{BASE_URL}/submit",
             files={"file": f}
         )
     job_id = submit_response.json()["job_id"]
 
     # Get status
-    status_response = requests.get(f"{BASE_URL}/jobs/{job_id}")
+    status_response = requests.get(f"{BASE_URL}/{job_id}")
     assert status_response.status_code == 200
 
     status_data = status_response.json()
@@ -755,7 +654,7 @@ def test_invalid_file_format():
     try:
         with open("test.txt", "rb") as f:
             response = requests.post(
-                f"{BASE_URL}/process",
+                f"{BASE_URL}/submit",
                 files={"file": ("test.pdf", f)}  # Fake .pdf extension
             )
 
@@ -768,7 +667,7 @@ def test_complete_workflow(sample_pdf):
     # Submit
     with open(sample_pdf, "rb") as f:
         submit_response = requests.post(
-            f"{BASE_URL}/process",
+            f"{BASE_URL}/submit",
             files={"file": f}
         )
     job_id = submit_response.json()["job_id"]
@@ -776,7 +675,7 @@ def test_complete_workflow(sample_pdf):
     # Wait for completion
     max_attempts = 90  # 3 minutes
     for _ in range(max_attempts):
-        status_response = requests.get(f"{BASE_URL}/jobs/{job_id}")
+        status_response = requests.get(f"{BASE_URL}/{job_id}")
         status = status_response.json()["status"]
 
         if status == "complete":
@@ -788,26 +687,16 @@ def test_complete_workflow(sample_pdf):
     else:
         pytest.fail("Job did not complete in time")
 
-    # Get result
-    result_response = requests.get(f"{BASE_URL}/jobs/{job_id}/result")
-    assert result_response.status_code == 200
-
-    result = result_response.json()
-    assert result["success"] is True
-    assert len(result["final_markdown"]) > 0
-    assert result["total_pages"] > 0
+    # Result is included in the status response when complete
+    result = status_response.json()
+    assert result["status"] == "complete"
 
     # Get ledger
-    ledger_response = requests.get(f"{BASE_URL}/jobs/{job_id}/ledger")
+    ledger_response = requests.get(f"{BASE_URL}/{job_id}/ledger")
     assert ledger_response.status_code == 200
 
     ledger = ledger_response.json()
     assert len(ledger["entries"]) > 0
-
-    # Get markdown
-    markdown_response = requests.get(f"{BASE_URL}/jobs/{job_id}/markdown")
-    assert markdown_response.status_code == 200
-    assert markdown_response.headers["content-type"].startswith("text/markdown")
 ```
 
 ---
@@ -836,7 +725,7 @@ def test_complete_workflow(sample_pdf):
 
 5. **Cache Results**
    - Job results are immutable once complete
-   - Cache final markdown/result to avoid redundant requests
+   - Cache final status response to avoid redundant requests
 
 ### Rate Limiting
 

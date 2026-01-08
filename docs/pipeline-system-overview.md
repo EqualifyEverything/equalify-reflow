@@ -1,6 +1,6 @@
-# V5 System Overview
+# Pipeline System Overview
 
-The V5 pipeline transforms PDF documents into accessible, semantically-correct markdown through an event-driven, multi-phase processing system with real-time streaming feedback.
+The pipeline transforms PDF documents into accessible, semantically-correct markdown through an event-driven, multi-phase processing system with real-time streaming feedback.
 
 ## Architecture at a Glance
 
@@ -34,7 +34,7 @@ Final Result (markdown + ledger + report)
 
 ### 2. In-Memory State Management
 - Job state stored in `_job_store` dictionary
-- No Redis/persistent queue for V5
+- No Redis/persistent queue for pipeline
 - Fast access, no network overhead
 - Event history maintained for reconnection
 
@@ -54,7 +54,7 @@ Final Result (markdown + ledger + report)
 
 | Component | Location |
 |-----------|----------|
-| **API Endpoints** | `src/api/v5.py` |
+| **API Endpoints** | `src/api/documents.py` |
 | **Main Orchestrator** | `src/agents/orchestrator.py` |
 | **Data Models** | `src/agents/models.py` |
 | **Events** | `src/agents/events.py` |
@@ -82,24 +82,19 @@ Final Result (markdown + ledger + report)
 
 ### Submit a Document
 ```bash
-curl -X POST http://localhost:8080/api/v5/process \
+curl -X POST http://localhost:8080/api/v1/documents/submit \
   -F "file=@document.pdf" \
   | jq -r '.job_id'
 ```
 
 ### Stream Real-Time Progress
 ```bash
-curl -N http://localhost:8080/api/v5/jobs/{job_id}/stream
+curl -N http://localhost:8080/api/v1/documents/{job_id}/stream
 ```
 
-### Get Final Result
+### Get Job Status (includes result when complete)
 ```bash
-curl http://localhost:8080/api/v5/jobs/{job_id}/result | jq
-```
-
-### Download Markdown
-```bash
-curl http://localhost:8080/api/v5/jobs/{job_id}/markdown -o result.md
+curl http://localhost:8080/api/v1/documents/{job_id} | jq
 ```
 
 ## Job Lifecycle
@@ -193,7 +188,7 @@ curl http://localhost:8080/api/v5/jobs/{job_id}/markdown -o result.md
 
 ### SSE Connection
 ```javascript
-const eventSource = new EventSource(`/api/v5/jobs/${jobId}/stream`);
+const eventSource = new EventSource(`/api/v1/documents/${jobId}/stream`);
 
 eventSource.onmessage = (event) => {
   const data = JSON.parse(event.data);
@@ -284,6 +279,5 @@ eventSource.addEventListener('processing:complete', () => {
 
 ## Related Documentation
 
-- [V6 System Overview](./v6-system-overview.md) - Next-generation pipeline
 - [Architecture Documentation](.claude/docs/architecture.md) - Overall system design
-- [Testing Strategy](.claude/docs/testing.md) - How to test V5 changes
+- [Testing Strategy](.claude/docs/testing.md) - How to test pipeline changes

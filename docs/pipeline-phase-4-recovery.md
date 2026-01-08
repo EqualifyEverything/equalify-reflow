@@ -1,4 +1,4 @@
-# V5 Phase 4: Recovery
+# Phase 4: Recovery
 
 Phase 4 attempts to fix pages that failed verification through targeted recovery actions.
 
@@ -584,7 +584,7 @@ Example: "Medical diagram requires subject matter expert to describe"
 
 ```python
 import logging
-logging.getLogger("src.agents.v5.recovery").setLevel(logging.DEBUG)
+logging.getLogger("src.agents.recovery").setLevel(logging.DEBUG)
 ```
 
 ### Inspect Recovery Attempts

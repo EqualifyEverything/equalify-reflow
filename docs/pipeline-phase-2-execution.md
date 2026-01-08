@@ -1,4 +1,4 @@
-# V5 Phase 2: Execution
+# Phase 2: Execution
 
 Phase 2 executes worker jobs in parallel to make document edits with validation gates.
 

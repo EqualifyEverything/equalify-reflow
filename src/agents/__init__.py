@@ -39,11 +39,14 @@ from .events import (
 )
 from .model_tiers import MODEL_TIER_MAP, ModelTier
 from .models import (
+    # Issue detection models
+    CitationIssue,
     DocumentPlan,
     DocumentStructure,
     DocumentType,
     EditProposal,
     FigureContext,
+    FootnoteIssue,
     HeadingFix,
     IssueCategory,
     Job,
@@ -51,7 +54,9 @@ from .models import (
     JobType,
     Ledger,
     LedgerEntry,
+    ListIssue,
     OutlineEntry,
+    PageArtifactIssue,
     PagePlan,
     PageSkeleton,
     PageType,
@@ -66,6 +71,7 @@ from .models import (
     TableContext,
     Task,
     TaskType,
+    TypographyIssue,
     ValidationResult,
     VerificationReport,
 )
@@ -93,6 +99,20 @@ from .recovery import (
     categorize_issues,
     determine_final_status,
     should_attempt_recovery,
+)
+from .subagents import (
+    CONFIDENCE_APPLY_WITH_REVIEW,
+    CONFIDENCE_AUTO_APPLY,
+    CONFIDENCE_SKIP,
+    SubagentResult,
+)
+from .subagents.types import (
+    CitationResult,
+    FootnoteResult,
+    ListResult,
+    PageArtifactResult,
+    ParagraphMergeResult,
+    TypographyResult,
 )
 from .validation import auto_fix_minor_issues, validate_edit
 from .worker import execute_job, execute_jobs_parallel
@@ -128,11 +148,13 @@ __all__ = [
     "determine_final_status",
     "should_attempt_recovery",
     # Models
+    "CitationIssue",
     "DocumentPlan",
     "DocumentStructure",
     "DocumentType",
     "EditProposal",
     "FigureContext",
+    "FootnoteIssue",
     "HeadingFix",
     "IssueCategory",
     "Job",
@@ -140,7 +162,9 @@ __all__ = [
     "JobType",
     "Ledger",
     "LedgerEntry",
+    "ListIssue",
     "OutlineEntry",
+    "PageArtifactIssue",
     "PagePlan",
     "PageSkeleton",
     "PageType",
@@ -155,8 +179,20 @@ __all__ = [
     "TableContext",
     "Task",
     "TaskType",
+    "TypographyIssue",
     "ValidationResult",
     "VerificationReport",
+    # Subagent types
+    "CONFIDENCE_AUTO_APPLY",
+    "CONFIDENCE_APPLY_WITH_REVIEW",
+    "CONFIDENCE_SKIP",
+    "SubagentResult",
+    "CitationResult",
+    "FootnoteResult",
+    "ListResult",
+    "PageArtifactResult",
+    "ParagraphMergeResult",
+    "TypographyResult",
     # Events
     "EventBus",
     "StreamEvent",

@@ -39,13 +39,21 @@ class DocumentType(str, Enum):
 class TaskType(str, Enum):
     """Types of tasks that workers can perform."""
 
+    # Existing Worker tasks
     ALT_TEXT = "alt_text"
     TABLE_TRANSCRIPTION = "table_transcription"
     HEADING_FIX = "heading_fix"
     OCR_FIX = "ocr_fix"
     FORMAT_FIX = "format_fix"
     SPELLING_FIX = "spelling_fix"
-    # Note: PAGELESS_OPTIMIZATION removed - replaced by ParagraphAgent tasks (PRD-001)
+
+    # ParagraphAgent tasks
+    PAGE_ARTIFACT_REMOVAL = "page_artifact_removal"
+    FOOTNOTE_CORRECTION = "footnote_correction"
+    CITATION_LINKING = "citation_linking"
+    LIST_FIX = "list_fix"
+    TYPOGRAPHY_FIX = "typography_fix"
+    PARAGRAPH_MERGE = "paragraph_merge"
 
 
 class JobType(str, Enum):
@@ -53,6 +61,7 @@ class JobType(str, Enum):
 
     STRUCTURE = "structure"  # Heading fixes - run first
     CONTENT = "content"  # Alt-text, tables - run after structure
+    PARAGRAPH = "paragraph"  # Text flow fixes - ParagraphAgent
 
 
 class PageType(str, Enum):
@@ -104,6 +113,52 @@ class PageSkeleton(BaseModel):
         default=PageType.CONTENT,
         description="Detected page type",
     )
+
+
+# =============================================================================
+# Paragraph Issue Detection Models (for PageChainAgent)
+# =============================================================================
+
+
+class PageArtifactIssue(BaseModel):
+    """A page break artifact detected during planning."""
+
+    text: str = Field(..., description="The artifact text (---, split word)")
+    artifact_type: str = Field(..., description="page_break, split_word, column_break")
+    line_number: int = Field(..., description="Line number in page markdown")
+
+
+class FootnoteIssue(BaseModel):
+    """A footnote problem detected during planning."""
+
+    marker: str = Field(..., description="The footnote marker ([^1], ¹, etc.)")
+    issue_type: str = Field(..., description="missing_definition, misplaced, orphaned")
+    line_number: int = Field(default=0)
+
+
+class CitationIssue(BaseModel):
+    """A citation linking problem detected during planning."""
+
+    marker: str = Field(..., description="The citation marker ([1], (Author, 2023))")
+    issue_type: str = Field(..., description="unlinked, missing_reference")
+    line_number: int = Field(default=0)
+
+
+class ListIssue(BaseModel):
+    """A list structure problem detected during planning."""
+
+    location: str = Field(..., description="Line range or identifier")
+    issue_type: str = Field(..., description="nesting, numbering, mixed_types")
+    description: str = Field(default="")
+
+
+class TypographyIssue(BaseModel):
+    """Semantic typography needing markup."""
+
+    text: str = Field(..., description="The text that should have formatting")
+    formatting_type: str = Field(..., description="bold, italic, monospace")
+    semantic_purpose: str = Field(..., description="emphasis, definition, code, warning")
+    line_number: int = Field(default=0)
 
 
 # =============================================================================
@@ -411,6 +466,12 @@ class LedgerEntry(BaseModel):
     validation_feedback: str | None = Field(
         default=None,
         description="Feedback if validation failed",
+    )
+
+    # Review flag for low-confidence edits
+    needs_review: bool = Field(
+        default=False,
+        description="True if edit was applied with low confidence and needs human review",
     )
 
 

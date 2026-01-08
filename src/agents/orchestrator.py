@@ -13,12 +13,14 @@ from __future__ import annotations
 
 import asyncio
 import logging
+import re
 import time
 from typing import TYPE_CHECKING
 from uuid import uuid4
 
 from ..utils.confidence_scoring import calculate_confidence_from_verification
 from .events import (
+    EditCommittedEvent,
     EventBus,
     PageVerifiedEvent,
     ProcessingCompleteEvent,
@@ -32,11 +34,14 @@ from .issue_fixer import detect_and_fix_issues_async
 from .models import (
     DocumentPlan,
     Ledger,
+    LedgerEntry,
+    LLMCallRecord,
     PageVerification,
     ProcessingResult,
     ProcessingStatus,
     RecoveryAttemptStatus,
     RecoveryReport,
+    TaskType,
     VerificationReport,
 )
 from .plan_verification import (
@@ -53,12 +58,272 @@ from .recovery import (
     determine_final_status,
     should_attempt_recovery,
 )
+from .subagents.paragraph_merge import invoke_paragraph_merge_subagent
 from .worker import execute_jobs_parallel
 
 if TYPE_CHECKING:
     from PIL import Image
 
 logger = logging.getLogger(__name__)
+
+
+# =============================================================================
+# Footnote Collection Helper
+# =============================================================================
+
+
+def collect_footnotes_at_end(markdown: str) -> str:
+    """Collect all footnote definitions and move them to the document end.
+
+    Also removes page separator markers (---).
+
+    Args:
+        markdown: Raw markdown with scattered footnote definitions
+
+    Returns:
+        Markdown with footnotes collected at the end
+    """
+    # Pattern for footnote definitions - captures multiline definitions
+    # Matches [^1]: definition text that may span lines until next footnote or double newline
+    footnote_pattern = r"^\[\^(\d+)\]:\s*(.+?)(?=\n\[\^|\n\n|\Z)"
+
+    # Find all footnote definitions
+    footnotes = {}
+    for match in re.finditer(footnote_pattern, markdown, re.MULTILINE | re.DOTALL):
+        num = int(match.group(1))
+        text = match.group(2).strip()
+        # Keep the first definition for each number (in case of duplicates)
+        if num not in footnotes:
+            footnotes[num] = text
+
+    # Remove footnote definitions from their current locations
+    cleaned = re.sub(footnote_pattern, "", markdown, flags=re.MULTILINE | re.DOTALL)
+
+    # Remove page separator markers
+    cleaned = re.sub(r"\n*---\n*", "\n\n", cleaned)
+
+    # Clean up excessive whitespace
+    cleaned = re.sub(r"\n{3,}", "\n\n", cleaned)
+    cleaned = cleaned.strip()
+
+    # Append footnotes at the end if any were found
+    if footnotes:
+        footnote_section = "\n\n---\n\n"  # Single separator before footnotes
+        for num in sorted(footnotes.keys()):
+            footnote_section += f"[^{num}]: {footnotes[num]}\n"
+        cleaned += footnote_section.rstrip()
+
+    return cleaned
+
+
+# =============================================================================
+# Cross-Page Merge Pass
+# =============================================================================
+
+
+def validate_merge_result(
+    page1_md: str,
+    page2_md: str,
+    page1_remove_chars: int,
+    page2_remove_chars: int,
+    merged_text: str,
+) -> tuple[bool, str]:
+    """Validate that a merge operation makes sense.
+
+    Checks:
+    - Character counts don't exceed available text
+    - Merged result doesn't end with partial word
+    - Result produces valid word boundaries
+
+    Returns:
+        (is_valid, error_message) tuple
+    """
+    # Check bounds
+    if page1_remove_chars > len(page1_md):
+        return False, f"page1_remove_chars ({page1_remove_chars}) exceeds page length ({len(page1_md)})"
+    if page2_remove_chars > len(page2_md):
+        return False, f"page2_remove_chars ({page2_remove_chars}) exceeds page length ({len(page2_md)})"
+
+    # Check that removal doesn't split a word (page 1 end)
+    if page1_remove_chars > 0:
+        remaining_page1 = page1_md[:-page1_remove_chars]
+        # If remaining text ends with a letter, it might be a split word
+        if remaining_page1 and remaining_page1[-1].isalpha():
+            # Check if what we're removing starts with a letter (continuing a word)
+            removed = page1_md[-page1_remove_chars:]
+            if removed and removed[0].isalpha():
+                return (
+                    False,
+                    f"Merge would split word at page 1 end: "
+                    f"'...{remaining_page1[-10:]}' | '{removed[:10]}...'"
+                )
+
+    # Check merged text produces valid word
+    if merged_text:
+        # Merged text should not end with hyphen or partial
+        if merged_text.rstrip().endswith('-'):
+            return False, f"Merged text ends with hyphen: '{merged_text[-20:]}'"
+
+    return True, ""
+
+
+async def merge_cross_page_paragraphs(
+    page_markdowns: dict[int, str],
+    page_images: dict[int, Image.Image],
+    plan: DocumentPlan,
+    ledger: Ledger,
+    event_bus: EventBus | None = None,
+) -> dict[int, str]:
+    """Merge paragraphs that are split across page boundaries.
+
+    This runs AFTER all per-page jobs complete, on stable markdown.
+    Uses the paragraph_merge subagent to detect and merge split paragraphs.
+
+    Args:
+        page_markdowns: Current markdown for each page
+        page_images: Images for each page
+        plan: DocumentPlan with page continuation flags
+        ledger: Ledger for recording changes
+        event_bus: Optional event bus for streaming
+
+    Returns:
+        Updated page_markdowns dict with merges applied
+    """
+    # Find pages with continuation flags
+    pages_with_continuation = [
+        page_num
+        for page_num, page_plan in plan.pages.items()
+        if page_plan.has_page_continuation
+    ]
+
+    if not pages_with_continuation:
+        logger.info("No cross-page merges needed")
+        return page_markdowns
+
+    logger.info(f"Processing {len(pages_with_continuation)} cross-page merges")
+
+    for page_num in sorted(pages_with_continuation):
+        next_page = page_num + 1
+
+        if next_page not in page_markdowns:
+            logger.warning(f"Page {next_page} not found for merge with page {page_num}")
+            continue
+
+        # Get page markdown boundaries
+        page1_md = page_markdowns[page_num]
+        page2_md = page_markdowns[next_page]
+
+        # Extract ending/starting text for merge analysis
+        page1_end = page1_md[-300:] if len(page1_md) > 300 else page1_md
+        page2_start = page2_md[:300] if len(page2_md) > 300 else page2_md
+
+        # Get images for both pages
+        page1_image = page_images.get(page_num)
+        page2_image = page_images.get(next_page)
+
+        if not page1_image or not page2_image:
+            logger.warning(f"Missing images for merge between pages {page_num}-{next_page}")
+            continue
+
+        try:
+            # Call merge subagent
+            result = await invoke_paragraph_merge_subagent(
+                page1_end=page1_end,
+                page2_start=page2_start,
+                page1_image=page1_image,
+                page2_image=page2_image,
+            )
+
+            if not result.should_merge:
+                logger.info(f"Merge not needed for pages {page_num}-{next_page}: {result.reasoning}")
+                continue
+
+            if result.confidence < 0.5:
+                logger.warning(
+                    f"Skipping low-confidence merge for pages {page_num}-{next_page}: "
+                    f"confidence={result.confidence}"
+                )
+                continue
+
+            # Determine if edit needs human review
+            needs_review = result.confidence < 0.8
+
+            # Validate the merge before applying
+            is_valid, error_msg = validate_merge_result(
+                page1_md=page1_md,
+                page2_md=page2_md,
+                page1_remove_chars=result.page1_remove_chars,
+                page2_remove_chars=result.page2_remove_chars,
+                merged_text=result.merged_text,
+            )
+
+            if not is_valid:
+                logger.warning(
+                    f"Invalid merge for pages {page_num}-{next_page}: {error_msg}. "
+                    f"AI returned: remove {result.page1_remove_chars} from p1, {result.page2_remove_chars} from p2, "
+                    f"merge to '{result.merged_text[:50]}...'"
+                )
+                continue  # Skip this invalid merge
+
+            # Apply the merge - remove chars from end of page 1
+            if result.page1_remove_chars > 0:
+                old_end = page1_md[-result.page1_remove_chars:]
+                page_markdowns[page_num] = page1_md[:-result.page1_remove_chars]
+
+                ledger.append(
+                    LedgerEntry(
+                        job_id=f"merge:{page_num}-{next_page}",
+                        page=page_num,
+                        action=TaskType.PARAGRAPH_MERGE,
+                        target=f"page_end:{page_num}",
+                        before=old_end,
+                        after="",
+                        reasoning=f"Removed for merge: {result.reasoning}",
+                        confidence=result.confidence,
+                        validated=True,
+                        needs_review=needs_review,
+                    )
+                )
+
+            # Replace start of page 2 with merged text
+            if result.page2_remove_chars > 0:
+                old_start = page2_md[: result.page2_remove_chars]
+                new_start = result.merged_text
+                page_markdowns[next_page] = new_start + page2_md[result.page2_remove_chars:]
+
+                entry = LedgerEntry(
+                    job_id=f"merge:{page_num}-{next_page}",
+                    page=next_page,
+                    action=TaskType.PARAGRAPH_MERGE,
+                    target=f"page_start:{next_page}",
+                    before=old_start,
+                    after=new_start,
+                    reasoning=f"Merged paragraph: {result.reasoning}",
+                    confidence=result.confidence,
+                    validated=True,
+                    needs_review=needs_review,
+                )
+                ledger.append(entry)
+
+                if event_bus:
+                    event_bus.emit(
+                        EditCommittedEvent(
+                            document_id=event_bus.document_id,
+                            ledger_entry=entry,
+                            content_preview=result.merged_text[:100],
+                        )
+                    )
+
+            logger.info(
+                f"Merged pages {page_num}-{next_page} "
+                f"(method: {result.join_method}, confidence: {result.confidence})"
+            )
+
+        except Exception as e:
+            logger.error(f"Merge failed for pages {page_num}-{next_page}: {e}")
+            continue
+
+    return page_markdowns
 
 
 # =============================================================================
@@ -494,6 +759,7 @@ async def process_document_v5(
             ledger=ledger,
             max_concurrent=max_concurrent_jobs,
             event_bus=event_bus,
+            page_markdowns=page_markdowns,  # For PARAGRAPH job routing
         )
 
         execution_duration_ms = int((time.time() - execution_start) * 1000)
@@ -512,7 +778,20 @@ async def process_document_v5(
         total_output_tokens = plan.planning_tokens_output + sum(r.output_tokens for r in job_results)
 
         # =================================================================
-        # Phase 2.5: Structured Issue Detection & Fixing
+        # Phase 2.5: Cross-Page Merge Pass
+        # =================================================================
+        # Merge paragraphs split across page boundaries.
+        # Runs AFTER per-page jobs so we work with clean, artifact-free text.
+        final_markdowns = await merge_cross_page_paragraphs(
+            page_markdowns=final_markdowns,
+            page_images=page_images,
+            plan=plan,
+            ledger=ledger,
+            event_bus=event_bus,
+        )
+
+        # =================================================================
+        # Phase 2.6: Structured Issue Detection & Fixing
         # =================================================================
         # Detect issues using structured types with full context.
         # Route to appropriate fixers:
@@ -585,7 +864,10 @@ async def process_document_v5(
         total_duration_ms = int((time.time() - start_time) * 1000)
 
         # Combine all page markdowns
-        final_markdown = "\n\n---\n\n".join(final_markdowns[p] for p in sorted(final_markdowns.keys()))
+        raw_markdown = "\n\n---\n\n".join(final_markdowns[p] for p in sorted(final_markdowns.keys()))
+
+        # Post-process: collect footnotes at document end and remove page separators
+        final_markdown = collect_footnotes_at_end(raw_markdown)
 
         # Calculate cost (Haiku pricing)
         cost = (total_input_tokens * 0.00025 / 1000) + (total_output_tokens * 0.00125 / 1000)
@@ -606,6 +888,20 @@ async def process_document_v5(
             f"recovery={recovery_edits})"
         )
 
+        # Aggregate all LLM calls from planning and execution
+        all_llm_calls: list[LLMCallRecord] = []
+
+        # Add planner LLM calls
+        all_llm_calls.extend(plan.llm_calls)
+
+        # Add worker LLM calls from job results
+        for r in job_results:
+            if r.llm_call:
+                all_llm_calls.append(r.llm_call)
+
+        # Sort by timestamp
+        all_llm_calls.sort(key=lambda c: c.timestamp)
+
         result = ProcessingResult(
             document_id=doc_id,
             success=is_success,
@@ -619,6 +915,7 @@ async def process_document_v5(
             total_input_tokens=total_input_tokens,
             total_output_tokens=total_output_tokens,
             total_cost=cost,
+            llm_calls=all_llm_calls,
             total_duration_ms=total_duration_ms,
             planning_duration_ms=plan.planning_duration_ms,
             execution_duration_ms=execution_duration_ms,

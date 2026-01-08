@@ -26,8 +26,11 @@ async def test_approval_token_uniqueness():
 @pytest.mark.asyncio
 async def test_approval_token_expiration_enforced(api_key_headers):
     """Test that expired tokens are rejected."""
+    from src.dependencies import get_redis_client, get_s3_client
+
+    job_id = "expired-test-job"
     expired_job = {
-        "job_id": "expired-test-job",
+        "job_id": job_id,
         "s3_key": "temp/test.pdf",
         "status": "awaiting_approval",
         "approval_token": "expired-token-123",
@@ -36,17 +39,20 @@ async def test_approval_token_expiration_enforced(api_key_headers):
         "pii_findings": []
     }
 
-    with patch("src.api.approval.get_redis_client") as mock_redis_dep, \
-         patch("src.api.approval.get_s3_client") as mock_s3_dep:
+    # Mock Redis client - token lookup returns job_id, but job has expired timestamp
+    mock_redis = AsyncMock()
+    # For get_job_by_approval_token: redis.get(token_key) returns job_id
+    mock_redis.get.return_value = job_id
+    # For get_job: redis.hgetall(job_key) returns job with expired approval_expires_at
+    mock_redis.hgetall.return_value = expired_job
 
-        mock_redis = AsyncMock()
-        mock_redis.keys.return_value = [b"eq-pdf:job:expired-test-job"]
-        mock_redis.hgetall.return_value = expired_job
-        mock_redis_dep.return_value = mock_redis
+    mock_s3 = AsyncMock()
 
-        mock_s3 = AsyncMock()
-        mock_s3_dep.return_value = mock_s3
+    # Use dependency overrides (not patches)
+    app.dependency_overrides[get_redis_client] = lambda: mock_redis
+    app.dependency_overrides[get_s3_client] = lambda: mock_s3
 
+    try:
         # Attempt to get review details with API key headers
         async with AsyncClient(
             transport=ASGITransport(app=app),
@@ -57,6 +63,8 @@ async def test_approval_token_expiration_enforced(api_key_headers):
         # Assert expired token rejected
         assert response.status_code == 404
         assert "Invalid or expired" in response.json()["detail"]
+    finally:
+        app.dependency_overrides.clear()
 
 
 @pytest.mark.asyncio

@@ -18,6 +18,7 @@ from src.dependencies import (
 )
 from src.services.job_service import JobService
 from src.services.queue_service import QueueService
+from src.services.s3_url_service import S3URLService
 from src.services.storage_service import StorageService
 
 
@@ -228,12 +229,18 @@ class TestMultipleWorkerCycles:
             )
             queue_service = QueueService(redis_client=mock_redis)
             job_service = JobService(redis_client=mock_redis)
+            s3_url_service = S3URLService(
+                s3_client=mock_s3,
+                temp_bucket="test-temp",
+                results_bucket="test-results"
+            )
 
             # Create worker
             worker = PIIWorker(
                 storage_service=storage_service,
                 queue_service=queue_service,
-                job_service=job_service
+                job_service=job_service,
+                s3_url_service=s3_url_service
             )
 
             # Start worker
@@ -322,6 +329,11 @@ class TestResourceCleanupOnExceptions:
         )
         queue_service = QueueService(redis_client=mock_redis)
         job_service = JobService(redis_client=mock_redis)
+        s3_url_service = S3URLService(
+            s3_client=mock_s3,
+            temp_bucket="test",
+            results_bucket="test"
+        )
 
         # Mock dequeue to raise exception
         queue_service.dequeue = AsyncMock(side_effect=RuntimeError("Queue error"))
@@ -329,7 +341,8 @@ class TestResourceCleanupOnExceptions:
         worker = PIIWorker(
             storage_service=storage_service,
             queue_service=queue_service,
-            job_service=job_service
+            job_service=job_service,
+            s3_url_service=s3_url_service
         )
 
         # Start worker

@@ -135,7 +135,7 @@ async def test_submit_approval_approved_decision(valid_job_data, api_key_headers
     """Test POST /api/v1/approval/{token}/decision with approved decision."""
     import json
 
-    from src.dependencies import get_redis_client, get_s3_client
+    from src.dependencies import get_redis_client, get_s3_client, get_s3_url_service, get_storage_service
 
     # Add updated_at field required by Job model
     valid_job_data["updated_at"] = valid_job_data["created_at"]
@@ -165,8 +165,7 @@ async def test_submit_approval_approved_decision(valid_job_data, api_key_headers
         return data
 
     mock_redis.hgetall.side_effect = return_redis_job
-    # For decision submission
-    mock_redis.lpush.return_value = 1
+    # For decision submission (no longer uses lpush, uses direct processing)
     mock_redis.zrem.return_value = 1
     mock_redis.hset.return_value = 1
     mock_redis.set.return_value = True  # For distributed lock acquisition
@@ -175,29 +174,42 @@ async def test_submit_approval_approved_decision(valid_job_data, api_key_headers
     # Mock S3 client
     mock_s3 = AsyncMock()
 
-    # Override dependencies (only Redis and S3, not services)
+    # Mock storage and URL services for processing trigger
+    mock_storage = AsyncMock()
+    mock_s3_url = AsyncMock()
+
+    # Override dependencies
     app.dependency_overrides[get_redis_client] = lambda: mock_redis
     app.dependency_overrides[get_s3_client] = lambda: mock_s3
+    app.dependency_overrides[get_storage_service] = lambda: mock_storage
+    app.dependency_overrides[get_s3_url_service] = lambda: mock_s3_url
 
-    try:
-        # Make request with API key headers
-        async with AsyncClient(transport=ASGITransport(app=app), base_url="http://test") as client:
-            response = await client.post(
-                f"/api/v1/approval/{token}/decision", json=decision_payload, headers=api_key_headers
-            )
+    # Mock DocumentProcessingService to prevent actual processing
+    # The import happens inside the method, so we patch where it's defined
+    with patch("src.services.document_processing_service.DocumentProcessingService") as mock_processing_class:
+        mock_processing_service = AsyncMock()
+        mock_processing_service.process_document = AsyncMock()
+        mock_processing_class.return_value = mock_processing_service
 
-        # Assert
-        assert response.status_code == 200
-        data = response.json()
-        assert data["decision"] == "approved"
-        assert data["job_id"] == valid_job_data["job_id"]
-        assert "approved" in data["message"]
+        try:
+            # Make request with API key headers
+            async with AsyncClient(transport=ASGITransport(app=app), base_url="http://test") as client:
+                response = await client.post(
+                    f"/api/v1/approval/{token}/decision", json=decision_payload, headers=api_key_headers
+                )
 
-        # Verify Redis operations were called
-        mock_redis.lpush.assert_called_once()  # Queue for processing
-    finally:
-        # Clean up overrides
-        app.dependency_overrides.clear()
+            # Assert
+            assert response.status_code == 200
+            data = response.json()
+            assert data["decision"] == "approved"
+            assert data["job_id"] == valid_job_data["job_id"]
+            assert "approved" in data["message"]
+
+            # Verify job status update was called (for quick_approve)
+            mock_redis.hset.assert_called()  # Status update to processing_queued
+        finally:
+            # Clean up overrides
+            app.dependency_overrides.clear()
 
 
 @pytest.mark.asyncio
@@ -261,20 +273,29 @@ async def test_submit_approval_denied_decision(valid_job_data, api_key_headers):
 @pytest.mark.asyncio
 async def test_submit_approval_invalid_token(api_key_headers):
     """Test POST /api/v1/approval/{token}/decision with invalid token."""
-    decision_payload = {"decision": "approved", "justification": "Test justification", "reviewed_by": "test@test.com"}
+    from src.dependencies import get_redis_client, get_s3_client, get_s3_url_service, get_storage_service
 
-    with (
-        patch("src.api.approval.get_redis_client") as mock_redis_dep,
-        patch("src.api.approval.get_s3_client") as mock_s3_dep,
-    ):
-        # Mock Redis - no matching job
-        mock_redis = AsyncMock()
-        mock_redis.keys.return_value = []
-        mock_redis_dep.return_value = mock_redis
+    decision_payload = {
+        "decision": "approved",
+        "justification": "Test justification with enough characters",
+        "reviewed_by": "test@test.com",
+    }
 
-        mock_s3 = AsyncMock()
-        mock_s3_dep.return_value = mock_s3
+    # Mock Redis - return None for token lookup (no matching job)
+    mock_redis = AsyncMock()
+    mock_redis.get.return_value = None  # Token lookup returns nothing
 
+    mock_s3 = AsyncMock()
+    mock_storage = AsyncMock()
+    mock_s3_url = AsyncMock()
+
+    # Use dependency overrides
+    app.dependency_overrides[get_redis_client] = lambda: mock_redis
+    app.dependency_overrides[get_s3_client] = lambda: mock_s3
+    app.dependency_overrides[get_storage_service] = lambda: mock_storage
+    app.dependency_overrides[get_s3_url_service] = lambda: mock_s3_url
+
+    try:
         # Make request with API key headers
         async with AsyncClient(transport=ASGITransport(app=app), base_url="http://test") as client:
             response = await client.post(
@@ -284,6 +305,8 @@ async def test_submit_approval_invalid_token(api_key_headers):
         # Assert
         assert response.status_code == 404
         assert "Invalid or expired" in response.json()["detail"]
+    finally:
+        app.dependency_overrides.clear()
 
 
 @pytest.mark.asyncio
@@ -299,7 +322,11 @@ async def test_submit_approval_validation_errors(api_key_headers):
 
     # Make request with API key headers
     async with AsyncClient(transport=ASGITransport(app=app), base_url="http://test") as client:
-        response = await client.post(f"/api/v1/approval/{token}/decision", json=invalid_payload, headers=api_key_headers)
+        response = await client.post(
+            f"/api/v1/approval/{token}/decision",
+            json=invalid_payload,
+            headers=api_key_headers,
+        )
 
     # Assert validation error
     assert response.status_code == 422  # Unprocessable Entity

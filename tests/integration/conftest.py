@@ -20,6 +20,7 @@ from src.config import settings
 from src.services.approval_service import ApprovalService
 from src.services.job_service import JobService
 from src.services.queue_service import QueueService
+from src.services.s3_url_service import S3URLService
 from src.services.storage_service import StorageService
 from src.shared.models.pii import PIIFinding
 from src.workers.pii_worker import PIIWorker
@@ -166,14 +167,39 @@ async def job_service(real_redis_client):
 
 
 @pytest_asyncio.fixture
-async def approval_service(real_redis_client, real_s3_client, job_service, queue_service):
-    """Create ApprovalService with real dependencies."""
-    return ApprovalService(
-        redis_client=real_redis_client,
+async def s3_url_service(real_s3_client):
+    """Create S3URLService with REAL S3 (testcontainer LocalStack)."""
+    return S3URLService(
         s3_client=real_s3_client,
-        job_service=job_service,
-        queue_service=queue_service
+        temp_bucket=settings.s3_temp_bucket,
+        results_bucket=settings.s3_results_bucket,
     )
+
+
+@pytest_asyncio.fixture
+async def approval_service(
+    real_redis_client, real_s3_client, job_service, queue_service, storage_service, s3_url_service
+):
+    """Create ApprovalService with real dependencies.
+
+    NOTE: DocumentProcessingService is mocked in the fixture to prevent actual
+    document processing during approval race condition tests.
+    """
+    # Patch where DocumentProcessingService is defined (it's late-imported in approval_service)
+    with patch("src.services.document_processing_service.DocumentProcessingService") as mock_processing_class:
+        # Mock the processing service to prevent actual processing
+        mock_processing_service = MagicMock()
+        mock_processing_service.process_document = AsyncMock()
+        mock_processing_class.return_value = mock_processing_service
+
+        yield ApprovalService(
+            redis_client=real_redis_client,
+            s3_client=real_s3_client,
+            job_service=job_service,
+            queue_service=queue_service,
+            storage_service=storage_service,
+            s3_url_service=s3_url_service,
+        )
 
 
 # ============================================================================
@@ -184,131 +210,46 @@ async def approval_service(real_redis_client, real_s3_client, job_service, queue
 def mock_ai_agents(request):
     """Auto-mock all AI agents for integration tests (no API keys needed).
 
-    This fixture mocks the multi-agent pipeline (4-phase architecture):
-    - analyze_document: Returns mock DocumentManifest and observations (chained analysis)
-    - extract_with_validation: Returns mock markdown content (extraction phase)
-    - Specialized agents (figures, tables, structure, typography): Mocked via chained_ functions
+    This fixture mocks the agentic document processing pipeline:
+    - process_document_v5: Returns mock ProcessingResult with markdown and ledger
+    - All Bedrock/AI operations are bypassed
 
     NOTE: This fixture is EXCLUDED for test_bedrock_agent.py tests which
     are designed to test real Bedrock API integration.
     """
     from unittest.mock import AsyncMock, patch
 
-    from src.agents.extraction.models import ExtractionMetrics, ExtractionResult
-    from src.shared.models.processing import LLMUsage
-    from src.shared.models.remediation import DocumentManifest, PageFeatures
+    from src.agents import Ledger, ProcessingResult, VerificationReport
 
     # Skip mocking for bedrock integration tests (they test real Bedrock)
     if "test_bedrock_agent" in request.node.nodeid:
         yield
         return
 
-    # Create mock LLM usage for cost tracking
-    mock_usage = LLMUsage(
-        input_tokens=100,
-        output_tokens=50,
-        total_tokens=150,
-        estimated_cost_cents=0.01
+    # Create mock processing result
+    mock_result = ProcessingResult(
+        document_id="test-job-id",
+        success=True,
+        final_markdown="# Test Document\n\nThis is mock extracted content.",
+        ledger=Ledger(document_id="test-job-id", entries=[]),
+        verification=VerificationReport(document_id="test-job-id", passed=True),
+        total_cost_cents=0.01,
+        processing_time_seconds=1.0,
     )
 
-    # Create mock DocumentManifest (output of analyze_document)
-    import json
-    heading_tree_data = {
-        "document_title": "Test Document",
-        "title_page": 1,
-        "sections": [],
-        "total_pages": 1,
-        "layout_type": "single_column",
-        "confidence": 0.95,
-        "observations": ""
-    }
-    mock_manifest = DocumentManifest(
-        job_id="test-job-id",
-        document_title="Test Document",
-        document_type="lecture_notes",
-        total_pages=1,
-        analysis_model="mock-model",
-        heading_tree_json=json.dumps(heading_tree_data),
-        page_features=[
-            PageFeatures(
-                page_num=1,
-                has_images=False,
-                image_count=0,
-                has_tables=False,
-                table_count=0,
-                has_lists=False,
-                has_code_blocks=False,
-                has_math=False,
-                layout_type="single_column",
-                has_headers_footers=False,
-                complexity_score=0.3,
-                complexity_factors=[]
-            )
-        ],
-        required_agents=[],  # Empty = skip specialized agents
-        analysis_confidence=0.95
-    )
-
-    # Mock extraction result (ExtractionResult object with metrics)
-    mock_extraction_result = ExtractionResult(
-        markdown="# Test Document\n\nThis is mock extracted content.",
-        metrics=ExtractionMetrics(
-            confidence=0.92,
-            heading_count=1,
-            total_words=6,
-            issues=[],
-            critical_issue_count=0,
-        ),
-        attempt_count=1,
-        correction_applied=False,
-    )
-
-    # Mock analyze_document (chained analysis function - Phase 1)
+    # Mock the main processing function (imported from agents.orchestrator)
     with patch(
-        'src.services.processing_service.analyze_document',
+        'src.agents.orchestrator.process_document_v5',
         new_callable=AsyncMock,
-        return_value=(mock_manifest, [], mock_usage)
+        return_value=(mock_result, MagicMock())  # Returns (result, event_bus)
     ):
-        # Mock extract_with_validation (extraction function - Phase 2)
-        # Returns tuple of (ExtractionResult, LLMUsage)
+        # Also mock the streaming version
         with patch(
-            'src.services.processing_service.extract_with_validation',
+            'src.agents.orchestrator.process_document_v5_streaming',
             new_callable=AsyncMock,
-            return_value=(mock_extraction_result, mock_usage)
+            return_value=(mock_result, MagicMock())
         ):
-            # Mock specialized agents (Phase 3b) - they all return AgentResult-like objects
-            # FiguresAgent returns AgentResult
-            mock_figures_result = MagicMock()
-            mock_figures_result.observations = []
-            mock_figures_result.auto_corrections = []
-            mock_figures_result.review_items = []
-            mock_figures_result.cost_cents = 0.0
-            mock_figures_agent = MagicMock()
-            mock_figures_agent.process = AsyncMock(return_value=mock_figures_result)
-
-            # TablesAgent returns AgentResult (PRD-024)
-            mock_tables_result = MagicMock()
-            mock_tables_result.observations = []
-            mock_tables_result.auto_corrections = []
-            mock_tables_result.review_items = []
-            mock_tables_result.cost_cents = 0.0
-            mock_tables_agent = MagicMock()
-            mock_tables_agent.process = AsyncMock(return_value=mock_tables_result)
-
-            with patch(
-                'src.services.processing_service.FiguresAgent',
-                return_value=mock_figures_agent
-            ):
-                with patch(
-                    'src.services.processing_service.TablesAgent',
-                    return_value=mock_tables_agent
-                ):
-                    with patch(
-                        'src.services.processing_service.chained_structure',
-                        new_callable=AsyncMock,
-                        return_value=([], mock_usage)
-                    ):
-                        yield
+            yield
 
 
 @pytest.fixture

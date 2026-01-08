@@ -25,11 +25,16 @@ from pydantic_ai.models.bedrock import BedrockConverseModel
 from src.agents.model_tiers import MODEL_TIER_MAP, ModelTier
 
 from .models import (
+    CitationIssue,
     DocumentType,
     FigureContext,
+    FootnoteIssue,
     HeadingFix,
+    ListIssue,
     OutlineEntry,
+    PageArtifactIssue,
     TableContext,
+    TypographyIssue,
 )
 
 if TYPE_CHECKING:
@@ -95,6 +100,26 @@ class PageChainState(BaseModel):
     )
     tables_by_page: dict[int, list[TableContext]] = Field(
         default_factory=dict, description="Tables found per page"
+    )
+
+    # Paragraph issues by page (for ParagraphAgent)
+    page_artifacts_by_page: dict[int, list[PageArtifactIssue]] = Field(
+        default_factory=dict, description="Page artifacts found per page"
+    )
+    footnote_issues_by_page: dict[int, list[FootnoteIssue]] = Field(
+        default_factory=dict, description="Footnote issues found per page"
+    )
+    citation_issues_by_page: dict[int, list[CitationIssue]] = Field(
+        default_factory=dict, description="Citation issues found per page"
+    )
+    list_issues_by_page: dict[int, list[ListIssue]] = Field(
+        default_factory=dict, description="List issues found per page"
+    )
+    typography_issues_by_page: dict[int, list[TypographyIssue]] = Field(
+        default_factory=dict, description="Typography issues found per page"
+    )
+    page_continuations: dict[int, bool] = Field(
+        default_factory=dict, description="Whether each page ends mid-sentence"
     )
 
     class Config:
@@ -182,6 +207,32 @@ class PageAnalysisOutput(BaseModel):
         default_factory=list, description="Tables found on this page"
     )
 
+    # Paragraph issues (for ParagraphAgent)
+    page_artifacts: list[PageArtifactIssue] = Field(
+        default_factory=list,
+        description="Page break artifacts found (---, split words)",
+    )
+    footnote_issues: list[FootnoteIssue] = Field(
+        default_factory=list,
+        description="Footnote problems (missing definitions, misplaced)",
+    )
+    citation_issues: list[CitationIssue] = Field(
+        default_factory=list,
+        description="Citation linking problems",
+    )
+    list_issues: list[ListIssue] = Field(
+        default_factory=list,
+        description="List structure problems",
+    )
+    typography_issues: list[TypographyIssue] = Field(
+        default_factory=list,
+        description="Semantic formatting needing markup",
+    )
+    has_page_continuation: bool = Field(
+        default=False,
+        description="True if page ends mid-sentence (for cross-page merge)",
+    )
+
 
 # =============================================================================
 # Page Chain Agent
@@ -194,6 +245,7 @@ Your job is to analyze the current page and:
 2. Summarize what the page covers
 3. Extract domain-specific terms for spell-checking
 4. Describe any figures and tables
+5. Detect paragraph-level issues
 
 ## Heading Level Rules
 
@@ -230,6 +282,36 @@ You'll receive the last heading from the previous page. Use this to:
 4. **Figures**: For each figure, describe what it appears to show.
 
 5. **Tables**: For each table, describe what data it contains.
+
+6. **Page Artifacts**: Look for extraction artifacts:
+   - `---`, `~~~`, `***` page break markers
+   - Words split across lines with hyphens: `infor-` (end of line) `mation` (next line)
+   - These are usually extraction errors, not intentional content
+
+7. **Footnotes**: Look for footnote markers and issues:
+   - Markers: `[^1]`, `¹`, `(1)`, `*`
+   - Issues: marker without definition, misplaced definition, orphaned text
+
+8. **Citations**: Look for citation patterns:
+   - Numbered: `[1]`, `[2]`, `[1-3]`
+   - Author-date: `(Smith, 2023)`, `(Smith & Jones, 2023)`
+   - Note if citations appear unlinked to references
+
+9. **List Structure**: Check lists for issues:
+   - Inconsistent indentation (should be 2 spaces per level)
+   - Mixed ordered/unordered at same nesting level
+   - Broken numbering sequences (1, 2, 5 instead of 1, 2, 3)
+
+10. **Typography**: Identify SEMANTIC formatting visible in the image but missing in markdown:
+    - **Bold** for key terms, warnings, definitions (not just styling)
+    - *Italic* for emphasis, foreign words, titles
+    - `Code` for commands, technical terms
+    - Only flag if the formatting conveys MEANING
+
+11. **Page Continuity**: Set `has_page_continuation=True` if:
+    - The page ends mid-sentence (no terminal punctuation)
+    - A word appears to be split at the page boundary
+    - This helps identify paragraphs that need merging across pages
 
 For page 1 only: Also provide document_title and document_type.
 """
@@ -306,7 +388,7 @@ def _build_page_prompt(
 ```
 {"(truncated)" if len(markdown) > 8000 else ""}
 
-Analyze this page. For each heading, determine if the current level is correct based on section numbering and document hierarchy.
+Analyze this page. Determine if heading levels are correct based on section numbering.
 """
     return prompt
 
@@ -553,6 +635,25 @@ def update_chain_state(
             )
             for tbl in output.tables
         ]
+
+    # Store paragraph issues
+    if output.page_artifacts:
+        state.page_artifacts_by_page[page_num] = output.page_artifacts
+
+    if output.footnote_issues:
+        state.footnote_issues_by_page[page_num] = output.footnote_issues
+
+    if output.citation_issues:
+        state.citation_issues_by_page[page_num] = output.citation_issues
+
+    if output.list_issues:
+        state.list_issues_by_page[page_num] = output.list_issues
+
+    if output.typography_issues:
+        state.typography_issues_by_page[page_num] = output.typography_issues
+
+    # Store page continuation flag
+    state.page_continuations[page_num] = output.has_page_continuation
 
     return state
 

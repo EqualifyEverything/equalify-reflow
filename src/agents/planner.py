@@ -236,6 +236,14 @@ def convert_chain_state_to_page_plans(
         figures = chain_state.figures_by_page.get(page_num, [])
         tables = chain_state.tables_by_page.get(page_num, [])
 
+        # Get paragraph issues for this page
+        page_artifacts = chain_state.page_artifacts_by_page.get(page_num, [])
+        footnote_issues = chain_state.footnote_issues_by_page.get(page_num, [])
+        citation_issues = chain_state.citation_issues_by_page.get(page_num, [])
+        list_issues = chain_state.list_issues_by_page.get(page_num, [])
+        typography_issues = chain_state.typography_issues_by_page.get(page_num, [])
+        has_page_continuation = chain_state.page_continuations.get(page_num, False)
+
         page_plans[page_num] = PagePlan(
             page_num=page_num,
             summary=summary,
@@ -245,6 +253,13 @@ def convert_chain_state_to_page_plans(
             tables=tables,
             ocr_errors=[],  # Could be extended in the chain
             formatting_issues=[],
+            # Paragraph issues for ParagraphAgent
+            page_artifacts=page_artifacts,
+            footnote_issues=footnote_issues,
+            citation_issues=citation_issues,
+            list_issues=list_issues,
+            typography_issues=typography_issues,
+            has_page_continuation=has_page_continuation,
         )
 
     return page_plans

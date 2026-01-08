@@ -314,6 +314,32 @@ class PagePlan(BaseModel):
         description="Markdown formatting problems",
     )
 
+    # Paragraph issues (for ParagraphAgent)
+    page_artifacts: list[PageArtifactIssue] = Field(
+        default_factory=list,
+        description="Page break artifacts found (---, split words)",
+    )
+    footnote_issues: list[FootnoteIssue] = Field(
+        default_factory=list,
+        description="Footnote problems (missing definitions, misplaced)",
+    )
+    citation_issues: list[CitationIssue] = Field(
+        default_factory=list,
+        description="Citation linking problems",
+    )
+    list_issues: list[ListIssue] = Field(
+        default_factory=list,
+        description="List structure problems",
+    )
+    typography_issues: list[TypographyIssue] = Field(
+        default_factory=list,
+        description="Semantic formatting needing markup",
+    )
+    has_page_continuation: bool = Field(
+        default=False,
+        description="True if page ends mid-sentence (for cross-page merge)",
+    )
+
 
 # =============================================================================
 # Stage 4: Job Generation Models

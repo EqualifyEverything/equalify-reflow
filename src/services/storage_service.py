@@ -207,6 +207,68 @@ class StorageService:
                 detail=f"Unexpected error downloading file: {str(e)}"
             )
 
+    async def download_file(self, s3_key: str) -> bytes:
+        """
+        Download file from results bucket with retry and circuit breaker.
+
+        Args:
+            s3_key: S3 key of file to download
+
+        Returns:
+            File contents as bytes
+
+        Raises:
+            HTTPException: If download fails
+            CircuitBreakerOpenError: If S3 download circuit breaker is open
+        """
+        # Check circuit breaker
+        self.download_circuit.check_state()
+        if self.download_circuit.is_open:
+            raise CircuitBreakerOpenError(
+                "S3 download circuit breaker is open due to repeated failures"
+            )
+
+        try:
+            # Download with retry logic
+            response: Any = await retry_with_backoff_for_sync_func(
+                lambda: self.s3_client.get_object(
+                    Bucket=self.results_bucket,
+                    Key=s3_key
+                ),
+                max_attempts=3,
+                base_delay=1.0,
+                operation_name=f"download {s3_key}"
+            )
+
+            # Record success
+            self.download_circuit.record_success()
+
+            return response['Body'].read()  # type: ignore[no-any-return]
+
+        except CircuitBreakerOpenError:
+            raise
+        except ClientError as e:
+            # Record failure
+            self.download_circuit.record_failure()
+
+            if e.response['Error']['Code'] == 'NoSuchKey':
+                raise HTTPException(
+                    status_code=404,
+                    detail=f"File not found: {s3_key}"
+                )
+            raise HTTPException(
+                status_code=500,
+                detail=f"Failed to download file: {str(e)}"
+            )
+        except Exception as e:
+            # Record failure
+            self.download_circuit.record_failure()
+
+            raise HTTPException(
+                status_code=500,
+                detail=f"Unexpected error downloading file: {str(e)}"
+            )
+
     async def upload_result(
         self,
         job_id: str,

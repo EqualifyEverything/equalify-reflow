@@ -634,7 +634,7 @@ async def process_document_v5(
                 total_jobs=len(plan.jobs),
                 total_cost=cost,
                 total_duration_ms=total_duration_ms,
-                result_url=f"/api/v5/jobs/{doc_id}/result",
+                result_url=f"/api/v1/documents/{doc_id}",
             )
         )
 

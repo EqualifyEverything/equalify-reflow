@@ -32,6 +32,7 @@ import logging
 import re
 import time
 from dataclasses import dataclass
+from datetime import UTC, datetime
 from io import BytesIO
 from typing import TYPE_CHECKING, Any
 
@@ -55,8 +56,10 @@ from .events import (
 from .models import (
     EditProposal,
     Job,
+    JobType,
     Ledger,
     LedgerEntry,
+    LLMCallRecord,
     Task,
     TaskType,
 )
@@ -273,7 +276,11 @@ async def view_page_tool(ctx: RunContext[WorkerDeps]) -> ViewResult:
 
     return ViewResult(
         success=True,
-        description=f"Page {deps.job.page} image is shown above. The markdown_content field contains the EXACT text you must use for the 'before' field in propose_edit.",
+        description=(
+            f"Page {deps.job.page} image is shown above. "
+            "The markdown_content field contains the EXACT text you must use "
+            "for the 'before' field in propose_edit."
+        ),
         markdown_content=deps.current_markdown,
     )
 
@@ -1203,6 +1210,7 @@ class JobResult:
     duration_ms: int
 
     error: str | None = None
+    llm_call: LLMCallRecord | None = None
 
 
 async def execute_job(
@@ -1330,6 +1338,22 @@ async def execute_job(
 
         duration_ms = int((time.time() - start_time) * 1000)
 
+        # Create LLM call record for tracking
+        input_tokens = usage.input_tokens or 0
+        output_tokens = usage.output_tokens or 0
+        cost_cents = ((input_tokens * 0.00025) + (output_tokens * 0.00125)) / 10
+
+        llm_call = LLMCallRecord(
+            agent="worker",
+            purpose=f"page_{job.page}_{job.tasks[0].task_type.value if job.tasks else 'unknown'}",
+            page=job.page,
+            input_tokens=input_tokens,
+            output_tokens=output_tokens,
+            cost_cents=cost_cents,
+            timestamp=datetime.now(UTC),
+            duration_ms=duration_ms,
+        )
+
         if event_bus:
             event_bus.emit(
                 JobCompletedEvent(
@@ -1339,7 +1363,7 @@ async def execute_job(
                     edits_made=len(deps.validated_edits),
                     edits_rejected=0,  # TODO: track this
                     duration_ms=duration_ms,
-                    tokens_used=(usage.input_tokens or 0) + (usage.output_tokens or 0),
+                    tokens_used=input_tokens + output_tokens,
                 )
             )
 
@@ -1350,9 +1374,10 @@ async def execute_job(
             ledger_entries=deps.validated_edits,
             tasks_completed=len(output.completed_tasks),
             tasks_failed=len(output.failed_tasks),
-            input_tokens=usage.input_tokens or 0,
-            output_tokens=usage.output_tokens or 0,
+            input_tokens=input_tokens,
+            output_tokens=output_tokens,
             duration_ms=duration_ms,
+            llm_call=llm_call,
         )
 
     except Exception as e:
@@ -1398,8 +1423,13 @@ async def execute_jobs_parallel(
     ledger: Ledger,
     max_concurrent: int = 3,
     event_bus: EventBus | None = None,
+    page_markdowns: dict[int, str] | None = None,
 ) -> list[JobResult]:
-    """Execute multiple jobs in parallel.
+    """Execute multiple jobs in parallel with agent routing.
+
+    Routes jobs to appropriate agents based on job type:
+    - PARAGRAPH jobs → ParagraphAgent (text flow fixes)
+    - STRUCTURE/CONTENT jobs → Worker (alt-text, tables, headings)
 
     Args:
         jobs: Jobs to execute
@@ -1409,10 +1439,21 @@ async def execute_jobs_parallel(
         ledger: Shared ledger
         max_concurrent: Max concurrent jobs
         event_bus: Optional event bus
+        page_markdowns: Current markdown for each page (needed for PARAGRAPH jobs)
 
     Returns:
         List of job results
     """
+    # Lazy import to avoid circular dependency
+    from .paragraph_agent import execute_with_paragraph_agent
+
+    # Build full document markdown for citation linking (ParagraphAgent needs this)
+    full_document_markdown = ""
+    if page_markdowns:
+        full_document_markdown = "\n\n".join(
+            page_markdowns[p] for p in sorted(page_markdowns.keys())
+        )
+
     semaphore = asyncio.Semaphore(max_concurrent)
 
     async def execute_with_semaphore(job: Job) -> JobResult:
@@ -1433,6 +1474,24 @@ async def execute_jobs_parallel(
                     error="No page image available",
                 )
 
+            # Route PARAGRAPH jobs to ParagraphAgent
+            if job.job_type == JobType.PARAGRAPH:
+                current_markdown = (
+                    page_markdowns.get(job.page, job.page_markdown)
+                    if page_markdowns
+                    else job.page_markdown
+                )
+                return await execute_with_paragraph_agent(
+                    job=job,
+                    page_image=page_image,
+                    current_markdown=current_markdown,
+                    full_document_markdown=full_document_markdown,
+                    ledger=ledger,
+                    event_bus=event_bus,
+                    dictionary=job.context.dictionary if job.context else None,
+                )
+
+            # Route other jobs (STRUCTURE, CONTENT) to Worker
             return await execute_job(
                 job=job,
                 page_image=page_image,

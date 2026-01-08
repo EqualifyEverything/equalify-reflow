@@ -456,6 +456,12 @@ class DocumentPlan(BaseModel):
     planning_tokens_input: int = Field(default=0)
     planning_tokens_output: int = Field(default=0)
 
+    # LLM call tracking for planning phase
+    llm_calls: list[LLMCallRecord] = Field(
+        default_factory=list,
+        description="LLM calls made during planning phase",
+    )
+
 
 # =============================================================================
 # Ledger Models
@@ -732,6 +738,36 @@ class RecoveryReport(BaseModel):
 
 
 # =============================================================================
+# LLM Call Tracking
+# =============================================================================
+
+
+class LLMCallRecord(BaseModel):
+    """Record of a single LLM agent call for cost tracking."""
+
+    agent: str = Field(
+        ...,
+        description="Agent that made the call: planner, worker, paragraph_agent, recovery, verification",
+    )
+    purpose: str = Field(
+        ...,
+        description="Purpose of call: document_structure, page_1_alt_text, page_merge_3-4, etc.",
+    )
+    page: int | None = Field(
+        default=None,
+        description="Page number if applicable",
+    )
+    input_tokens: int = Field(..., description="Input tokens consumed")
+    output_tokens: int = Field(..., description="Output tokens generated")
+    cost_cents: float = Field(..., description="Estimated cost in cents")
+    timestamp: datetime = Field(..., description="When the call was made")
+    duration_ms: int | None = Field(
+        default=None,
+        description="Duration of the call in milliseconds",
+    )
+
+
+# =============================================================================
 # Processing Result
 # =============================================================================
 
@@ -764,6 +800,12 @@ class ProcessingResult(BaseModel):
     total_input_tokens: int = Field(default=0)
     total_output_tokens: int = Field(default=0)
     total_cost: float = Field(default=0.0)
+
+    # Per-call tracking
+    llm_calls: list[LLMCallRecord] = Field(
+        default_factory=list,
+        description="Detailed record of each LLM call for cost breakdown",
+    )
 
     # Timing
     total_duration_ms: int = Field(default=0)

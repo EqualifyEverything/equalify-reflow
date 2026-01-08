@@ -76,6 +76,7 @@ from .models import (
     VerificationReport,
 )
 from .orchestrator import (
+    merge_cross_page_paragraphs,
     process_document_v5,
     process_document_v5_streaming,
     run_recovery_phase,
@@ -84,6 +85,7 @@ from .page_chain import (
     PageChainState,
     run_page_chain,
 )
+from .paragraph_agent import execute_with_paragraph_agent
 from .plan_verification import (
     verify_against_plan,
     verify_figure_completeness,
@@ -139,6 +141,8 @@ __all__ = [
     "plan_document",
     "execute_job",
     "execute_jobs_parallel",
+    "execute_with_paragraph_agent",
+    "merge_cross_page_paragraphs",
     # Page chain
     "PageChainState",
     "run_page_chain",

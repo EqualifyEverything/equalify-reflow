@@ -268,7 +268,7 @@ def convert_chain_state_to_page_plans(
 async def stage2_page_chain(
     page_markdowns: dict[int, str],
     event_bus: EventBus | None = None,
-) -> tuple[DocumentStructure, dict[int, PagePlan], int, int]:
+) -> tuple[DocumentStructure, dict[int, PagePlan], int, int, list]:
     """Stage 2: Run page chain for sequential document analysis.
 
     This replaces the old Stage 2 (structure inference) and Stage 3
@@ -284,10 +284,10 @@ async def stage2_page_chain(
         event_bus: Optional event bus for streaming
 
     Returns:
-        Tuple of (structure, page_plans, input_tokens, output_tokens)
+        Tuple of (structure, page_plans, input_tokens, output_tokens, llm_calls)
     """
     # Run the page chain
-    chain_state, input_tokens, output_tokens = await run_page_chain(
+    chain_state, input_tokens, output_tokens, llm_calls = await run_page_chain(
         page_markdowns=page_markdowns,
         event_bus=event_bus,
     )
@@ -317,7 +317,7 @@ async def stage2_page_chain(
         f"{len(structure.key_terms)} terms"
     )
 
-    return structure, page_plans, input_tokens, output_tokens
+    return structure, page_plans, input_tokens, output_tokens, llm_calls
 
 
 # =============================================================================
@@ -915,6 +915,99 @@ def stage4_generate_jobs(
                     )
                 )
 
+    # Create paragraph jobs for text flow fixes (ParagraphAgent)
+    for page_num, plan in sorted(page_plans.items()):
+        paragraph_tasks: list[Task] = []
+
+        # Page artifact removal tasks (---, split words, column breaks)
+        for artifact in plan.page_artifacts:
+            paragraph_tasks.append(
+                Task(
+                    task_type=TaskType.PAGE_ARTIFACT_REMOVAL,
+                    target=f"artifact:{page_num}:{artifact.line_number}",
+                    context=f"{artifact.artifact_type}: {artifact.text[:50]}",
+                    priority=1,
+                )
+            )
+
+        # Footnote correction tasks
+        for fn in plan.footnote_issues:
+            paragraph_tasks.append(
+                Task(
+                    task_type=TaskType.FOOTNOTE_CORRECTION,
+                    target=f"footnote:{fn.marker}",
+                    context=fn.issue_type,
+                    priority=1,
+                )
+            )
+
+        # Citation linking tasks
+        for cite in plan.citation_issues:
+            paragraph_tasks.append(
+                Task(
+                    task_type=TaskType.CITATION_LINKING,
+                    target=f"citation:{cite.marker}",
+                    context=cite.issue_type,
+                    priority=2,
+                )
+            )
+
+        # List structure fix tasks
+        for lst in plan.list_issues:
+            paragraph_tasks.append(
+                Task(
+                    task_type=TaskType.LIST_FIX,
+                    target=f"list:{lst.location}",
+                    context=f"{lst.issue_type}: {lst.description}",
+                    priority=2,
+                )
+            )
+
+        # Typography fix tasks (semantic bold/italic/code)
+        for typo in plan.typography_issues:
+            paragraph_tasks.append(
+                Task(
+                    task_type=TaskType.TYPOGRAPHY_FIX,
+                    target=f"typography:{typo.text[:20]}",
+                    context=f"{typo.formatting_type}: {typo.semantic_purpose}",
+                    priority=3,
+                )
+            )
+
+        # Only create job if there are paragraph tasks
+        if paragraph_tasks:
+            context = JobContext(
+                document_title=structure.title,
+                document_type=structure.document_type,
+                section_context=plan.section_context,
+                dictionary=structure.key_terms + plan.keywords,
+                relevant_outline=_get_relevant_outline(page_num, structure.outline),
+            )
+
+            job = Job(
+                job_type=JobType.PARAGRAPH,
+                priority=page_num + 100,  # Run after CONTENT jobs (priority 2+)
+                page=page_num,
+                tasks=paragraph_tasks,
+                context=context,
+                page_markdown=page_markdowns.get(page_num, ""),
+            )
+            jobs.append(job)
+
+            if event_bus:
+                event_bus.emit(
+                    JobCreatedEvent(
+                        document_id=event_bus.document_id,
+                        job_id=job.job_id,
+                        job_type=job.job_type.value,
+                        page=job.page,
+                        task_count=len(job.tasks),
+                        task_types=[t.task_type.value for t in job.tasks],
+                        tasks_detail=[t.model_dump() for t in job.tasks],
+                        section_context=context.section_context,
+                    )
+                )
+
     logger.info(f"Stage 4 complete: {len(jobs)} jobs created")
     return jobs
 
@@ -967,7 +1060,7 @@ async def plan_document(
 
     # Stage 2: Page Chain (sequential LLM analysis)
     # This replaces the old Stage 2 + Stage 3 with a unified approach
-    structure, page_plans, input_tokens, output_tokens = await stage2_page_chain(
+    structure, page_plans, input_tokens, output_tokens, llm_calls = await stage2_page_chain(
         page_markdowns, event_bus
     )
 
@@ -990,6 +1083,7 @@ async def plan_document(
         planning_duration_ms=duration_ms,
         planning_tokens_input=input_tokens,
         planning_tokens_output=output_tokens,
+        llm_calls=llm_calls,
     )
 
     if event_bus:

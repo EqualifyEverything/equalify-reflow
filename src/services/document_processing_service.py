@@ -373,6 +373,10 @@ class DocumentProcessingService:
             markdown_s3_key = await self._store_markdown(job_id, processing_result.final_markdown)
 
             # Update final job state (store S3 key, not presigned URL - API generates URLs on demand)
+            # Note: field names must match what _build_llm_cost() expects in api/documents.py
+            total_tokens = processing_result.total_input_tokens + processing_result.total_output_tokens
+            cost_cents = processing_result.total_cost * 100  # Convert dollars to cents
+
             await self._update_job_state(
                 job_id,
                 status="completed",
@@ -384,9 +388,11 @@ class DocumentProcessingService:
                 confidence_score=processing_result.confidence_score,
                 total_edits=processing_result.total_edits,
                 total_pages=processing_result.total_pages,
-                total_input_tokens=processing_result.total_input_tokens,
-                total_output_tokens=processing_result.total_output_tokens,
-                total_cost=processing_result.total_cost,
+                llm_input_tokens=processing_result.total_input_tokens,
+                llm_output_tokens=processing_result.total_output_tokens,
+                llm_total_tokens=total_tokens,
+                llm_cost_cents=cost_cents,
+                llm_calls=[call.model_dump(mode="json") for call in processing_result.llm_calls],
             )
 
             logger.info(f"Job {job_id} complete: {processing_result.total_edits} edits")

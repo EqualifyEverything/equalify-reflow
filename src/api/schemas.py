@@ -18,6 +18,19 @@ class PIIFinding(BaseModel):
     score: float = Field(..., description="Confidence score (0.0 to 1.0)")
 
 
+class LLMCallInfo(BaseModel):
+    """Individual LLM call information for detailed cost tracking."""
+
+    agent: str = Field(..., description="Agent that made the call (planner, worker, paragraph_agent, etc.)")
+    purpose: str = Field(..., description="Purpose of the call (page_1_alt_text, document_structure, etc.)")
+    page: int | None = Field(None, description="Page number if applicable")
+    input_tokens: int = Field(..., description="Input tokens consumed")
+    output_tokens: int = Field(..., description="Output tokens generated")
+    cost_cents: float = Field(..., description="Estimated cost in cents")
+    timestamp: str = Field(..., description="ISO timestamp of the call")
+    duration_ms: int | None = Field(None, description="Duration in milliseconds")
+
+
 class LLMCostInfo(BaseModel):
     """Aggregate LLM cost information for a job.
 
@@ -29,6 +42,7 @@ class LLMCostInfo(BaseModel):
     total_tokens: int = Field(0, description="Total tokens (input + output)")
     estimated_cost_cents: float = Field(..., description="Total estimated LLM cost in cents")
     estimated_cost_dollars: float = Field(..., description="Total estimated LLM cost in dollars")
+    calls: list[LLMCallInfo] = Field(default_factory=list, description="Breakdown of individual LLM calls")
 
 
 # Status-specific response models
@@ -200,6 +214,7 @@ class LedgerEntryResponse(BaseModel):
     reasoning: str = Field(..., description="LLM reasoning for the change")
     confidence: float = Field(..., ge=0.0, le=1.0, description="Confidence score")
     timestamp: str = Field(..., description="ISO timestamp of the change")
+    needs_review: bool = Field(default=False, description="True if edit needs human review (low confidence)")
 
 
 class LedgerPageGroup(BaseModel):
@@ -218,6 +233,7 @@ class LedgerResponse(BaseModel):
     total_pages: int = Field(..., description="Total pages in document")
     pages_with_changes: int = Field(..., description="Pages that have changes")
     total_edits: int = Field(..., description="Total edits across all pages")
+    entries_needing_review: int = Field(default=0, description="Count of entries requiring human review")
     pages: list[LedgerPageGroup] = Field(..., description="Ledger entries grouped by page")
     processing_duration_ms: int = Field(default=0, description="Processing duration in milliseconds")
     final_markdown_url: str = Field(..., description="URL to final markdown")

@@ -16,6 +16,8 @@ from __future__ import annotations
 
 import logging
 import re
+import time
+from datetime import UTC, datetime
 from typing import TYPE_CHECKING
 
 from pydantic import BaseModel, Field
@@ -31,6 +33,7 @@ from .models import (
     FootnoteIssue,
     HeadingFix,
     ListIssue,
+    LLMCallRecord,
     OutlineEntry,
     PageArtifactIssue,
     TableContext,
@@ -423,7 +426,7 @@ async def analyze_page(
     markdown: str,
     state: PageChainState,
     total_pages: int,
-) -> tuple[PageAnalysisOutput, int, int]:
+) -> tuple[PageAnalysisOutput, int, int, LLMCallRecord]:
     """Analyze a single page with context from previous pages.
 
     Args:
@@ -433,8 +436,9 @@ async def analyze_page(
         total_pages: Total pages in document
 
     Returns:
-        Tuple of (PageAnalysisOutput, input_tokens, output_tokens)
+        Tuple of (PageAnalysisOutput, input_tokens, output_tokens, llm_call_record)
     """
+    start_time = time.time()
     agent = _get_page_analysis_agent()
     prompt = _build_page_prompt(page_num, markdown, state, total_pages)
 
@@ -444,8 +448,22 @@ async def analyze_page(
     usage = result.usage()
     input_tokens = usage.input_tokens or 0
     output_tokens = usage.output_tokens or 0
+    duration_ms = int((time.time() - start_time) * 1000)
 
-    return output, input_tokens, output_tokens
+    # Create LLM call record
+    cost_cents = ((input_tokens * 0.00025) + (output_tokens * 0.00125)) / 10
+    llm_call = LLMCallRecord(
+        agent="planner",
+        purpose=f"page_{page_num}_analysis",
+        page=page_num,
+        input_tokens=input_tokens,
+        output_tokens=output_tokens,
+        cost_cents=cost_cents,
+        timestamp=datetime.now(UTC),
+        duration_ms=duration_ms,
+    )
+
+    return output, input_tokens, output_tokens, llm_call
 
 
 def _normalize_for_matching(text: str) -> str:
@@ -661,7 +679,7 @@ def update_chain_state(
 async def run_page_chain(
     page_markdowns: dict[int, str],
     event_bus=None,
-) -> tuple[PageChainState, int, int]:
+) -> tuple[PageChainState, int, int, list[LLMCallRecord]]:
     """Run the page chain to analyze all pages sequentially.
 
     This is the main entry point. It processes pages in order,
@@ -672,11 +690,12 @@ async def run_page_chain(
         event_bus: Optional event bus for streaming events
 
     Returns:
-        Tuple of (final_state, total_input_tokens, total_output_tokens)
+        Tuple of (final_state, total_input_tokens, total_output_tokens, llm_calls)
     """
     state = PageChainState()
     total_input_tokens = 0
     total_output_tokens = 0
+    llm_calls: list[LLMCallRecord] = []
 
     sorted_pages = sorted(page_markdowns.keys())
     total_pages = len(sorted_pages)
@@ -687,7 +706,7 @@ async def run_page_chain(
         markdown = page_markdowns[page_num]
 
         # Analyze this page
-        output, input_tokens, output_tokens = await analyze_page(
+        output, input_tokens, output_tokens, llm_call = await analyze_page(
             page_num=page_num,
             markdown=markdown,
             state=state,
@@ -696,6 +715,7 @@ async def run_page_chain(
 
         total_input_tokens += input_tokens
         total_output_tokens += output_tokens
+        llm_calls.append(llm_call)
 
         # Update state with results (pass markdown for actual heading extraction)
         state = update_chain_state(state, page_num, output, markdown)
@@ -733,4 +753,4 @@ async def run_page_chain(
         f"{len(state.dictionary)} dictionary terms"
     )
 
-    return state, total_input_tokens, total_output_tokens
+    return state, total_input_tokens, total_output_tokens, llm_calls

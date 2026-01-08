@@ -3,12 +3,11 @@
 Tests the ledger endpoint for PR-like review of changes made by the pipeline.
 """
 
-from unittest.mock import AsyncMock, MagicMock, patch
+from unittest.mock import AsyncMock, MagicMock
 
 import pytest
 from fastapi import status
 from fastapi.testclient import TestClient
-
 from src.dependencies import get_job_service, get_s3_url_service, get_storage_service
 from src.main import app
 

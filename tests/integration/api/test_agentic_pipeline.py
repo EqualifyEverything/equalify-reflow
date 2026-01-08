@@ -14,21 +14,17 @@ import io
 import json
 import uuid
 from datetime import UTC, datetime
-from typing import Any
 from unittest.mock import AsyncMock, MagicMock, patch
 
 import pytest
-import pytest_asyncio
 from httpx import ASGITransport, AsyncClient
 from src.dependencies import (
     get_job_service,
-    get_queue_service,
     get_redis_client,
     get_s3_url_service,
     get_storage_service,
 )
 from src.main import app
-
 
 # =============================================================================
 # Fixtures

@@ -8,14 +8,11 @@ Tests the document processing pipeline orchestration including:
 """
 
 import json
-from datetime import datetime, timezone
 from unittest.mock import AsyncMock, MagicMock, patch
-import sys
 
 import pytest
 from src.config import settings
 from src.services.document_processing_service import DocumentProcessingService
-
 
 # Module path where document_processing_service imports its dependencies
 SERVICE_MODULE = "src.services.document_processing_service"
@@ -738,12 +735,11 @@ class TestProcessDocumentScannedPdfHandling:
             patch("src.agents.events.EventBus") as mock_event_bus_class,
             patch("src.agents.events.register_event_bus"),
             patch("src.agents.orchestrator.process_document_v5") as mock_process_v5,
-            patch("src.services.vision_extraction_service.is_scanned_pdf", return_value=True) as mock_is_scanned,
-            patch("src.services.vision_extraction_service.detect_visual_document_type") as mock_detect_visual,
+            patch("src.services.vision_extraction_service.is_scanned_pdf", return_value=True),
+            patch("src.services.vision_extraction_service.detect_visual_document_type"),
             patch("src.services.vision_extraction_service.extract_all_pages_vision") as mock_extract_vision,
             patch("asyncio.to_thread") as mock_to_thread,
         ):
-            from src.services.vision_extraction_service import VisualDocumentType
 
             mock_input_format.PDF = "PDF"
 

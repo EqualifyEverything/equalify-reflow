@@ -92,7 +92,7 @@ def reset_agent_singletons():
     module-level reset functions where needed.
     """
     # Import V5 pipeline modules that use singleton/cached agents
-    from src.agents import worker, page_chain, issue_fixer
+    from src.agents import issue_fixer, page_chain, worker
 
     # List of modules with reset functions
     modules_with_reset = [

@@ -9,7 +9,6 @@ from __future__ import annotations
 from unittest.mock import MagicMock, patch
 
 import pytest
-
 from src.agents.models import DocumentType, Job, JobContext, JobType, Task, TaskType
 from src.agents.worker import (
     _build_preloaded_prompt,

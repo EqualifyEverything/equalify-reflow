@@ -8,7 +8,6 @@ Tests for verifying document output against the document plan:
 """
 
 import pytest
-
 from src.agents.models import (
     DocumentPlan,
     DocumentStructure,
@@ -24,7 +23,6 @@ from src.agents.plan_verification import (
     verify_spelling,
     verify_table_completeness,
 )
-
 
 # =============================================================================
 # Fixtures

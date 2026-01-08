@@ -1,8 +1,8 @@
 """Tests for ProcessingResult, ProcessingTrace, and phase summary models."""
 
-import pytest
-from datetime import datetime, UTC
+from datetime import UTC, datetime
 
+from src.shared.models.agent_trace import AgentTrace
 from src.shared.models.processing_result import (
     AnalysisSummary,
     ExtractionSummary,
@@ -10,7 +10,6 @@ from src.shared.models.processing_result import (
     ProcessingTrace,
     StructureSummary,
 )
-from src.shared.models.agent_trace import AgentTrace
 from src.shared.models.review_checklist import ReviewChecklist
 
 

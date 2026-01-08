@@ -1,7 +1,6 @@
 """Unit tests for observation models (Observation, ObservationLocation)."""
 
 import json
-from datetime import UTC, datetime
 
 import pytest
 from pydantic import ValidationError

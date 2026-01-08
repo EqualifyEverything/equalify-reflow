@@ -15,7 +15,6 @@ Max 2 attempts per page. If still failing after 2 attempts, escalate.
 from __future__ import annotations
 
 import logging
-import re
 import time
 from dataclasses import dataclass
 from io import BytesIO
@@ -32,8 +31,6 @@ from .events import (
     EventBus,
     RecoveryCompleteEvent,
     RecoveryEditAppliedEvent,
-    RecoveryPhaseCompleteEvent,
-    RecoveryPhaseStartedEvent,
     RecoveryStartedEvent,
 )
 from .models import (
@@ -422,7 +419,7 @@ async def propose_cleanup_tool(
     if before and before not in deps.current_markdown:
         return ProposeCleanupResult(
             accepted=False,
-            feedback=f"Target text not found. Use view_page_tool() to see exact content.",
+            feedback="Target text not found. Use view_page_tool() to see exact content.",
         )
 
     # Apply the edit

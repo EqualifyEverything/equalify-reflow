@@ -18,7 +18,6 @@ LLM-Based Fixers:
 
 from __future__ import annotations
 
-import asyncio
 import logging
 import re
 from dataclasses import dataclass
@@ -332,7 +331,10 @@ class AltTextResult(BaseModel):
     )
     extended_description: str | None = Field(
         default=None,
-        description="For COMPLEX images only: detailed description of data, relationships, or structure (1-3 sentences)",
+        description=(
+            "For COMPLEX images only: detailed description of data, "
+            "relationships, or structure (1-3 sentences)"
+        ),
     )
     reasoning: str = Field(
         ...,

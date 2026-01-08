@@ -334,13 +334,13 @@ async def extract_page_markdown_vision(
         # Customize user prompt based on document type
         if visual_doc_type == VisualDocumentType.POSTER:
             user_prompt = (
-                f"Extract all content from this event poster/flyer. "
-                f"Include all text, describe the artwork, and organize into semantic sections."
+                "Extract all content from this event poster/flyer. "
+                "Include all text, describe the artwork, and organize into semantic sections."
             )
         elif visual_doc_type == VisualDocumentType.INFOGRAPHIC:
             user_prompt = (
-                f"Extract all content from this infographic. "
-                f"Describe all charts/visualizations and extract all data points and statistics."
+                "Extract all content from this infographic. "
+                "Describe all charts/visualizations and extract all data points and statistics."
             )
         else:
             user_prompt = (

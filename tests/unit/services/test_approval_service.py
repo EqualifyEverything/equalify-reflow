@@ -7,7 +7,7 @@ import pytest
 from src.services.approval_service import ApprovalService
 from src.services.job_service import JobService
 from src.services.queue_service import QueueService
-from src.shared.constants.queues import APPROVAL_TIMEOUT_KEY, PROCESSING_QUEUE
+from src.shared.constants.queues import APPROVAL_TIMEOUT_KEY
 from src.shared.constants.statuses import (
     STATUS_DENIED,
     STATUS_PROCESSING,

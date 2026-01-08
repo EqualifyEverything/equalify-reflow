@@ -23,7 +23,6 @@ from typing import TYPE_CHECKING, Any
 
 from botocore.exceptions import ClientError
 
-from src.config import settings
 from src.shared.models.debug_bundle import (
     DebugArtifact,
     DebugBundleManifest,
@@ -61,7 +60,7 @@ class DebugBundleService:
         >>> zip_bytes = await service.generate_bundle("job123")
     """
 
-    def __init__(self, storage_service: "StorageService"):
+    def __init__(self, storage_service: StorageService):
         """Initialize debug bundle service.
 
         Args:
@@ -567,7 +566,7 @@ _debug_bundle_service: DebugBundleService | None = None
 
 
 def get_debug_bundle_service(
-    storage_service: "StorageService",
+    storage_service: StorageService,
 ) -> DebugBundleService:
     """Get or create the debug bundle service.
 

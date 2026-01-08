@@ -6,15 +6,13 @@ import logging
 from collections import Counter
 from datetime import UTC, datetime
 from io import BytesIO
-from typing import TYPE_CHECKING, Any, Literal
+from typing import Any, Literal
 
 from fastapi import APIRouter, BackgroundTasks, Depends, File, Form, HTTPException, UploadFile, status
 from fastapi.responses import StreamingResponse
 from pydantic import BaseModel
 
 from ..config import settings
-
-
 from ..dependencies import (
     get_job_service,
     get_queue_service,
@@ -26,8 +24,6 @@ from ..dependencies import (
 from ..services import JobService, QueueService, S3URLService, StorageService
 from ..services.document_processing_service import DocumentProcessingService
 from ..services.remediation_storage_service import RemediationStorageService
-from ..shared.constants.queues import PROCESSING_QUEUE
-from ..shared.models.queue import ProcessingQueuePayload
 from .schemas import (
     AgenticCompletedResponse,
     AgenticProcessingResponse,
@@ -367,7 +363,11 @@ async def get_job(
                     confidence_score=float(job.get("confidence_score", 0.0)),
                     llm_cost=_build_llm_cost(job)
                     or LLMCostInfo(
-                        input_tokens=0, output_tokens=0, total_tokens=0, estimated_cost_cents=0, estimated_cost_dollars=0
+                        input_tokens=0,
+                        output_tokens=0,
+                        total_tokens=0,
+                        estimated_cost_cents=0,
+                        estimated_cost_dollars=0,
                     ),
                     ledger_url=ledger_url,
                     total_pages=int(job.get("total_pages", 0)),
@@ -395,7 +395,11 @@ async def get_job(
                     ),
                     llm_cost=_build_llm_cost(job)
                     or LLMCostInfo(
-                        input_tokens=0, output_tokens=0, total_tokens=0, estimated_cost_cents=0, estimated_cost_dollars=0
+                        input_tokens=0,
+                        output_tokens=0,
+                        total_tokens=0,
+                        estimated_cost_cents=0,
+                        estimated_cost_dollars=0,
                     ),
                 )
 

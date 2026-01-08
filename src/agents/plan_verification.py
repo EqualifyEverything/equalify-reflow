@@ -17,11 +17,11 @@ import asyncio
 import logging
 import re
 from io import BytesIO
-from typing import TYPE_CHECKING, Any
+from typing import TYPE_CHECKING
 
 from pydantic import BaseModel, Field
 
-from .models import DocumentPlan, OutlineEntry, PagePlan
+from .models import DocumentPlan, OutlineEntry
 from .validation import _check_spelling
 
 if TYPE_CHECKING:

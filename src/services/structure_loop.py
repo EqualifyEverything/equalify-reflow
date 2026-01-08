@@ -28,7 +28,7 @@ from typing import TYPE_CHECKING
 import mdformat
 from pydantic import BaseModel, ConfigDict, Field
 
-from src.shared.models.observation import Observation, ObservationLocation
+from src.shared.models.observation import Observation
 from src.utils.ocr_checker import OCRChecker, OCRSuggestion
 
 if TYPE_CHECKING:

@@ -1,8 +1,7 @@
 """Tests for ReviewChecklist, ReviewItem, and ReviewOption models."""
 
-import pytest
-from datetime import datetime, UTC
 
+import pytest
 from src.shared.models.observation import Observation, ObservationLocation
 from src.shared.models.review_checklist import (
     ReviewChecklist,

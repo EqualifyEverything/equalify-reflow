@@ -948,7 +948,7 @@ async def plan_document(
     logger.info(f"Starting planning for {filename} ({total_pages} pages)")
 
     # Stage 1: Quick Scan (code only - fast)
-    skeletons = await stage1_quick_scan(page_markdowns, event_bus)
+    await stage1_quick_scan(page_markdowns, event_bus)
 
     # Stage 2: Page Chain (sequential LLM analysis)
     # This replaces the old Stage 2 + Stage 3 with a unified approach

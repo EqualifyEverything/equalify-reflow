@@ -1,7 +1,6 @@
 """Tests for Observation model lifecycle (simplified 2-field version)."""
 
 import pytest
-
 from src.shared.models.observation import Observation, ObservationLocation
 
 

@@ -35,16 +35,15 @@ def crop_element(
     Returns:
         Cropped PIL Image containing just the element
     """
-    from PIL import Image as PILImage  # noqa: F811
 
-    l, t, r, b = bbox
+    x0, y0, x1, y1 = bbox
     scale = page_image.width / page_width
 
     # Normalize coordinates (handle inverted Y from PDF coordinate system)
-    left = min(l, r)
-    right = max(l, r)
-    top = min(t, b)
-    bottom = max(t, b)
+    left = min(x0, x1)
+    right = max(x0, x1)
+    top = min(y0, y1)
+    bottom = max(y0, y1)
 
     # Convert document coords to pixel coords with padding
     pixel_left = max(0, int(left * scale - padding))
@@ -89,17 +88,17 @@ def highlight_element(
     """
     from PIL import ImageDraw
 
-    l, t, r, b = bbox
+    x0, y0, x1, y1 = bbox
     img_copy = page_image.copy()
     draw = ImageDraw.Draw(img_copy)
 
     scale = img_copy.width / page_width
 
     # Normalize coordinates (handle inverted Y from PDF coordinate system)
-    left = min(l, r)
-    right = max(l, r)
-    top = min(t, b)
-    bottom = max(t, b)
+    left = min(x0, x1)
+    right = max(x0, x1)
+    top = min(y0, y1)
+    bottom = max(y0, y1)
 
     pixel_bbox = (
         int(left * scale),

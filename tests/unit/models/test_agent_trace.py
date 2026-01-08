@@ -1,12 +1,11 @@
 """Tests for AgentTrace and AgentResult models."""
 
-import pytest
-from datetime import datetime, UTC
+from datetime import UTC, datetime
 
+import pytest
 from src.shared.models.agent_trace import AgentResult, AgentTrace
-from src.shared.models.observation import Observation, ObservationLocation
 from src.shared.models.auto_correction import AutoCorrection
-from src.shared.models.review_checklist import ReviewItem, ReviewOption
+from src.shared.models.observation import Observation, ObservationLocation
 
 
 class TestAgentTrace:

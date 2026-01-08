@@ -59,7 +59,6 @@ from .models import (
     LedgerEntry,
     Task,
     TaskType,
-    ValidationResult,
 )
 from .validation import auto_fix_minor_issues, validate_edit
 
@@ -1125,7 +1124,7 @@ def _build_preloaded_prompt(
         if has_cropped_image:
             image_info = f"**Element image:** Shown above (labeled `{task.target}`)"
         else:
-            image_info = f"**Element image:** Use `view_figure()` or `view_table()` to see it"
+            image_info = "**Element image:** Use `view_figure()` or `view_table()` to see it"
 
         task_sections.append(f"""
 ### Task: {task.task_type.value} for `{task.target}`
@@ -1240,7 +1239,7 @@ async def execute_job(
         )
 
     # Build task summary for prompt
-    tasks_summary = "\n".join(_format_task_description(t) for t in job.tasks)
+    "\n".join(_format_task_description(t) for t in job.tasks)
 
     # Build context summary
     context = job.context

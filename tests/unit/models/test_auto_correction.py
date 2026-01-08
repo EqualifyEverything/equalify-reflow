@@ -1,8 +1,8 @@
 """Tests for AutoCorrection model."""
 
-import pytest
-from datetime import datetime, UTC
+from datetime import datetime
 
+import pytest
 from src.shared.models.auto_correction import AutoCorrection
 
 

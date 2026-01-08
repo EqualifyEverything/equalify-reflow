@@ -1,6 +1,5 @@
 """Tests for DocumentSummary and ObservationContext models."""
 
-import pytest
 
 from src.shared.models.document_context import DocumentSummary, ObservationContext
 from src.shared.models.observation import Observation, ObservationLocation

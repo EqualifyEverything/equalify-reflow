@@ -45,7 +45,7 @@ class TaskType(str, Enum):
     OCR_FIX = "ocr_fix"
     FORMAT_FIX = "format_fix"
     SPELLING_FIX = "spelling_fix"
-    PAGELESS_OPTIMIZATION = "pageless_optimization"  # Final pass: page break removal, paragraph merging
+    # Note: PAGELESS_OPTIMIZATION removed - replaced by ParagraphAgent tasks (PRD-001)
 
 
 class JobType(str, Enum):

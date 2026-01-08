@@ -169,10 +169,7 @@ def detect_heading_issues(
                         actual_level=actual_level,
                         expected_level=expected_level,
                         suggested_fix=after_text,
-                        description=(
-                            f"Heading '{actual_text}' is H{actual_level}, "
-                            f"should be H{expected_level}"
-                        ),
+                        description=(f"Heading '{actual_text}' is H{actual_level}, should be H{expected_level}"),
                     )
                 )
         else:
@@ -272,9 +269,7 @@ def fix_heading_level(
     # Simple string replacement
     if issue.actual_text in markdown:
         fixed = markdown.replace(issue.actual_text, issue.suggested_fix, 1)
-        logger.info(
-            f"Fixed heading: '{issue.actual_text}' → '{issue.suggested_fix}'"
-        )
+        logger.info(f"Fixed heading: '{issue.actual_text}' → '{issue.suggested_fix}'")
         return FixResult(
             success=True,
             fixed_text=fixed,
@@ -802,9 +797,7 @@ class IssueFixer:
                 current_markdown = result.fixed_text
                 applied.append(f"[{issue.issue_type.value}] {issue.description}")
             else:
-                failed.append(
-                    f"[{issue.issue_type.value}] {issue.description}: {result.error}"
-                )
+                failed.append(f"[{issue.issue_type.value}] {issue.description}: {result.error}")
 
         # Apply LLM-based fixes (async)
         for issue in llm_issues:
@@ -813,9 +806,7 @@ class IssueFixer:
                 current_markdown = result.fixed_text
                 applied.append(f"[{issue.issue_type.value}] {issue.description}")
             else:
-                failed.append(
-                    f"[{issue.issue_type.value}] {issue.description}: {result.error}"
-                )
+                failed.append(f"[{issue.issue_type.value}] {issue.description}: {result.error}")
 
         return current_markdown, applied, failed
 
@@ -844,9 +835,7 @@ class IssueFixer:
                 current_markdown = result.fixed_text
                 applied.append(f"[{issue.issue_type.value}] {issue.description}")
             else:
-                failed.append(
-                    f"[{issue.issue_type.value}] {issue.description}: {result.error}"
-                )
+                failed.append(f"[{issue.issue_type.value}] {issue.description}: {result.error}")
 
         return current_markdown, applied, failed
 
@@ -937,9 +926,7 @@ class IssueFixer:
                 elif page_plan.figures:
                     figure_context = page_plan.figures[0]
 
-            return await fix_missing_alt_text(
-                markdown, issue, page_image, figure_context
-            )
+            return await fix_missing_alt_text(markdown, issue, page_image, figure_context)
 
         if issue.issue_type in (
             IssueType.TABLE_NOT_TRANSCRIBED,
@@ -956,9 +943,7 @@ class IssueFixer:
                 elif page_plan.tables:
                     table_context = page_plan.tables[0]
 
-            return await fix_table_not_transcribed(
-                markdown, issue, page_image, table_context
-            )
+            return await fix_table_not_transcribed(markdown, issue, page_image, table_context)
 
         return FixResult(
             success=False,
@@ -1064,9 +1049,7 @@ async def detect_and_fix_issues_async(
         issues.extend(table_issues)
 
         # Apply fixes (async - supports LLM fixes)
-        fixed_md, applied, failed = await fixer.fix_all_async(
-            markdown, issues, page_num
-        )
+        fixed_md, applied, failed = await fixer.fix_all_async(markdown, issues, page_num)
         fixed_markdowns[page_num] = fixed_md
 
         for fix in applied:
@@ -1124,196 +1107,3 @@ def detect_table_issues(
             )
 
     return issues
-
-
-# =============================================================================
-# Final Pass Agent - Pageless Document Optimization
-# =============================================================================
-
-
-class FinalPassResult(BaseModel):
-    """Result from final pass document optimization."""
-
-    optimized_markdown: str = Field(
-        ...,
-        description="The optimized markdown document for pageless reading",
-    )
-    changes_made: list[str] = Field(
-        default_factory=list,
-        description="List of changes made during optimization",
-    )
-    sections_merged: int = Field(
-        default=0,
-        description="Number of page breaks removed or sections merged",
-    )
-
-
-FINAL_PASS_SYSTEM_PROMPT = """You are a document optimization expert preparing academic documents for pageless digital reading.
-
-## Your Task
-Transform a page-separated markdown document into a smooth, continuous reading experience.
-
-## Rules
-
-### REMOVE Page Separators
-- Remove ALL `---` horizontal rules that were used as page separators
-- These artifacts of PDF pagination disrupt reading flow
-
-### PRESERVE Document Structure
-- Keep ALL headings (H1, H2, H3, etc.) exactly as they are
-- Keep ALL figures, tables, and their descriptions
-- Keep ALL content - do not summarize or remove anything
-- Keep code blocks intact
-
-### SMOOTH Transitions
-- If a paragraph was split across pages, merge it into one paragraph
-- Ensure sentences flow naturally (no orphaned fragments)
-- Fix any mid-word breaks from hyphenation
-
-### DO NOT
-- Add new content or commentary
-- Change heading levels
-- Reorder sections
-- Modify figure descriptions or alt text
-- Alter table data
-- Add introductory or concluding text
-
-## Example
-
-BEFORE:
-```
-## Introduction
-
-This is the beginning of a paragraph that continues
-
----
-
-on the next page with more content.
-
-## Methods
-```
-
-AFTER:
-```
-## Introduction
-
-This is the beginning of a paragraph that continues on the next page with more content.
-
-## Methods
-```
-
-## Output
-Return the complete optimized document. Every word of original content must be preserved.
-
-## Changes Made (IMPORTANT)
-For each change you make, add a clear description to changes_made list:
-- "Removed page break between sections X and Y"
-- "Merged split paragraph in section Z"
-- "Fixed hyphenated word 'docu-ment' → 'document'"
-- "Removed 8 page separators for continuous reading"
-
-These descriptions will be shown to human reviewers, so be specific and clear.
-"""
-
-_final_pass_agent: Agent[None, FinalPassResult] | None = None
-
-
-def _get_final_pass_agent() -> Agent[None, FinalPassResult]:
-    """Get or create the final pass optimization agent."""
-    global _final_pass_agent
-    if _final_pass_agent is None:
-        _final_pass_agent = Agent(
-            model=_get_model(),
-            output_type=FinalPassResult,
-            system_prompt=FINAL_PASS_SYSTEM_PROMPT,
-        )
-    return _final_pass_agent
-
-
-async def optimize_for_pageless_reading(
-    markdown: str,
-    document_title: str = "",
-    max_retries: int = 1,
-) -> tuple[str, list[str]]:
-    """Optimize a document for pageless digital reading.
-
-    This is the final pass after all other processing is complete.
-    It removes page separators and smooths transitions.
-
-    Args:
-        markdown: The complete markdown document (all pages joined)
-        document_title: Optional title for context
-        max_retries: Number of retry attempts
-
-    Returns:
-        Tuple of (optimized_markdown, changes_made)
-    """
-    # Quick check - if no page separators, return as-is
-    if "---" not in markdown:
-        logger.info("No page separators found, skipping final pass")
-        return markdown, []
-
-    # Count separators for logging
-    separator_count = markdown.count("\n---\n") + markdown.count("\n\n---\n\n")
-    logger.info(f"Final pass: optimizing document with {separator_count} page separators")
-
-    for attempt in range(max_retries + 1):
-        try:
-            context = f"Document: {document_title}\n\n" if document_title else ""
-            user_prompt = f"{context}Optimize this document for pageless reading:\n\n{markdown}"
-
-            agent = _get_final_pass_agent()
-            result = await agent.run(user_prompt)
-
-            final_result = result.output
-
-            # Validate output preserves content
-            original_words = len(markdown.split())
-            optimized_words = len(final_result.optimized_markdown.split())
-
-            # Allow some variance (merged paragraphs may have fewer line breaks)
-            if optimized_words < original_words * 0.9:
-                logger.warning(
-                    f"Final pass lost content: {original_words} -> {optimized_words} words"
-                )
-                if attempt < max_retries:
-                    continue
-                # On final attempt, return original if too much was lost
-                return markdown, ["Optimization skipped - content preservation failed"]
-
-            logger.info(
-                f"Final pass complete: {final_result.sections_merged} merges, "
-                f"{len(final_result.changes_made)} changes"
-            )
-
-            return final_result.optimized_markdown, final_result.changes_made
-
-        except Exception as e:
-            logger.warning(f"Final pass attempt {attempt + 1} failed: {e}")
-            if attempt == max_retries:
-                logger.error(f"Final pass failed after {max_retries + 1} attempts: {e}")
-                return markdown, [f"Optimization failed: {e}"]
-
-    return markdown, ["Optimization failed after all retries"]
-
-
-def remove_page_separators_simple(markdown: str) -> str:
-    """Simple deterministic removal of page separators.
-
-    Use this for a quick, deterministic approach without LLM.
-    Does not attempt to merge split paragraphs.
-
-    Args:
-        markdown: The complete markdown document
-
-    Returns:
-        Markdown with page separators removed
-    """
-    # Remove various separator patterns
-    result = re.sub(r"\n\n---\n\n", "\n\n", markdown)
-    result = re.sub(r"\n---\n", "\n\n", result)
-
-    # Clean up excessive blank lines (more than 2 in a row)
-    result = re.sub(r"\n{4,}", "\n\n\n", result)
-
-    return result

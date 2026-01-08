@@ -474,33 +474,6 @@ class RecoveryPhaseCompleteEvent(StreamEvent):
 # =============================================================================
 # Final Pass Events (Pageless Optimization)
 # =============================================================================
-
-
-class FinalPassStartedEvent(StreamEvent):
-    """Emitted when final pass optimization begins."""
-
-    page_separators_found: int = Field(
-        default=0,
-        description="Number of page separators to remove",
-    )
-
-    @property
-    def event_type(self) -> str:
-        return "final_pass:started"
-
-
-class FinalPassCompleteEvent(StreamEvent):
-    """Emitted when final pass optimization completes."""
-
-    changes_made: int = Field(default=0, description="Number of changes made")
-    success: bool = Field(default=True, description="Whether optimization succeeded")
-
-    @property
-    def event_type(self) -> str:
-        return "final_pass:complete"
-
-
-# =============================================================================
 # Processing Complete Event
 # =============================================================================
 

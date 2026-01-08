@@ -9,10 +9,12 @@ from typing import Any, Literal
 from fastapi import APIRouter, BackgroundTasks, Depends, HTTPException
 from pydantic import BaseModel, Field
 
-from ..dependencies import get_redis_client, get_s3_client
+from ..dependencies import get_redis_client, get_s3_client, get_s3_url_service, get_storage_service
 from ..services.approval_service import ApprovalService
 from ..services.job_service import JobService
 from ..services.queue_service import QueueService
+from ..services.s3_url_service import S3URLService
+from ..services.storage_service import StorageService
 from .schemas import PIIFinding
 
 router = APIRouter(prefix="/api/v1/approval", tags=["Approval"])
@@ -155,6 +157,8 @@ async def submit_decision(
     decision_input: ApprovalDecisionInput,
     background_tasks: BackgroundTasks,
     redis_client: Any = Depends(get_redis_client),
+    storage_service: StorageService = Depends(get_storage_service),
+    s3_url_service: S3URLService = Depends(get_s3_url_service),
 ) -> ApprovalResponse:
     """Submit approval or denial decision with instant response.
 
@@ -194,7 +198,7 @@ async def submit_decision(
         }
     """
     try:
-        # Initialize services (no S3 client needed for sync path)
+        # Initialize services
         job_service = JobService(redis_client)
         queue_service = QueueService(redis_client)
         approval_service = ApprovalService(
@@ -202,6 +206,8 @@ async def submit_decision(
             s3_client=None,  # Lazy-loaded in background if needed (denial path)
             job_service=job_service,
             queue_service=queue_service,
+            storage_service=storage_service,
+            s3_url_service=s3_url_service,
         )
 
         # Validate token and get job (sync - required before response)

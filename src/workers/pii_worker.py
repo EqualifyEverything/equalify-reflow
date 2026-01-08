@@ -15,6 +15,7 @@ from ..services.metrics_service import (
 )
 from ..services.pii_service import PIIDetectionService
 from ..services.queue_service import QueueService
+from ..services.s3_url_service import S3URLService
 from ..services.storage_service import StorageService
 from ..shared.constants.queues import PII_QUEUE
 from ..shared.models.queue import PIIQueuePayload
@@ -33,7 +34,8 @@ class PIIWorker:
         self,
         storage_service: StorageService,
         queue_service: QueueService,
-        job_service: JobService
+        job_service: JobService,
+        s3_url_service: S3URLService,
     ):
         """Initialize PII worker.
 
@@ -41,11 +43,13 @@ class PIIWorker:
             storage_service: S3 storage operations
             queue_service: Redis queue operations
             job_service: Job status management
+            s3_url_service: S3 URL generation service (for processing trigger)
         """
         self.pii_service = PIIDetectionService(
             storage_service=storage_service,
             queue_service=queue_service,
-            job_service=job_service
+            job_service=job_service,
+            s3_url_service=s3_url_service,
         )
         self.queue = queue_service
         self.running = False
@@ -177,11 +181,19 @@ async def start_pii_worker(shutdown_event: asyncio.Event | None = None) -> None:
     queue_service = QueueService(redis_client=redis_client)
     job_service = JobService(redis_client=redis_client)
 
+    # Create S3URLService for processing trigger
+    s3_url_service = S3URLService(
+        s3_client=s3_client,
+        temp_bucket=settings.s3_temp_bucket,
+        results_bucket=settings.s3_results_bucket,
+    )
+
     # Create worker
     _worker_instance = PIIWorker(
         storage_service=storage_service,
         queue_service=queue_service,
-        job_service=job_service
+        job_service=job_service,
+        s3_url_service=s3_url_service,
     )
 
     logger.info("PII worker services initialized, starting worker loop...")

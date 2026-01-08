@@ -1,23 +1,27 @@
 """Approval service for PII-flagged document review workflow.
 
 Handles token validation, approval/denial decision processing,
-and routing to processing queue or cleanup.
+and routing to document processing or cleanup.
 """
 
+import asyncio
 import logging
 from datetime import UTC, datetime
-from typing import Any, Literal
+from typing import TYPE_CHECKING, Any, Literal
 
-from ..shared.constants.queues import APPROVAL_TIMEOUT_KEY, PROCESSING_QUEUE
+from ..shared.constants.queues import APPROVAL_TIMEOUT_KEY
 from ..shared.constants.statuses import (
     STATUS_DENIED,
     STATUS_PROCESSING,
     STATUS_PROCESSING_QUEUED,
 )
-from ..shared.models.queue import ProcessingQueuePayload
 from .cleanup_service import CleanupService
 from .job_service import JobService
 from .queue_service import QueueService
+
+if TYPE_CHECKING:
+    from .s3_url_service import S3URLService
+    from .storage_service import StorageService
 
 logger = logging.getLogger(__name__)
 
@@ -31,6 +35,8 @@ class ApprovalService:
         s3_client: Any | None,
         job_service: JobService,
         queue_service: QueueService,
+        storage_service: "StorageService | None" = None,
+        s3_url_service: "S3URLService | None" = None,
     ):
         """Initialize approval service with dependencies.
 
@@ -39,10 +45,14 @@ class ApprovalService:
             s3_client: Boto3 S3 client instance (optional, lazy-loaded for denial path)
             job_service: Job status management service
             queue_service: Redis queue operations service
+            storage_service: S3 storage operations (required for processing trigger)
+            s3_url_service: S3 URL generation service (required for processing trigger)
         """
         self.redis = redis_client
         self.job_service = job_service
         self.queue_service = queue_service
+        self.storage_service = storage_service
+        self.s3_url_service = s3_url_service
         self._s3_client = s3_client
         self._cleanup_service: CleanupService | None = None
 
@@ -233,14 +243,43 @@ class ApprovalService:
                     logger.warning(f"Job {job_id} in unexpected status '{current_status}' during approval")
                     raise ValueError(f"Job {job_id} cannot be approved from status '{current_status}'")
 
-                # Enqueue to processing queue
-                queue_payload = ProcessingQueuePayload(job_id=job_id, s3_key=s3_key, approved_at=datetime.now(UTC))
-                await self.queue_service.enqueue(PROCESSING_QUEUE, queue_payload)
-                logger.info(f"Job {job_id} approved - queued for processing")
-
                 # Update job status
                 await self.job_service.update_job_status(job_id, STATUS_PROCESSING, approval_decision=decision_metadata)
                 logger.info(f"Job {job_id} status updated to processing")
+
+                # Trigger document processing directly instead of queueing
+                filename = current_job.get("original_filename", "document.pdf")
+                review_mode = current_job.get("review_mode", "auto")
+
+                # Import here to avoid circular imports
+                from .document_processing_service import DocumentProcessingService
+
+                if self.storage_service is None or self.s3_url_service is None:
+                    logger.error(f"Storage services not configured for job {job_id}")
+                    await self.job_service.update_job_status(
+                        job_id,
+                        "failed",
+                        error="Storage services not configured for processing",
+                    )
+                    return
+
+                # Create processing service
+                processing_service = DocumentProcessingService(
+                    redis_client=self.redis,
+                    storage_service=self.storage_service,
+                    s3_url_service=self.s3_url_service,
+                )
+
+                # Trigger processing in background (non-blocking)
+                asyncio.create_task(
+                    processing_service.process_document(
+                        job_id=job_id,
+                        s3_key=s3_key,
+                        filename=filename,
+                        review_mode=review_mode,
+                    )
+                )
+                logger.info(f"Job {job_id} approved - processing started")
 
             finally:
                 # Release lock after processing (or on error)
@@ -366,15 +405,6 @@ class ApprovalService:
                     logger.info(f"Job {job_id} in status '{current_status}' - skipping background")
                     return
 
-                # Enqueue to processing queue
-                queue_payload = ProcessingQueuePayload(
-                    job_id=job_id,
-                    s3_key=s3_key,
-                    approved_at=datetime.now(UTC),
-                )
-                await self.queue_service.enqueue(PROCESSING_QUEUE, queue_payload)
-                logger.info(f"Job {job_id} enqueued for processing")
-
                 # Update to full processing status with decision metadata
                 decision_metadata = {
                     "decision": "approved",
@@ -387,7 +417,40 @@ class ApprovalService:
                     STATUS_PROCESSING,
                     approval_decision=decision_metadata,
                 )
-                logger.info(f"Job {job_id} background approval complete - now processing")
+
+                # Trigger document processing directly instead of queueing
+                filename = current_job.get("original_filename", "document.pdf")
+                review_mode = current_job.get("review_mode", "auto")
+
+                # Import here to avoid circular imports
+                from .document_processing_service import DocumentProcessingService
+
+                if self.storage_service is None or self.s3_url_service is None:
+                    logger.error(f"Storage services not configured for job {job_id}")
+                    await self.job_service.update_job_status(
+                        job_id,
+                        "failed",
+                        error="Storage services not configured for processing",
+                    )
+                    return
+
+                # Create processing service
+                processing_service = DocumentProcessingService(
+                    redis_client=self.redis,
+                    storage_service=self.storage_service,
+                    s3_url_service=self.s3_url_service,
+                )
+
+                # Trigger processing in background (non-blocking)
+                asyncio.create_task(
+                    processing_service.process_document(
+                        job_id=job_id,
+                        s3_key=s3_key,
+                        filename=filename,
+                        review_mode=review_mode,
+                    )
+                )
+                logger.info(f"Job {job_id} background approval complete - processing started")
 
             finally:
                 await self.redis.delete(lock_key)

@@ -24,6 +24,7 @@ import logging
 import re
 import time
 from dataclasses import dataclass, field
+from datetime import UTC, datetime
 from io import BytesIO
 from typing import TYPE_CHECKING
 
@@ -48,6 +49,7 @@ from .models import (
     Job,
     Ledger,
     LedgerEntry,
+    LLMCallRecord,
     TaskType,
 )
 from .subagents import (
@@ -128,6 +130,9 @@ YOU decide whether to apply their recommendations.
 
 ### Edit Tool
 - propose_edit(before, after, reasoning, needs_review): Submit your edit for validation
+  - Returns {accepted, applied, feedback}
+  - If applied=False, the edit was NOT made! Check feedback and retry with exact text.
+  - Use find_text() first to get the exact text before calling propose_edit()
 
 ## Workflow
 
@@ -605,9 +610,43 @@ async def propose_edit_tool(
         logger.info(f"Edit applied for {proposal.target} (needs_review={needs_review})")
         return ProposeEditResult(accepted=True, applied=True)
 
+    # Try to find similar text to help the agent retry
+
+    # Get lines from current markdown
+    markdown_lines = deps.current_markdown.split("\n")
+    before_lines = before.split("\n")
+    first_before_line = before_lines[0].strip() if before_lines else before[:50]
+
+    # Search for similar lines
+    similar_lines = []
+    for i, line in enumerate(markdown_lines):
+        if first_before_line[:20] in line or (
+            len(first_before_line) > 10 and first_before_line[:10] in line
+        ):
+            context_start = max(0, i - 1)
+            context_end = min(len(markdown_lines), i + 2)
+            similar_lines.append(
+                f"Lines {context_start + 1}-{context_end}: "
+                + "\n".join(markdown_lines[context_start:context_end])
+            )
+
+    if similar_lines:
+        feedback = (
+            f"Edit NOT applied - 'before' text not found exactly. "
+            f"Similar text found:\n{similar_lines[0][:300]}\n\n"
+            f"Please retry with the exact text from find_text()."
+        )
+    else:
+        # Show a snippet of the markdown around where we might expect it
+        feedback = (
+            f"Edit NOT applied - 'before' text not found in markdown. "
+            f"First 500 chars of markdown:\n{deps.current_markdown[:500]}\n\n"
+            f"Please use find_text() to locate the exact text before calling propose_edit()."
+        )
+
     return ProposeEditResult(
         accepted=True,
-        feedback="Edit accepted but target text not found to replace",
+        feedback=feedback,
         applied=False,
     )
 
@@ -671,6 +710,7 @@ class JobResult:
     duration_ms: int
 
     error: str | None = None
+    llm_call: LLMCallRecord | None = None
 
 
 # =============================================================================
@@ -768,6 +808,22 @@ Remember:
         )
         tasks_failed = len(output.tasks_failed)
 
+        # Create LLM call record for tracking
+        input_tokens = usage.input_tokens or 0
+        output_tokens = usage.output_tokens or 0
+        cost_cents = ((input_tokens * 0.00025) + (output_tokens * 0.00125)) / 10
+
+        llm_call = LLMCallRecord(
+            agent="paragraph_agent",
+            purpose=f"page_{job.page}_paragraph_fixes",
+            page=job.page,
+            input_tokens=input_tokens,
+            output_tokens=output_tokens,
+            cost_cents=cost_cents,
+            timestamp=datetime.now(UTC),
+            duration_ms=duration_ms,
+        )
+
         # Emit completion event
         if event_bus:
             event_bus.emit(
@@ -787,9 +843,10 @@ Remember:
             ledger_entries=deps.validated_edits,
             tasks_completed=tasks_completed,
             tasks_failed=tasks_failed,
-            input_tokens=usage.input_tokens or 0,
-            output_tokens=usage.output_tokens or 0,
+            input_tokens=input_tokens,
+            output_tokens=output_tokens,
             duration_ms=duration_ms,
+            llm_call=llm_call,
         )
 
     except Exception as e:

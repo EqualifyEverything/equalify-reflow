@@ -324,9 +324,7 @@ class Job(BaseModel):
     page_markdown: str = Field(..., description="Current markdown for this page")
 
     # Status tracking
-    status: Literal["pending", "running", "completed", "failed"] = Field(
-        default="pending"
-    )
+    status: Literal["pending", "running", "completed", "failed"] = Field(default="pending")
     started_at: datetime | None = None
     completed_at: datetime | None = None
     error: str | None = None
@@ -644,138 +642,6 @@ class RecoveryReport(BaseModel):
         default=0,
         description="Total recovery phase duration",
     )
-
-
-# =============================================================================
-# Optimized Pipeline Models (Phase 1: Context Gathering)
-# =============================================================================
-
-
-class ExtractedHeading(BaseModel):
-    """Raw heading extracted deterministically from markdown.
-
-    Used in Phase 1A - no LLM required, just regex extraction.
-    """
-
-    text: str = Field(..., description="Heading text (without # prefix)")
-    page: int = Field(..., description="Page number (1-indexed)")
-    line: int = Field(..., description="Line number in page markdown")
-    markdown_level: int = Field(
-        ..., ge=1, le=6, description="Level from markdown (# count)"
-    )
-
-
-class HeadingInference(BaseModel):
-    """LLM inference for a single heading's correct level.
-
-    Output from Phase 1B structure inference.
-    """
-
-    heading_text: str = Field(..., description="The heading text")
-    page: int = Field(..., description="Page number")
-    markdown_level: int = Field(..., description="Original markdown level")
-    inferred_level: int = Field(
-        ..., ge=1, le=6, description="Correct level inferred by LLM"
-    )
-    confidence: float = Field(
-        default=0.9, ge=0.0, le=1.0, description="Confidence in inference"
-    )
-    reason: str = Field(
-        default="", description="Brief reason for level (if changed)"
-    )
-
-
-class StructureInferenceResult(BaseModel):
-    """Complete result from Phase 1B structure inference.
-
-    Single LLM call output that analyzes all headings at once.
-    """
-
-    document_title: str = Field(..., description="Inferred document title")
-    document_type: DocumentType = Field(
-        default=DocumentType.OTHER, description="Inferred document type"
-    )
-    headings: list[HeadingInference] = Field(
-        ..., description="All headings with inferred levels"
-    )
-    key_terms: list[str] = Field(
-        default_factory=list,
-        description="Domain-specific terms extracted from headings",
-    )
-    low_confidence_pages: list[int] = Field(
-        default_factory=list,
-        description="Pages that need additional context for accurate inference",
-    )
-
-
-class PageSummary(BaseModel):
-    """Brief summary of a page from Phase 1C.
-
-    Gathered in parallel after structure inference.
-    """
-
-    page_num: int = Field(..., description="Page number (1-indexed)")
-    summary: str = Field(
-        ..., description="2-3 sentence summary of page content"
-    )
-    section_context: str = Field(
-        default="",
-        description="Where this page fits (e.g., 'Part of Chapter 2')",
-    )
-    has_figures: bool = Field(default=False, description="Whether page has figures")
-    has_tables: bool = Field(default=False, description="Whether page has tables")
-    figure_count: int = Field(default=0, description="Number of figures on page")
-    table_count: int = Field(default=0, description="Number of tables on page")
-
-
-class DocumentContext(BaseModel):
-    """Complete document context for parallel issue detection.
-
-    This is the output of Phase 1 (Context Gathering) and input to Phase 2
-    (Issue Detection). Contains everything needed for a page-level agent
-    to understand the full document structure.
-    """
-
-    # Document metadata
-    document_id: str = Field(
-        default_factory=lambda: str(uuid4()),
-        description="Unique document identifier",
-    )
-    filename: str = Field(..., description="Original filename")
-    total_pages: int = Field(..., description="Total page count")
-
-    # From Phase 1B: Authoritative structure
-    title: str = Field(..., description="Document title")
-    document_type: DocumentType = Field(
-        default=DocumentType.OTHER, description="Document type"
-    )
-    authoritative_outline: list[OutlineEntry] = Field(
-        default_factory=list,
-        description="Authoritative heading structure (source of truth)",
-    )
-    heading_fixes: list[HeadingFix] = Field(
-        default_factory=list,
-        description="Heading level corrections needed",
-    )
-
-    # From Phase 1C: Page summaries
-    page_summaries: dict[int, PageSummary] = Field(
-        default_factory=dict,
-        description="Brief summaries indexed by page number",
-    )
-
-    # Dictionary for spell-checking
-    dictionary: list[str] = Field(
-        default_factory=list,
-        description="Domain-specific terms for spell-checking",
-    )
-
-    # Phase 1 stats
-    extraction_duration_ms: int = Field(default=0)
-    inference_duration_ms: int = Field(default=0)
-    summary_duration_ms: int = Field(default=0)
-    total_tokens_input: int = Field(default=0)
-    total_tokens_output: int = Field(default=0)
 
 
 # =============================================================================

@@ -13,8 +13,6 @@ See individual modules in src/agents/ for implementation details.
 """
 
 # Re-export model tiers for convenience
-from .model_tiers import MODEL_TIER_MAP, ModelTier
-
 # Import all pipeline components
 from .events import (
     EditCommittedEvent,
@@ -39,6 +37,7 @@ from .events import (
     VerificationCompleteEvent,
     VerificationStartedEvent,
 )
+from .model_tiers import MODEL_TIER_MAP, ModelTier
 from .models import (
     DocumentPlan,
     DocumentStructure,
@@ -69,29 +68,15 @@ from .models import (
     TaskType,
     ValidationResult,
     VerificationReport,
-    # Optimized pipeline models
-    DocumentContext,
-    ExtractedHeading,
-    HeadingInference,
-    PageSummary,
-    StructureInferenceResult,
 )
 from .orchestrator import (
     process_document_v5,
     process_document_v5_streaming,
     run_recovery_phase,
 )
-from .planner import plan_document
 from .page_chain import (
     PageChainState,
     run_page_chain,
-)
-from .recovery import (
-    attempt_page_recovery,
-    calculate_pass_threshold,
-    categorize_issues,
-    determine_final_status,
-    should_attempt_recovery,
 )
 from .plan_verification import (
     verify_against_plan,
@@ -101,24 +86,16 @@ from .plan_verification import (
     verify_table_accuracy_vision,
     verify_table_completeness,
 )
+from .planner import plan_document
+from .recovery import (
+    attempt_page_recovery,
+    calculate_pass_threshold,
+    categorize_issues,
+    determine_final_status,
+    should_attempt_recovery,
+)
 from .validation import auto_fix_minor_issues, validate_edit
 from .worker import execute_job, execute_jobs_parallel
-
-# Optimized pipeline (two-phase architecture)
-from .context_gatherer import (
-    extract_all_headings,
-    gather_document_context,
-    infer_document_structure,
-    summarize_all_pages,
-)
-from .issue_detector import (
-    detect_all_issues,
-    detect_page_issues,
-    get_critical_issues,
-    get_fixable_issues,
-    summarize_issues,
-)
-from .orchestrator_optimized import process_document_v5_optimized
 
 __all__ = [
     # Model tiers
@@ -127,7 +104,6 @@ __all__ = [
     # Main entry points
     "process_document_v5",
     "process_document_v5_streaming",
-    "process_document_v5_optimized",  # Optimized two-phase pipeline
     "plan_document",
     "execute_job",
     "execute_jobs_parallel",
@@ -204,20 +180,4 @@ __all__ = [
     "RecoveryEditAppliedEvent",
     "RecoveryCompleteEvent",
     "RecoveryPhaseCompleteEvent",
-    # Optimized pipeline
-    "gather_document_context",
-    "extract_all_headings",
-    "infer_document_structure",
-    "summarize_all_pages",
-    "detect_all_issues",
-    "detect_page_issues",
-    "get_critical_issues",
-    "get_fixable_issues",
-    "summarize_issues",
-    # Optimized pipeline models
-    "DocumentContext",
-    "ExtractedHeading",
-    "HeadingInference",
-    "PageSummary",
-    "StructureInferenceResult",
 ]

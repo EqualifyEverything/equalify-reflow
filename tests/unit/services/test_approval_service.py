@@ -51,13 +51,29 @@ def mock_queue_service():
 
 
 @pytest.fixture
-def approval_service(mock_redis_client, mock_s3_client, mock_job_service, mock_queue_service):
+def mock_storage_service():
+    """Mock StorageService."""
+    return AsyncMock()
+
+
+@pytest.fixture
+def mock_s3_url_service():
+    """Mock S3URLService."""
+    return MagicMock()
+
+
+@pytest.fixture
+def approval_service(
+    mock_redis_client, mock_s3_client, mock_job_service, mock_queue_service, mock_storage_service, mock_s3_url_service
+):
     """ApprovalService instance with mocked dependencies."""
     return ApprovalService(
         redis_client=mock_redis_client,
         s3_client=mock_s3_client,
         job_service=mock_job_service,
         queue_service=mock_queue_service,
+        storage_service=mock_storage_service,
+        s3_url_service=mock_s3_url_service,
     )
 
 
@@ -175,7 +191,7 @@ async def test_validate_approval_token_handles_string_keys(approval_service, moc
 async def test_process_approval_decision_approved(
     approval_service, mock_redis_client, mock_job_service, mock_queue_service
 ):
-    """Test processing approved decision."""
+    """Test processing approved decision triggers inline processing."""
     # Arrange
     job_id = "550e8400-e29b-41d4-a716-446655440001"
     s3_key = "temp/approved-doc.pdf"
@@ -191,14 +207,9 @@ async def test_process_approval_decision_approved(
 
     # Assert
     mock_redis_client.zrem.assert_called_once_with(APPROVAL_TIMEOUT_KEY, job_id)
-    mock_queue_service.enqueue.assert_called_once()
-    queue_call = mock_queue_service.enqueue.call_args
-    assert queue_call[0][0] == PROCESSING_QUEUE
-    # ProcessingQueuePayload is a Pydantic model
-    payload = queue_call[0][1]
-    assert payload.job_id == job_id
-    assert payload.s3_key == s3_key
-    mock_job_service.update_job_status.assert_called_once()
+    # Processing is now triggered inline via DocumentProcessingService, not enqueued
+    # So we verify the status update instead of queue enqueue
+    mock_job_service.update_job_status.assert_called()
     status_call = mock_job_service.update_job_status.call_args
     assert status_call[0][1] == STATUS_PROCESSING
 
@@ -279,9 +290,17 @@ async def test_process_approval_stores_decision_metadata(
         job_id=job_id, decision="approved", justification=justification, reviewed_by=reviewed_by
     )
 
-    # Assert
-    status_call = mock_job_service.update_job_status.call_args
-    approval_metadata = status_call[1]["approval_decision"]
+    # Assert - check that update_job_status was called with approval_decision metadata
+    mock_job_service.update_job_status.assert_called()
+    # Find the call that includes approval_decision (may be called multiple times)
+    approval_call = None
+    for call in mock_job_service.update_job_status.call_args_list:
+        if "approval_decision" in call[1]:
+            approval_call = call
+            break
+
+    assert approval_call is not None, "update_job_status should be called with approval_decision"
+    approval_metadata = approval_call[1]["approval_decision"]
     assert approval_metadata["decision"] == "approved"
     assert approval_metadata["justification"] == justification
     assert approval_metadata["reviewed_by"] == reviewed_by
@@ -351,10 +370,10 @@ async def test_quick_deny_sets_denied_status(approval_service, mock_job_service)
 
 
 @pytest.mark.asyncio
-async def test_process_approval_background_enqueues_job(
+async def test_process_approval_background_triggers_processing(
     approval_service, mock_redis_client, mock_job_service, mock_queue_service
 ):
-    """Test background approval enqueues job for processing."""
+    """Test background approval triggers inline processing."""
     # Arrange
     job_id = "550e8400-e29b-41d4-a716-446655440020"
     s3_key = "temp/bg-test.pdf"
@@ -375,14 +394,9 @@ async def test_process_approval_background_enqueues_job(
 
     # Assert
     mock_redis_client.zrem.assert_called_once_with(APPROVAL_TIMEOUT_KEY, job_id)
-    mock_queue_service.enqueue.assert_called_once()
-    queue_call = mock_queue_service.enqueue.call_args
-    assert queue_call[0][0] == PROCESSING_QUEUE
-    payload = queue_call[0][1]
-    assert payload.job_id == job_id
-    assert payload.s3_key == s3_key
-
+    # Processing is now triggered inline via DocumentProcessingService, not enqueued
     # Verify final status update to STATUS_PROCESSING
+    mock_job_service.update_job_status.assert_called()
     status_call = mock_job_service.update_job_status.call_args
     assert status_call[0][1] == STATUS_PROCESSING
 

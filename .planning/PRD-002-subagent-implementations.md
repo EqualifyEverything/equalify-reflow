@@ -587,3 +587,8 @@ Tests should verify:
 2. Confidence is within 0.0-1.0 range
 3. Reasoning is non-empty
 4. Subagent handles empty input gracefully
+
+### Code Comment Standards
+
+- **DO NOT include PRD numbers in code comments** - Comments like "PRD-001" or "(PRD-003)" should never appear in source code
+- Comments should describe *what* and *why*, not *when* or *which PRD*

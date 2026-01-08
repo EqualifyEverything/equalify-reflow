@@ -316,3 +316,8 @@ The LLM should set `has_page_continuation=True` when:
 - Context suggests continuation (mid-thought)
 
 This flag is used later to generate `PARAGRAPH_MERGE` jobs in the cross-page merge pass.
+
+### Code Comment Standards
+
+- **DO NOT include PRD numbers in code comments** - Comments like "PRD-001" or "(PRD-003)" should never appear in source code
+- Comments should describe *what* and *why*, not *when* or *which PRD*

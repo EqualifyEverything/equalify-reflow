@@ -665,3 +665,8 @@ If a subagent fails, the parent agent should:
 2. Add to `tasks_failed` output
 3. Continue with remaining tasks
 4. Not crash the entire job
+
+### Code Comment Standards
+
+- **DO NOT include PRD numbers in code comments** - Comments like "PRD-001" or "(PRD-003)" should never appear in source code
+- Comments should describe *what* and *why*, not *when* or *which PRD*

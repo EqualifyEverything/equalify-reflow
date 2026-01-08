@@ -627,3 +627,8 @@ The `needs_review` flag integrates with your existing human review branch:
 2. Each entry has `needs_review` boolean
 3. Human review UI can filter by this flag
 4. Reviewer can approve/reject flagged edits
+
+### Code Comment Standards
+
+- **DO NOT include PRD numbers in code comments** - Comments like "PRD-001" or "(PRD-003)" should never appear in source code
+- Comments should describe *what* and *why*, not *when* or *which PRD*

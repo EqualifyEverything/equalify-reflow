@@ -101,10 +101,22 @@ from .recovery import (
     should_attempt_recovery,
 )
 from .subagents import (
+    CITATION_SYSTEM_PROMPT,
     CONFIDENCE_APPLY_WITH_REVIEW,
     CONFIDENCE_AUTO_APPLY,
     CONFIDENCE_SKIP,
+    FOOTNOTE_SYSTEM_PROMPT,
+    LIST_SEMANTICS_SYSTEM_PROMPT,
+    PAGE_ARTIFACT_SYSTEM_PROMPT,
+    PARAGRAPH_MERGE_SYSTEM_PROMPT,
+    TYPOGRAPHY_SYSTEM_PROMPT,
     SubagentResult,
+    invoke_citation_subagent,
+    invoke_footnote_subagent,
+    invoke_list_subagent,
+    invoke_page_artifact_subagent,
+    invoke_paragraph_merge_subagent,
+    invoke_typography_subagent,
 )
 from .subagents.types import (
     CitationResult,
@@ -182,7 +194,7 @@ __all__ = [
     "TypographyIssue",
     "ValidationResult",
     "VerificationReport",
-    # Subagent types
+    # Subagent types and constants
     "CONFIDENCE_AUTO_APPLY",
     "CONFIDENCE_APPLY_WITH_REVIEW",
     "CONFIDENCE_SKIP",
@@ -193,6 +205,20 @@ __all__ = [
     "PageArtifactResult",
     "ParagraphMergeResult",
     "TypographyResult",
+    # Subagent invoke functions
+    "invoke_citation_subagent",
+    "invoke_footnote_subagent",
+    "invoke_list_subagent",
+    "invoke_page_artifact_subagent",
+    "invoke_paragraph_merge_subagent",
+    "invoke_typography_subagent",
+    # Subagent system prompts
+    "CITATION_SYSTEM_PROMPT",
+    "FOOTNOTE_SYSTEM_PROMPT",
+    "LIST_SEMANTICS_SYSTEM_PROMPT",
+    "PAGE_ARTIFACT_SYSTEM_PROMPT",
+    "PARAGRAPH_MERGE_SYSTEM_PROMPT",
+    "TYPOGRAPHY_SYSTEM_PROMPT",
     # Events
     "EventBus",
     "StreamEvent",

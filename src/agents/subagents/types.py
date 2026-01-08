@@ -4,9 +4,39 @@ Each result type extends SubagentResult with task-specific fields.
 All results include confidence and reasoning from the base class.
 """
 
-from pydantic import Field
+from pydantic import BaseModel, Field
 
-from . import SubagentResult
+# =============================================================================
+# Base Result Type
+# =============================================================================
+
+
+class SubagentResult(BaseModel):
+    """Base class for all subagent results.
+
+    All subagent tools return a result that includes:
+    - confidence: How confident the subagent is in its recommendation (0.0-1.0)
+    - reasoning: Explanation of what was found and why the recommendation was made
+
+    Parent agents use confidence to decide:
+    - >= CONFIDENCE_AUTO_APPLY: Apply via propose_edit(needs_review=False)
+    - >= CONFIDENCE_APPLY_WITH_REVIEW: Apply via propose_edit(needs_review=True)
+    - < CONFIDENCE_SKIP: Skip the edit, log for manual review
+    """
+
+    confidence: float = Field(
+        ge=0.0,
+        le=1.0,
+        description="Confidence in recommendation (0.0-1.0)",
+    )
+    reasoning: str = Field(
+        description="Explanation of the recommendation",
+    )
+
+
+# =============================================================================
+# Specialized Result Types
+# =============================================================================
 
 
 class PageArtifactResult(SubagentResult):
@@ -120,6 +150,7 @@ class ParagraphMergeResult(SubagentResult):
 
 
 __all__ = [
+    "SubagentResult",
     "PageArtifactResult",
     "FootnoteResult",
     "CitationResult",

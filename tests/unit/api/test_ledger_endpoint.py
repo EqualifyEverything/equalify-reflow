@@ -588,11 +588,11 @@ class TestLedgerUrlInJobStatus:
         assert response.ledger_url == f"/api/v1/documents/{job_id}/ledger"
 
     @pytest.mark.asyncio
-    async def test_ledger_url_not_included_for_auto_review_mode(self, mock_job_service, mock_url_service):
-        """Test that ledger_url is None when review_mode is 'auto'.
+    async def test_ledger_url_included_for_auto_review_mode(self, mock_job_service, mock_url_service):
+        """Test that ledger_url is provided for all review modes including 'auto'.
 
-        In auto mode, the ledger is not exposed via API since there's no
-        human review step.
+        The ledger is always stored and should be accessible for debugging
+        purposes regardless of review mode.
         """
         from src.api.documents import get_job
 
@@ -620,4 +620,5 @@ class TestLedgerUrlInJobStatus:
         # Verify the response object has the expected fields
         assert response.status == "completed"
         assert response.review_mode == "auto"
-        assert response.ledger_url is None
+        # Ledger is now always available for debugging purposes
+        assert response.ledger_url == f"/api/v1/documents/{job_id}/ledger"

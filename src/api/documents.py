@@ -43,6 +43,7 @@ from .schemas import (
     LedgerEntryResponse,
     LedgerPageGroup,
     LedgerResponse,
+    LLMCallInfo,
     LLMCostInfo,
     NeedsReviewResponse,
     ObservationSummary,
@@ -80,12 +81,41 @@ def _build_llm_cost(job: dict[str, Any]) -> LLMCostInfo | None:
     output_tokens = int(job.get("llm_output_tokens", 0) or 0)
     total_tokens = int(job.get("llm_total_tokens", 0) or 0)
 
+    # Parse individual LLM calls from job data
+    llm_calls_raw = job.get("llm_calls")
+    calls: list[LLMCallInfo] = []
+
+    if llm_calls_raw:
+        # llm_calls is stored as JSON string in Redis
+        if isinstance(llm_calls_raw, str):
+            try:
+                llm_calls_raw = json.loads(llm_calls_raw)
+            except json.JSONDecodeError:
+                llm_calls_raw = []
+
+        if isinstance(llm_calls_raw, list):
+            for call in llm_calls_raw:
+                if isinstance(call, dict):
+                    calls.append(
+                        LLMCallInfo(
+                            agent=call.get("agent", ""),
+                            purpose=call.get("purpose", ""),
+                            page=call.get("page"),
+                            input_tokens=call.get("input_tokens", 0),
+                            output_tokens=call.get("output_tokens", 0),
+                            cost_cents=call.get("cost_cents", 0.0),
+                            timestamp=call.get("timestamp", ""),
+                            duration_ms=call.get("duration_ms"),
+                        )
+                    )
+
     return LLMCostInfo(
         input_tokens=input_tokens,
         output_tokens=output_tokens,
         total_tokens=total_tokens,
         estimated_cost_cents=total_cents,
         estimated_cost_dollars=total_cents / 100.0,
+        calls=calls,
     )
 
 
@@ -351,10 +381,8 @@ async def get_job(
                         detail="Job completed but result_url/markdown_url not set. This indicates a bug.",
                     )
 
-                # Build ledger URL only for human review mode
-                ledger_url = None
-                if review_mode == "human":
-                    ledger_url = f"/api/v1/documents/{job_id}/ledger"
+                # Ledger is always available for completed agentic pipeline jobs
+                ledger_url = f"/api/v1/documents/{job_id}/ledger"
 
                 return AgenticCompletedResponse(
                     **base,
@@ -822,10 +850,15 @@ async def get_ledger(
 
     # Build grouped ledger response
     entries_by_page: dict[int, list[LedgerEntryResponse]] = {}
+    entries_needing_review_count = 0
     for entry in ledger_data.get("entries", []):
         page = entry.get("page", 1)
         if page not in entries_by_page:
             entries_by_page[page] = []
+
+        needs_review = entry.get("needs_review", False)
+        if needs_review:
+            entries_needing_review_count += 1
 
         entries_by_page[page].append(
             LedgerEntryResponse(
@@ -838,6 +871,7 @@ async def get_ledger(
                 reasoning=entry.get("reasoning", ""),
                 confidence=float(entry.get("confidence", 0.0)),
                 timestamp=entry.get("timestamp", ""),
+                needs_review=needs_review,
             )
         )
 
@@ -866,6 +900,7 @@ async def get_ledger(
         total_pages=int(job.get("total_pages", 0)),
         pages_with_changes=len(pages),
         total_edits=ledger_data.get("total_edits", 0),
+        entries_needing_review=entries_needing_review_count,
         pages=pages,
         processing_duration_ms=0,
         final_markdown_url=final_markdown_url,

@@ -1,4 +1,4 @@
-"""V5 Pipeline Issue Fixer - Agent-based error correction.
+"""Pipeline Issue Fixer - Agent-based error correction.
 
 This module provides structured issue types and intelligent routing
 to fix verification failures. Each issue type has a specialized fixer
@@ -332,8 +332,7 @@ class AltTextResult(BaseModel):
     extended_description: str | None = Field(
         default=None,
         description=(
-            "For COMPLEX images only: detailed description of data, "
-            "relationships, or structure (1-3 sentences)"
+            "For COMPLEX images only: detailed description of data, relationships, or structure (1-3 sentences)"
         ),
     )
     reasoning: str = Field(

@@ -55,9 +55,7 @@ class APIKeyAuthMiddleware(BaseHTTPMiddleware):
         logger.info(f"Loaded {len(keys)} API key(s) for authentication")
         return keys
 
-    async def dispatch(
-        self, request: Request, call_next: Callable[[Request], Awaitable[Response]]
-    ) -> Response:
+    async def dispatch(self, request: Request, call_next: Callable[[Request], Awaitable[Response]]) -> Response:
         """
         Validate API key before processing request.
 
@@ -78,8 +76,7 @@ class APIKeyAuthMiddleware(BaseHTTPMiddleware):
         # Check if API key is provided
         if not api_key:
             logger.warning(
-                f"Missing API key for {request.method} {request.url.path} "
-                f"from {self._get_client_ip(request)}"
+                f"Missing API key for {request.method} {request.url.path} from {self._get_client_ip(request)}"
             )
             return self._unauthorized_response(
                 detail=f"Missing API key. Provide a valid key in the '{settings.api_key_header_name}' header."
@@ -88,12 +85,9 @@ class APIKeyAuthMiddleware(BaseHTTPMiddleware):
         # Validate API key using constant-time comparison
         if not self._is_valid_key(api_key):
             logger.warning(
-                f"Invalid API key for {request.method} {request.url.path} "
-                f"from {self._get_client_ip(request)}"
+                f"Invalid API key for {request.method} {request.url.path} from {self._get_client_ip(request)}"
             )
-            return self._unauthorized_response(
-                detail="Invalid API key"
-            )
+            return self._unauthorized_response(detail="Invalid API key")
 
         # API key is valid, add to request state for potential use in handlers
         request.state.api_key = api_key
@@ -134,7 +128,7 @@ class APIKeyAuthMiddleware(BaseHTTPMiddleware):
         if path == "/demo" or path.startswith("/demo/"):
             return True
 
-        # V5 Viewer static files (have separate HTTP Basic auth)
+        # Viewer static files (have separate HTTP Basic auth)
         if path == "/viewer" or path.startswith("/viewer/"):
             return True
 
@@ -251,10 +245,6 @@ class APIKeyAuthMiddleware(BaseHTTPMiddleware):
         """
         return JSONResponse(
             status_code=status.HTTP_401_UNAUTHORIZED,
-            content={
-                "detail": detail
-            },
-            headers={
-                "WWW-Authenticate": "ApiKey realm=\"API\", charset=\"UTF-8\""
-            }
+            content={"detail": detail},
+            headers={"WWW-Authenticate": 'ApiKey realm="API", charset="UTF-8"'},
         )

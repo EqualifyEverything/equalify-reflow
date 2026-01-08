@@ -1,4 +1,4 @@
-"""V5 Recovery Agent - Attempts to Fix Failed Pages.
+"""Recovery Agent - Attempts to Fix Failed Pages.
 
 The Recovery Agent attempts to fix pages that failed verification.
 It's more conservative than the Worker agent - when in doubt, it escalates.
@@ -175,9 +175,7 @@ def categorize_issues(issues: list[str]) -> dict[IssueCategory, list[str]]:
     Returns:
         Dict mapping issue category to list of issues in that category
     """
-    categorized: dict[IssueCategory, list[str]] = {
-        category: [] for category in IssueCategory
-    }
+    categorized: dict[IssueCategory, list[str]] = {category: [] for category in IssueCategory}
 
     for issue in issues:
         issue_lower = issue.lower()
@@ -234,9 +232,7 @@ def should_attempt_recovery(
     ]
 
     # Check if any issues are in recoverable categories
-    recoverable_count = sum(
-        len(categorized[cat]) for cat in recoverable_categories
-    )
+    recoverable_count = sum(len(categorized[cat]) for cat in recoverable_categories)
 
     # Attempt recovery if at least one recoverable issue exists
     return recoverable_count > 0
@@ -609,9 +605,7 @@ This is attempt {attempt_number}. Be thorough but don't force fixes.
                 )
             )
 
-        logger.info(
-            f"Page {page_num} recovery attempt {attempt_number}: {status.value}"
-        )
+        logger.info(f"Page {page_num} recovery attempt {attempt_number}: {status.value}")
 
         return deps.current_markdown, attempt
 

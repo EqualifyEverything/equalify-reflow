@@ -1,4 +1,4 @@
-"""Unit tests for V5 Plan Verification Module.
+"""Unit tests for Plan Verification Module.
 
 Tests for verifying document output against the document plan:
 - verify_heading_structure: Check all expected headings are present at correct levels
@@ -219,9 +219,7 @@ Methods section at wrong level (H2 instead of H1).
         # Should mention the wrong level for "Methods"
         assert any("Methods" in issue or "level" in issue.lower() for issue in issues)
 
-    def test_verify_heading_structure_nested_all_match(
-        self, plan_with_nested_headings: DocumentPlan
-    ):
+    def test_verify_heading_structure_nested_all_match(self, plan_with_nested_headings: DocumentPlan):
         """Test nested heading structure with all matches."""
         markdown = """# Chapter 1
 
@@ -243,9 +241,7 @@ Content for chapter 2.
 
         assert len(issues) == 0
 
-    def test_verify_heading_structure_nested_missing_subsection(
-        self, plan_with_nested_headings: DocumentPlan
-    ):
+    def test_verify_heading_structure_nested_missing_subsection(self, plan_with_nested_headings: DocumentPlan):
         """Test nested heading structure with missing subsection."""
         markdown = """# Chapter 1
 
@@ -321,9 +317,7 @@ Method details here.
         # Should mention missing alt-text or figure issues
         assert any("alt" in issue.lower() or "figure" in issue.lower() for issue in issues)
 
-    def test_verify_figure_completeness_multiple_figures_all_present(
-        self, plan_with_multiple_figures: DocumentPlan
-    ):
+    def test_verify_figure_completeness_multiple_figures_all_present(self, plan_with_multiple_figures: DocumentPlan):
         """Test multiple figures all with proper alt-text."""
         page_markdowns = {
             1: """# Introduction
@@ -341,9 +335,7 @@ Method details here.
 
         assert len(issues) == 0
 
-    def test_verify_figure_completeness_multiple_figures_some_missing(
-        self, plan_with_multiple_figures: DocumentPlan
-    ):
+    def test_verify_figure_completeness_multiple_figures_some_missing(self, plan_with_multiple_figures: DocumentPlan):
         """Test multiple figures with some missing alt-text."""
         page_markdowns = {
             1: """# Introduction
@@ -447,9 +439,7 @@ No tables here, just text about methods.
         # Should mention missing table
         assert any("table" in issue.lower() for issue in issues)
 
-    def test_verify_table_completeness_multiple_tables_all_present(
-        self, plan_with_multiple_tables: DocumentPlan
-    ):
+    def test_verify_table_completeness_multiple_tables_all_present(self, plan_with_multiple_tables: DocumentPlan):
         """Test multiple tables all transcribed."""
         page_markdowns = {
             1: """# Data
@@ -473,9 +463,7 @@ No tables here, just text about methods.
 
         assert len(issues) == 0
 
-    def test_verify_table_completeness_multiple_tables_some_missing(
-        self, plan_with_multiple_tables: DocumentPlan
-    ):
+    def test_verify_table_completeness_multiple_tables_some_missing(self, plan_with_multiple_tables: DocumentPlan):
         """Test multiple tables with some not transcribed."""
         page_markdowns = {
             1: """# Data
@@ -540,9 +528,7 @@ This documnet has sevral typos in it.
         assert len(issues) >= 1
         # Should detect misspelled words
         issue_text = " ".join(issues).lower()
-        assert any(
-            word in issue_text for word in ["framewrok", "documnet", "sevral", "spell", "misspell"]
-        )
+        assert any(word in issue_text for word in ["framewrok", "documnet", "sevral", "spell", "misspell"])
 
     def test_verify_spelling_domain_terms_accepted(self, sample_plan: DocumentPlan):
         """Test that domain terms from dictionary are not flagged."""

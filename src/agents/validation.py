@@ -1,4 +1,4 @@
-"""V5 Pipeline Validation Gate.
+"""Pipeline Validation Gate.
 
 The validation gate checks all proposed edits before they are committed.
 This catches agent mistakes and enforces quality standards.
@@ -245,9 +245,7 @@ def validate_edit(
     # Spell issues with suggestions are likely real typos
     typo_issues = [s for s in spell_issues if s.suggestion and len(s.suggestion) > 2]
     if strict and typo_issues:
-        serious_issues.append(
-            f"Possible typos: {[f'{s.word} -> {s.suggestion}' for s in typo_issues[:3]]}"
-        )
+        serious_issues.append(f"Possible typos: {[f'{s.word} -> {s.suggestion}' for s in typo_issues[:3]]}")
 
     # Serious lint issues (not just trailing whitespace)
     serious_lint = [i for i in lint_issues if "whitespace" not in i.lower()]

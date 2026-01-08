@@ -1,4 +1,4 @@
-"""V5 Pipeline Data Models.
+"""Pipeline Data Models.
 
 This module defines all the data structures for the hierarchical
 document processing pipeline with streaming ledger support.
@@ -773,7 +773,7 @@ class LLMCallRecord(BaseModel):
 
 
 class ProcessingResult(BaseModel):
-    """Final result of V5 pipeline processing."""
+    """Final result of agentic pipeline processing."""
 
     document_id: str = Field(..., description="Document ID")
     success: bool = Field(..., description="Whether processing succeeded")

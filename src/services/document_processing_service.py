@@ -117,7 +117,7 @@ class DocumentProcessingService:
             VisionExtractionStartedEvent,
             VisionPageExtractedEvent,
         )
-        from ..agents.orchestrator import process_document_v5
+        from ..agents.orchestrator import run_agentic_pipeline
         from ..services.vision_extraction_service import (
             VisualDocumentType,
             detect_visual_document_type,
@@ -168,9 +168,7 @@ class DocumentProcessingService:
             )
 
             converter = DocumentConverter(
-                format_options={
-                    InputFormat.PDF: PdfFormatOption(pipeline_options=pipeline_options)
-                }
+                format_options={InputFormat.PDF: PdfFormatOption(pipeline_options=pipeline_options)}
             )
 
             # Convert from bytes using DocumentStream
@@ -328,17 +326,13 @@ class DocumentProcessingService:
                         idx = figure_counts[page_no]
                         if hasattr(item, "prov") and item.prov:
                             bbox = item.prov[0].bbox
-                            element_bboxes[(page_no, "figure", idx)] = (
-                                bbox.l, bbox.t, bbox.r, bbox.b
-                            )
+                            element_bboxes[(page_no, "figure", idx)] = (bbox.l, bbox.t, bbox.r, bbox.b)
                     elif item.label == "table":
                         table_counts[page_no] = table_counts.get(page_no, 0) + 1
                         idx = table_counts[page_no]
                         if hasattr(item, "prov") and item.prov:
                             bbox = item.prov[0].bbox
-                            element_bboxes[(page_no, "table", idx)] = (
-                                bbox.l, bbox.t, bbox.r, bbox.b
-                            )
+                            element_bboxes[(page_no, "table", idx)] = (bbox.l, bbox.t, bbox.r, bbox.b)
 
             # Get page width
             page_width = 612.0  # Default letter size
@@ -354,9 +348,9 @@ class DocumentProcessingService:
                 total_pages=len(page_markdowns),
             )
 
-            # Run V5 pipeline
+            # Run agentic pipeline
             logger.info(f"Starting agentic pipeline for {filename}")
-            processing_result, event_bus = await process_document_v5(
+            processing_result, event_bus = await run_agentic_pipeline(
                 filename=filename,
                 page_markdowns=page_markdowns,
                 page_images=page_images,

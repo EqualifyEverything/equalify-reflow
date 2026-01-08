@@ -77,8 +77,8 @@ from .models import (
 )
 from .orchestrator import (
     merge_cross_page_paragraphs,
-    process_document_v5,
-    process_document_v5_streaming,
+    run_agentic_pipeline,
+    run_agentic_pipeline_streaming,
     run_recovery_phase,
 )
 from .page_chain import (
@@ -136,8 +136,8 @@ __all__ = [
     "MODEL_TIER_MAP",
     "ModelTier",
     # Main entry points
-    "process_document_v5",
-    "process_document_v5_streaming",
+    "run_agentic_pipeline",
+    "run_agentic_pipeline_streaming",
     "plan_document",
     "execute_job",
     "execute_jobs_parallel",

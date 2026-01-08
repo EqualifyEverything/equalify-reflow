@@ -87,11 +87,11 @@ def reset_agent_singletons():
     This ensures test isolation by clearing cached agent instances.
     Each test starts with a fresh agent state, preventing test pollution.
 
-    NOTE: The old multi-agent system was removed. The current V5 pipeline
+    NOTE: The old multi-agent system was removed. The current agentic pipeline
     uses lazy-loaded agents in worker.py, page_chain.py, etc. that have
     module-level reset functions where needed.
     """
-    # Import V5 pipeline modules that use singleton/cached agents
+    # Import agentic pipeline modules that use singleton/cached agents
     from src.agents import issue_fixer, page_chain, paragraph_agent, worker
 
     # List of modules with reset functions

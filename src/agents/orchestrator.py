@@ -1,6 +1,6 @@
-"""V5 Pipeline Orchestrator - Main Pipeline Coordination.
+"""Pipeline Orchestrator - Main Pipeline Coordination.
 
-The Orchestrator runs the complete V5 pipeline:
+The Orchestrator runs the complete agentic pipeline:
     1. Planning Phase - Analyze document, create jobs
     2. Execution Phase - Run worker jobs in parallel
     3. Verification Phase - Final quality check
@@ -154,14 +154,13 @@ def validate_merge_result(
             if removed and removed[0].isalpha():
                 return (
                     False,
-                    f"Merge would split word at page 1 end: "
-                    f"'...{remaining_page1[-10:]}' | '{removed[:10]}...'"
+                    f"Merge would split word at page 1 end: '...{remaining_page1[-10:]}' | '{removed[:10]}...'",
                 )
 
     # Check merged text produces valid word
     if merged_text:
         # Merged text should not end with hyphen or partial
-        if merged_text.rstrip().endswith('-'):
+        if merged_text.rstrip().endswith("-"):
             return False, f"Merged text ends with hyphen: '{merged_text[-20:]}'"
 
     return True, ""
@@ -191,9 +190,7 @@ async def merge_cross_page_paragraphs(
     """
     # Find pages with continuation flags
     pages_with_continuation = [
-        page_num
-        for page_num, page_plan in plan.pages.items()
-        if page_plan.has_page_continuation
+        page_num for page_num, page_plan in plan.pages.items() if page_plan.has_page_continuation
     ]
 
     if not pages_with_continuation:
@@ -240,8 +237,7 @@ async def merge_cross_page_paragraphs(
 
             if result.confidence < 0.5:
                 logger.warning(
-                    f"Skipping low-confidence merge for pages {page_num}-{next_page}: "
-                    f"confidence={result.confidence}"
+                    f"Skipping low-confidence merge for pages {page_num}-{next_page}: confidence={result.confidence}"
                 )
                 continue
 
@@ -267,8 +263,8 @@ async def merge_cross_page_paragraphs(
 
             # Apply the merge - remove chars from end of page 1
             if result.page1_remove_chars > 0:
-                old_end = page1_md[-result.page1_remove_chars:]
-                page_markdowns[page_num] = page1_md[:-result.page1_remove_chars]
+                old_end = page1_md[-result.page1_remove_chars :]
+                page_markdowns[page_num] = page1_md[: -result.page1_remove_chars]
 
                 ledger.append(
                     LedgerEntry(
@@ -289,7 +285,7 @@ async def merge_cross_page_paragraphs(
             if result.page2_remove_chars > 0:
                 old_start = page2_md[: result.page2_remove_chars]
                 new_start = result.merged_text
-                page_markdowns[next_page] = new_start + page2_md[result.page2_remove_chars:]
+                page_markdowns[next_page] = new_start + page2_md[result.page2_remove_chars :]
 
                 entry = LedgerEntry(
                     job_id=f"merge:{page_num}-{next_page}",
@@ -315,8 +311,7 @@ async def merge_cross_page_paragraphs(
                     )
 
             logger.info(
-                f"Merged pages {page_num}-{next_page} "
-                f"(method: {result.join_method}, confidence: {result.confidence})"
+                f"Merged pages {page_num}-{next_page} (method: {result.join_method}, confidence: {result.confidence})"
             )
 
         except Exception as e:
@@ -696,7 +691,7 @@ async def run_recovery_phase(
 # =============================================================================
 
 
-async def process_document_v5(
+async def run_agentic_pipeline(
     filename: str,
     page_markdowns: dict[int, str],
     page_images: dict[int, Image.Image],
@@ -706,9 +701,9 @@ async def process_document_v5(
     max_concurrent_jobs: int = 3,
     event_bus: EventBus | None = None,
 ) -> tuple[ProcessingResult, EventBus]:
-    """Run the complete V5 pipeline.
+    """Run the complete agentic pipeline.
 
-    This is the main entry point for V5 processing.
+    This is the main entry point for document processing.
 
     Args:
         filename: Original document filename
@@ -733,7 +728,7 @@ async def process_document_v5(
     # Create ledger
     ledger = Ledger(document_id=doc_id)
 
-    logger.info(f"Starting V5 pipeline for {filename} (id={doc_id})")
+    logger.info(f"Starting agentic pipeline for {filename} (id={doc_id})")
 
     try:
         # =================================================================
@@ -936,14 +931,14 @@ async def process_document_v5(
         )
 
         logger.info(
-            f"V5 pipeline complete: {ledger.total_edits} edits, "
+            f"Agentic pipeline complete: {ledger.total_edits} edits, "
             f"${cost:.4f}, {total_duration_ms}ms, status={final_status.value}"
         )
 
         return result, event_bus
 
     except Exception as e:
-        logger.error(f"V5 pipeline failed: {e}")
+        logger.error(f"Agentic pipeline failed: {e}")
 
         event_bus.emit(
             ProcessingErrorEvent(
@@ -975,7 +970,7 @@ async def process_document_v5(
 # =============================================================================
 
 
-async def process_document_v5_streaming(
+async def run_agentic_pipeline_streaming(
     filename: str,
     page_markdowns: dict[int, str],
     page_images: dict[int, Image.Image],
@@ -1001,7 +996,7 @@ async def process_document_v5_streaming(
     # Start processing in background
     async def run_pipeline():
         try:
-            await process_document_v5(
+            await run_agentic_pipeline(
                 filename=filename,
                 page_markdowns=page_markdowns,
                 page_images=page_images,

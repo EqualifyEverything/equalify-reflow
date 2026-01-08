@@ -1,4 +1,4 @@
-"""V5 Pipeline Streaming Events.
+"""Pipeline Streaming Events.
 
 Event types for real-time streaming to the UI via SSE.
 Each event type corresponds to a stage in the pipeline.

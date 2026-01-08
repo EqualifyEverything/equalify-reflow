@@ -69,9 +69,7 @@ def mock_s3_url_service():
     mock.generate_url = AsyncMock(
         side_effect=lambda key, bucket=None: f"http://localhost:4566/{bucket or 'test-bucket'}/{key}"
     )
-    mock.generate_presigned_url = AsyncMock(
-        side_effect=lambda key: f"http://localhost:4566/presigned/{key}"
-    )
+    mock.generate_presigned_url = AsyncMock(side_effect=lambda key: f"http://localhost:4566/presigned/{key}")
     mock.results_bucket = "equalify-pdf-results"
     mock.temp_bucket = "equalify-pdf-temp"
     return mock
@@ -79,7 +77,7 @@ def mock_s3_url_service():
 
 @pytest.fixture
 def mock_processing_result():
-    """Create mock ProcessingResult from V5 pipeline."""
+    """Create mock ProcessingResult from agentic pipeline."""
     from src.agents.models import (
         Ledger,
         LedgerEntry,
@@ -219,9 +217,7 @@ async def test_submit_document_skip_pii_scan_auto_mode(
         app.dependency_overrides[get_s3_url_service] = lambda: mock_s3_url_service
 
         try:
-            async with AsyncClient(
-                transport=ASGITransport(app=app), base_url="http://test"
-            ) as client:
+            async with AsyncClient(transport=ASGITransport(app=app), base_url="http://test") as client:
                 files = {"file": ("test.pdf", io.BytesIO(sample_pdf_bytes), "application/pdf")}
                 data = {
                     "skip_pii_scan": "true",
@@ -315,9 +311,7 @@ async def test_submit_document_skip_pii_scan_human_mode(
         app.dependency_overrides[get_s3_url_service] = lambda: mock_s3_url_service
 
         try:
-            async with AsyncClient(
-                transport=ASGITransport(app=app), base_url="http://test"
-            ) as client:
+            async with AsyncClient(transport=ASGITransport(app=app), base_url="http://test") as client:
                 # Submit document
                 files = {"file": ("test.pdf", io.BytesIO(sample_pdf_bytes), "application/pdf")}
                 data = {
@@ -340,9 +334,7 @@ async def test_submit_document_skip_pii_scan_human_mode(
             await asyncio.sleep(0.2)
 
             # Check job status after processing
-            async with AsyncClient(
-                transport=ASGITransport(app=app), base_url="http://test"
-            ) as client:
+            async with AsyncClient(transport=ASGITransport(app=app), base_url="http://test") as client:
                 status_response = await client.get(
                     f"/api/v1/documents/{job_id}",
                     headers=api_key_headers,
@@ -402,9 +394,7 @@ async def test_stream_endpoint_for_completed_job(
     app.dependency_overrides[get_redis_client] = lambda: real_redis_client
 
     try:
-        async with AsyncClient(
-            transport=ASGITransport(app=app), base_url="http://test"
-        ) as client:
+        async with AsyncClient(transport=ASGITransport(app=app), base_url="http://test") as client:
             response = await client.get(
                 f"/api/v1/documents/{job_id}/stream",
                 headers=api_key_headers,
@@ -426,6 +416,7 @@ async def test_stream_endpoint_for_completed_job(
         app.dependency_overrides.clear()
         # Clean up event bus registry
         from src.agents.events import unregister_event_bus
+
         unregister_event_bus(job_id)
 
 
@@ -444,9 +435,7 @@ async def test_stream_endpoint_returns_404_for_nonexistent_job(
     app.dependency_overrides[get_redis_client] = lambda: real_redis_client
 
     try:
-        async with AsyncClient(
-            transport=ASGITransport(app=app), base_url="http://test"
-        ) as client:
+        async with AsyncClient(transport=ASGITransport(app=app), base_url="http://test") as client:
             response = await client.get(
                 "/api/v1/documents/nonexistent-job-id/stream",
                 headers=api_key_headers,
@@ -537,9 +526,7 @@ async def test_ledger_endpoint_returns_changes(
         "total_edits": 2,
     }
 
-    mock_storage.download_file = AsyncMock(
-        return_value=json.dumps(ledger_data).encode("utf-8")
-    )
+    mock_storage.download_file = AsyncMock(return_value=json.dumps(ledger_data).encode("utf-8"))
 
     app.dependency_overrides[get_storage_service] = lambda: mock_storage
     app.dependency_overrides[get_job_service] = lambda: job_service
@@ -547,9 +534,7 @@ async def test_ledger_endpoint_returns_changes(
     app.dependency_overrides[get_s3_url_service] = lambda: mock_s3_url_service
 
     try:
-        async with AsyncClient(
-            transport=ASGITransport(app=app), base_url="http://test"
-        ) as client:
+        async with AsyncClient(transport=ASGITransport(app=app), base_url="http://test") as client:
             response = await client.get(
                 f"/api/v1/documents/{job_id}/ledger",
                 headers=api_key_headers,
@@ -611,9 +596,7 @@ async def test_ledger_endpoint_returns_400_for_incomplete_job(
     app.dependency_overrides[get_redis_client] = lambda: real_redis_client
 
     try:
-        async with AsyncClient(
-            transport=ASGITransport(app=app), base_url="http://test"
-        ) as client:
+        async with AsyncClient(transport=ASGITransport(app=app), base_url="http://test") as client:
             response = await client.get(
                 f"/api/v1/documents/{job_id}/ledger",
                 headers=api_key_headers,
@@ -641,9 +624,7 @@ async def test_ledger_endpoint_returns_404_for_nonexistent_job(
     app.dependency_overrides[get_redis_client] = lambda: real_redis_client
 
     try:
-        async with AsyncClient(
-            transport=ASGITransport(app=app), base_url="http://test"
-        ) as client:
+        async with AsyncClient(transport=ASGITransport(app=app), base_url="http://test") as client:
             response = await client.get(
                 "/api/v1/documents/nonexistent-job/ledger",
                 headers=api_key_headers,
@@ -689,9 +670,7 @@ async def test_ledger_endpoint_returns_404_when_ledger_not_found(
     app.dependency_overrides[get_s3_url_service] = lambda: mock_s3_url_service
 
     try:
-        async with AsyncClient(
-            transport=ASGITransport(app=app), base_url="http://test"
-        ) as client:
+        async with AsyncClient(transport=ASGITransport(app=app), base_url="http://test") as client:
             response = await client.get(
                 f"/api/v1/documents/{job_id}/ledger",
                 headers=api_key_headers,
@@ -751,9 +730,7 @@ async def test_status_endpoint_returns_agentic_processing_response(
     app.dependency_overrides[get_s3_url_service] = lambda: mock_s3_url_service
 
     try:
-        async with AsyncClient(
-            transport=ASGITransport(app=app), base_url="http://test"
-        ) as client:
+        async with AsyncClient(transport=ASGITransport(app=app), base_url="http://test") as client:
             response = await client.get(
                 f"/api/v1/documents/{job_id}",
                 headers=api_key_headers,
@@ -839,9 +816,7 @@ async def test_status_endpoint_returns_agentic_completed_response(
     app.dependency_overrides[get_s3_url_service] = lambda: mock_s3_url_service
 
     try:
-        async with AsyncClient(
-            transport=ASGITransport(app=app), base_url="http://test"
-        ) as client:
+        async with AsyncClient(transport=ASGITransport(app=app), base_url="http://test") as client:
             # Test human mode
             response_human = await client.get(
                 f"/api/v1/documents/{job_id_human}",

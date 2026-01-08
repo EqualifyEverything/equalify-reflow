@@ -461,7 +461,7 @@ class TestProcessDocumentIntegration:
             patch("docling.datamodel.document.DocumentStream"),
             patch("src.agents.events.EventBus") as mock_event_bus_class,
             patch("src.agents.events.register_event_bus"),
-            patch("src.agents.orchestrator.process_document_v5") as mock_process_v5,
+            patch("src.agents.orchestrator.run_agentic_pipeline") as mock_run_pipeline,
             patch("src.services.vision_extraction_service.is_scanned_pdf", return_value=False),
             patch("asyncio.to_thread") as mock_to_thread,
         ):
@@ -491,8 +491,8 @@ class TestProcessDocumentIntegration:
             mock_event_bus.emit = MagicMock()
             mock_event_bus_class.return_value = mock_event_bus
 
-            # Setup process_document_v5 mock
-            mock_process_v5.return_value = (mock_processing_result, mock_event_bus)
+            # Setup run_agentic_pipeline mock
+            mock_run_pipeline.return_value = (mock_processing_result, mock_event_bus)
 
             # Mock iterate_items to return empty (no figures/tables)
             mock_doc.iterate_items = MagicMock(return_value=[])
@@ -535,7 +535,7 @@ class TestProcessDocumentIntegration:
             patch("docling.datamodel.document.DocumentStream"),
             patch("src.agents.events.EventBus") as mock_event_bus_class,
             patch("src.agents.events.register_event_bus"),
-            patch("src.agents.orchestrator.process_document_v5") as mock_process_v5,
+            patch("src.agents.orchestrator.run_agentic_pipeline") as mock_run_pipeline,
             patch("src.services.vision_extraction_service.is_scanned_pdf", return_value=False),
             patch("asyncio.to_thread") as mock_to_thread,
         ):
@@ -562,7 +562,7 @@ class TestProcessDocumentIntegration:
             mock_event_bus = MagicMock()
             mock_event_bus_class.return_value = mock_event_bus
 
-            mock_process_v5.return_value = (mock_processing_result, mock_event_bus)
+            mock_run_pipeline.return_value = (mock_processing_result, mock_event_bus)
 
             await document_processing_service.process_document(
                 job_id="test-job-123",
@@ -604,7 +604,7 @@ class TestProcessDocumentPhaseUpdates:
             patch("docling.datamodel.document.DocumentStream"),
             patch("src.agents.events.EventBus") as mock_event_bus_class,
             patch("src.agents.events.register_event_bus"),
-            patch("src.agents.orchestrator.process_document_v5") as mock_process_v5,
+            patch("src.agents.orchestrator.run_agentic_pipeline") as mock_run_pipeline,
             patch("src.services.vision_extraction_service.is_scanned_pdf", return_value=False),
             patch("asyncio.to_thread") as mock_to_thread,
         ):
@@ -630,7 +630,7 @@ class TestProcessDocumentPhaseUpdates:
             mock_event_bus = MagicMock()
             mock_event_bus_class.return_value = mock_event_bus
 
-            mock_process_v5.return_value = (mock_processing_result, mock_event_bus)
+            mock_run_pipeline.return_value = (mock_processing_result, mock_event_bus)
 
             await document_processing_service.process_document(
                 job_id="test-job-123",
@@ -670,7 +670,7 @@ class TestProcessDocumentEventEmission:
             patch("docling.datamodel.document.DocumentStream"),
             patch("src.agents.events.EventBus") as mock_event_bus_class,
             patch("src.agents.events.register_event_bus"),
-            patch("src.agents.orchestrator.process_document_v5") as mock_process_v5,
+            patch("src.agents.orchestrator.run_agentic_pipeline") as mock_run_pipeline,
             patch("src.services.vision_extraction_service.is_scanned_pdf", return_value=False),
             patch("asyncio.to_thread") as mock_to_thread,
         ):
@@ -696,7 +696,7 @@ class TestProcessDocumentEventEmission:
             mock_event_bus = MagicMock()
             mock_event_bus_class.return_value = mock_event_bus
 
-            mock_process_v5.return_value = (mock_processing_result, mock_event_bus)
+            mock_run_pipeline.return_value = (mock_processing_result, mock_event_bus)
 
             await document_processing_service.process_document(
                 job_id="test-job-123",
@@ -734,13 +734,12 @@ class TestProcessDocumentScannedPdfHandling:
             patch("docling.datamodel.document.DocumentStream"),
             patch("src.agents.events.EventBus") as mock_event_bus_class,
             patch("src.agents.events.register_event_bus"),
-            patch("src.agents.orchestrator.process_document_v5") as mock_process_v5,
+            patch("src.agents.orchestrator.run_agentic_pipeline") as mock_run_pipeline,
             patch("src.services.vision_extraction_service.is_scanned_pdf", return_value=True),
             patch("src.services.vision_extraction_service.detect_visual_document_type"),
             patch("src.services.vision_extraction_service.extract_all_pages_vision") as mock_extract_vision,
             patch("asyncio.to_thread") as mock_to_thread,
         ):
-
             mock_input_format.PDF = "PDF"
 
             # Setup mocks
@@ -772,7 +771,7 @@ class TestProcessDocumentScannedPdfHandling:
             mock_vision_stats.total_duration_ms = 2000
             mock_extract_vision.return_value = ({1: "# Extracted content"}, mock_vision_stats)
 
-            mock_process_v5.return_value = (mock_processing_result, mock_event_bus)
+            mock_run_pipeline.return_value = (mock_processing_result, mock_event_bus)
 
             await document_processing_service.process_document(
                 job_id="test-job-123",

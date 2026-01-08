@@ -1,4 +1,4 @@
-"""V5 Pipeline Page Chain - Sequential Page Analysis with Context Chaining.
+"""Pipeline Page Chain - Sequential Page Analysis with Context Chaining.
 
 This module implements a page-by-page analysis approach where each page:
 1. Receives context from previous pages (heading structure, dictionary)
@@ -68,42 +68,26 @@ class PageChainState(BaseModel):
 
     # Document-level info (set on page 1)
     document_title: str = Field(default="", description="Document title from page 1")
-    document_type: DocumentType = Field(
-        default=DocumentType.OTHER, description="Document type"
-    )
+    document_type: DocumentType = Field(default=DocumentType.OTHER, description="Document type")
 
     # Heading chain - the last heading provides context for next page
-    last_heading: HeadingInChain | None = Field(
-        default=None, description="Last heading seen (for continuity)"
-    )
+    last_heading: HeadingInChain | None = Field(default=None, description="Last heading seen (for continuity)")
 
     # Accumulated outline
-    outline: list[OutlineEntry] = Field(
-        default_factory=list, description="Hierarchical outline built so far"
-    )
+    outline: list[OutlineEntry] = Field(default_factory=list, description="Hierarchical outline built so far")
 
     # Accumulated dictionary
-    dictionary: set[str] = Field(
-        default_factory=set, description="Domain terms accumulated"
-    )
+    dictionary: set[str] = Field(default_factory=set, description="Domain terms accumulated")
 
     # Heading fixes needed
-    heading_fixes: list[HeadingFix] = Field(
-        default_factory=list, description="All heading fixes needed"
-    )
+    heading_fixes: list[HeadingFix] = Field(default_factory=list, description="All heading fixes needed")
 
     # Page summaries
-    page_summaries: dict[int, str] = Field(
-        default_factory=dict, description="Summary for each page"
-    )
+    page_summaries: dict[int, str] = Field(default_factory=dict, description="Summary for each page")
 
     # Figure and table context by page
-    figures_by_page: dict[int, list[FigureContext]] = Field(
-        default_factory=dict, description="Figures found per page"
-    )
-    tables_by_page: dict[int, list[TableContext]] = Field(
-        default_factory=dict, description="Tables found per page"
-    )
+    figures_by_page: dict[int, list[FigureContext]] = Field(default_factory=dict, description="Figures found per page")
+    tables_by_page: dict[int, list[TableContext]] = Field(default_factory=dict, description="Tables found per page")
 
     # Paragraph issues by page (for ParagraphAgent)
     page_artifacts_by_page: dict[int, list[PageArtifactIssue]] = Field(
@@ -121,9 +105,7 @@ class PageChainState(BaseModel):
     typography_issues_by_page: dict[int, list[TypographyIssue]] = Field(
         default_factory=dict, description="Typography issues found per page"
     )
-    page_continuations: dict[int, bool] = Field(
-        default_factory=dict, description="Whether each page ends mid-sentence"
-    )
+    page_continuations: dict[int, bool] = Field(default_factory=dict, description="Whether each page ends mid-sentence")
 
     class Config:
         arbitrary_types_allowed = True
@@ -139,36 +121,24 @@ class HeadingAnalysis(BaseModel):
 
     text: str = Field(description="The heading text as it appears")
     current_level: int = Field(description="Current level in markdown (1-6)")
-    correct_level: int = Field(
-        description="What level it SHOULD be based on document structure"
-    )
-    reasoning: str = Field(
-        description="Brief reason if correction needed, empty if correct"
-    )
+    correct_level: int = Field(description="What level it SHOULD be based on document structure")
+    reasoning: str = Field(description="Brief reason if correction needed, empty if correct")
 
 
 class FigureAnalysis(BaseModel):
     """Analysis of a figure on the page."""
 
     figure_index: int = Field(description="1-based index of figure on this page")
-    appears_to_be: str = Field(
-        description="What the figure appears to show (diagram, chart, photo, etc.)"
-    )
-    surrounding_context: str = Field(
-        description="Brief context from surrounding text"
-    )
-    is_decorative: bool = Field(
-        default=False, description="True if purely decorative (no content value)"
-    )
+    appears_to_be: str = Field(description="What the figure appears to show (diagram, chart, photo, etc.)")
+    surrounding_context: str = Field(description="Brief context from surrounding text")
+    is_decorative: bool = Field(default=False, description="True if purely decorative (no content value)")
 
 
 class TableAnalysis(BaseModel):
     """Analysis of a table on the page."""
 
     table_index: int = Field(description="1-based index of table on this page")
-    appears_to_contain: str = Field(
-        description="What data the table appears to contain"
-    )
+    appears_to_contain: str = Field(description="What data the table appears to contain")
     row_count_estimate: int = Field(default=0, description="Estimated number of rows")
     has_header: bool = Field(default=True, description="Whether table has header row")
 
@@ -177,22 +147,16 @@ class PageAnalysisOutput(BaseModel):
     """LLM output for analyzing a single page."""
 
     # For page 1 only
-    document_title: str | None = Field(
-        default=None, description="Document title (page 1 only)"
-    )
+    document_title: str | None = Field(default=None, description="Document title (page 1 only)")
     document_type: str | None = Field(
         default=None, description="Document type: paper, report, syllabus, manual, slides, article, other"
     )
 
     # Headings on this page
-    headings: list[HeadingAnalysis] = Field(
-        default_factory=list, description="All headings found on this page"
-    )
+    headings: list[HeadingAnalysis] = Field(default_factory=list, description="All headings found on this page")
 
     # Page summary
-    summary: str = Field(
-        description="2-3 sentence summary of what this page covers"
-    )
+    summary: str = Field(description="2-3 sentence summary of what this page covers")
 
     # Domain terms found
     terms: list[str] = Field(
@@ -201,14 +165,10 @@ class PageAnalysisOutput(BaseModel):
     )
 
     # Figures
-    figures: list[FigureAnalysis] = Field(
-        default_factory=list, description="Figures found on this page"
-    )
+    figures: list[FigureAnalysis] = Field(default_factory=list, description="Figures found on this page")
 
     # Tables
-    tables: list[TableAnalysis] = Field(
-        default_factory=list, description="Tables found on this page"
-    )
+    tables: list[TableAnalysis] = Field(default_factory=list, description="Tables found on this page")
 
     # Paragraph issues (for ParagraphAgent)
     page_artifacts: list[PageArtifactIssue] = Field(
@@ -350,10 +310,7 @@ def _build_page_prompt(
     # Extract current headings from markdown for reference
     heading_pattern = re.compile(r"^(#{1,6})\s+(.+)$", re.MULTILINE)
     matches = heading_pattern.findall(markdown)
-    current_headings = [
-        f"  - '{m[1].strip()}' (currently H{len(m[0])})"
-        for m in matches
-    ]
+    current_headings = [f"  - '{m[1].strip()}' (currently H{len(m[0])})" for m in matches]
 
     # Count figures and tables
     figure_count = len(re.findall(r"!\[", markdown))
@@ -369,9 +326,7 @@ def _build_page_prompt(
     else:
         context_parts.append(f"This is page {page_num} of {total_pages}.")
         if state.last_heading:
-            context_parts.append(
-                f"Previous page ended with: '{state.last_heading.text}' (H{state.last_heading.level})"
-            )
+            context_parts.append(f"Previous page ended with: '{state.last_heading.text}' (H{state.last_heading.level})")
         if state.document_title:
             context_parts.append(f"Document: '{state.document_title}' ({state.document_type.value})")
 
@@ -591,8 +546,7 @@ def update_chain_state(
         else:
             # No match found - log warning and use LLM text as fallback
             logger.warning(
-                f"Page {page_num}: Could not match LLM heading '{llm_heading.text}' "
-                f"to actual markdown headings"
+                f"Page {page_num}: Could not match LLM heading '{llm_heading.text}' to actual markdown headings"
             )
             # Still add to outline but this may cause verification issues
             new_entry = OutlineEntry(
@@ -723,6 +677,7 @@ async def run_page_chain(
         # Emit event if we have an event bus
         if event_bus:
             from .events import PageSummarizedEvent
+
             event_bus.emit(
                 PageSummarizedEvent(
                     document_id=event_bus.document_id,
@@ -731,10 +686,7 @@ async def run_page_chain(
                     figures_found=len(output.figures),
                     tables_found=len(output.tables),
                     headings_found=len(output.headings),
-                    heading_fixes_needed=sum(
-                        1 for h in output.headings
-                        if h.current_level != h.correct_level
-                    ),
+                    heading_fixes_needed=sum(1 for h in output.headings if h.current_level != h.correct_level),
                 )
             )
 

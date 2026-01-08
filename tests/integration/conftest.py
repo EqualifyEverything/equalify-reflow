@@ -31,6 +31,7 @@ from testcontainers.redis import RedisContainer
 # TEST CONFIGURATION - Disable Background Workers
 # ============================================================================
 
+
 @pytest.fixture(scope="session", autouse=True)
 def disable_background_workers():
     """Disable background workers for all integration tests.
@@ -48,6 +49,7 @@ def disable_background_workers():
 # ============================================================================
 # TESTCONTAINER FIXTURES - Isolated Infrastructure
 # ============================================================================
+
 
 @pytest.fixture(scope="session")
 def redis_container():
@@ -74,6 +76,7 @@ def localstack_container():
 # ============================================================================
 # CLIENT FIXTURES - Fresh Clients Per Test
 # ============================================================================
+
 
 @pytest_asyncio.fixture
 async def real_redis_client(redis_container) -> AsyncGenerator[aioredis.Redis, None]:
@@ -144,6 +147,7 @@ def real_s3_client(localstack_container):
 # REAL SERVICE FIXTURES - Using Real Infrastructure
 # ============================================================================
 
+
 @pytest_asyncio.fixture
 async def storage_service(real_s3_client):
     """Create StorageService with REAL S3 (testcontainer LocalStack)."""
@@ -206,12 +210,13 @@ async def approval_service(
 # MOCKED AI/ML FIXTURES - Expensive Components (Keep Mocked)
 # ============================================================================
 
+
 @pytest.fixture(autouse=True)
 def mock_ai_agents(request):
     """Auto-mock all AI agents for integration tests (no API keys needed).
 
     This fixture mocks the agentic document processing pipeline:
-    - process_document_v5: Returns mock ProcessingResult with markdown and ledger
+    - run_agentic_pipeline: Returns mock ProcessingResult with markdown and ledger
     - All Bedrock/AI operations are bypassed
 
     NOTE: This fixture is EXCLUDED for test_bedrock_agent.py tests which
@@ -239,15 +244,15 @@ def mock_ai_agents(request):
 
     # Mock the main processing function (imported from agents.orchestrator)
     with patch(
-        'src.agents.orchestrator.process_document_v5',
+        "src.agents.orchestrator.run_agentic_pipeline",
         new_callable=AsyncMock,
-        return_value=(mock_result, MagicMock())  # Returns (result, event_bus)
+        return_value=(mock_result, MagicMock()),  # Returns (result, event_bus)
     ):
         # Also mock the streaming version
         with patch(
-            'src.agents.orchestrator.process_document_v5_streaming',
+            "src.agents.orchestrator.run_agentic_pipeline_streaming",
             new_callable=AsyncMock,
-            return_value=(mock_result, MagicMock())
+            return_value=(mock_result, MagicMock()),
         ):
             yield
 
@@ -255,7 +260,7 @@ def mock_ai_agents(request):
 @pytest.fixture
 def mock_pii_analyzer():
     """Mock PII analyzer to avoid external dependencies."""
-    with patch('src.services.pii_analyzer.get_pii_analyzer') as mock:
+    with patch("src.services.pii_analyzer.get_pii_analyzer") as mock:
         analyzer = MagicMock()
         # Default: no PII detected
         analyzer.analyze_text.return_value = []
@@ -270,7 +275,7 @@ def mock_pdf_extractor():
     Uses AsyncMock since extract_pdf_text is an async function.
     This prevents CI timeout issues from Docling downloading models at runtime.
     """
-    with patch('src.services.pii_service.extract_pdf_text', new_callable=AsyncMock) as mock:
+    with patch("src.services.pii_service.extract_pdf_text", new_callable=AsyncMock) as mock:
         # Default: return simple text
         mock.return_value = "Sample PDF text content for testing."
         yield mock
@@ -308,6 +313,7 @@ def mock_ai_enhancement():
 # WORKER FIXTURES - Using Real Services
 # ============================================================================
 
+
 @pytest_asyncio.fixture
 async def pii_worker(storage_service, queue_service, job_service, mock_pii_analyzer, mock_pdf_extractor):
     """Create PIIWorker instance with REAL services and MOCKED PII analyzer/PDF extractor.
@@ -321,19 +327,13 @@ async def pii_worker(storage_service, queue_service, job_service, mock_pii_analy
     # Note: mock_pdf_extractor is a context manager fixture that patches
     # src.services.pii_service.extract_pdf_text automatically
     pii_service = PIIDetectionService(
-        storage_service=storage_service,
-        queue_service=queue_service,
-        job_service=job_service
+        storage_service=storage_service, queue_service=queue_service, job_service=job_service
     )
     # Replace the auto-created analyzer with our mocked one
     pii_service.pii_analyzer = mock_pii_analyzer
 
     # Create worker and inject the pre-configured pii service
-    worker = PIIWorker(
-        storage_service=storage_service,
-        queue_service=queue_service,
-        job_service=job_service
-    )
+    worker = PIIWorker(storage_service=storage_service, queue_service=queue_service, job_service=job_service)
     # Replace the auto-created pii_service with our mocked one
     worker.pii_service = pii_service
 
@@ -348,6 +348,7 @@ async def pii_worker(storage_service, queue_service, job_service, mock_pii_analy
 # ============================================================================
 # TEST DATA FIXTURES
 # ============================================================================
+
 
 @pytest.fixture
 def sample_job_id():
@@ -390,18 +391,6 @@ def sample_pdf_content():
 def sample_pii_findings():
     """Generate sample PII findings."""
     return [
-        PIIFinding(
-            entity_type="PERSON",
-            text="John Doe",
-            score=0.95,
-            start=10,
-            end=18
-        ),
-        PIIFinding(
-            entity_type="EMAIL_ADDRESS",
-            text="john@example.com",
-            score=0.99,
-            start=100,
-            end=116
-        )
+        PIIFinding(entity_type="PERSON", text="John Doe", score=0.95, start=10, end=18),
+        PIIFinding(entity_type="EMAIL_ADDRESS", text="john@example.com", score=0.99, start=100, end=116),
     ]

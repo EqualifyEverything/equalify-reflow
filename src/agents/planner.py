@@ -1,4 +1,4 @@
-"""V5 Document Planner - 3-Stage Document Analysis.
+"""Document Planner - 3-Stage Document Analysis.
 
 The Planner establishes the holistic view of the document before any
 corrections are made. This is the single source of truth that workers follow.
@@ -682,10 +682,7 @@ async def stage3_page_summaries(
     batches = [pages[i : i + batch_size] for i in range(0, len(pages), batch_size)]
 
     # Run batches in parallel
-    tasks = [
-        _summarize_batch(batch, page_markdowns, page_images, structure)
-        for batch in batches
-    ]
+    tasks = [_summarize_batch(batch, page_markdowns, page_images, structure) for batch in batches]
 
     results = await asyncio.gather(*tasks)
 
@@ -799,11 +796,7 @@ def stage4_generate_jobs(
                 Task(
                     task_type=TaskType.HEADING_FIX,
                     target=fix.current_text,
-                    context=(
-                        f"FIND: {before_text}\n"
-                        f"REPLACE WITH: {after_text}\n"
-                        f"Reason: {fix.reason}"
-                    ),
+                    context=(f"FIND: {before_text}\nREPLACE WITH: {after_text}\nReason: {fix.reason}"),
                     priority=1,
                 )
             )
@@ -1060,9 +1053,7 @@ async def plan_document(
 
     # Stage 2: Page Chain (sequential LLM analysis)
     # This replaces the old Stage 2 + Stage 3 with a unified approach
-    structure, page_plans, input_tokens, output_tokens, llm_calls = await stage2_page_chain(
-        page_markdowns, event_bus
-    )
+    structure, page_plans, input_tokens, output_tokens, llm_calls = await stage2_page_chain(page_markdowns, event_bus)
 
     # Stage 3: Job Generation (code only - fast)
     jobs = stage4_generate_jobs(page_markdowns, page_plans, structure, event_bus)
@@ -1098,9 +1089,6 @@ async def plan_document(
             )
         )
 
-    logger.info(
-        f"Planning complete: {len(jobs)} jobs, {len(full_dictionary)} terms, "
-        f"{duration_ms}ms"
-    )
+    logger.info(f"Planning complete: {len(jobs)} jobs, {len(full_dictionary)} terms, {duration_ms}ms")
 
     return plan

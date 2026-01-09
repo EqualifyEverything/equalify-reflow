@@ -746,6 +746,47 @@ class RecoveryReport(BaseModel):
 
 
 # =============================================================================
+# Image Reference for Debug Bundles
+# =============================================================================
+
+
+class ImageReference(BaseModel):
+    """Reference to an image stored separately in the debug bundle.
+
+    Used to replace inline binary/base64 image data with file path references,
+    significantly reducing artifact size (from ~2-3MB to <100KB per artifact).
+
+    Attributes:
+        ref_type: Type of image ("page", "element", "cropped")
+        identifier: Unique identifier (page number or element target)
+        path: Relative path in bundle (e.g., "images/page_001.png")
+        media_type: MIME type of the image (default: "image/png")
+        size_bytes: Original size of the image data in bytes
+    """
+
+    ref_type: str = Field(
+        ...,
+        description="Type of image: 'page' for full page, 'element' for cropped element",
+    )
+    identifier: str = Field(
+        ...,
+        description="Unique identifier (e.g., 'page_1', 'fig:1', 'table:2')",
+    )
+    path: str = Field(
+        ...,
+        description="Relative path in debug bundle (e.g., 'images/page_001.png')",
+    )
+    media_type: str = Field(
+        default="image/png",
+        description="MIME type of the image",
+    )
+    size_bytes: int = Field(
+        default=0,
+        description="Original size of the image data in bytes",
+    )
+
+
+# =============================================================================
 # LLM Call Tracking
 # =============================================================================
 
@@ -786,6 +827,12 @@ class LLMCallRecord(BaseModel):
     model_id: str | None = Field(
         default=None,
         description="Model identifier used for this call",
+    )
+
+    # Image references for debug bundles (replaces inline binary data)
+    image_references: list[ImageReference] = Field(
+        default_factory=list,
+        description="References to images stored separately in debug bundle",
     )
 
 

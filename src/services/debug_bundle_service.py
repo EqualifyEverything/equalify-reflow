@@ -23,9 +23,11 @@ from typing import TYPE_CHECKING, Any
 
 from botocore.exceptions import ClientError
 
+from src.agents.debug_capture import ExtractedImage
 from src.shared.models.debug_bundle import (
     DebugArtifact,
     DebugBundleManifest,
+    DebugImageReference,
     DebugPhaseSummary,
 )
 
@@ -102,6 +104,36 @@ class DebugBundleService:
             logger.error(f"Failed to save debug artifact {key}: {e}")
             raise
 
+    async def save_image(
+        self,
+        job_id: str,
+        image: ExtractedImage,
+    ) -> str:
+        """Save a debug image to S3.
+
+        Args:
+            job_id: Job identifier
+            image: ExtractedImage with binary data
+
+        Returns:
+            S3 key where image was saved
+        """
+        key = f"{DEBUG_PREFIX}/{job_id}/images/{image.identifier}.png"
+
+        try:
+            self.storage.s3_client.put_object(
+                Bucket=self.storage.temp_bucket,
+                Key=key,
+                Body=image.data,
+                ContentType=image.media_type,
+            )
+            logger.debug(f"Saved debug image: {key} ({len(image.data):,} bytes)")
+            return key
+        except ClientError as e:
+            logger.warning(f"Failed to save debug image {key}: {e}")
+            # Don't raise - image storage failures are non-fatal
+            return ""
+
     async def save_artifact_from_agent_run(
         self,
         job_id: str,
@@ -115,6 +147,8 @@ class DebugBundleService:
         cost_cents: float,
         model_id: str,
         duration_ms: float | None = None,
+        extracted_images: list[ExtractedImage] | None = None,
+        image_references: list[DebugImageReference] | None = None,
     ) -> str:
         """Save debug artifact from an agent run.
 
@@ -132,10 +166,17 @@ class DebugBundleService:
             cost_cents: Estimated cost in cents
             model_id: Model identifier used
             duration_ms: Execution duration in milliseconds
+            extracted_images: List of images extracted from prompt/response
+            image_references: List of image references to include in artifact
 
         Returns:
             S3 key where artifact was saved
         """
+        # Save extracted images separately
+        if extracted_images:
+            for image in extracted_images:
+                await self.save_image(job_id, image)
+
         # Serialize input/output to JSON strings
         if isinstance(input_data, str):
             input_summary = input_data
@@ -170,6 +211,7 @@ class DebugBundleService:
                 "model_id": model_id,
                 "duration_ms": duration_ms,
             },
+            image_references=image_references or [],
         )
 
         return await self.save_artifact(job_id, phase, agent_name, artifact)
@@ -228,22 +270,25 @@ class DebugBundleService:
             # 1. Collect debug artifacts from temp bucket
             artifacts_count += await self._add_debug_artifacts(zf, job_id, phases)
 
-            # 2. Add original PDF if requested
+            # 2. Add extracted debug images (from artifact image_references)
+            await self._add_debug_images(zf, job_id)
+
+            # 3. Add original PDF if requested
             if include_pdf:
                 await self._add_original_pdf(zf, job_id)
 
-            # 3. Add page images if requested
+            # 4. Add page images if requested
             if include_page_images:
                 await self._add_page_images(zf, job_id)
 
-            # 4. Add output files from results bucket
+            # 5. Add output files from results bucket
             await self._add_output_files(zf, job_id)
 
-            # 5. Generate and add manifest
+            # 6. Generate and add manifest
             manifest = await self._generate_manifest(job_id, phases, artifacts_count)
             zf.writestr("manifest.json", manifest.model_dump_json(indent=2))
 
-            # 6. Generate and add README
+            # 7. Generate and add README
             readme = self._generate_readme(job_id, manifest)
             zf.writestr("README.md", readme)
 
@@ -315,6 +360,56 @@ class DebugBundleService:
             logger.warning(f"Failed to list debug artifacts for {job_id}: {e}")
 
         return artifacts_count
+
+    async def _add_debug_images(self, zf: zipfile.ZipFile, job_id: str) -> int:
+        """Add extracted debug images from S3 to zip file.
+
+        Images are stored in debug/{job_id}/images/ and are included
+        in the bundle at images/ for reference by artifacts.
+
+        Args:
+            zf: ZipFile to add images to
+            job_id: Job identifier
+
+        Returns:
+            Count of images added
+        """
+        images_count = 0
+        prefix = f"{DEBUG_PREFIX}/{job_id}/images/"
+
+        try:
+            response = self.storage.s3_client.list_objects_v2(
+                Bucket=self.storage.temp_bucket,
+                Prefix=prefix,
+            )
+
+            for obj in response.get("Contents", []):
+                key = obj["Key"]
+                filename = key.replace(prefix, "")
+
+                try:
+                    img_response = self.storage.s3_client.get_object(
+                        Bucket=self.storage.temp_bucket,
+                        Key=key,
+                    )
+                    content = img_response["Body"].read()
+
+                    # Add to zip under images/ directory
+                    zip_path = f"images/{filename}"
+                    zf.writestr(zip_path, content)
+                    images_count += 1
+                    logger.debug(f"Added debug image: {zip_path} ({len(content):,} bytes)")
+
+                except ClientError as e:
+                    logger.warning(f"Failed to fetch debug image {key}: {e}")
+
+        except ClientError as e:
+            logger.debug(f"No debug images found for job {job_id}: {e}")
+
+        if images_count > 0:
+            logger.info(f"Added {images_count} debug images to bundle")
+
+        return images_count
 
     async def _add_original_pdf(self, zf: zipfile.ZipFile, job_id: str) -> None:
         """Add original PDF from temp bucket to zip file."""

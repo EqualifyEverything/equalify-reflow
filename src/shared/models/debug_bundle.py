@@ -15,9 +15,48 @@ Usage:
 from __future__ import annotations
 
 from datetime import datetime
-from typing import Any
+from typing import TYPE_CHECKING, Any
 
 from pydantic import BaseModel, Field
+
+if TYPE_CHECKING:
+    pass
+
+
+class DebugImageReference(BaseModel):
+    """Reference to an image stored separately in the debug bundle.
+
+    This is a standalone model to avoid circular imports with agents.models.
+    It mirrors ImageReference but is used specifically for serialization.
+
+    Attributes:
+        ref_type: Type of image ("page", "element", "cropped")
+        identifier: Unique identifier (page number or element target)
+        path: Relative path in bundle (e.g., "images/page_001.png")
+        media_type: MIME type of the image (default: "image/png")
+        size_bytes: Original size of the image data in bytes
+    """
+
+    ref_type: str = Field(
+        ...,
+        description="Type of image: 'page' for full page, 'element' for cropped element",
+    )
+    identifier: str = Field(
+        ...,
+        description="Unique identifier (e.g., 'page_1', 'fig:1', 'table:2')",
+    )
+    path: str = Field(
+        ...,
+        description="Relative path in debug bundle (e.g., 'images/page_001.png')",
+    )
+    media_type: str = Field(
+        default="image/png",
+        description="MIME type of the image",
+    )
+    size_bytes: int = Field(
+        default=0,
+        description="Original size of the image data in bytes",
+    )
 
 
 class DebugArtifact(BaseModel):
@@ -34,6 +73,7 @@ class DebugArtifact(BaseModel):
         response_raw: Raw LLM response text
         output_parsed: Parsed/validated output as JSON string
         metadata: Execution metadata (tokens, cost, duration, model, etc.)
+        image_references: References to images stored separately in bundle
     """
 
     agent_name: str = Field(..., description="Agent identifier")
@@ -45,6 +85,10 @@ class DebugArtifact(BaseModel):
     output_parsed: str = Field(default="", description="Parsed output as JSON")
     metadata: dict[str, Any] = Field(
         default_factory=dict, description="Execution metadata (tokens, cost, model, duration)"
+    )
+    image_references: list[DebugImageReference] = Field(
+        default_factory=list,
+        description="References to images stored separately in debug bundle",
     )
 
 
@@ -108,6 +152,7 @@ class DebugBundleManifest(BaseModel):
 
 __all__ = [
     "DebugArtifact",
+    "DebugImageReference",
     "DebugPhaseSummary",
     "DebugBundleManifest",
 ]

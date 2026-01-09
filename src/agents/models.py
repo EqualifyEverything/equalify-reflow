@@ -766,6 +766,20 @@ class LLMCallRecord(BaseModel):
         description="Duration of the call in milliseconds",
     )
 
+    # Debug capture fields (only populated when debug_bundle_requested=true)
+    prompt_text: str | None = Field(
+        default=None,
+        description="Full prompt text sent to LLM (only captured for debug bundles)",
+    )
+    response_raw: str | None = Field(
+        default=None,
+        description="Raw LLM response text (only captured for debug bundles)",
+    )
+    model_id: str | None = Field(
+        default=None,
+        description="Model identifier used for this call",
+    )
+
 
 # =============================================================================
 # Processing Result

@@ -94,6 +94,59 @@ s3_retry_attempts_total = Counter(
     ["operation", "attempt"]
 )
 
+# Prometheus Metrics for LLM Operations
+llm_tokens_total = Counter(
+    "llm_tokens_total",
+    "Total tokens consumed by LLM calls",
+    ["agent", "direction"],  # agent: planner/worker/paragraph, direction: input/output
+)
+
+llm_request_duration_seconds = Histogram(
+    "llm_request_duration_seconds",
+    "LLM API request duration in seconds",
+    ["agent"],
+    buckets=[0.5, 1.0, 2.0, 5.0, 10.0, 30.0, 60.0, 120.0, 300.0],  # 500ms to 5min
+)
+
+llm_cost_cents_total = Counter(
+    "llm_cost_cents_total",
+    "Total estimated LLM cost in cents",
+    ["agent"],
+)
+
+llm_requests_total = Counter(
+    "llm_requests_total",
+    "Total LLM API requests",
+    ["agent", "status"],  # status: success/error
+)
+
+
+def record_llm_call(
+    agent: str,
+    input_tokens: int,
+    output_tokens: int,
+    cost_cents: float,
+    duration_ms: int,
+    success: bool = True,
+) -> None:
+    """Record Prometheus metrics for an LLM API call.
+
+    Args:
+        agent: Agent name (planner, worker, paragraph, recovery, verification)
+        input_tokens: Number of input tokens
+        output_tokens: Number of output tokens
+        cost_cents: Estimated cost in cents
+        duration_ms: Call duration in milliseconds
+        success: Whether the call succeeded
+    """
+    llm_tokens_total.labels(agent=agent, direction="input").inc(input_tokens)
+    llm_tokens_total.labels(agent=agent, direction="output").inc(output_tokens)
+    llm_cost_cents_total.labels(agent=agent).inc(cost_cents)
+    llm_request_duration_seconds.labels(agent=agent).observe(duration_ms / 1000)
+    llm_requests_total.labels(
+        agent=agent, status="success" if success else "error"
+    ).inc()
+
 
 class MetricsService:
     """Service for metrics tracking and cleanup."""

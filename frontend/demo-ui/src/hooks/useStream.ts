@@ -383,7 +383,7 @@ export function useStream({
     [onEvent, fetchMarkdown]
   );
 
-  const connect = useCallback(() => {
+  const connect = useCallback(async () => {
     if (!jobId || !apiKey) {
       setStatus('error');
       setStatusMessage('Missing job ID or API key');
@@ -396,14 +396,39 @@ export function useStream({
     }
 
     setStatus('connecting');
+    setStatusMessage('Getting stream token...');
+
+    // First, get a stream token (single-use, short-lived)
+    // This avoids exposing API key in URL/logs
+    let streamToken: string;
+    try {
+      const tokenResponse = await fetch(`${apiUrl}/api/v1/documents/${jobId}/stream/token`, {
+        method: 'POST',
+        headers: {
+          'X-API-Key': apiKey,
+        },
+      });
+
+      if (!tokenResponse.ok) {
+        const error = await tokenResponse.json().catch(() => ({ detail: 'Unknown error' }));
+        setStatus('error');
+        setStatusMessage(`Failed to get stream token: ${error.detail || tokenResponse.statusText}`);
+        return;
+      }
+
+      const tokenData = await tokenResponse.json();
+      streamToken = tokenData.token;
+    } catch (error) {
+      setStatus('error');
+      setStatusMessage(`Failed to get stream token: ${error instanceof Error ? error.message : 'Network error'}`);
+      return;
+    }
+
     setStatusMessage('Connecting...');
 
-    const url = `${apiUrl}/api/v1/documents/${jobId}/stream`;
-
-    // Create EventSource with credentials
-    // Note: EventSource doesn't support custom headers natively,
-    // so we pass the API key as a query param (backend should support this)
-    const eventSource = new EventSource(`${url}?api_key=${encodeURIComponent(apiKey)}`);
+    // Connect with single-use stream token (not the API key)
+    const url = `${apiUrl}/api/v1/documents/${jobId}/stream?token=${encodeURIComponent(streamToken)}`;
+    const eventSource = new EventSource(url);
     eventSourceRef.current = eventSource;
 
     eventSource.onopen = () => {

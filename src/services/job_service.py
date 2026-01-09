@@ -97,6 +97,7 @@ class JobService:
         pii_skip_reason: str | None = None,
         debug_bundle_requested: bool = False,
         review_mode: str | None = None,
+        max_rounds: int = 1,
     ) -> None:
         """
         Create a new job in Redis with automatic TTL.
@@ -113,6 +114,7 @@ class JobService:
             pii_skip_reason: Reason PII scan was skipped
             debug_bundle_requested: Whether to generate debug bundle artifacts
             review_mode: Review mode ('auto' | 'human') for agentic pipeline
+            max_rounds: Maximum number of iterative refinement rounds (1-5, default: 1)
 
         Example:
             >>> await job_service.create_job("job-123", "temp/file.pdf", original_filename="doc.pdf")
@@ -122,9 +124,10 @@ class JobService:
             ...     "job-456", "temp/file.pdf",
             ...     status="processing",
             ...     pii_skipped=True,
-            ...     pii_skip_reason="Trusted source"
+            ...     pii_skip_reason="Trusted source",
+            ...     max_rounds=3
             ... )
-            # Creates job with PII skip audit trail
+            # Creates job with PII skip audit trail and 3 refinement rounds
         """
         created_at = datetime.now(UTC).isoformat()
 
@@ -134,6 +137,7 @@ class JobService:
             "status": status,
             "created_at": created_at,
             "updated_at": created_at,
+            "max_rounds": str(max_rounds),
         }
         if original_filename:
             mapping["original_filename"] = original_filename

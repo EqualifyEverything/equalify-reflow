@@ -232,6 +232,7 @@ class PIIDetectionService:
 
         filename = job_data.get("original_filename", "document.pdf")
         review_mode = job_data.get("review_mode", "auto")
+        max_rounds = int(job_data.get("max_rounds", "1"))
 
         # Import here to avoid circular imports
         from .document_processing_service import DocumentProcessingService
@@ -259,10 +260,11 @@ class PIIDetectionService:
                 s3_key=job.s3_key,
                 filename=filename,
                 review_mode=review_mode,
+                max_rounds=max_rounds,
             )
         )
 
-        logger.info(f"Job {job.job_id} processing started in background")
+        logger.info(f"Job {job.job_id} processing started in background (max_rounds={max_rounds})")
 
     async def _queue_for_processing_with_retry(self, job: PIIQueuePayload) -> None:
         """Queue job for processing with retry logic for transient failures.

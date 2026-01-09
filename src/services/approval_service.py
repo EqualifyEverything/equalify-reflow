@@ -250,6 +250,7 @@ class ApprovalService:
                 # Trigger document processing directly instead of queueing
                 filename = current_job.get("original_filename", "document.pdf")
                 review_mode = current_job.get("review_mode", "auto")
+                max_rounds = int(current_job.get("max_rounds", "1"))
 
                 # Import here to avoid circular imports
                 from .document_processing_service import DocumentProcessingService
@@ -277,9 +278,10 @@ class ApprovalService:
                         s3_key=s3_key,
                         filename=filename,
                         review_mode=review_mode,
+                        max_rounds=max_rounds,
                     )
                 )
-                logger.info(f"Job {job_id} approved - processing started")
+                logger.info(f"Job {job_id} approved - processing started (max_rounds={max_rounds})")
 
             finally:
                 # Release lock after processing (or on error)
@@ -421,6 +423,7 @@ class ApprovalService:
                 # Trigger document processing directly instead of queueing
                 filename = current_job.get("original_filename", "document.pdf")
                 review_mode = current_job.get("review_mode", "auto")
+                max_rounds = int(current_job.get("max_rounds", "1"))
 
                 # Import here to avoid circular imports
                 from .document_processing_service import DocumentProcessingService
@@ -448,9 +451,10 @@ class ApprovalService:
                         s3_key=s3_key,
                         filename=filename,
                         review_mode=review_mode,
+                        max_rounds=max_rounds,
                     )
                 )
-                logger.info(f"Job {job_id} background approval complete - processing started")
+                logger.info(f"Job {job_id} background approval complete - processing started (max_rounds={max_rounds})")
 
             finally:
                 await self.redis.delete(lock_key)

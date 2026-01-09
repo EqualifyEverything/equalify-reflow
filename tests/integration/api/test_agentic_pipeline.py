@@ -764,8 +764,7 @@ async def test_status_endpoint_returns_agentic_completed_response(
 
     Verifies:
     1. Response includes markdown_url, confidence_score, llm_cost
-    2. For human mode: includes ledger_url
-    3. For auto mode: ledger_url is null
+    2. Both human and auto modes include ledger_url (always available for audit)
     """
     from src.services.job_service import JobService
 
@@ -852,8 +851,10 @@ async def test_status_endpoint_returns_agentic_completed_response(
             assert data_auto["status"] == "completed"
             assert data_auto["review_mode"] == "auto"
 
-            # Auto mode should NOT have ledger_url
-            assert data_auto.get("ledger_url") is None
+            # Auto mode also has ledger_url (always available for audit trail)
+            assert "ledger_url" in data_auto
+            assert data_auto["ledger_url"] is not None
+            assert f"/api/v1/documents/{job_id_auto}/ledger" in data_auto["ledger_url"]
 
     finally:
         app.dependency_overrides.clear()

@@ -23,6 +23,7 @@ from ..dependencies import (
 )
 from ..services import JobService, QueueService, S3URLService, StorageService
 from ..services.document_processing_service import DocumentProcessingService
+from ..services.metrics_service import jobs_submitted_total
 from ..services.remediation_storage_service import RemediationStorageService
 from .schemas import (
     AgenticCompletedResponse,
@@ -172,6 +173,9 @@ async def submit_document(
             review_mode=review_mode,
         )
 
+        # Record job submission metric
+        jobs_submitted_total.labels(source="api").inc()
+
         # Use DocumentProcessingService for agentic pipeline
         processing_service = DocumentProcessingService(
             redis_client=redis_client,
@@ -206,6 +210,9 @@ async def submit_document(
             review_mode=review_mode,
         )
         await queue.queue_pii_job(job_id, s3_key)
+
+        # Record job submission metric
+        jobs_submitted_total.labels(source="api").inc()
 
         return JobSubmissionResponse(
             job_id=job_id,

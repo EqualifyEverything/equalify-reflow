@@ -25,7 +25,9 @@ from pydantic_ai import Agent
 from pydantic_ai.models.bedrock import BedrockConverseModel
 
 from src.agents.model_tiers import MODEL_TIER_MAP, ModelTier
+from src.services.metrics_service import record_llm_call
 
+from .debug_capture import extract_raw_response, serialize_text_prompt
 from .models import (
     CitationIssue,
     DocumentType,
@@ -381,6 +383,7 @@ async def analyze_page(
     markdown: str,
     state: PageChainState,
     total_pages: int,
+    capture_debug: bool = False,
 ) -> tuple[PageAnalysisOutput, int, int, LLMCallRecord]:
     """Analyze a single page with context from previous pages.
 
@@ -389,6 +392,7 @@ async def analyze_page(
         markdown: Markdown content for this page
         state: Current chain state from previous pages
         total_pages: Total pages in document
+        capture_debug: If True, capture full prompt/response for debug bundle
 
     Returns:
         Tuple of (PageAnalysisOutput, input_tokens, output_tokens, llm_call_record)
@@ -407,6 +411,16 @@ async def analyze_page(
 
     # Create LLM call record
     cost_cents = ((input_tokens * 0.00025) + (output_tokens * 0.00125)) / 10
+
+    # Capture debug data if requested
+    prompt_text = None
+    response_raw = None
+    model_id = None
+    if capture_debug:
+        prompt_text = serialize_text_prompt(prompt)
+        response_raw = extract_raw_response(result)
+        model_id = MODEL_TIER_MAP.get(ModelTier.EFFICIENT, "unknown")
+
     llm_call = LLMCallRecord(
         agent="planner",
         purpose=f"page_{page_num}_analysis",
@@ -415,6 +429,18 @@ async def analyze_page(
         output_tokens=output_tokens,
         cost_cents=cost_cents,
         timestamp=datetime.now(UTC),
+        duration_ms=duration_ms,
+        prompt_text=prompt_text,
+        response_raw=response_raw,
+        model_id=model_id,
+    )
+
+    # Emit Prometheus metrics for this LLM call
+    record_llm_call(
+        agent="planner",
+        input_tokens=input_tokens,
+        output_tokens=output_tokens,
+        cost_cents=cost_cents,
         duration_ms=duration_ms,
     )
 
@@ -633,6 +659,7 @@ def update_chain_state(
 async def run_page_chain(
     page_markdowns: dict[int, str],
     event_bus=None,
+    capture_debug: bool = False,
 ) -> tuple[PageChainState, int, int, list[LLMCallRecord]]:
     """Run the page chain to analyze all pages sequentially.
 
@@ -642,6 +669,7 @@ async def run_page_chain(
     Args:
         page_markdowns: Dict mapping page number to markdown content
         event_bus: Optional event bus for streaming events
+        capture_debug: If True, capture full prompt/response for debug bundle
 
     Returns:
         Tuple of (final_state, total_input_tokens, total_output_tokens, llm_calls)
@@ -665,6 +693,7 @@ async def run_page_chain(
             markdown=markdown,
             state=state,
             total_pages=total_pages,
+            capture_debug=capture_debug,
         )
 
         total_input_tokens += input_tokens

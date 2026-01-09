@@ -42,7 +42,9 @@ from pydantic_ai.messages import BinaryContent
 from pydantic_ai.models.bedrock import BedrockConverseModel
 
 from src.agents.model_tiers import MODEL_TIER_MAP, ModelTier
+from src.services.metrics_service import record_llm_call
 
+from .debug_capture import extract_raw_response, serialize_prompt
 from .events import (
     AgentThinkingEvent,
     EditCommittedEvent,
@@ -1220,6 +1222,7 @@ async def execute_job(
     page_width: float,
     ledger: Ledger,
     event_bus: EventBus | None = None,
+    capture_debug: bool = False,
 ) -> JobResult:
     """Execute a single job.
 
@@ -1230,6 +1233,7 @@ async def execute_job(
         page_width: Page width for bbox scaling
         ledger: Ledger to append entries to
         event_bus: Optional event bus for streaming
+        capture_debug: If True, capture full prompt/response for debug bundle
 
     Returns:
         JobResult with updated markdown and ledger entries
@@ -1343,6 +1347,15 @@ async def execute_job(
         output_tokens = usage.output_tokens or 0
         cost_cents = ((input_tokens * 0.00025) + (output_tokens * 0.00125)) / 10
 
+        # Capture debug data if requested
+        prompt_text = None
+        response_raw = None
+        model_id = None
+        if capture_debug:
+            prompt_text = serialize_prompt(messages)
+            response_raw = extract_raw_response(result)
+            model_id = MODEL_TIER_MAP.get(ModelTier.EFFICIENT, "unknown")
+
         llm_call = LLMCallRecord(
             agent="worker",
             purpose=f"page_{job.page}_{job.tasks[0].task_type.value if job.tasks else 'unknown'}",
@@ -1351,6 +1364,18 @@ async def execute_job(
             output_tokens=output_tokens,
             cost_cents=cost_cents,
             timestamp=datetime.now(UTC),
+            duration_ms=duration_ms,
+            prompt_text=prompt_text,
+            response_raw=response_raw,
+            model_id=model_id,
+        )
+
+        # Emit Prometheus metrics for this LLM call
+        record_llm_call(
+            agent="worker",
+            input_tokens=input_tokens,
+            output_tokens=output_tokens,
+            cost_cents=cost_cents,
             duration_ms=duration_ms,
         )
 
@@ -1424,6 +1449,7 @@ async def execute_jobs_parallel(
     max_concurrent: int = 3,
     event_bus: EventBus | None = None,
     page_markdowns: dict[int, str] | None = None,
+    capture_debug: bool = False,
 ) -> list[JobResult]:
     """Execute multiple jobs in parallel with agent routing.
 
@@ -1440,6 +1466,7 @@ async def execute_jobs_parallel(
         max_concurrent: Max concurrent jobs
         event_bus: Optional event bus
         page_markdowns: Current markdown for each page (needed for PARAGRAPH jobs)
+        capture_debug: If True, capture full prompt/response for debug bundle
 
     Returns:
         List of job results
@@ -1489,6 +1516,7 @@ async def execute_jobs_parallel(
                     ledger=ledger,
                     event_bus=event_bus,
                     dictionary=job.context.dictionary if job.context else None,
+                    capture_debug=capture_debug,
                 )
 
             # Route other jobs (STRUCTURE, CONTENT) to Worker
@@ -1499,6 +1527,7 @@ async def execute_jobs_parallel(
                 page_width=page_width,
                 ledger=ledger,
                 event_bus=event_bus,
+                capture_debug=capture_debug,
             )
 
     # Sort jobs by priority

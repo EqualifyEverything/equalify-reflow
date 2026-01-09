@@ -27,6 +27,7 @@ from typing import TYPE_CHECKING, Any, Literal
 from redis.asyncio import Redis
 
 from ..config import settings
+from .metrics_service import job_duration_seconds, jobs_completed_total
 
 if TYPE_CHECKING:
     from ..agents.models import ProcessingResult
@@ -143,6 +144,9 @@ class DocumentProcessingService:
         )
 
         try:
+            # Track processing duration for metrics
+            processing_start_time = time.time()
+
             # Download PDF from S3
             logger.info(f"Downloading PDF from S3: {s3_key}")
             file_content = await self.storage.download_temp_file(s3_key)
@@ -348,8 +352,13 @@ class DocumentProcessingService:
                 total_pages=len(page_markdowns),
             )
 
+            # Check if debug bundle was requested
+            job_key = f"{self.status_prefix}{job_id}"
+            debug_bundle_requested = await self.redis.hget(job_key, "debug_bundle_requested")
+            capture_debug = debug_bundle_requested == b"true" or debug_bundle_requested == "true"
+
             # Run agentic pipeline
-            logger.info(f"Starting agentic pipeline for {filename}")
+            logger.info(f"Starting agentic pipeline for {filename} (debug_bundle={capture_debug})")
             processing_result, event_bus = await run_agentic_pipeline(
                 filename=filename,
                 page_markdowns=page_markdowns,
@@ -358,7 +367,12 @@ class DocumentProcessingService:
                 page_width=page_width,
                 document_id=job_id,
                 event_bus=event_bus,
+                capture_debug=capture_debug,
             )
+
+            # Save debug artifacts if requested
+            if capture_debug:
+                await self._save_debug_artifacts(job_id, processing_result)
 
             # Store ledger to S3
             ledger_s3_key = await self._store_ledger(job_id, processing_result)
@@ -389,6 +403,11 @@ class DocumentProcessingService:
                 llm_calls=[call.model_dump(mode="json") for call in processing_result.llm_calls],
             )
 
+            # Record job completion metrics
+            processing_duration = time.time() - processing_start_time
+            jobs_completed_total.labels(status="success").inc()
+            job_duration_seconds.labels(stage="processing").observe(processing_duration)
+
             logger.info(f"Job {job_id} complete: {processing_result.total_edits} edits")
             return processing_result
 
@@ -399,6 +418,10 @@ class DocumentProcessingService:
                 status="failed",
                 error=str(e),
             )
+
+            # Record job failure metric
+            jobs_completed_total.labels(status="failed").inc()
+
             raise
 
     async def _update_job_state(self, job_id: str, **fields: Any) -> None:
@@ -531,3 +554,67 @@ class DocumentProcessingService:
         except Exception as e:
             logger.warning(f"Failed to retrieve ledger for job {job_id}: {e}")
             return None
+
+    async def _save_debug_artifacts(self, job_id: str, result: ProcessingResult) -> None:
+        """Save LLM call artifacts to S3 for debug bundle generation.
+
+        Iterates through all LLM calls that have debug data captured
+        and saves them as artifacts using the DebugBundleService.
+
+        Args:
+            job_id: Job identifier
+            result: Processing result containing llm_calls with debug data
+        """
+        from ..services.debug_bundle_service import get_debug_bundle_service
+
+        debug_service = get_debug_bundle_service(self.storage)
+        saved_count = 0
+
+        for llm_call in result.llm_calls:
+            # Only save if debug data was captured
+            if llm_call.prompt_text:
+                phase = self._map_purpose_to_phase(llm_call.purpose)
+                agent_name = f"{llm_call.agent}_{llm_call.purpose}"
+
+                try:
+                    await debug_service.save_artifact_from_agent_run(
+                        job_id=job_id,
+                        phase=phase,
+                        agent_name=agent_name,
+                        input_data={"purpose": llm_call.purpose, "page": llm_call.page},
+                        prompt=llm_call.prompt_text,
+                        response_raw=llm_call.response_raw or "",
+                        output_parsed="",
+                        tokens={
+                            "input": llm_call.input_tokens,
+                            "output": llm_call.output_tokens,
+                            "total": llm_call.input_tokens + llm_call.output_tokens,
+                        },
+                        cost_cents=llm_call.cost_cents,
+                        model_id=llm_call.model_id or "unknown",
+                        duration_ms=llm_call.duration_ms,
+                    )
+                    saved_count += 1
+                except Exception as e:
+                    logger.warning(f"Failed to save debug artifact for {agent_name}: {e}")
+
+        logger.info(f"Saved {saved_count} debug artifacts for job {job_id}")
+
+    def _map_purpose_to_phase(self, purpose: str) -> str:
+        """Map LLMCallRecord purpose to debug bundle phase name.
+
+        Args:
+            purpose: Purpose string from LLMCallRecord (e.g., "page_1_analysis")
+
+        Returns:
+            Phase name for organizing in debug bundle
+        """
+        if "analysis" in purpose:
+            return "phase_1_planning"
+        elif "recovery" in purpose:
+            return "phase_4_recovery"
+        elif "verification" in purpose:
+            return "phase_3_verification"
+        else:
+            # alt_text, table_transcription, heading_fix, paragraph_fixes, etc.
+            return "phase_2_execution"

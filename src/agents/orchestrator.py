@@ -700,6 +700,7 @@ async def run_agentic_pipeline(
     document_id: str | None = None,
     max_concurrent_jobs: int = 3,
     event_bus: EventBus | None = None,
+    capture_debug: bool = False,
 ) -> tuple[ProcessingResult, EventBus]:
     """Run the complete agentic pipeline.
 
@@ -714,6 +715,7 @@ async def run_agentic_pipeline(
         document_id: Optional document ID (generated if not provided)
         max_concurrent_jobs: Max concurrent worker jobs
         event_bus: Optional pre-created event bus for streaming
+        capture_debug: If True, capture full prompt/response for debug bundle
 
     Returns:
         Tuple of (ProcessingResult, EventBus)
@@ -739,6 +741,7 @@ async def run_agentic_pipeline(
             page_markdowns=page_markdowns,
             page_images=page_images,
             event_bus=event_bus,
+            capture_debug=capture_debug,
         )
 
         # =================================================================
@@ -755,6 +758,7 @@ async def run_agentic_pipeline(
             max_concurrent=max_concurrent_jobs,
             event_bus=event_bus,
             page_markdowns=page_markdowns,  # For PARAGRAPH job routing
+            capture_debug=capture_debug,
         )
 
         execution_duration_ms = int((time.time() - execution_start) * 1000)

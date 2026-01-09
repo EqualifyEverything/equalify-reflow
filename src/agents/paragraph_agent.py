@@ -34,7 +34,9 @@ from pydantic_ai.messages import BinaryContent
 from pydantic_ai.models.bedrock import BedrockConverseModel
 
 from src.agents.model_tiers import MODEL_TIER_MAP, ModelTier
+from src.services.metrics_service import record_llm_call
 
+from .debug_capture import extract_raw_response, serialize_prompt
 from .events import (
     EditCommittedEvent,
     EditProposedEvent,
@@ -726,6 +728,7 @@ async def execute_with_paragraph_agent(
     ledger: Ledger,
     event_bus: EventBus | None = None,
     dictionary: list[str] | None = None,
+    capture_debug: bool = False,
 ) -> JobResult:
     """Execute a paragraph job using ParagraphAgent.
 
@@ -737,6 +740,7 @@ async def execute_with_paragraph_agent(
         ledger: Ledger to append entries
         event_bus: Optional event bus for streaming
         dictionary: Optional document-specific dictionary
+        capture_debug: If True, capture full prompt/response for debug bundle
 
     Returns:
         JobResult with updated markdown and ledger entries
@@ -813,6 +817,16 @@ Remember:
         output_tokens = usage.output_tokens or 0
         cost_cents = ((input_tokens * 0.00025) + (output_tokens * 0.00125)) / 10
 
+        # Capture debug data if requested
+        prompt_text = None
+        response_raw = None
+        model_id = None
+        if capture_debug:
+            messages = [f"Page {job.page} image:", image_content, prompt]
+            prompt_text = serialize_prompt(messages)
+            response_raw = extract_raw_response(result)
+            model_id = MODEL_TIER_MAP.get(ModelTier.EFFICIENT, "unknown")
+
         llm_call = LLMCallRecord(
             agent="paragraph_agent",
             purpose=f"page_{job.page}_paragraph_fixes",
@@ -821,6 +835,18 @@ Remember:
             output_tokens=output_tokens,
             cost_cents=cost_cents,
             timestamp=datetime.now(UTC),
+            duration_ms=duration_ms,
+            prompt_text=prompt_text,
+            response_raw=response_raw,
+            model_id=model_id,
+        )
+
+        # Emit Prometheus metrics for this LLM call
+        record_llm_call(
+            agent="paragraph",
+            input_tokens=input_tokens,
+            output_tokens=output_tokens,
+            cost_cents=cost_cents,
             duration_ms=duration_ms,
         )
 

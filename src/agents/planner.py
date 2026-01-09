@@ -268,6 +268,7 @@ def convert_chain_state_to_page_plans(
 async def stage2_page_chain(
     page_markdowns: dict[int, str],
     event_bus: EventBus | None = None,
+    capture_debug: bool = False,
 ) -> tuple[DocumentStructure, dict[int, PagePlan], int, int, list]:
     """Stage 2: Run page chain for sequential document analysis.
 
@@ -282,6 +283,7 @@ async def stage2_page_chain(
     Args:
         page_markdowns: Markdown for each page (1-indexed)
         event_bus: Optional event bus for streaming
+        capture_debug: If True, capture full prompt/response for debug bundle
 
     Returns:
         Tuple of (structure, page_plans, input_tokens, output_tokens, llm_calls)
@@ -290,6 +292,7 @@ async def stage2_page_chain(
     chain_state, input_tokens, output_tokens, llm_calls = await run_page_chain(
         page_markdowns=page_markdowns,
         event_bus=event_bus,
+        capture_debug=capture_debug,
     )
 
     # Emit structure inferred event
@@ -1015,6 +1018,7 @@ async def plan_document(
     page_markdowns: dict[int, str],
     page_images: dict[int, Image.Image],
     event_bus: EventBus | None = None,
+    capture_debug: bool = False,
 ) -> DocumentPlan:
     """Run the complete 3-stage planning process.
 
@@ -1028,6 +1032,7 @@ async def plan_document(
         page_markdowns: Markdown for each page (1-indexed)
         page_images: Images for each page (1-indexed)
         event_bus: Optional event bus for streaming
+        capture_debug: If True, capture full prompt/response for debug bundle
 
     Returns:
         Complete DocumentPlan
@@ -1053,7 +1058,9 @@ async def plan_document(
 
     # Stage 2: Page Chain (sequential LLM analysis)
     # This replaces the old Stage 2 + Stage 3 with a unified approach
-    structure, page_plans, input_tokens, output_tokens, llm_calls = await stage2_page_chain(page_markdowns, event_bus)
+    structure, page_plans, input_tokens, output_tokens, llm_calls = await stage2_page_chain(
+        page_markdowns, event_bus, capture_debug=capture_debug
+    )
 
     # Stage 3: Job Generation (code only - fast)
     jobs = stage4_generate_jobs(page_markdowns, page_plans, structure, event_bus)

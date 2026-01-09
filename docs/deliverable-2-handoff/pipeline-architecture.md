@@ -9,20 +9,20 @@ PDF Upload → PII Scan → Docling Extract → Phase 1: Planning → Phase 2: E
                                                                       │
                                               ┌───────────────────────┴───────────────────────┐
                                               │                                               │
-                                        Phase 2.5: Cross-Page Merge          Phase 2.6: Issue Detection
+                                        Phase 3: Assembly              Phase 4: Lint & Fix
                                               │                                               │
                                               └───────────────────────┬───────────────────────┘
                                                                       │
-                                                            Phase 3: Verification
+                                                            Phase 5: Verification
                                                                       │
                                                               ┌───────┴───────┐
                                                              Pass            Fail
                                                               │               │
                                                               ▼               ▼
-                                                          Complete    Phase 4: Recovery → Complete
+                                                          Complete    Phase 6: Recovery → Complete
 ```
 
-**Diagram description:** The pipeline flows left-to-right starting with PDF Upload, then PII Scan, Docling Extract, Phase 1 (Planning), and Phase 2 (Execution). After execution, two parallel sub-phases run: Phase 2.5 (Cross-Page Merge) and Phase 2.6 (Issue Detection). These converge into Phase 3 (Verification), which branches: if verification passes, processing completes; if it fails, Phase 4 (Recovery) runs before completing.
+**Diagram description:** The pipeline flows left-to-right starting with PDF Upload, then PII Scan, Docling Extract, Phase 1 (Planning), and Phase 2 (Execution). After execution, two phases run: Phase 3 (Assembly - Cross-Page Merge) and Phase 4 (Lint & Fix - Issue Detection). These converge into Phase 5 (Verification), which branches: if verification passes, processing completes; if it fails, Phase 6 (Recovery) runs before completing.
 
 ## Phase 1: Planning
 
@@ -171,7 +171,7 @@ Agent reviews confidence
 | List | `subagents/lists.py` | List nesting, numbering, mixed types |
 | Typography | `subagents/typography.py` | Bold, italic, code semantic meaning |
 
-## Phase 2.5: Cross-Page Merge
+## Phase 3: Assembly (Cross-Page Merge)
 
 **Purpose:** Fix paragraphs split across page boundaries.
 
@@ -179,13 +179,13 @@ Agent reviews confidence
 
 A paragraph is merged if: page ends mid-sentence, next page starts lowercase, or hyphenated word at break.
 
-## Phase 2.6: Issue Detection & Fixing
+## Phase 4: Lint & Fix (Issue Resolution)
 
 **Purpose:** Catch issues that workers missed.
 
 Routing: deterministic fixes (headings, placeholders) run synchronously; LLM-based fixes (alt-text, tables) run asynchronously.
 
-## Phase 3: Verification
+## Phase 5: Verification
 
 **Purpose:** Validate processing completeness against the original plan.
 
@@ -214,7 +214,7 @@ Routing: deterministic fixes (headings, placeholders) run synchronously; LLM-bas
 }
 ```
 
-## Phase 4: Recovery (Conditional)
+## Phase 6: Recovery (Conditional)
 
 **Purpose:** Attempt to fix issues found during verification.
 
@@ -301,6 +301,107 @@ The pipeline emits Server-Sent Events (SSE) throughout processing:
 | `processing:complete` | Final | Result URLs |
 | `processing:error` | Error | Error details |
 
+## Multi-Round Processing (Ralph Loop)
+
+**Purpose:** Iterative refinement of document quality through multiple processing rounds.
+
+**When Active:** When `max_rounds > 1` (default: 1) in submission.
+
+### Round 1: Page-Based Pipeline
+
+The standard agentic pipeline runs with per-page processing:
+
+- Planner analyzes document structure and creates processing plan
+- Jobs routed to specialized agents (Worker, Paragraph)
+- Execution phase produces initial markdown with edits
+- Cross-page merge fixes split paragraphs
+- Issues detected and fixed
+
+**Output:** Merged markdown with initial `PageBoundaryMap` (line-to-page mappings).
+
+### Rounds 2+: Document-Based Refinement
+
+Each subsequent round follows this sequence:
+
+#### 1. CriticAgent Analysis
+- **Model:** Efficient tier (Haiku)
+- **Input:** Current merged markdown (no page images)
+- **Analysis:** Identifies issues across four categories:
+  - **Structure:** Heading hierarchy, list nesting, section organization
+  - **Accessibility:** Missing alt-text, unlabeled figures, semantic markup
+  - **Content:** Fragmentation, unclear sections, formatting inconsistencies
+  - **Formatting:** Typography, code blocks, special characters
+
+**Output:** `CriticReport` with categorized `CriticIssue` objects (severity: critical, major, minor, cosmetic).
+
+#### 2. Issue-to-Job Conversion
+- CriticIssues with line ranges converted to `DocumentJob` objects
+- Each job references a specific line range in the markdown
+- Original page images retrieved for context
+
+#### 3. DocumentWorker Execution
+- **Model:** Reasoning tier (Sonnet or higher)
+- **Input:** Markdown section + page images + issue description
+- **Process:** Worker applies fixes with references to visual layout
+- **Output:** Fixed text with confidence scores and reasoning
+
+#### 4. Convergence Check
+Processing stops when ANY condition is met:
+
+| Condition | Trigger |
+|-----------|---------|
+| Max rounds reached | `round_number >= max_rounds` |
+| High quality | No critical issues AND quality >= 0.85 |
+| No improvement | Current round issues ≥ previous round issues |
+| Ready signal | CriticAgent marks document "ready" |
+| No issues | CriticAgent detects no issues |
+
+**Output:** `RoundLoopResult` with convergence reason and metrics.
+
+### New Data Models
+
+```python
+# Line-to-page mapping (from Round 1)
+PageBoundary: line_number, page_number
+PageBoundaryMap: {line_num: page_num}
+
+# Issue detection (Rounds 2+)
+CriticIssue: line_start, line_end, category, severity, description, suggested_fix
+CriticReport: issues: [CriticIssue], quality_score: float, ready: bool
+
+# Fix tasks for DocumentWorker
+DocumentJobType: STRUCTURE_FIX | ACCESSIBILITY_FIX | CONTENT_FIX | FORMATTING_FIX
+DocumentJob: type, line_start, line_end, issue_description, page_numbers: [int]
+
+# Round tracking
+RoundContext: current_round, total_rounds, previous_issues_count
+RoundLoopResult: round_number, convergence_reason, issues_found, quality_score
+```
+
+### New Agents
+
+| Agent | Location | Tier | Tools | Purpose |
+|-------|----------|------|-------|---------|
+| CriticAgent | `src/agents/critic.py` | EFFICIENT | 4 tools | Analyzes markdown for issues |
+| DocumentWorker | `src/agents/document_worker.py` | REASONING | 3 tools | Fixes issues using page context |
+
+### CriticAgent Tools
+
+| Tool | Input | Output | Purpose |
+|------|-------|--------|---------|
+| `analyze_section_tool` | Line range | Issues + reasoning | Detailed issue analysis |
+| `check_structure_tool` | Full markdown | Structure issues | Heading hierarchy, lists, nesting |
+| `check_accessibility_tool` | Full markdown | Accessibility issues | Alt-text, semantic markup |
+| `score_document_tool` | Full markdown | Quality score (0-1) | Overall document quality |
+
+### DocumentWorker Tools
+
+| Tool | Input | Output | Purpose |
+|------|-------|--------|---------|
+| `view_source_page_tool` | Page number | Page image | See visual context |
+| `view_context_tool` | Line range | Markdown text | Read current content |
+| `propose_fix_tool` | Before/after/reasoning | Approval + feedback | Submit fix with validation |
+
 ## File Locations
 
 | Component | Path |
@@ -309,6 +410,8 @@ The pipeline emits Server-Sent Events (SSE) throughout processing:
 | Planner | `src/agents/planner.py` |
 | Worker Agent | `src/agents/worker.py` |
 | Paragraph Agent | `src/agents/paragraph_agent.py` |
+| CriticAgent | `src/agents/critic.py` |
+| DocumentWorker | `src/agents/document_worker.py` |
 | Subagents | `src/agents/subagents/` |
 | Page Chain | `src/agents/page_chain.py` |
 | Processing Service | `src/services/document_processing.py` |

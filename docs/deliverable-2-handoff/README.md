@@ -3,7 +3,7 @@
 **Project:** UIC AI PDF to Accessible HTML Tool
 **Milestone:** 2 of 4
 **Status:** Complete
-**Date:** <!-- TODO: Add completion date -->
+**Date:** 01/09/2026
 
 ## Executive Summary
 
@@ -20,9 +20,8 @@ Deliverable 2 establishes the core AI-powered document processing system. The sy
 | API interface operational | ✅ | REST API at `/api/v1/documents/*` |
 | 10 test documents processed | ✅ | <!-- TODO: Link to test results --> |
 | Confidence scoring implemented | ✅ | Per-edit and per-document scores |
+| Multi-round processing (iterative refinement) | ✅ | CriticAgent + DocumentWorker loop with convergence criteria |
 | Progress report delivered | ✅ | This documentation |
-
-*Source: Version 1 Buildout, Deliverable 2 Acceptance Criteria*
 
 ## Documentation Index
 
@@ -39,7 +38,6 @@ Deliverable 2 establishes the core AI-powered document processing system. The sy
 |----------|-------------|
 | [Pipeline Architecture](./pipeline-architecture.md) | Phase-by-phase breakdown with agent tools |
 | [API Reference](./api-reference.md) | Endpoints, requests, responses |
-| [Demo UI Guide](./demo-ui-guide.md) | Pipeline Viewer interface |
 | [Confidence & Ledger System](./confidence-and-ledger.md) | Edit tracking and scoring |
 
 ### For Evaluation
@@ -72,8 +70,6 @@ Deliverable 3 focuses on integration and pilot testing:
 - Faculty review interface
 - WCAG 2.1 AA compliance reports
 - Performance validation (2-8 min, ~$0.20/doc)
-
-*Source: Version 1 Buildout, Deliverable 3 Acceptance Criteria*
 
 ## Contact
 

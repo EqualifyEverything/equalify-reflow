@@ -36,6 +36,23 @@ curl -X POST http://localhost:8080/api/v1/documents/submit \
 | End-to-End | `make test-e2e` | ~5min | Full pipeline: upload → markdown |
 | Coverage | `make coverage` | ~2min | Generates `htmlcov/` report |
 
+**Current Coverage:** 628 unit tests across service classes, utilities, and models.
+
+## Multi-Round Processing Tests
+
+Tests for the iterative refinement pipeline:
+
+| Test File | Purpose | Test Count |
+|-----------|---------|------------|
+| `tests/unit/agents/test_page_boundary_map.py` | PageBoundary and PageBoundaryMap model tests | ~17 tests |
+| `tests/unit/agents/test_convergence.py` | Convergence logic for multi-round loop | ~28 tests |
+| `tests/unit/agents/test_round_events.py` | Round tracking events (RoundStarted, RoundComplete, Convergence) | ~33 tests |
+
+**Key test scenarios:**
+- Line-to-page mapping accuracy
+- Convergence condition detection (max rounds, quality threshold, no improvement)
+- Event serialization for SSE streaming
+
 ## Validating Processing Results
 
 ### Manual Validation Checklist
@@ -139,8 +156,6 @@ Select documents representing:
 | Cost | ~$0.20/doc | `GET /documents/{job_id}` → `llm_cost` |
 | Resources | 0.4 vCPU, 2GB RAM | `docker stats` |
 
-*Source: Version 1 Buildout, Deliverable 3 Acceptance Criteria*
-
 ## Common Issues
 
 ### Test Failures
@@ -171,27 +186,3 @@ make shell
 # Redis CLI
 make redis-cli
 ```
-
-## Accessibility Testing
-
-### Screen Reader Testing
-
-*Source: Original Proposal, Manual Quality Review section*
-
-| Platform | Browser | Screen Reader |
-|----------|---------|---------------|
-| Windows | Chrome | NVDA |
-| Android | Chrome | TalkBack |
-| macOS | Safari | VoiceOver |
-| iOS | Safari | VoiceOver |
-
-### Automated Accessibility Checks
-
-```bash
-# Run axe-core on output (example)
-npx axe-cli http://localhost:8080/viewer --results=axe-results.json
-```
-
-Target: WCAG 2.1 AA compliance
-
-*Source: Original Proposal, Success Metrics section*

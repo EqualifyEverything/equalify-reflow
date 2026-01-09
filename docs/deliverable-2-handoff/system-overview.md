@@ -126,13 +126,11 @@ Attempts targeted fixes for issues found during verification.
 | Automation Rate | 80% | Percentage handled without manual intervention |
 | Confidence Threshold | 0.8 | Minimum for automatic application |
 
-*Source: Version 1 Buildout, Deliverable 3 Acceptance Criteria*
 
 ## Security Model
 
 Course materials only—no student records or PII. Documents are scanned with Microsoft Presidio before AI processing; flagged documents require approval. All transfers use TLS; storage is encrypted; originals deleted after processing.
 
-*Source: Version 1 Buildout, Security section*
 
 ## What Success Looks Like
 

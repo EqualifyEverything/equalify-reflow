@@ -45,13 +45,24 @@ The overall document confidence is calculated from:
 
 ### Calculation
 
+The document confidence score combines page-level scores with quality penalties:
+
+1. **Base score:** Average of all page confidence scores
+2. **Critical issue penalty:** Subtract min(0.30, critical_issues × 0.05)
+3. **Recovery penalty:** Subtract min(0.10, recovery_edits × 0.02)
+4. **Final:** Clamp result between 0.0 and 1.0
+
+**Formula:**
 ```
-document_confidence = (
-    page_confidence_avg * 0.7 +
-    (1 - critical_issues / total_elements) * 0.2 +
-    recovery_success_rate * 0.1
-)
+final_score = base_avg - critical_penalty - recovery_penalty
+final_score = max(0.0, min(1.0, final_score))
 ```
+
+**Example:**
+- Base average: 0.90
+- Critical issues: 2 → penalty = 2 × 0.05 = 0.10
+- Recovery edits: 3 → penalty = 3 × 0.02 = 0.06
+- Final: 0.90 - 0.10 - 0.06 = 0.74
 
 ### Score Interpretation
 
@@ -88,6 +99,7 @@ Every edit made by the pipeline is recorded in a ledger, providing a complete au
 | Field | Description |
 |-------|-------------|
 | `entry_id` | Unique identifier for the edit |
+| `job_id` | Job that created this entry |
 | `page` | Page number where edit occurred |
 | `action` | Type of edit (ALT_TEXT, TABLE_TRANSCRIPTION, etc.) |
 | `target` | What was edited (figure ID, table ID, heading) |
@@ -96,6 +108,8 @@ Every edit made by the pipeline is recorded in a ledger, providing a complete au
 | `reasoning` | AI explanation for the change |
 | `confidence` | Score from the subagent |
 | `timestamp` | When the edit was committed |
+| `validated` | Whether edit passed validation |
+| `validation_feedback` | Feedback if validation failed |
 | `needs_review` | Whether this requires human review |
 
 ### Action Types
@@ -176,6 +190,64 @@ The confidence-based system creates a feedback loop:
 4. **More compute** (additional verification passes) improves accuracy
 
 The principle: *The more compute applied to semantic analysis, the closer the output converges to true document semantics.*
+
+## Multi-Round Processing Models
+
+Beyond single-pass processing, the system supports iterative refinement through multi-round processing. This section documents the data structures supporting that workflow.
+
+### PageBoundaryMap
+
+Maps line numbers in merged markdown back to source pages, enabling pageless processing while retaining ability to reference source pages for visual context.
+
+**Fields:**
+- `document_id` - Document identifier
+- `boundaries` - List of PageBoundary objects (page_num, start_line, end_line)
+- `total_lines` - Total lines in merged document
+
+**Methods:**
+- `get_page_for_line(line)` - Get the page number containing a specific line
+- `get_pages_for_range(start, end)` - Get all pages overlapping a line range
+
+### CriticReport
+
+Output from CriticAgent analyzing merged markdown for quality assessment and issue detection.
+
+**Fields:**
+- `document_id` - Document identifier
+- `round_number` - Which round of processing (1-indexed)
+- `issues` - List of CriticIssue objects found
+- `critical_count` - Number of critical severity issues
+- `major_count` - Number of major severity issues
+- `overall_quality` - Quality score (0.0-1.0)
+- `ready_for_output` - Whether critic marks document ready for output
+- `summary` - Human-readable summary of findings
+- `analysis_duration_ms` - Time spent analyzing
+- `input_tokens` / `output_tokens` - LLM usage
+
+### RoundLoopResult
+
+Final result of multi-round processing, containing converged markdown and complete history.
+
+**Fields:**
+- `document_id` - Document identifier
+- `final_markdown` - Final corrected markdown
+- `final_quality` - Quality score after all rounds
+- `rounds_completed` - Number of rounds executed
+- `convergence_reason` - Enum reason for stopping
+- `round_contexts` - History of each round
+- `total_edits` - Total edits across all rounds
+- `total_duration_ms` / token usage - Performance metrics
+
+### ConvergenceReason
+
+Enum explaining why multi-round processing stopped:
+
+- `MAX_ROUNDS_REACHED` - Hit the maximum rounds limit
+- `QUALITY_THRESHOLD_MET` - Quality ≥ 0.85 with no critical issues
+- `NO_IMPROVEMENT` - Quality didn't improve from previous round
+- `NO_ISSUES_FOUND` - CriticAgent found no issues to address
+- `CRITIC_MARKED_READY` - CriticAgent explicitly marked document as ready
+- `ERROR` - Processing error occurred during a round
 
 ## Best Practices
 

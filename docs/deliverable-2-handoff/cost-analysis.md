@@ -31,8 +31,8 @@ The system uses AWS Bedrock Claude models with tiered pricing:
 
 | Tier | Use Case | Input (per 1M tokens) | Output (per 1M tokens) |
 |------|----------|----------------------|------------------------|
-| Efficient | Most processing | ~$3.00 | ~$15.00 |
-| Standard | Complex analysis | ~$8.00 | ~$24.00 |
+| Efficient | Most processing | $1.00 | $5.00 |
+| Standard | Complex analysis | $3.00 | $15.00 |
 
 *Prices are approximate and subject to AWS Bedrock pricing changes.*
 
@@ -50,8 +50,6 @@ The system uses AWS Bedrock Claude models with tiered pricing:
 ### Target Metric
 
 **~$0.20 per typical document**
-
-*Source: Version 1 Buildout, Deliverable 3 Acceptance Criteria*
 
 ### Factors Affecting Cost
 
@@ -180,5 +178,3 @@ Consider alerts for:
 ### Pilot Phase (30 documents)
 
 Estimated total: **~$6-10**
-
-*Source: Version 1 Buildout, Deliverable 3 scope*

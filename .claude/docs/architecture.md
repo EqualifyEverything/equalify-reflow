@@ -157,6 +157,23 @@ aws sso login --profile uic
 - Prevents BedrockConverseModel from blocking event loop during startup
 - All workers start in <1 second
 
+## Multi-Round Processing Architecture
+
+The pipeline supports iterative refinement when `max_rounds > 1`:
+
+**Round 1:** Standard agentic pipeline (planning → execution → verification → recovery)
+- Page-based processing with specialized agents
+- Produces initial markdown + PageBoundaryMap (line-to-page mappings)
+
+**Rounds 2+:** Document-based refinement loop
+- CriticAgent (Efficient tier) analyzes full markdown for issues across structure, accessibility, content, formatting
+- DocumentWorker (Reasoning tier) fixes identified issues using page images as reference
+- Convergence check determines if processing should continue (max_rounds, quality score, no improvement, ready signal)
+
+**Data Models:** PageBoundary, CriticIssue, CriticReport, DocumentJob, RoundContext, RoundLoopResult
+
+**New Agents:** CriticAgent (4 tools), DocumentWorker (3 tools)
+
 ## Processing Pipeline Flow
 
 1. **POST /api/v1/documents/submit** (API)

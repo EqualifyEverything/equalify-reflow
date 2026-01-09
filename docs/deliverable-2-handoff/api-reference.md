@@ -25,6 +25,7 @@ X-API-Key: <api-key>
 | `skip_pii_scan` | boolean | No | Bypass PII scanning (default: false) |
 | `skip_reason` | string | No | Audit trail reason for skipping PII scan |
 | `review_mode` | string | No | `"auto"` (default) or `"human"` |
+| `max_rounds` | integer | No | Maximum processing rounds (1-5, default: 1). Use 2+ for iterative refinement. |
 | `generate_debug_bundle` | boolean | No | Generate debug bundle (default: false) |
 
 #### Response (201 Created)

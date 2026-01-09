@@ -11,8 +11,6 @@ This document outlines the explicit boundaries of Version 1 and content types th
 | Page count | Under 40 pages | Optimal for 1-25 pages |
 | File size | 10 MB max | API upload limit |
 
-*Source: Version 1 Buildout, Project Overview*
-
 ### Document Types
 
 **Supported (V1):**
@@ -31,8 +29,6 @@ This document outlines the explicit boundaries of Version 1 and content types th
 ## V1 Scope Exclusions
 
 The following content types are **explicitly out of scope for V1** and will be flagged in processing results:
-
-*Source: Version 1 Buildout, Project Limitations*
 
 ### 1. Mathematical Content
 
@@ -89,6 +85,8 @@ The following content types are **explicitly out of scope for V1** and will be f
 
 **Review practice:** Long documents benefit from splitting. Extended document support is planned for future phases.
 
+**Update:** Cross-page paragraph merging now automatically detects and merges paragraphs split across page boundaries using the paragraph_merge subagent.
+
 ### 5. OCR-Only Content
 
 **Limitation:** Poor quality scanned documents
@@ -136,6 +134,54 @@ Not supported:
 - Encrypted content cannot be processed
 - DRM-protected documents are not supported
 
+## Multi-Round Processing Limitations
+
+The system supports iterative refinement through multi-round processing (`max_rounds` parameter, 1-5).
+
+### Round Constraints
+
+| Constraint | Value | Notes |
+|------------|-------|-------|
+| Maximum rounds | 5 | API enforces `max_rounds` between 1-5 |
+| Default | 1 | Single-pass processing |
+| Quality threshold | 0.85 | Stops if reached with no critical issues |
+
+### CriticAgent Limitations (Rounds 2+)
+
+The CriticAgent operates on merged markdown **without vision capabilities**:
+- Cannot re-verify complex visual elements (charts, diagrams, scientific figures)
+- Detects only text-based issues: structure, accessibility, content, formatting
+- Visual analysis only occurs in Round 1 (page-based agents with images)
+
+**Implication:** Documents with complex visual content should rely on Round 1 output. Multi-round is best for structural and accessibility refinement.
+
+### Convergence Edge Cases
+
+Processing stops when ANY condition is met:
+- `MAX_ROUNDS_REACHED`: Hit the max_rounds limit
+- `QUALITY_THRESHOLD_MET`: Quality ≥ 0.85 AND no critical issues
+- `NO_IMPROVEMENT`: Current round quality ≤ previous round
+- `NO_ISSUES_FOUND`: CriticAgent reports zero issues
+- `CRITIC_MARKED_READY`: CriticAgent explicitly marks document ready
+
+**Edge cases:**
+- Documents plateauing at 0.82-0.84 quality may run to max_rounds
+- CriticAgent accuracy varies; may mark ready prematurely
+- Very small quality degradation triggers NO_IMPROVEMENT exit
+
+### Cost Implications
+
+| Round | Typical Cost | Cumulative |
+|-------|--------------|------------|
+| Round 1 | $0.10-0.30 | $0.10-0.30 |
+| Each additional | +$0.05-0.15 | Scales linearly |
+| 5 rounds total | - | $0.30-0.90 |
+
+**Guidance:** Default to `max_rounds=1`. Use multi-round for:
+- Documents with known accessibility issues
+- Critical content requiring high confidence
+- Large documents (50+ pages) that may need refinement
+
 ## What Gets Flagged
 
 The system automatically flags content for review:
@@ -163,8 +209,6 @@ The original proposal outlined extensions to address these limitations:
 | Advanced Visual Content | Scientific figures, interactive charts |
 | Performance & Scale Optimization | Long documents, cross-references |
 | Production Automation | Batch processing, Canvas integration |
-
-*Source: Original Proposal, Future Extensions section*
 
 ## Reporting Issues
 

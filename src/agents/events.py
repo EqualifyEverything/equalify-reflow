@@ -470,6 +470,80 @@ class RecoveryPhaseCompleteEvent(StreamEvent):
 # =============================================================================
 # Final Pass Events (Pageless Optimization)
 # =============================================================================
+
+
+# =============================================================================
+# Multi-Round Processing Events
+# =============================================================================
+
+
+class RoundStartedEvent(StreamEvent):
+    """Emitted when a new processing round begins."""
+
+    round_number: int = Field(..., description="Round number (1-indexed)")
+    previous_quality: float = Field(
+        default=0.0,
+        description="Quality score from previous round (0 for round 1)",
+    )
+    max_rounds: int = Field(default=1, description="Maximum rounds configured")
+
+    @property
+    def event_type(self) -> str:
+        return "round:started"
+
+
+class CriticAnalysisCompleteEvent(StreamEvent):
+    """Emitted when CriticAgent completes analysis of merged markdown."""
+
+    round_number: int = Field(..., description="Round number")
+    issues_found: int = Field(default=0, description="Total issues found")
+    critical_count: int = Field(default=0, description="Critical issues found")
+    major_count: int = Field(default=0, description="Major issues found")
+    quality_score: float = Field(default=0.0, description="Assessed quality score")
+    ready_for_output: bool = Field(
+        default=False,
+        description="Whether critic marked document ready",
+    )
+    summary: str = Field(default="", description="Critic summary")
+
+    @property
+    def event_type(self) -> str:
+        return "critic:complete"
+
+
+class RoundCompleteEvent(StreamEvent):
+    """Emitted when a processing round completes."""
+
+    round_number: int = Field(..., description="Round number")
+    jobs_executed: int = Field(default=0, description="Jobs executed this round")
+    edits_applied: int = Field(default=0, description="Edits applied this round")
+    quality_score: float = Field(default=0.0, description="Quality after this round")
+    quality_delta: float = Field(
+        default=0.0,
+        description="Change in quality from previous round",
+    )
+    duration_ms: int = Field(default=0, description="Round duration")
+
+    @property
+    def event_type(self) -> str:
+        return "round:complete"
+
+
+class ConvergenceEvent(StreamEvent):
+    """Emitted when multi-round processing converges (stops)."""
+
+    reason: str = Field(..., description="Why processing stopped")
+    total_rounds: int = Field(..., description="Total rounds completed")
+    final_quality: float = Field(default=0.0, description="Final quality score")
+    total_edits: int = Field(default=0, description="Total edits across all rounds")
+    total_duration_ms: int = Field(default=0, description="Total processing time")
+
+    @property
+    def event_type(self) -> str:
+        return "convergence:reached"
+
+
+# =============================================================================
 # Processing Complete Event
 # =============================================================================
 

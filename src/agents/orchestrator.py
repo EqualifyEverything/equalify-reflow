@@ -21,19 +21,26 @@ from uuid import uuid4
 
 from ..utils.confidence_scoring import calculate_confidence_from_verification
 from .events import (
+    ConvergenceEvent,
     EditCommittedEvent,
     EventBus,
     PageVerifiedEvent,
-    ProcessingCompleteEvent,
     ProcessingErrorEvent,
     RecoveryPhaseCompleteEvent,
     RecoveryPhaseStartedEvent,
+    RoundCompleteEvent,
+    RoundStartedEvent,
     StreamEvent,
     VerificationCompleteEvent,
     VerificationStartedEvent,
 )
 from .issue_fixer import detect_and_fix_issues_async
 from .models import (
+    ConvergenceReason,
+    CriticIssue,
+    CriticReport,
+    DocumentJob,
+    DocumentJobType,
     DocumentPlan,
     DocumentStructure,
     DocumentType,
@@ -41,12 +48,16 @@ from .models import (
     Ledger,
     LedgerEntry,
     LLMCallRecord,
+    PageBoundary,
+    PageBoundaryMap,
     PagePlan,
     PageVerification,
     ProcessingResult,
     ProcessingStatus,
     RecoveryAttemptStatus,
     RecoveryReport,
+    RoundContext,
+    RoundLoopResult,
     StoredFigure,
     TaskType,
     VerificationReport,
@@ -896,7 +907,7 @@ async def run_agentic_pipeline(
         total_output_tokens = plan.planning_tokens_output + sum(r.output_tokens for r in job_results)
 
         # =================================================================
-        # Phase 2.5: Cross-Page Merge Pass
+        # Phase 3: Assembly (Cross-Page Merge)
         # =================================================================
         # Merge paragraphs split across page boundaries.
         # Runs AFTER per-page jobs so we work with clean, artifact-free text.
@@ -909,7 +920,7 @@ async def run_agentic_pipeline(
         )
 
         # =================================================================
-        # Phase 2.6: Structured Issue Detection & Fixing
+        # Phase 4: Lint & Fix (Issue Resolution)
         # =================================================================
         # Detect issues using structured types with full context.
         # Route to appropriate fixers:
@@ -929,7 +940,7 @@ async def run_agentic_pipeline(
                 logger.warning(f"  ✗ {fail}")
 
         # =================================================================
-        # Phase 3: Verification
+        # Phase 5: Verification
         # =================================================================
         verification = await verify_document(
             final_markdowns=final_markdowns,
@@ -942,7 +953,7 @@ async def run_agentic_pipeline(
         )
 
         # =================================================================
-        # Phase 4: Recovery (if needed)
+        # Phase 6: Recovery (if needed)
         # =================================================================
         recovery_report: RecoveryReport | None = None
 
@@ -1049,17 +1060,8 @@ async def run_agentic_pipeline(
             recovery_report=recovery_report,
         )
 
-        event_bus.emit(
-            ProcessingCompleteEvent(
-                document_id=doc_id,
-                success=is_success,
-                total_edits=ledger.total_edits,
-                total_jobs=len(plan.jobs),
-                total_cost=cost,
-                total_duration_ms=total_duration_ms,
-                result_url=f"/api/v1/documents/{doc_id}",
-            )
-        )
+        # NOTE: ProcessingCompleteEvent is emitted by document_processing_service
+        # AFTER markdown is stored to S3, ensuring the URL is available when UI fetches
 
         logger.info(
             f"Agentic pipeline complete: {ledger.total_edits} edits, "
@@ -1274,7 +1276,7 @@ async def run_agentic_pipeline_with_streaming_handoff(
         )
 
         # =================================================================
-        # Phase 2.5: Cross-Page Merge Pass
+        # Phase 3: Assembly (Cross-Page Merge)
         # =================================================================
         final_markdowns = await merge_cross_page_paragraphs(
             page_markdowns=final_markdowns,
@@ -1285,7 +1287,7 @@ async def run_agentic_pipeline_with_streaming_handoff(
         )
 
         # =================================================================
-        # Phase 2.6: Structured Issue Detection & Fixing
+        # Phase 4: Lint & Fix (Issue Resolution)
         # =================================================================
         final_markdowns, fixes_applied, fixes_failed = await detect_and_fix_issues_async(
             final_markdowns, plan, page_images
@@ -1296,7 +1298,7 @@ async def run_agentic_pipeline_with_streaming_handoff(
             logger.warning(f"Issue fixer failed on {len(fixes_failed)} issues")
 
         # =================================================================
-        # Phase 3: Verification
+        # Phase 5: Verification
         # =================================================================
         verification = await verify_document(
             final_markdowns=final_markdowns,
@@ -1309,7 +1311,7 @@ async def run_agentic_pipeline_with_streaming_handoff(
         )
 
         # =================================================================
-        # Phase 4: Recovery (if needed)
+        # Phase 6: Recovery (if needed)
         # =================================================================
         recovery_report: RecoveryReport | None = None
         total_pages = len(page_markdowns)
@@ -1377,17 +1379,8 @@ async def run_agentic_pipeline_with_streaming_handoff(
             recovery_report=recovery_report,
         )
 
-        event_bus.emit(
-            ProcessingCompleteEvent(
-                document_id=doc_id,
-                success=is_success,
-                total_edits=ledger.total_edits,
-                total_jobs=len(all_jobs),
-                total_cost=cost,
-                total_duration_ms=total_duration_ms,
-                result_url=f"/api/v1/documents/{doc_id}",
-            )
-        )
+        # NOTE: ProcessingCompleteEvent is emitted by document_processing_service
+        # AFTER markdown is stored to S3, ensuring the URL is available when UI fetches
 
         logger.info(
             f"Streaming handoff pipeline complete: {ledger.total_edits} edits, "
@@ -1415,6 +1408,566 @@ async def run_agentic_pipeline_with_streaming_handoff(
                 final_markdown="",
                 ledger=ledger,
                 verification=VerificationReport(document_id=doc_id, passed=False),
+            ),
+            event_bus,
+        )
+
+
+# =============================================================================
+# Multi-Round Pipeline Helpers
+# =============================================================================
+
+
+def build_page_boundary_map(
+    page_markdowns: dict[int, str],
+    merged_markdown: str,
+    document_id: str,
+) -> PageBoundaryMap:
+    """Build a PageBoundaryMap from page markdowns and merged output.
+
+    Maps line numbers in merged_markdown back to source pages.
+    This enables pageless processing while retaining the ability to
+    reference source page_images for visual context.
+
+    Args:
+        page_markdowns: Dict of page_num -> markdown content
+        merged_markdown: The merged document markdown
+        document_id: Document identifier
+
+    Returns:
+        PageBoundaryMap with line-to-page mappings
+    """
+    boundaries: list[PageBoundary] = []
+    current_line = 1  # 1-indexed
+    current_char = 0
+
+    # Process pages in order
+    for page_num in sorted(page_markdowns.keys()):
+        page_md = page_markdowns[page_num]
+        page_lines = page_md.split("\n")
+        line_count = len(page_lines)
+        char_count = len(page_md)
+
+        if line_count > 0:
+            boundaries.append(
+                PageBoundary(
+                    page_num=page_num,
+                    start_line=current_line,
+                    end_line=current_line + line_count - 1,
+                    start_char=current_char,
+                    end_char=current_char + char_count,
+                )
+            )
+
+            current_line += line_count
+            current_char += char_count
+
+            # Account for page separator if not last page
+            # (merged markdown uses "\n\n---\n\n" between pages = 5 chars, 3 lines)
+            if page_num < max(page_markdowns.keys()):
+                current_line += 2  # For the separator lines
+                current_char += 5  # "\n\n---\n\n"
+
+    total_lines = len(merged_markdown.split("\n"))
+
+    return PageBoundaryMap(
+        document_id=document_id,
+        boundaries=boundaries,
+        total_lines=total_lines,
+    )
+
+
+def check_convergence(
+    round_number: int,
+    max_rounds: int,
+    critic_report: CriticReport | None,
+    previous_quality: float,
+    current_quality: float,
+    quality_threshold: float = 0.85,
+) -> tuple[bool, ConvergenceReason | None]:
+    """Check if multi-round loop should stop.
+
+    Convergence is checked after each round. The loop stops when any
+    of the following conditions are met:
+
+    1. max_rounds reached
+    2. No critical issues AND quality >= threshold
+    3. No improvement from previous round (quality_delta <= 0)
+    4. CriticAgent marks document ready
+    5. No issues found by critic
+
+    Args:
+        round_number: Current round number (1-indexed)
+        max_rounds: Maximum allowed rounds
+        critic_report: Report from CriticAgent (None for round 1)
+        previous_quality: Quality score from previous round
+        current_quality: Quality score from current round
+        quality_threshold: Quality threshold for early exit
+
+    Returns:
+        Tuple of (should_stop, reason) - reason is None if should continue
+    """
+    # Check max rounds first
+    if round_number >= max_rounds:
+        return True, ConvergenceReason.MAX_ROUNDS_REACHED
+
+    # For round 1, we don't have critic report yet
+    if critic_report is None:
+        return False, None
+
+    # Check if critic marked document ready
+    if critic_report.ready_for_output:
+        return True, ConvergenceReason.CRITIC_MARKED_READY
+
+    # Check if no issues found
+    if len(critic_report.issues) == 0:
+        return True, ConvergenceReason.NO_ISSUES_FOUND
+
+    # Check quality threshold (no critical issues + quality met)
+    if critic_report.critical_count == 0 and current_quality >= quality_threshold:
+        return True, ConvergenceReason.QUALITY_THRESHOLD_MET
+
+    # Check for no improvement (only for round 2+)
+    if round_number > 1:
+        quality_delta = current_quality - previous_quality
+        if quality_delta <= 0:
+            return True, ConvergenceReason.NO_IMPROVEMENT
+
+    # Continue processing
+    return False, None
+
+
+def _critic_issue_to_document_job(issue: CriticIssue) -> DocumentJob:
+    """Convert a CriticIssue into a DocumentJob.
+
+    Maps critic issue categories to document job types and assigns
+    priority based on severity.
+
+    Args:
+        issue: The CriticIssue to convert
+
+    Returns:
+        DocumentJob targeting the issue location
+    """
+    # Map category to job type
+    category_to_type = {
+        "structure": DocumentJobType.STRUCTURE_FIX,
+        "accessibility": DocumentJobType.ACCESSIBILITY_FIX,
+        "content": DocumentJobType.CONTENT_FIX,
+        "formatting": DocumentJobType.FORMATTING_FIX,
+    }
+    job_type = category_to_type.get(issue.category, DocumentJobType.CONTENT_FIX)
+
+    # Priority based on severity (critical=1, major=2, minor=3, cosmetic=4)
+    severity_priority = {"critical": 1, "major": 2, "minor": 3, "cosmetic": 4}
+    priority = severity_priority.get(issue.severity.value, 3)
+
+    return DocumentJob(
+        job_type=job_type,
+        priority=priority,
+        line_start=issue.line_start,
+        line_end=issue.line_end,
+        search_text=issue.search_text,
+        issue_description=issue.description,
+        suggested_fix=issue.suggested_fix,
+        source_pages=issue.source_pages,
+    )
+
+
+# =============================================================================
+# Multi-Round Pipeline Main Function
+# =============================================================================
+
+
+async def run_multi_round_pipeline(
+    filename: str,
+    page_markdowns: dict[int, str],
+    page_images: dict[int, Image.Image],
+    element_bboxes: dict[tuple[int, str, int], tuple[float, float, float, float]],
+    page_width: float,
+    document_id: str | None = None,
+    max_rounds: int = 1,
+    max_concurrent_jobs: int = 3,
+    event_bus: EventBus | None = None,
+    capture_debug: bool = False,
+    stored_figures: list[StoredFigure] | None = None,
+    quality_threshold: float = 0.85,
+) -> tuple[RoundLoopResult, EventBus]:
+    """Multi-round pipeline wrapper.
+
+    Round 1 runs the existing page-based agentic pipeline.
+    Rounds 2+ use CriticAgent to identify issues in merged markdown,
+    convert them to DocumentJobs, and execute fixes with DocumentWorker.
+
+    The loop continues until convergence is reached (max rounds, quality
+    threshold met, no improvement, or critic marks ready).
+
+    Args:
+        filename: Original document filename
+        page_markdowns: Initial markdown for each page (1-indexed)
+        page_images: Images for each page (1-indexed)
+        element_bboxes: Bounding boxes for figures/tables
+        page_width: Page width for bbox scaling
+        document_id: Optional document ID (generated if not provided)
+        max_rounds: Maximum processing rounds (default 1 = single round)
+        max_concurrent_jobs: Max concurrent worker jobs
+        event_bus: Optional pre-created event bus for streaming
+        capture_debug: If True, capture full prompt/response for debug bundle
+        stored_figures: List of figures already uploaded to S3
+        quality_threshold: Quality score threshold for early exit
+
+    Returns:
+        Tuple of (RoundLoopResult, EventBus)
+    """
+    start_time = time.time()
+    doc_id = document_id or str(uuid4())
+
+    # Use provided event bus or create new one
+    if event_bus is None:
+        event_bus = EventBus(doc_id)
+
+    logger.info(
+        f"Starting multi-round pipeline for {filename} (id={doc_id}, max_rounds={max_rounds})"
+    )
+
+    # Track round contexts and aggregated stats
+    round_contexts: list[RoundContext] = []
+    all_llm_calls: list[LLMCallRecord] = []
+    total_edits = 0
+    total_input_tokens = 0
+    total_output_tokens = 0
+
+    # Current state
+    current_markdown = ""
+    current_quality = 0.0
+    previous_quality = 0.0
+    convergence_reason: ConvergenceReason | None = None
+    page_boundary_map: PageBoundaryMap | None = None
+
+    try:
+        # =================================================================
+        # Round 1: Run existing page-based pipeline
+        # =================================================================
+        round_start = time.time()
+
+        if event_bus:
+            event_bus.emit(
+                RoundStartedEvent(
+                    document_id=doc_id,
+                    round_number=1,
+                    previous_quality=0.0,
+                    max_rounds=max_rounds,
+                )
+            )
+
+        logger.info("Round 1: Running page-based agentic pipeline")
+
+        result, event_bus = await run_agentic_pipeline(
+            filename=filename,
+            page_markdowns=page_markdowns,
+            page_images=page_images,
+            element_bboxes=element_bboxes,
+            page_width=page_width,
+            document_id=doc_id,
+            max_concurrent_jobs=max_concurrent_jobs,
+            event_bus=event_bus,
+            capture_debug=capture_debug,
+            stored_figures=stored_figures,
+        )
+
+        round_duration_ms = int((time.time() - round_start) * 1000)
+
+        # Extract merged markdown from result
+        current_markdown = result.final_markdown
+        current_quality = result.confidence_score
+        total_edits += result.total_edits
+        total_input_tokens += result.total_input_tokens
+        total_output_tokens += result.total_output_tokens
+        all_llm_calls.extend(result.llm_calls)
+
+        # Build page boundary map for subsequent rounds
+        page_boundary_map = build_page_boundary_map(
+            page_markdowns=page_markdowns,
+            merged_markdown=current_markdown,
+            document_id=doc_id,
+        )
+
+        # Record round 1 context
+        round_1_context = RoundContext(
+            round_number=1,
+            input_markdown="",  # N/A for round 1
+            page_boundary_map=page_boundary_map,
+            output_markdown=current_markdown,
+            critic_report=None,  # N/A for round 1
+            jobs_executed=result.total_jobs,
+            edits_applied=result.total_edits,
+            duration_ms=round_duration_ms,
+            quality_delta=current_quality,  # First round, delta = quality
+            input_tokens=result.total_input_tokens,
+            output_tokens=result.total_output_tokens,
+            llm_calls=result.llm_calls,
+        )
+        round_contexts.append(round_1_context)
+
+        if event_bus:
+            event_bus.emit(
+                RoundCompleteEvent(
+                    document_id=doc_id,
+                    round_number=1,
+                    jobs_executed=result.total_jobs,
+                    edits_applied=result.total_edits,
+                    quality_score=current_quality,
+                    quality_delta=current_quality,
+                    duration_ms=round_duration_ms,
+                )
+            )
+
+        logger.info(
+            f"Round 1 complete: {result.total_edits} edits, "
+            f"quality={current_quality:.2f}, duration={round_duration_ms}ms"
+        )
+
+        # Check convergence after round 1
+        should_stop, convergence_reason = check_convergence(
+            round_number=1,
+            max_rounds=max_rounds,
+            critic_report=None,
+            previous_quality=0.0,
+            current_quality=current_quality,
+            quality_threshold=quality_threshold,
+        )
+
+        # =================================================================
+        # Round 2+: Critic -> DocumentJobs -> DocumentWorker loop
+        # =================================================================
+        current_round = 1
+
+        while not should_stop and current_round < max_rounds:
+            current_round += 1
+            round_start = time.time()
+            previous_quality = current_quality
+
+            # Lazy import to avoid circular imports
+            from .critic import run_critic_analysis
+            from .document_worker import execute_document_jobs
+
+            if event_bus:
+                event_bus.emit(
+                    RoundStartedEvent(
+                        document_id=doc_id,
+                        round_number=current_round,
+                        previous_quality=previous_quality,
+                        max_rounds=max_rounds,
+                    )
+                )
+
+            logger.info(f"Round {current_round}: Running CriticAgent analysis")
+
+            # Run CriticAgent on merged markdown
+            critic_report = await run_critic_analysis(
+                document_id=doc_id,
+                merged_markdown=current_markdown,
+                page_boundary_map=page_boundary_map,
+                page_images=page_images,
+                round_number=current_round,
+                event_bus=event_bus,
+                capture_debug=capture_debug,
+            )
+
+            # Track critic tokens
+            total_input_tokens += critic_report.input_tokens
+            total_output_tokens += critic_report.output_tokens
+            if critic_report.llm_call:
+                all_llm_calls.append(critic_report.llm_call)
+
+            current_quality = critic_report.overall_quality
+
+            # Check convergence after critic analysis
+            should_stop, convergence_reason = check_convergence(
+                round_number=current_round,
+                max_rounds=max_rounds,
+                critic_report=critic_report,
+                previous_quality=previous_quality,
+                current_quality=current_quality,
+                quality_threshold=quality_threshold,
+            )
+
+            round_edits = 0
+            round_jobs = 0
+            round_llm_calls: list[LLMCallRecord] = []
+            if critic_report.llm_call:
+                round_llm_calls.append(critic_report.llm_call)
+
+            # If not converged and issues found, execute fixes
+            if not should_stop and len(critic_report.issues) > 0:
+                # Filter to critical and major issues only for fixing
+                issues_to_fix = [
+                    i for i in critic_report.issues
+                    if i.severity.value in ("critical", "major")
+                ]
+
+                if issues_to_fix:
+                    # Convert issues to DocumentJobs
+                    jobs = [_critic_issue_to_document_job(issue) for issue in issues_to_fix]
+                    round_jobs = len(jobs)
+
+                    logger.info(
+                        f"Round {current_round}: Executing {len(jobs)} DocumentJobs"
+                    )
+
+                    # Execute jobs
+                    # Create a temporary ledger for this round
+                    round_ledger = Ledger(document_id=doc_id)
+
+                    updated_markdown, edits_applied, job_llm_calls = await execute_document_jobs(
+                        jobs=jobs,
+                        current_markdown=current_markdown,
+                        page_images=page_images,
+                        page_boundary_map=page_boundary_map,
+                        ledger=round_ledger,
+                        event_bus=event_bus,
+                        capture_debug=capture_debug,
+                    )
+
+                    current_markdown = updated_markdown
+                    round_edits = edits_applied
+                    total_edits += edits_applied
+                    round_llm_calls.extend(job_llm_calls)
+                    all_llm_calls.extend(job_llm_calls)
+
+                    # Track tokens from worker jobs
+                    for call in job_llm_calls:
+                        total_input_tokens += call.input_tokens
+                        total_output_tokens += call.output_tokens
+
+            round_duration_ms = int((time.time() - round_start) * 1000)
+            quality_delta = current_quality - previous_quality
+
+            # Record round context
+            round_context = RoundContext(
+                round_number=current_round,
+                input_markdown=current_markdown,  # Before this round
+                page_boundary_map=page_boundary_map,
+                output_markdown=current_markdown,  # After this round
+                critic_report=critic_report,
+                jobs_executed=round_jobs,
+                edits_applied=round_edits,
+                duration_ms=round_duration_ms,
+                quality_delta=quality_delta,
+                input_tokens=critic_report.input_tokens + sum(c.input_tokens for c in round_llm_calls[1:]),
+                output_tokens=critic_report.output_tokens + sum(c.output_tokens for c in round_llm_calls[1:]),
+                llm_calls=round_llm_calls,
+            )
+            round_contexts.append(round_context)
+
+            if event_bus:
+                event_bus.emit(
+                    RoundCompleteEvent(
+                        document_id=doc_id,
+                        round_number=current_round,
+                        jobs_executed=round_jobs,
+                        edits_applied=round_edits,
+                        quality_score=current_quality,
+                        quality_delta=quality_delta,
+                        duration_ms=round_duration_ms,
+                    )
+                )
+
+            logger.info(
+                f"Round {current_round} complete: {round_edits} edits, "
+                f"quality={current_quality:.2f} (delta={quality_delta:+.2f}), "
+                f"duration={round_duration_ms}ms"
+            )
+
+            # Check convergence again after document worker execution
+            if not should_stop:
+                should_stop, convergence_reason = check_convergence(
+                    round_number=current_round,
+                    max_rounds=max_rounds,
+                    critic_report=critic_report,
+                    previous_quality=previous_quality,
+                    current_quality=current_quality,
+                    quality_threshold=quality_threshold,
+                )
+
+        # =================================================================
+        # Finalize: Emit convergence event and build result
+        # =================================================================
+        total_duration_ms = int((time.time() - start_time) * 1000)
+        rounds_completed = len(round_contexts)
+
+        # Default convergence reason if not set
+        if convergence_reason is None:
+            convergence_reason = ConvergenceReason.MAX_ROUNDS_REACHED
+
+        if event_bus:
+            event_bus.emit(
+                ConvergenceEvent(
+                    document_id=doc_id,
+                    reason=convergence_reason.value,
+                    total_rounds=rounds_completed,
+                    final_quality=current_quality,
+                    total_edits=total_edits,
+                    total_duration_ms=total_duration_ms,
+                )
+            )
+            # NOTE: ProcessingCompleteEvent is emitted by document_processing_service
+            # AFTER markdown is stored to S3, ensuring the URL is available when UI fetches
+
+        logger.info(
+            f"Multi-round pipeline complete: {rounds_completed} rounds, "
+            f"reason={convergence_reason.value}, quality={current_quality:.2f}, "
+            f"total_edits={total_edits}, duration={total_duration_ms}ms"
+        )
+
+        # Sort all LLM calls by timestamp
+        all_llm_calls.sort(key=lambda c: c.timestamp)
+
+        return (
+            RoundLoopResult(
+                document_id=doc_id,
+                final_markdown=current_markdown,
+                final_quality=current_quality,
+                rounds_completed=rounds_completed,
+                round_contexts=round_contexts,
+                convergence_reason=convergence_reason,
+                total_edits=total_edits,
+                total_duration_ms=total_duration_ms,
+                total_input_tokens=total_input_tokens,
+                total_output_tokens=total_output_tokens,
+                llm_calls=all_llm_calls,
+            ),
+            event_bus,
+        )
+
+    except Exception as e:
+        logger.error(f"Multi-round pipeline failed: {e}")
+
+        if event_bus:
+            event_bus.emit(
+                ProcessingErrorEvent(
+                    document_id=doc_id,
+                    error=str(e),
+                    phase="multi_round",
+                    recoverable=False,
+                )
+            )
+
+        total_duration_ms = int((time.time() - start_time) * 1000)
+
+        return (
+            RoundLoopResult(
+                document_id=doc_id,
+                final_markdown=current_markdown or "",
+                final_quality=current_quality,
+                rounds_completed=len(round_contexts),
+                round_contexts=round_contexts,
+                convergence_reason=ConvergenceReason.ERROR,
+                total_edits=total_edits,
+                total_duration_ms=total_duration_ms,
+                total_input_tokens=total_input_tokens,
+                total_output_tokens=total_output_tokens,
+                llm_calls=all_llm_calls,
             ),
             event_bus,
         )

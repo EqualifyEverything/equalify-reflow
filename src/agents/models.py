@@ -746,6 +746,260 @@ class RecoveryReport(BaseModel):
 
 
 # =============================================================================
+# Multi-Round Processing Models
+# =============================================================================
+
+
+class PageBoundary(BaseModel):
+    """Boundary information for a single page in merged markdown.
+
+    Used to map line ranges back to source pages for visual reference.
+    """
+
+    page_num: int = Field(..., description="1-indexed page number")
+    start_line: int = Field(..., description="First line of this page (1-indexed)")
+    end_line: int = Field(..., description="Last line of this page (inclusive)")
+    start_char: int = Field(default=0, description="Character offset start")
+    end_char: int = Field(default=0, description="Character offset end")
+
+
+class PageBoundaryMap(BaseModel):
+    """Maps line numbers in merged markdown to source pages.
+
+    Enables pageless processing while retaining ability to reference
+    source page_images for visual context.
+    """
+
+    document_id: str = Field(..., description="Document identifier")
+    boundaries: list[PageBoundary] = Field(
+        default_factory=list,
+        description="Page boundaries in order",
+    )
+    total_lines: int = Field(default=0, description="Total lines in merged document")
+
+    def get_page_for_line(self, line: int) -> int | None:
+        """Get the page number containing a specific line.
+
+        Args:
+            line: Line number (1-indexed)
+
+        Returns:
+            Page number or None if line is out of bounds
+        """
+        for boundary in self.boundaries:
+            if boundary.start_line <= line <= boundary.end_line:
+                return boundary.page_num
+        return None
+
+    def get_pages_for_range(self, start: int, end: int) -> list[int]:
+        """Get all pages that overlap with a line range.
+
+        Args:
+            start: Start line (1-indexed)
+            end: End line (inclusive)
+
+        Returns:
+            List of page numbers that overlap the range
+        """
+        pages = []
+        for boundary in self.boundaries:
+            # Check if ranges overlap
+            if boundary.start_line <= end and boundary.end_line >= start:
+                pages.append(boundary.page_num)
+        return pages
+
+
+class IssueSeverity(str, Enum):
+    """Severity levels for issues found by CriticAgent."""
+
+    CRITICAL = "critical"  # Must fix before output
+    MAJOR = "major"        # Should fix, impacts accessibility
+    MINOR = "minor"        # Nice to fix, cosmetic impact
+    COSMETIC = "cosmetic"  # Optional polish
+
+
+class CriticIssue(BaseModel):
+    """An issue identified by the CriticAgent.
+
+    Contains location info (line ranges) for pageless targeting
+    plus source_pages for visual reference.
+    """
+
+    issue_id: str = Field(
+        default_factory=lambda: str(uuid4())[:8],
+        description="Unique issue identifier",
+    )
+    severity: IssueSeverity = Field(..., description="Issue severity")
+    category: str = Field(
+        ...,
+        description="Issue category: structure, accessibility, content, formatting",
+    )
+    description: str = Field(..., description="Human-readable issue description")
+    suggested_fix: str = Field(default="", description="Suggested fix approach")
+    line_start: int = Field(..., description="Start line in merged markdown (1-indexed)")
+    line_end: int = Field(..., description="End line in merged markdown (inclusive)")
+    search_text: str = Field(
+        default="",
+        description="Text snippet to locate the issue",
+    )
+    confidence: float = Field(default=0.7, ge=0.0, le=1.0)
+    reasoning: str = Field(default="", description="Why this is an issue")
+    source_pages: list[int] = Field(
+        default_factory=list,
+        description="Source page numbers for visual reference",
+    )
+
+
+class CriticReport(BaseModel):
+    """Report from CriticAgent analyzing merged markdown.
+
+    Contains all issues found and overall quality assessment.
+    """
+
+    document_id: str = Field(..., description="Document identifier")
+    round_number: int = Field(..., ge=1, description="Which round of processing")
+    issues: list[CriticIssue] = Field(
+        default_factory=list,
+        description="Issues identified",
+    )
+    critical_count: int = Field(default=0, description="Number of critical issues")
+    major_count: int = Field(default=0, description="Number of major issues")
+    overall_quality: float = Field(
+        default=0.0,
+        ge=0.0,
+        le=1.0,
+        description="Quality score (0-1)",
+    )
+    ready_for_output: bool = Field(
+        default=False,
+        description="Whether document is ready for output",
+    )
+    summary: str = Field(default="", description="Human-readable summary")
+    analysis_duration_ms: int = Field(default=0, description="Analysis duration")
+    input_tokens: int = Field(default=0, description="Input tokens used")
+    output_tokens: int = Field(default=0, description="Output tokens used")
+    llm_call: LLMCallRecord | None = Field(
+        default=None,
+        description="LLM call record for debug bundle",
+    )
+
+
+class DocumentJobType(str, Enum):
+    """Types of document-level jobs for Round N > 1."""
+
+    STRUCTURE_FIX = "structure_fix"
+    ACCESSIBILITY_FIX = "accessibility_fix"
+    CONTENT_FIX = "content_fix"
+    FORMATTING_FIX = "formatting_fix"
+
+
+class DocumentJob(BaseModel):
+    """A job targeting a line range in merged markdown.
+
+    Unlike page-based Job, this targets specific line ranges
+    in the pageless merged document.
+    """
+
+    job_id: str = Field(
+        default_factory=lambda: str(uuid4()),
+        description="Unique job identifier",
+    )
+    job_type: DocumentJobType = Field(..., description="Type of fix needed")
+    priority: int = Field(default=1, ge=1, description="Lower = higher priority")
+    line_start: int = Field(..., description="Start line in merged markdown")
+    line_end: int = Field(..., description="End line in merged markdown")
+    search_text: str = Field(default="", description="Text to locate the issue")
+    issue_description: str = Field(..., description="What needs to be fixed")
+    suggested_fix: str = Field(default="", description="Suggested approach")
+    source_pages: list[int] = Field(
+        default_factory=list,
+        description="Source pages for visual reference",
+    )
+    status: Literal["pending", "running", "completed", "failed"] = Field(
+        default="pending",
+        description="Job status",
+    )
+
+
+class RoundContext(BaseModel):
+    """Context and results for a single processing round.
+
+    Captures input, output, and metrics for one round of the
+    iterative refinement loop.
+    """
+
+    round_number: int = Field(..., ge=1, description="Round number (1-indexed)")
+    input_markdown: str = Field(..., description="Markdown at start of round")
+    page_boundary_map: PageBoundaryMap | None = Field(
+        default=None,
+        description="Page boundary mapping (if available)",
+    )
+    output_markdown: str = Field(default="", description="Markdown after round")
+    critic_report: CriticReport | None = Field(
+        default=None,
+        description="CriticAgent report (rounds 2+)",
+    )
+    jobs_executed: int = Field(default=0, description="Number of jobs run")
+    edits_applied: int = Field(default=0, description="Number of edits applied")
+    duration_ms: int = Field(default=0, description="Round duration")
+    quality_delta: float = Field(
+        default=0.0,
+        description="Change in quality from previous round",
+    )
+    input_tokens: int = Field(default=0, description="Total input tokens")
+    output_tokens: int = Field(default=0, description="Total output tokens")
+    llm_calls: list[LLMCallRecord] = Field(
+        default_factory=list,
+        description="All LLM calls this round (for debug bundle)",
+    )
+
+
+class ConvergenceReason(str, Enum):
+    """Reasons for stopping the multi-round loop."""
+
+    MAX_ROUNDS_REACHED = "max_rounds_reached"
+    QUALITY_THRESHOLD_MET = "quality_threshold_met"
+    NO_IMPROVEMENT = "no_improvement"
+    NO_ISSUES_FOUND = "no_issues_found"
+    CRITIC_MARKED_READY = "critic_marked_ready"
+    ERROR = "error"
+
+
+class RoundLoopResult(BaseModel):
+    """Final result of multi-round processing loop.
+
+    Contains the converged markdown, quality metrics, and
+    complete history of all rounds for debugging.
+    """
+
+    document_id: str = Field(..., description="Document identifier")
+    final_markdown: str = Field(..., description="Final corrected markdown")
+    final_quality: float = Field(
+        default=0.0,
+        ge=0.0,
+        le=1.0,
+        description="Final quality score",
+    )
+    rounds_completed: int = Field(default=1, description="Number of rounds run")
+    round_contexts: list[RoundContext] = Field(
+        default_factory=list,
+        description="Context for each round",
+    )
+    convergence_reason: ConvergenceReason = Field(
+        ...,
+        description="Why processing stopped",
+    )
+    total_edits: int = Field(default=0, description="Total edits across all rounds")
+    total_duration_ms: int = Field(default=0, description="Total processing time")
+    total_input_tokens: int = Field(default=0, description="Total input tokens")
+    total_output_tokens: int = Field(default=0, description="Total output tokens")
+    llm_calls: list[LLMCallRecord] = Field(
+        default_factory=list,
+        description="Aggregated LLM calls from all rounds",
+    )
+
+
+# =============================================================================
 # Image Reference for Debug Bundles
 # =============================================================================
 

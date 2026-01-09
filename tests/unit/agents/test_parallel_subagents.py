@@ -563,18 +563,26 @@ class TestRunSubagentsParallel:
                     artifacts_removed=[],
                     words_rejoined=[],
                 )
-            elif task.task_type == TaskType.TYPOGRAPHY_FIX:
-                return TypographyResult(
+            return None
+
+        async def mock_typography_batch(text_regions, page_image):
+            """Mock typography batch that returns success for all regions."""
+            return [
+                (target, TypographyResult(
                     confidence=0.8,
                     reasoning="success",
                     corrected_markdown="**bold**",
                     formatting_added=[],
-                )
-            return None
+                ))
+                for target, _ in text_regions
+            ]
 
         with patch(
             "src.agents.paragraph_agent._invoke_subagent_for_task",
             side_effect=mock_with_failure,
+        ), patch(
+            "src.agents.paragraph_agent.invoke_typography_subagent_batch",
+            side_effect=mock_typography_batch,
         ):
             result = await _run_subagents_parallel(job, sample_deps)
 

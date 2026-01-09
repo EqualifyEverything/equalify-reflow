@@ -1,3 +1,4 @@
+import { useEffect, useRef } from 'react';
 import { motion, AnimatePresence } from 'framer-motion';
 import { cn } from '@/lib/utils';
 import { Button } from '@/components/ui/button';
@@ -84,6 +85,46 @@ function AgentEventItem({ event }: { event: AgentThinkingData }) {
 }
 
 export function AgentDetailModal({ isOpen, onClose, jobId, page, events }: AgentDetailModalProps) {
+  const modalRef = useRef<HTMLDivElement>(null);
+  const closeButtonRef = useRef<HTMLButtonElement>(null);
+
+  // Focus trap and keyboard handling
+  useEffect(() => {
+    if (!isOpen) return;
+
+    // Focus the close button when modal opens
+    setTimeout(() => closeButtonRef.current?.focus(), 0);
+
+    const handleKeyDown = (e: KeyboardEvent) => {
+      if (e.key === 'Escape') {
+        onClose();
+        return;
+      }
+
+      if (e.key === 'Tab') {
+        const modal = modalRef.current;
+        if (!modal) return;
+
+        const focusableElements = modal.querySelectorAll(
+          'button, [href], input, select, textarea, [tabindex]:not([tabindex="-1"])'
+        );
+        const firstElement = focusableElements[0] as HTMLElement;
+        const lastElement = focusableElements[focusableElements.length - 1] as HTMLElement;
+
+        if (e.shiftKey && document.activeElement === firstElement) {
+          e.preventDefault();
+          lastElement?.focus();
+        } else if (!e.shiftKey && document.activeElement === lastElement) {
+          e.preventDefault();
+          firstElement?.focus();
+        }
+      }
+    };
+
+    document.addEventListener('keydown', handleKeyDown);
+    return () => document.removeEventListener('keydown', handleKeyDown);
+  }, [isOpen, onClose]);
+
   return (
     <AnimatePresence>
       {isOpen && (
@@ -96,10 +137,15 @@ export function AgentDetailModal({ isOpen, onClose, jobId, page, events }: Agent
             transition={{ duration: 0.2 }}
             className="fixed inset-0 bg-black/50 z-50"
             onClick={onClose}
+            aria-hidden="true"
           />
 
           {/* Modal */}
           <motion.div
+            ref={modalRef}
+            role="dialog"
+            aria-modal="true"
+            aria-labelledby="agent-modal-title"
             initial={{ opacity: 0, scale: 0.95, y: 20 }}
             animate={{ opacity: 1, scale: 1, y: 0 }}
             exit={{ opacity: 0, scale: 0.95, y: 20 }}
@@ -113,15 +159,17 @@ export function AgentDetailModal({ isOpen, onClose, jobId, page, events }: Agent
             {/* Header */}
             <div className="flex items-center justify-between px-6 py-4 bg-uic-blue text-white">
               <div>
-                <h2 className="text-xl font-bold">Agent Activity</h2>
+                <h2 id="agent-modal-title" className="text-xl font-bold">Agent Activity</h2>
                 <p className="text-sm text-white/80">
                   Page {page} • Job {jobId.slice(0, 8)}...
                 </p>
               </div>
               <Button
+                ref={closeButtonRef}
                 variant="ghost"
                 size="icon"
                 onClick={onClose}
+                aria-label="Close dialog"
                 className="text-white hover:bg-white/10"
               >
                 <X className="w-5 h-5" />

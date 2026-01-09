@@ -1,4 +1,4 @@
-import { useState, useCallback, useEffect } from 'react';
+import { useState, useCallback, useEffect, useRef } from 'react';
 import { useSearchParams } from 'react-router-dom';
 import { motion } from 'framer-motion';
 import { Panel, Group as PanelGroup, Separator as PanelResizeHandle } from 'react-resizable-panels';
@@ -10,8 +10,17 @@ import { MarkdownViewer } from '@/components/viewer/MarkdownViewer';
 import { AgentDetailModal } from '@/components/viewer/AgentDetailModal';
 import { DecisionList } from '@/components/viewer/DecisionList';
 import { JobNavigationPanel } from '@/components/viewer/JobNavigationPanel';
+import { SkipNav } from '@/components/viewer/SkipNav';
 import { useStream } from '@/hooks/useStream';
 import type { AgentThinkingData } from '@/types/events';
+
+// Skip navigation destinations
+const skipLinks = [
+  { id: 'controls', label: 'Controls' },
+  { id: 'document-nav', label: 'Document Navigation' },
+  { id: 'preview', label: 'Preview' },
+  { id: 'events', label: 'Events & Decisions' },
+];
 import {
   Play,
   Square,
@@ -182,8 +191,53 @@ export function ViewerPage() {
     );
   };
 
+  // Live region announcement for status changes
+  const [statusAnnouncement, setStatusAnnouncement] = useState('');
+  const prevStatus = useRef(status);
+
+  // Announce connection status changes
+  useEffect(() => {
+    if (prevStatus.current !== status) {
+      const announcements: Record<string, string> = {
+        connected: 'Connected to pipeline',
+        connecting: 'Connecting to pipeline...',
+        disconnected: 'Disconnected from pipeline',
+        error: 'Connection error',
+      };
+      setStatusAnnouncement(announcements[status] || '');
+      prevStatus.current = status;
+    }
+  }, [status]);
+
+  // Announce processing completion
+  const [completionAnnouncement, setCompletionAnnouncement] = useState('');
+  useEffect(() => {
+    const completeEvent = events.find((e) => e.type === 'processing:complete');
+    const errorEvent = events.find((e) => e.type === 'processing:error');
+
+    if (completeEvent && !completionAnnouncement.includes('complete')) {
+      const pageCount = documentPlan?.totalPages || 0;
+      setCompletionAnnouncement(`Processing complete. ${pageCount} pages converted.`);
+    } else if (errorEvent && !completionAnnouncement.includes('failed')) {
+      setCompletionAnnouncement('Processing failed. Check events for details.');
+    }
+  }, [events, documentPlan, completionAnnouncement]);
+
   return (
     <div className="flex flex-col h-screen bg-slate-100">
+      {/* Skip Navigation Menu - Ctrl+/ or Cmd+/ to open */}
+      <SkipNav links={skipLinks} />
+
+      {/* Live region for connection status announcements */}
+      <div role="status" aria-live="polite" aria-atomic="true" className="sr-only">
+        {statusAnnouncement}
+      </div>
+
+      {/* Live region for processing completion announcements */}
+      <div role="status" aria-live="polite" className="sr-only">
+        {completionAnnouncement}
+      </div>
+
       {/* Header */}
       <header className="bg-uic-blue text-white px-6 py-4 shadow-lg">
         <div className="flex items-center justify-between">
@@ -225,7 +279,7 @@ export function ViewerPage() {
       </header>
 
       {/* Control Bar */}
-      <div className="bg-white border-b px-6 py-3 shadow-sm">
+      <div id="controls" tabIndex={-1} className="bg-white border-b px-6 py-3 shadow-sm">
         <div className="flex items-center gap-4">
           {/* API Key Input */}
           <div className="flex items-center gap-2">
@@ -319,40 +373,54 @@ export function ViewerPage() {
       </div>
 
       {/* Main Content - Fixed sidebar + resizable main area */}
-      <div className="flex-1 overflow-hidden flex">
+      <main className="flex-1 overflow-hidden flex">
         {/* Left Sidebar - Fixed width Job Navigation */}
-        <motion.div
-          initial={{ opacity: 0, x: -20 }}
-          animate={{ opacity: 1, x: 0 }}
-          className="w-72 flex-shrink-0 h-full m-2 mr-1 rounded-lg shadow-md overflow-hidden border border-slate-200 bg-white"
+        <nav
+          id="document-nav"
+          tabIndex={-1}
+          aria-label="Document navigation"
+          className="w-72 flex-shrink-0 h-full m-2 mr-1"
         >
-          <JobNavigationPanel
+          <motion.div
+            initial={{ opacity: 0, x: -20 }}
+            animate={{ opacity: 1, x: 0 }}
+            className="h-full rounded-lg shadow-md overflow-hidden border border-slate-200 bg-white"
+          >
+            <JobNavigationPanel
             documentPlan={documentPlan}
             jobs={jobs}
             verification={verification}
             currentPage={currentPage}
             onJobClick={handleJobClick}
           />
-        </motion.div>
+          </motion.div>
+        </nav>
 
         {/* Right area - Resizable panels for content */}
         <div className="flex-1 overflow-hidden">
           <PanelGroup orientation="horizontal" className="h-full">
             {/* Center Panel - Markdown Viewer */}
             <Panel defaultSize={55} minSize={30}>
-              <motion.div
-                initial={{ opacity: 0, y: 10 }}
-                animate={{ opacity: 1, y: 0 }}
-                transition={{ delay: 0.1 }}
-                className="h-full flex flex-col bg-white m-2 mx-1 rounded-lg shadow-md overflow-hidden"
+              <section
+                id="preview"
+                tabIndex={-1}
+                aria-label="Document preview"
+                className="h-full"
               >
+                <motion.div
+                  initial={{ opacity: 0, y: 10 }}
+                  animate={{ opacity: 1, y: 0 }}
+                  transition={{ delay: 0.1 }}
+                  className="h-full flex flex-col bg-white m-2 mx-1 rounded-lg shadow-md overflow-hidden"
+                >
                 {/* Panel Header */}
                 <div className="flex items-center gap-2 px-4 py-3 bg-gradient-to-r from-uic-blue to-uic-blue/90 text-white">
                   <FileText className="w-5 h-5" />
                   <span className="font-semibold">Markdown Output</span>
                 </div>
                 <MarkdownViewer content={finalMarkdown} className="flex-1" />
-              </motion.div>
+                </motion.div>
+              </section>
             </Panel>
 
             {/* Resize Handle */}
@@ -360,7 +428,12 @@ export function ViewerPage() {
 
             {/* Right Panel - Events & Decisions */}
             <Panel defaultSize={45} minSize={25}>
-              <div className="h-full flex flex-col m-2 ml-1 gap-2">
+              <section
+                id="events"
+                tabIndex={-1}
+                aria-label="Events and decisions"
+                className="h-full flex flex-col m-2 ml-1 gap-2"
+              >
                 {/* Events Panel */}
                 <motion.div
                   initial={{ opacity: 0, x: 20 }}
@@ -395,11 +468,11 @@ export function ViewerPage() {
                   </div>
                   <DecisionList decisions={decisions} className="flex-1" />
                 </motion.div>
-              </div>
+              </section>
             </Panel>
           </PanelGroup>
         </div>
-      </div>
+      </main>
 
       {/* Agent Detail Modal */}
       <AgentDetailModal

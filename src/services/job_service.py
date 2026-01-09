@@ -9,6 +9,7 @@ from redis.asyncio import Redis
 
 from ..config import settings
 from ..shared.constants.statuses import STATUS_COMPLETED, STATUS_DENIED, STATUS_FAILED
+from ..utils.token_generator import generate_secure_token
 
 logger = logging.getLogger(__name__)
 
@@ -490,3 +491,68 @@ class JobService:
         except Exception as e:
             logger.error(f"Error fetching job by token: {str(e)}", exc_info=True)
             return None
+
+    async def create_stream_token(self, job_id: str) -> str:
+        """Generate single-use stream token for SSE authentication.
+
+        Browser EventSource API cannot send custom headers, so this creates
+        a short-lived token that can be passed as a query parameter.
+
+        Token characteristics:
+        - 256-bit entropy (cryptographically secure)
+        - 5-minute TTL (connection should start immediately)
+        - Single-use (consumed on first validation via GETDEL)
+        - Job-scoped (validated against specific job_id)
+
+        Args:
+            job_id: Job identifier to associate with token
+
+        Returns:
+            Secure token string (43 characters, URL-safe)
+
+        Example:
+            >>> token = await job_service.create_stream_token("job-123")
+            >>> # Client uses: EventSource(f"/stream?token={token}")
+        """
+        token = generate_secure_token()
+        token_key = f"eq-pdf:stream-token:{token}"
+
+        # Store token -> job_id mapping with short TTL (5 minutes)
+        await self.redis.set(token_key, job_id, ex=300)
+
+        logger.debug(f"Created stream token for job {job_id}: {token[:8]}...")
+        return token
+
+    async def validate_and_consume_stream_token(self, token: str) -> str | None:
+        """Validate stream token and consume it atomically (single-use).
+
+        Uses Redis GETDEL for atomic get-and-delete operation, ensuring
+        the token can only be used once even under concurrent requests.
+
+        Args:
+            token: Stream token from query parameter
+
+        Returns:
+            job_id if token is valid, None if invalid/expired/already-consumed
+
+        Example:
+            >>> job_id = await job_service.validate_and_consume_stream_token("abc...")
+            >>> if job_id:
+            ...     # Token was valid and is now consumed
+            ...     # Verify job_id matches requested job for security
+        """
+        token_key = f"eq-pdf:stream-token:{token}"
+
+        # GETDEL: Atomic get-and-delete ensures single-use
+        job_id = await self.redis.getdel(token_key)
+
+        if not job_id:
+            logger.debug("Stream token not found, expired, or already consumed")
+            return None
+
+        # Decode if bytes
+        if isinstance(job_id, bytes):
+            job_id = job_id.decode("utf-8")
+
+        logger.debug(f"Consumed stream token for job {job_id}")
+        return job_id

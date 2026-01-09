@@ -8,9 +8,9 @@ from datetime import UTC, datetime
 from io import BytesIO
 from typing import Any, Literal
 
-from fastapi import APIRouter, BackgroundTasks, Depends, File, Form, HTTPException, UploadFile, status
+from fastapi import APIRouter, BackgroundTasks, Depends, File, Form, HTTPException, Query, UploadFile, status
 from fastapi.responses import StreamingResponse
-from pydantic import BaseModel
+from pydantic import BaseModel, Field
 
 from ..config import settings
 from ..dependencies import (
@@ -699,25 +699,94 @@ async def download_debug_bundle(
     )
 
 
+class StreamTokenResponse(BaseModel):
+    """Response for stream token generation."""
+
+    token: str = Field(..., description="Single-use token for SSE authentication")
+    expires_in_seconds: int = Field(300, description="Token validity period in seconds")
+    stream_url: str = Field(..., description="Full URL path with token for EventSource")
+
+
+@router.post("/{job_id}/stream/token", response_model=StreamTokenResponse)
+async def create_stream_token(
+    job_id: str,
+    job_service: JobService = Depends(get_job_service),
+) -> StreamTokenResponse:
+    """Generate single-use token for SSE stream authentication.
+
+    Browser EventSource API cannot send custom headers. This endpoint
+    generates a short-lived, single-use token that can be passed as
+    a query parameter to the stream endpoint.
+
+    The token:
+    - Expires in 5 minutes
+    - Is consumed on first use (single-use)
+    - Is scoped to the specific job_id
+
+    Args:
+        job_id: Job identifier
+
+    Returns:
+        StreamTokenResponse with token and stream URL
+
+    Raises:
+        HTTPException 404: Job not found
+    """
+    # Verify job exists
+    job = await job_service.get_job(job_id)
+    if not job:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail=f"Job {job_id} not found")
+
+    # Generate single-use token
+    token = await job_service.create_stream_token(job_id)
+
+    return StreamTokenResponse(
+        token=token,
+        expires_in_seconds=300,
+        stream_url=f"/api/v1/documents/{job_id}/stream?token={token}",
+    )
+
+
 @router.get("/{job_id}/stream")
 async def stream_events(
     job_id: str,
+    token: str | None = Query(None, description="Single-use stream token from /stream/token endpoint"),
     job_service: JobService = Depends(get_job_service),
 ) -> StreamingResponse:
     """Stream processing events via Server-Sent Events (SSE).
+
+    Authentication: Either X-API-Key header OR valid stream token.
+    Stream tokens are generated via POST /{job_id}/stream/token.
 
     Connect to this endpoint to watch processing in real-time.
     Events include: docling progress, planning progress, job creation, edits, etc.
 
     Args:
         job_id: Job identifier
+        token: Optional single-use stream token (for browser EventSource)
 
     Returns:
         SSE stream with processing events
 
     Raises:
+        HTTPException 401: Invalid or missing authentication
         HTTPException 404: Job not found
     """
+    # If token provided, validate and consume it (single-use)
+    if token:
+        validated_job_id = await job_service.validate_and_consume_stream_token(token)
+        if not validated_job_id:
+            raise HTTPException(
+                status_code=status.HTTP_401_UNAUTHORIZED,
+                detail="Invalid, expired, or already-used stream token",
+            )
+        # Verify token is for this job (job-scoped security)
+        if validated_job_id != job_id:
+            raise HTTPException(
+                status_code=status.HTTP_401_UNAUTHORIZED,
+                detail="Stream token is not valid for this job",
+            )
+    # Note: If no token, middleware already validated API key
     from ..agents.events import get_event_bus
 
     # Verify job exists

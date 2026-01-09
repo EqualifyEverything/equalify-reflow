@@ -140,6 +140,11 @@ class APIKeyAuthMiddleware(BaseHTTPMiddleware):
         if self._is_demo_ui_request(request):
             return True
 
+        # Allow stream endpoints with token query parameter
+        # Token validation happens in the endpoint handler
+        if self._is_stream_token_request(request):
+            return True
+
         return False
 
     def _is_demo_ui_request(self, request: Request) -> bool:
@@ -181,6 +186,42 @@ class APIKeyAuthMiddleware(BaseHTTPMiddleware):
             return True
 
         return False
+
+    def _is_stream_token_request(self, request: Request) -> bool:
+        """
+        Check if request has stream token for SSE endpoint.
+
+        Stream tokens allow bypassing API key auth for browser EventSource
+        connections which cannot send custom headers.
+
+        This only checks if the endpoint qualifies for token-based auth.
+        Actual token validation and consumption happens in the endpoint handler.
+        We mark it as "public" here to bypass API key check, then the
+        endpoint validates the token.
+
+        Args:
+            request: Incoming request
+
+        Returns:
+            True if this is a stream endpoint with a token parameter
+        """
+        path = request.url.path
+
+        # Only applies to stream endpoints (not the token creation endpoint)
+        if not path.endswith("/stream"):
+            return False
+
+        # Must have token query parameter
+        token = request.query_params.get("token")
+        if not token:
+            return False
+
+        # Basic format validation (256-bit tokens are ~43 chars)
+        # Full validation happens in endpoint handler
+        if len(token) < 40:
+            return False
+
+        return True
 
     def _is_valid_key(self, provided_key: str) -> bool:
         """

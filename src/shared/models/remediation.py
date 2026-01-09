@@ -7,9 +7,12 @@ These models capture the output of Phase 1 (Analysis) which guides:
 """
 
 from datetime import UTC, datetime
-from typing import Literal
+from typing import TYPE_CHECKING, Literal
 
-from pydantic import BaseModel, ConfigDict, Field
+from pydantic import BaseModel, ConfigDict, Field, model_validator
+
+if TYPE_CHECKING:
+    from .document_context import DocumentSummary
 
 
 class HeadingNode(BaseModel):
@@ -131,14 +134,14 @@ class PageFeatures(BaseModel):
 
     Attributes:
         page_num: 1-indexed page number
-        has_images: Whether page contains images
-        image_count: Number of images on page
+        has_images: Whether page contains INFORMATIVE images
+        image_count: Number of informative images on page
         has_tables: Whether page contains tables
         table_count: Number of tables on page
         has_lists: Whether page contains lists
         has_code_blocks: Whether page contains code blocks
         has_math: Whether page contains mathematical notation
-        layout_type: Column layout of the page
+        layout_type: Column layout of THIS PAGE ONLY
         has_headers_footers: Whether page has headers/footers
         complexity_score: Overall complexity assessment (0.0-1.0)
         complexity_factors: List of factors contributing to complexity
@@ -154,34 +157,153 @@ class PageFeatures(BaseModel):
         ... )
     """
 
-    page_num: int = Field(..., ge=1, description="1-indexed page number")
+    page_num: int = Field(
+        ...,
+        ge=1,
+        description="1-indexed page number (first page is 1, not 0)"
+    )
 
-    # Content detection
-    has_images: bool = Field(default=False)
-    image_count: int = Field(default=0, ge=0)
-    has_tables: bool = Field(default=False)
-    table_count: int = Field(default=0, ge=0)
-    has_lists: bool = Field(default=False)
-    has_code_blocks: bool = Field(default=False)
-    has_math: bool = Field(default=False)
+    # Content detection - Images
+    has_images: bool = Field(
+        default=False,
+        description=(
+            "True if page contains INFORMATIVE images requiring alt text. "
+            "Includes: charts, diagrams, photos, screenshots with content. "
+            "Excludes: decorative borders, backgrounds, logos, spacers."
+        ),
+    )
+    image_count: int = Field(
+        default=0,
+        ge=0,
+        description=(
+            "Count of INFORMATIVE images only (matching has_images criteria). "
+            "If has_images=True, image_count must be >= 1. "
+            "If has_images=False, image_count must be 0."
+        ),
+    )
+
+    # Content detection - Tables
+    has_tables: bool = Field(
+        default=False,
+        description=(
+            "True if page contains data tables requiring structure analysis. "
+            "Includes: data tables, comparison tables, schedules. "
+            "Excludes: layout tables used purely for positioning."
+        ),
+    )
+    table_count: int = Field(
+        default=0,
+        ge=0,
+        description=(
+            "Count of data tables only (matching has_tables criteria). "
+            "If has_tables=True, table_count must be >= 1. "
+            "If has_tables=False, table_count must be 0."
+        ),
+    )
+
+    # Content detection - Other elements
+    has_lists: bool = Field(
+        default=False,
+        description="True if page contains bulleted or numbered lists."
+    )
+    has_code_blocks: bool = Field(
+        default=False,
+        description="True if page contains code snippets or preformatted text."
+    )
+    has_math: bool = Field(
+        default=False,
+        description="True if page contains mathematical equations or formulas."
+    )
 
     # Layout
     layout_type: Literal["single_column", "two_column", "mixed"] = Field(
-        default="single_column"
+        default="single_column",
+        description=(
+            "Layout for THIS PAGE ONLY (not the whole document). "
+            "'single_column': Standard linear reading order, text flows top to bottom. "
+            "'two_column': Side-by-side columns (common in academic papers). "
+            "'mixed': ONLY if multiple layouts appear on the SAME page. "
+            "Note: If page 1 is single-column and page 2 is two-column, "
+            "each gets their own layout_type (not 'mixed')."
+        ),
     )
-    has_headers_footers: bool = Field(default=False)
+    has_headers_footers: bool = Field(
+        default=False,
+        description="True if page has running headers or footers to exclude from main content."
+    )
 
     # Complexity assessment
     complexity_score: float = Field(
         default=0.5,
         ge=0.0,
         le=1.0,
-        description="Overall complexity score (0.0-1.0)"
+        description=(
+            "Page complexity score for routing decisions. "
+            "0.0 = Very simple (plain text, clear structure, no special elements). "
+            "0.5 = Moderate (some tables/lists, standard formatting). "
+            "1.0 = Very complex (nested tables, multi-column, dense figures, merged cells). "
+            "Consider: table nesting depth, list hierarchy, image density, column count."
+        ),
     )
     complexity_factors: list[str] = Field(
         default_factory=list,
-        description="Factors contributing to complexity"
+        description=(
+            "List specific factors contributing to complexity_score. "
+            "Examples: 'dense tables', 'nested lists', 'multi-column layout', "
+            "'complex images with labels', 'mathematical equations', 'merged table cells'. "
+            "Empty list if complexity_score <= 0.3."
+        ),
     )
+
+    # Reasoning transparency (from Reasoned[T] fields)
+    layout_type_reasoning: str | None = Field(
+        default=None,
+        description=(
+            "LLM reasoning for layout_type determination. "
+            "Cites visual evidence: gutter presence, text block width, column structure."
+        ),
+    )
+    complexity_score_reasoning: str | None = Field(
+        default=None,
+        description=(
+            "LLM reasoning for complexity_score determination. "
+            "Cites factors: table density, nesting depth, image count."
+        ),
+    )
+
+    @model_validator(mode="after")
+    def validate_image_consistency(self) -> "PageFeatures":
+        """Ensure has_images and image_count are consistent."""
+        if self.has_images and self.image_count == 0:
+            # Auto-fix: if has_images is True, count must be at least 1
+            self.image_count = 1
+        elif not self.has_images and self.image_count > 0:
+            # Auto-fix: if has_images is False, count must be 0
+            self.image_count = 0
+        return self
+
+    @model_validator(mode="after")
+    def validate_table_consistency(self) -> "PageFeatures":
+        """Ensure has_tables and table_count are consistent."""
+        if self.has_tables and self.table_count == 0:
+            # Auto-fix: if has_tables is True, count must be at least 1
+            self.table_count = 1
+        elif not self.has_tables and self.table_count > 0:
+            # Auto-fix: if has_tables is False, count must be 0
+            self.table_count = 0
+        return self
+
+    @model_validator(mode="after")
+    def validate_complexity_factors(self) -> "PageFeatures":
+        """Ensure complexity_factors matches complexity_score."""
+        import logging
+        if self.complexity_score <= 0.3 and self.complexity_factors:
+            # Low complexity shouldn't have factors
+            logging.getLogger(__name__).debug(
+                f"Clearing complexity_factors for low complexity page {self.page_num}"
+            )
+            self.complexity_factors = []
+        return self
 
     model_config = ConfigDict(
         json_schema_extra={
@@ -279,6 +401,36 @@ class DocumentManifest(BaseModel):
         description="Notes about analysis decisions or observations"
     )
 
+    # Reasoning transparency (from Reasoned[T] and verification fields)
+    document_type_reasoning: str | None = Field(
+        default=None,
+        description=(
+            "LLM reasoning for document_type classification. "
+            "Cites visual evidence: title patterns, structure indicators."
+        ),
+    )
+    heading_order_verification: str | None = Field(
+        default=None,
+        description=(
+            "LLM verification that heading tree respects reading order. "
+            "For two-column: confirms down-left-then-right reading. "
+            "Validates subsections follow parents (5.1 after 5)."
+        ),
+    )
+    agent_routing_reasoning: str | None = Field(
+        default=None,
+        description=(
+            "LLM reasoning for agent routing decisions. "
+            "Explains which agents were included/excluded and why."
+        ),
+    )
+
+    # Document summary for downstream agents (NEW in 4-phase architecture)
+    summary: "DocumentSummary | None" = Field(
+        default=None,
+        description="Generated during analysis for downstream context"
+    )
+
     # Metadata
     created_at: datetime = Field(default_factory=lambda: datetime.now(UTC))
     analysis_model: str = Field(default="claude-sonnet-4-5")
@@ -296,6 +448,7 @@ class DocumentManifest(BaseModel):
                 "skip_agents": ["typography"],
                 "analysis_confidence": 0.92,
                 "analysis_notes": "Clear structure, some complex tables on pages 5-6",
+                "summary": None,
                 "created_at": "2024-12-10T10:30:00Z",
                 "analysis_model": "claude-sonnet-4-5"
             }

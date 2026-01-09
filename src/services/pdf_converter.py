@@ -2,8 +2,10 @@
 
 from __future__ import annotations
 
+import asyncio
 import base64
 import logging
+import re
 from dataclasses import dataclass
 from io import BytesIO
 from typing import TYPE_CHECKING
@@ -18,6 +20,10 @@ from docling.document_converter import DocumentConverter, PdfFormatOption
 
 from src.config import settings
 
+# Page break marker inserted between pages in exported markdown
+# This allows accurate page-based splitting without heuristics
+PAGE_BREAK_MARKER = "<!-- PAGE_BREAK -->"
+
 logger = logging.getLogger(__name__)
 
 
@@ -27,6 +33,7 @@ class PageData:
 
     page_num: int
     image_base64: str  # PNG image encoded as base64 string
+    markdown: str = ""  # Docling-extracted markdown for this page
 
 
 @dataclass
@@ -38,6 +45,7 @@ class ExtractedImage:
     caption: str  # Extracted caption text
     page_num: int  # Source page number
     pil_image: Image.Image  # noqa: F821
+    bbox: tuple[float, float, float, float] | None = None  # (l, t, r, b) in doc coords
 
 
 @dataclass
@@ -48,6 +56,8 @@ class PDFConversionResult:
     total_pages: int
     has_page_images: bool
     extracted_images: list[ExtractedImage]  # Embedded figures/tables from PDF
+    docling_markdown: str = ""  # Full document markdown from Docling
+    is_scanned: bool = False  # True if PDF appears to be scanned (no extractable text)
 
 
 class PDFConverter:
@@ -66,6 +76,7 @@ class PDFConverter:
         pipeline_options = PdfPipelineOptions(
             generate_page_images=True,  # CRITICAL: Generate full page renders
             generate_picture_images=True,  # Also generate embedded picture images
+            generate_table_images=True,  # Generate table images for subagent processing
             images_scale=scale,  # Configurable resolution
             do_ocr=False,  # OCR not needed - we send images directly to AI
             do_table_structure=False,  # Table structure not needed - AI handles this
@@ -106,8 +117,9 @@ class PDFConverter:
                 stream=pdf_stream,
             )
 
-            # Convert document
-            result = self.converter.convert(source=doc_stream)
+            # Convert document (run in thread pool to avoid blocking event loop)
+            # Docling's convert() is synchronous and CPU-intensive
+            result = await asyncio.to_thread(self.converter.convert, source=doc_stream)
             doc = result.document
 
             logger.info(f"Docling conversion complete: {len(doc.pages)} pages")
@@ -158,6 +170,12 @@ class PDFConverter:
             # Extract pictures (diagrams, photos, illustrations)
             for pic in doc.pictures:
                 if pic.image and hasattr(pic.image, "pil_image") and pic.image.pil_image:
+                    # Extract bounding box from provenance if available
+                    bbox = None
+                    if pic.prov and pic.prov[0].bbox:
+                        bb = pic.prov[0].bbox
+                        bbox = (bb.l, bb.t, bb.r, bb.b)
+
                     extracted_images.append(
                         ExtractedImage(
                             ref_id=pic.self_ref,
@@ -165,17 +183,24 @@ class PDFConverter:
                             caption=pic.caption_text(doc=doc) or "",
                             page_num=pic.prov[0].page_no if pic.prov else 1,
                             pil_image=pic.image.pil_image,
+                            bbox=bbox,
                         )
                     )
                     logger.debug(
                         f"Extracted picture {pic.self_ref} from page "
                         f"{pic.prov[0].page_no if pic.prov else 'unknown'}: "
-                        f"{pic.caption_text(doc=doc)}"
+                        f"{pic.caption_text(doc=doc)} (bbox={bbox})"
                     )
 
             # Extract tables (if they have image representations)
             for table in doc.tables:
                 if table.image and hasattr(table.image, "pil_image") and table.image.pil_image:
+                    # Extract bounding box from provenance if available
+                    bbox = None
+                    if table.prov and table.prov[0].bbox:
+                        bb = table.prov[0].bbox
+                        bbox = (bb.l, bb.t, bb.r, bb.b)
+
                     extracted_images.append(
                         ExtractedImage(
                             ref_id=table.self_ref,
@@ -183,17 +208,36 @@ class PDFConverter:
                             caption=table.caption_text(doc=doc) or "",
                             page_num=table.prov[0].page_no if table.prov else 1,
                             pil_image=table.image.pil_image,
+                            bbox=bbox,
                         )
                     )
                     logger.debug(
                         f"Extracted table {table.self_ref} from page "
                         f"{table.prov[0].page_no if table.prov else 'unknown'}: "
-                        f"{table.caption_text(doc=doc)}"
+                        f"{table.caption_text(doc=doc)} (bbox={bbox})"
                     )
+
+            # Extract markdown from Docling (born-digital PDF text extraction)
+            # Use page_break_placeholder to insert markers between pages for accurate splitting
+            docling_markdown = ""
+            try:
+                raw_markdown = doc.export_to_markdown(
+                    page_break_placeholder=PAGE_BREAK_MARKER
+                )
+                # Add unique IDs to image and table placeholders
+                docling_markdown = self._add_placeholder_ids(raw_markdown)
+            except Exception as md_err:
+                logger.warning(f"Failed to export Docling markdown: {md_err}")
+
+            # Detect if PDF is scanned (minimal/no extractable text)
+            # Heuristic: <50 chars per page on average suggests scanned
+            text_per_page = len(docling_markdown) / max(len(pages), 1)
+            is_scanned = text_per_page < 50
 
             logger.info(
                 f"PDF conversion successful: {len(pages)} pages with images extracted, "
-                f"{len(extracted_images)} embedded images (pictures/tables)"
+                f"{len(extracted_images)} embedded images (pictures/tables), "
+                f"docling_markdown={len(docling_markdown)} chars, is_scanned={is_scanned}"
             )
 
             return PDFConversionResult(
@@ -201,6 +245,8 @@ class PDFConverter:
                 total_pages=len(pages),
                 has_page_images=has_page_images,
                 extracted_images=extracted_images,
+                docling_markdown=docling_markdown,
+                is_scanned=is_scanned,
             )
 
         except Exception as e:
@@ -220,3 +266,33 @@ class PDFConverter:
         image.save(buffer, format="PNG")
         image_bytes = buffer.getvalue()
         return base64.b64encode(image_bytes).decode("utf-8")
+
+    def _add_placeholder_ids(self, markdown: str) -> str:
+        """Add unique IDs to image and table placeholders.
+
+        Replaces generic `<!-- image -->` and `<!-- table -->` comments
+        with sequentially numbered versions like `<!-- image:1 -->`.
+
+        Args:
+            markdown: Raw markdown from Docling export
+
+        Returns:
+            Markdown with numbered placeholders
+        """
+        image_count = 0
+
+        def replace_image(match: re.Match[str]) -> str:
+            nonlocal image_count
+            image_count += 1
+            return f"<!-- image:{image_count} -->"
+
+        table_count = 0
+
+        def replace_table(match: re.Match[str]) -> str:
+            nonlocal table_count
+            table_count += 1
+            return f"<!-- table:{table_count} -->"
+
+        result = re.sub(r"<!-- image -->", replace_image, markdown)
+        result = re.sub(r"<!-- table -->", replace_table, result)
+        return result

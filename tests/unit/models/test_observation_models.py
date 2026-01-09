@@ -1,13 +1,10 @@
 """Unit tests for observation models (Observation, ObservationLocation)."""
 
 import json
-from datetime import datetime, UTC
 
 import pytest
 from pydantic import ValidationError
-
 from src.shared.models.observation import (
-    VALID_OBSERVATION_TRANSITIONS,
     Observation,
     ObservationLocation,
 )
@@ -118,9 +115,9 @@ class TestObservation:
         assert observation.source == "agent"  # default
         assert observation.confidence == 0.8  # default
         assert observation.severity == "major"  # default
-        assert observation.route == "auto"  # default
+        assert observation.category == "general"  # default
         assert observation.status == "open"  # default
-        assert observation.resolved_by is None
+        assert observation.resolution is None
         assert observation.human_comment is None
         # UUID should be auto-generated
         assert len(observation.id) == 36  # UUID format
@@ -141,17 +138,14 @@ class TestObservation:
             ),
             confidence=0.7,
             severity="critical",
-            route="manual",
-            manual_reason="Complex merged cell structure needs human judgment",
-            status="open",
+            category="table_format",
             human_comment="Flagged during manual review"
         )
 
         assert observation.id == "custom-id"
         assert observation.source == "human"
         assert observation.severity == "critical"
-        assert observation.route == "manual"
-        assert observation.manual_reason is not None
+        assert observation.category == "table_format"
 
     def test_auto_generated_id(self) -> None:
         """Test that ID is auto-generated if not provided."""
@@ -200,7 +194,7 @@ class TestObservation:
         assert obs_min.confidence == 0.0
         assert obs_max.confidence == 1.0
 
-        # Invalid values
+        # Invalid outside bounds
         with pytest.raises(ValidationError):
             Observation(
                 job_id="job-1",
@@ -211,8 +205,18 @@ class TestObservation:
                 confidence=1.5
             )
 
-    def test_severity_validation(self) -> None:
-        """Test severity accepts only valid values."""
+        with pytest.raises(ValidationError):
+            Observation(
+                job_id="job-1",
+                agent="test",
+                visual_description="test",
+                markup_description="test",
+                location=location,
+                confidence=-0.1
+            )
+
+    def test_severity_values(self) -> None:
+        """Test valid severity values."""
         location = ObservationLocation(value="test", page_num=1)
 
         for severity in ["critical", "major", "minor"]:
@@ -222,37 +226,24 @@ class TestObservation:
                 visual_description="test",
                 markup_description="test",
                 location=location,
-                severity=severity  # type: ignore[arg-type]
+                severity=severity
             )
             assert obs.severity == severity
 
+    def test_invalid_severity(self) -> None:
+        """Test invalid severity is rejected."""
         with pytest.raises(ValidationError):
             Observation(
                 job_id="job-1",
                 agent="test",
                 visual_description="test",
                 markup_description="test",
-                location=location,
-                severity="moderate"  # type: ignore[arg-type]
+                location=ObservationLocation(value="test", page_num=1),
+                severity="invalid"  # type: ignore[arg-type]
             )
 
-    def test_status_validation(self) -> None:
-        """Test status accepts only valid values."""
-        location = ObservationLocation(value="test", page_num=1)
-
-        for status in ["open", "resolved", "wont_fix", "manual"]:
-            obs = Observation(
-                job_id="job-1",
-                agent="test",
-                visual_description="test",
-                markup_description="test",
-                location=location,
-                status=status  # type: ignore[arg-type]
-            )
-            assert obs.status == status
-
-    def test_source_validation(self) -> None:
-        """Test source accepts only agent or human."""
+    def test_source_values(self) -> None:
+        """Test valid source values."""
         location = ObservationLocation(value="test", page_num=1)
 
         for source in ["agent", "human"]:
@@ -262,152 +253,96 @@ class TestObservation:
                 visual_description="test",
                 markup_description="test",
                 location=location,
-                source=source  # type: ignore[arg-type]
+                source=source
             )
             assert obs.source == source
 
+    def test_invalid_source(self) -> None:
+        """Test invalid source is rejected."""
         with pytest.raises(ValidationError):
             Observation(
                 job_id="job-1",
                 agent="test",
                 visual_description="test",
                 markup_description="test",
-                location=location,
-                source="automated"  # type: ignore[arg-type]
+                location=ObservationLocation(value="test", page_num=1),
+                source="invalid"  # type: ignore[arg-type]
             )
-
-    def test_created_at_default(self) -> None:
-        """Test created_at is set to current UTC time by default."""
-        before = datetime.now(UTC)
-        obs = Observation(
-            job_id="job-1",
-            agent="test",
-            visual_description="test",
-            markup_description="test",
-            location=ObservationLocation(value="test", page_num=1)
-        )
-        after = datetime.now(UTC)
-
-        assert before <= obs.created_at <= after
-
-    def test_can_transition_to_valid(self) -> None:
-        """Test can_transition_to returns True for valid transitions."""
-        location = ObservationLocation(value="test", page_num=1)
-        obs = Observation(
-            job_id="job-1",
-            agent="test",
-            visual_description="test",
-            markup_description="test",
-            location=location,
-            status="open"
-        )
-
-        # From open, can transition to resolved, wont_fix, manual
-        assert obs.can_transition_to("resolved") is True
-        assert obs.can_transition_to("wont_fix") is True
-        assert obs.can_transition_to("manual") is True
-
-    def test_can_transition_to_invalid(self) -> None:
-        """Test can_transition_to returns False for invalid transitions."""
-        location = ObservationLocation(value="test", page_num=1)
-        obs = Observation(
-            job_id="job-1",
-            agent="test",
-            visual_description="test",
-            markup_description="test",
-            location=location,
-            status="resolved"  # Terminal state
-        )
-
-        # From resolved, cannot transition to anything
-        assert obs.can_transition_to("open") is False
-        assert obs.can_transition_to("manual") is False
-        assert obs.can_transition_to("wont_fix") is False
-
-    def test_manual_to_resolved_transition(self) -> None:
-        """Test manual status can transition to resolved."""
-        location = ObservationLocation(value="test", page_num=1)
-        obs = Observation(
-            job_id="job-1",
-            agent="test",
-            visual_description="test",
-            markup_description="test",
-            location=location,
-            status="manual"
-        )
-
-        assert obs.can_transition_to("resolved") is True
-        assert obs.can_transition_to("wont_fix") is True
 
     def test_json_serialization(self) -> None:
         """Test Observation serializes to JSON correctly."""
-        obs = Observation(
+        observation = Observation(
             id="obs-123",
             job_id="job-456",
             agent="figures",
-            visual_description="Flowchart image",
+            visual_description="Image shows chart",
             markup_description="Empty alt text",
-            location=ObservationLocation(
-                location_type="element",
-                value="img.flowchart",
-                page_num=3
-            ),
-            confidence=0.9,
-            severity="major"
+            location=ObservationLocation(value="figure area", page_num=2),
+            category="alt_text",
+            confidence=0.95
         )
 
-        json_str = obs.model_dump_json()
+        json_str = observation.model_dump_json()
         data = json.loads(json_str)
 
         assert data["id"] == "obs-123"
         assert data["job_id"] == "job-456"
         assert data["agent"] == "figures"
-        assert data["location"]["page_num"] == 3
-        assert data["confidence"] == 0.9
+        assert data["category"] == "alt_text"
+        assert data["confidence"] == 0.95
+        assert data["status"] == "open"
+        assert data["resolution"] is None
+        assert data["location"]["page_num"] == 2
 
-    def test_json_round_trip(self) -> None:
-        """Test Observation survives JSON round-trip."""
-        original = Observation(
-            job_id="job-789",
-            agent="tables",
-            visual_description="Complex table",
-            markup_description="Simple table",
-            location=ObservationLocation(
-                location_type="range",
-                value="50-75",
-                page_num=5
-            ),
-            confidence=0.75,
-            severity="critical",
-            route="manual",
-            manual_reason="Complex structure"
+    def test_json_deserialization(self) -> None:
+        """Test Observation can be deserialized from JSON."""
+        json_data = {
+            "id": "obs-789",
+            "job_id": "job-101",
+            "agent": "tables",
+            "source": "agent",
+            "visual_description": "Table visible",
+            "markup_description": "Markdown table",
+            "location": {
+                "location_type": "element",
+                "value": "table.data",
+                "page_num": 3
+            },
+            "confidence": 0.85,
+            "severity": "major",
+            "category": "table_format",
+            "status": "open",
+            "resolution": None,
+        }
+
+        observation = Observation(**json_data)
+
+        assert observation.id == "obs-789"
+        assert observation.agent == "tables"
+        assert observation.category == "table_format"
+        assert observation.location.page_num == 3
+
+    def test_affected_pages_field(self) -> None:
+        """Test the affected_pages field for multi-page issues."""
+        observation = Observation(
+            job_id="job-123",
+            agent="structure",
+            visual_description="Heading structure issue",
+            markup_description="Missing H2",
+            location=ObservationLocation(value="section", page_num=1),
+            affected_pages=[1, 2, 3, 4]
         )
 
-        json_str = original.model_dump_json()
-        restored = Observation.model_validate_json(json_str)
+        assert observation.affected_pages == [1, 2, 3, 4]
 
-        assert restored.id == original.id
-        assert restored.job_id == original.job_id
-        assert restored.agent == original.agent
-        assert restored.location.page_num == original.location.page_num
-        assert restored.manual_reason == original.manual_reason
+    def test_default_affected_pages(self) -> None:
+        """Test affected_pages defaults to empty list."""
+        observation = Observation(
+            job_id="job-123",
+            agent="figures",
+            visual_description="test",
+            markup_description="test",
+            location=ObservationLocation(value="test", page_num=1)
+        )
 
-
-class TestObservationTransitions:
-    """Tests for observation status transition rules."""
-
-    def test_valid_transitions_from_open(self) -> None:
-        """Test valid transitions from open status."""
-        assert VALID_OBSERVATION_TRANSITIONS["open"] == [
-            "resolved", "wont_fix", "manual"
-        ]
-
-    def test_terminal_states(self) -> None:
-        """Test terminal states have no valid transitions."""
-        assert VALID_OBSERVATION_TRANSITIONS["resolved"] == []
-        assert VALID_OBSERVATION_TRANSITIONS["wont_fix"] == []
-
-    def test_manual_can_be_resolved(self) -> None:
-        """Test manual status can transition to resolved or wont_fix."""
-        assert "resolved" in VALID_OBSERVATION_TRANSITIONS["manual"]
-        assert "wont_fix" in VALID_OBSERVATION_TRANSITIONS["manual"]
+        assert observation.affected_pages == []

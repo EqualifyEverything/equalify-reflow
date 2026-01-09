@@ -51,8 +51,8 @@ services:
       - ./pyproject.toml:/app/pyproject.toml:ro
       # Mount Docker socket for testcontainers
       - /var/run/docker.sock:/var/run/docker.sock
-      # Mount built demo UI (run `make build-demo-ui` to update)
-      - ./frontend/demo-ui/dist:/app/static/demo-ui:ro
+      # Mount built pipeline viewer (run `make build-viewer` to update)
+      - ./frontend/demo-ui/dist:/app/static/viewer:ro
     environment:
       # AWS Hybrid Configuration - LocalStack for S3/CloudWatch, Real AWS for Bedrock
       # Use service-specific endpoints (no global endpoint to avoid bedrock conflicts)
@@ -78,6 +78,10 @@ services:
       - LOG_LEVEL=DEBUG
       - ENVIRONMENT=dev
       - ENABLE_METRICS=true
+      # OpenTelemetry Configuration
+      - TELEMETRY_ENABLED=true
+      - TELEMETRY_OTLP_ENDPOINT=jaeger:4317
+      - TELEMETRY_LOG_PROMPTS=true
     command: [ "uv", "run", "uvicorn", "src.main:app", "--reload", "--host", "0.0.0.0", "--port", "8080" ]
     depends_on:
       redis:
@@ -135,34 +139,53 @@ services:
       retries: 3
 
   # Grafana - Metrics visualization and dashboards
-  # grafana:
-  #   image: grafana/grafana:latest
-  #   container_name: equalify-pdf-grafana
-  #   restart: unless-stopped
-  #   ports:
-  #     - "3000:3000"
-  #   environment:
-  #     - GF_SECURITY_ADMIN_USER=admin
-  #     - GF_SECURITY_ADMIN_PASSWORD=admin
-  #     - GF_USERS_ALLOW_SIGN_UP=false
-  #     - GF_USERS_ALLOW_ORG_CREATE=false
-  #     - GF_AUTH_ANONYMOUS_ENABLED=false
-  #     - GF_SERVER_ROOT_URL=http://localhost:3000
-  #     - GF_LOG_LEVEL=info
-  #   volumes:
-  #     - ./infrastructure/grafana/dashboards:/etc/grafana/provisioning/dashboards:ro
-  #     - ./infrastructure/grafana/datasources:/etc/grafana/provisioning/datasources:ro
-  #     - grafana-data:/var/lib/grafana
-  #   depends_on:
-  #     prometheus:
-  #       condition: service_healthy
-  #   networks:
-  #     - equalify-network
-  #   healthcheck:
-  #     test: [ "CMD", "wget", "--spider", "-q", "http://localhost:3000/api/health" ]
-  #     interval: 10s
-  #     timeout: 5s
-  #     retries: 3
+  grafana:
+    image: grafana/grafana:latest
+    container_name: equalify-pdf-grafana
+    restart: unless-stopped
+    ports:
+      - "3000:3000"
+    environment:
+      - GF_SECURITY_ADMIN_USER=admin
+      - GF_SECURITY_ADMIN_PASSWORD=admin
+      - GF_USERS_ALLOW_SIGN_UP=false
+      - GF_USERS_ALLOW_ORG_CREATE=false
+      - GF_AUTH_ANONYMOUS_ENABLED=false
+      - GF_SERVER_ROOT_URL=http://localhost:3000
+      - GF_LOG_LEVEL=info
+    volumes:
+      - ./infrastructure/grafana/dashboards:/etc/grafana/provisioning/dashboards:ro
+      - ./infrastructure/grafana/datasources:/etc/grafana/provisioning/datasources:ro
+      - grafana-data:/var/lib/grafana
+    depends_on:
+      prometheus:
+        condition: service_healthy
+    networks:
+      - equalify-network
+    healthcheck:
+      test: [ "CMD", "wget", "--spider", "-q", "http://localhost:3000/api/health" ]
+      interval: 10s
+      timeout: 5s
+      retries: 3
+
+  # Jaeger - Distributed tracing UI for OpenTelemetry
+  jaeger:
+    image: jaegertracing/all-in-one:latest
+    container_name: equalify-pdf-jaeger
+    restart: unless-stopped
+    ports:
+      - "16686:16686"  # Jaeger UI
+      - "4317:4317"    # OTLP gRPC receiver
+      - "4318:4318"    # OTLP HTTP receiver
+    environment:
+      - COLLECTOR_OTLP_ENABLED=true
+    networks:
+      - equalify-network
+    healthcheck:
+      test: [ "CMD", "wget", "--spider", "-q", "http://localhost:16686/" ]
+      interval: 10s
+      timeout: 5s
+      retries: 3
 
 networks:
   equalify-network:

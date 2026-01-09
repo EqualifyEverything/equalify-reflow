@@ -28,19 +28,33 @@ The Equalify PDF Converter transforms PDF documents into accessible, semantic ma
 - ❌ DO NOT use `localhost:6379` in code (use `redis:6379`)
 - ❌ DO NOT run `python` or `pytest` directly on host
 
+## Default Ports
+
+**API Gateway:** `http://localhost:8080`
+- FastAPI docs: `http://localhost:8080/docs`
+- Pipeline Viewer: `http://localhost:8080/viewer`
+
+**Other Services:**
+- Redis: `localhost:6379`
+- LocalStack: `localhost:4566`
+- Prometheus: `http://localhost:9090`
+- Grafana: `http://localhost:3000`
+- Jaeger: `http://localhost:16686`
+
 ## Quick Architecture
 
-**Pattern:** Monolith with Background Task Queue
+**Pattern:** Monolith with Inline Agentic Pipeline
 
 ```
-├── API Layer (FastAPI)
-│   ├── POST /api/documents/submit     → Queue for PII scan
-│   ├── GET /api/documents/{job_id}    → Job status + results
-│   └── PATCH /api/corrections/{job_id} → Approve/reject
+├── API Layer (FastAPI) - All endpoints prefixed with /api/v1/
+│   ├── POST /api/v1/documents/submit     → PII scan + inline processing
+│   ├── GET /api/v1/documents/{job_id}    → Job status + results
+│   ├── GET /api/v1/documents/{job_id}/stream → SSE event stream
+│   ├── GET /api/v1/documents/{job_id}/ledger → Change ledger for review
+│   └── POST /api/v1/approval/{token}/decision → PII approval
 │
 ├── Workers (Background threads)
 │   ├── PII Worker         → Microsoft Presidio PII detection
-│   ├── Processing Worker  → Docling + AWS Bedrock text correction
 │   └── Timeout Worker     → Approval timeout checks
 │
 ├── Services (Business logic)
@@ -50,13 +64,13 @@ The Equalify PDF Converter transforms PDF documents into accessible, semantic ma
 │   ├── QueueService       → Redis queue operations
 │   ├── JobService         → Redis job state management
 │   ├── PIIDetectionService → Presidio-based PII scanning
-│   ├── TextCorrectionService → AWS Bedrock text correction
-│   └── ProcessingService  → AI pipeline orchestration
+│   ├── DocumentProcessingService → Inline agentic pipeline orchestration
+│   └── AssemblyService    → Correction application and confidence scoring
 │
 └── Infrastructure
-    ├── Redis              → Task queues, job state, rate limiting
+    ├── Redis              → Job state, rate limiting, event bus
     ├── LocalStack (dev)   → S3 + CloudWatch emulation
-    └── AWS Bedrock        → Claude Haiku for text correction
+    └── AWS Bedrock        → Claude models for extraction and analysis
 ```
 
 **Data Flow:**

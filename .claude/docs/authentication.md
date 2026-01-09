@@ -21,10 +21,30 @@ API_KEYS=uic-2bd2c716-bc67-4032-ba66-e4f35c441759
 
 - `/health`, `/health/ready`, `/metrics` - Always public for monitoring
 - `/api/dev/monitoring/*` - Public in dev environment only
+- `/api/v1/documents/{job_id}/stream?token=...` - Stream endpoints with valid token (see below)
+
+### Stream Token Authentication
+
+**Purpose:** Allow browser EventSource connections without exposing API key in URLs
+
+Browser's native EventSource API cannot send custom headers. Stream tokens provide a secure alternative:
+
+1. Client requests token via `POST /api/v1/documents/{job_id}/stream/token` (with API key header)
+2. Server returns short-lived, single-use token (5-minute TTL)
+3. Client connects to `GET /api/v1/documents/{job_id}/stream?token={token}`
+4. Token is consumed on first use (GETDEL in Redis)
+
+**Security properties:**
+- Single-use: Token deleted after first validation
+- Job-scoped: Token only valid for specific job_id
+- Short TTL: 5-minute expiration via Redis
+- Not logged: Short-lived tokens are less sensitive than API keys
+
+**Implementation:** `src/services/job_service.py` (create/validate), `src/middleware/api_key_auth.py` (bypass)
 
 ### Approval Endpoints Security
 
-Approval endpoints (`/api/approval/*`) require BOTH:
+Approval endpoints (`/api/v1/approval/*`) require BOTH:
 1. **API Key** (Layer 1) - Ensures only authorized systems (UIC infrastructure) can make requests
 2. **Approval Token** (Layer 2) - Ensures the requester has permission for the specific job
 
@@ -97,9 +117,11 @@ Middleware executes in reverse order of registration (last added = first execute
 **Unit Tests:**
 - `tests/unit/middleware/test_api_key_auth.py` - API key middleware
 - `tests/unit/middleware/test_docs_auth.py` - Docs auth middleware
+- `tests/unit/services/test_job_service.py::TestStreamTokens` - Stream token methods
 
 **Integration Tests:**
 - `tests/integration/api/test_api_authentication.py` - Full auth flow
+- `tests/integration/api/test_stream_auth.py` - Stream token authentication
 
 **Manual Testing:**
 
@@ -108,12 +130,12 @@ Middleware executes in reverse order of registration (last added = first execute
 make dev
 
 # Test API endpoint without key (should fail)
-curl http://localhost:8080/api/documents/test-id
+curl http://localhost:8080/api/v1/documents/test-id
 # → 401 Unauthorized
 
 # Test with valid key (should work or 404 if job not found)
 curl -H "X-API-Key: uic-2bd2c716-bc67-4032-ba66-e4f35c441759" \
-  http://localhost:8080/api/documents/test-id
+  http://localhost:8080/api/v1/documents/test-id
 
 # Test Swagger UI (should prompt for username/password)
 open http://localhost:8080/docs

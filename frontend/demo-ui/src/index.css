@@ -4,157 +4,177 @@
 
 @layer base {
   :root {
-    /* Content colors */
-    --background: 0.98 0 0;  /* Near white background */
-    --foreground: 0.1 0 0;   /* Near black text */
+    /* Background & Foreground */
+    --background: 0 0% 100%;
+    --foreground: 222 47% 11%;
 
     /* Card colors */
-    --card: 1 0 0;
-    --card-foreground: 0.1 0 0;
+    --card: 0 0% 100%;
+    --card-foreground: 222 47% 11%;
 
-    /* Primary (UIC Navy equivalent in OKLCH) */
-    --primary: 0.1 0 0;
-    --primary-foreground: 1 0 0;
+    /* Primary (UIC Blue) */
+    --primary: 227 100% 19%;
+    --primary-foreground: 0 0% 100%;
 
     /* Secondary */
-    --secondary: 0.95 0 0;
-    --secondary-foreground: 0.1 0 0;
+    --secondary: 210 40% 96%;
+    --secondary-foreground: 222 47% 11%;
 
     /* Muted */
-    --muted: 0.95 0 0;
-    --muted-foreground: 0.4 0 0;
+    --muted: 210 40% 96%;
+    --muted-foreground: 215 16% 47%;
 
     /* Accent */
-    --accent: 0.95 0 0;
-    --accent-foreground: 0.1 0 0;
+    --accent: 210 40% 96%;
+    --accent-foreground: 222 47% 11%;
 
-    /* Destructive (UIC Red equivalent) */
-    --destructive: 0.577 0.245 27.325;
-    --destructive-foreground: 1 0 0;
+    /* Destructive (UIC Red) */
+    --destructive: 350 100% 42%;
+    --destructive-foreground: 0 0% 100%;
 
     /* Borders & Inputs */
-    --border: 0 0 0 / 10%;
-    --input: 0 0 0 / 10%;
-    --ring: 0.4 0 0;
+    --border: 214 32% 91%;
+    --input: 214 32% 91%;
+    --ring: 227 100% 19%;
 
-    /* Sidebar dark theme */
-    --sidebar: 0.12 0 0;          /* Very dark gray */
-    --sidebar-foreground: 0.985 0 0;  /* Near white */
-    --sidebar-primary: 0.488 0.243 264.376;  /* Blue/Purple */
-    --sidebar-accent: 0.15 0 0;   /* Dark gray */
-    --sidebar-border: 1 0 0 / 10%;  /* White 10% opacity */
-    --sidebar-ring: 0.556 0 0;    /* Mid-gray */
+    /* Sidebar (dark theme) */
+    --sidebar: 227 100% 19%;
+    --sidebar-foreground: 0 0% 100%;
+    --sidebar-primary: 350 100% 42%;
+    --sidebar-accent: 227 100% 25%;
+    --sidebar-border: 0 0% 100% / 10%;
+    --sidebar-ring: 350 100% 42%;
+
+    /* Chart colors */
+    --chart-1: 227 100% 19%;
+    --chart-2: 350 100% 42%;
+    --chart-3: 210 40% 60%;
+    --chart-4: 280 65% 60%;
+    --chart-5: 340 75% 55%;
 
     /* Border radius */
-    --radius: 0.625rem;  /* 10px base */
+    --radius: 0.5rem;
+  }
+
+  .dark {
+    /* Background & Foreground */
+    --background: 222 47% 11%;
+    --foreground: 210 40% 98%;
+
+    /* Card colors */
+    --card: 222 47% 14%;
+    --card-foreground: 210 40% 98%;
+
+    /* Primary (lighter blue for dark mode) */
+    --primary: 217 91% 60%;
+    --primary-foreground: 222 47% 11%;
+
+    /* Secondary */
+    --secondary: 217 33% 17%;
+    --secondary-foreground: 210 40% 98%;
+
+    /* Muted */
+    --muted: 217 33% 17%;
+    --muted-foreground: 215 20% 65%;
+
+    /* Accent */
+    --accent: 217 33% 17%;
+    --accent-foreground: 210 40% 98%;
+
+    /* Destructive (UIC Red - slightly lighter for dark) */
+    --destructive: 350 89% 60%;
+    --destructive-foreground: 0 0% 100%;
+
+    /* Borders & Inputs */
+    --border: 217 33% 25%;
+    --input: 217 33% 25%;
+    --ring: 217 91% 60%;
+
+    /* Sidebar (keep dark theme) */
+    --sidebar: 222 47% 8%;
+    --sidebar-foreground: 210 40% 98%;
+    --sidebar-primary: 350 89% 60%;
+    --sidebar-accent: 217 33% 17%;
+    --sidebar-border: 210 40% 98% / 10%;
+    --sidebar-ring: 350 89% 60%;
+
+    /* Chart colors (brighter for dark mode) */
+    --chart-1: 217 91% 60%;
+    --chart-2: 350 89% 60%;
+    --chart-3: 210 40% 70%;
+    --chart-4: 280 65% 70%;
+    --chart-5: 340 75% 65%;
   }
 
   body {
-    @apply bg-uic-light-gray text-foreground font-sans;
-  }
-
-  /* Typography hierarchy matching UIC branding */
-  h1 {
-    @apply text-5xl font-bold text-uic-navy mt-16 mb-8;
-    border-bottom: 4px solid #d50032;
-    padding-bottom: 0.5rem;
-  }
-
-  h2 {
-    @apply text-3xl font-bold text-uic-navy mt-14 mb-6;
-    border-bottom: 2px solid #d50032;
-    padding-bottom: 0.5rem;
-  }
-
-  h3 {
-    @apply text-2xl font-bold text-uic-navy mt-10 mb-4;
-  }
-
-  h4 {
-    @apply text-xl font-bold text-uic-navy mt-8 mb-3;
-  }
-
-  h5 {
-    @apply text-lg font-bold text-uic-navy mt-6 mb-2;
-  }
-
-  h6 {
-    @apply text-base font-bold text-uic-navy mt-4 mb-2;
-  }
-
-  /* Body text */
-  p {
-    @apply text-lg leading-relaxed mb-6;
-  }
-
-  p:first-of-type {
-    @apply text-xl text-uic-navy;
-  }
-
-  /* Links */
-  a {
-    @apply text-uic-red no-underline hover:underline font-semibold transition-colors;
-  }
-
-  /* Strong/Bold */
-  strong, b {
-    @apply text-uic-navy font-bold;
-  }
-
-  /* Code inline */
-  code {
-    @apply text-uic-navy bg-gray-100 text-sm font-mono rounded px-1.5 py-0.5;
-  }
-
-  /* Blockquotes */
-  blockquote {
-    @apply text-xl italic text-uic-navy border-l-4 border-uic-red bg-gray-50 pl-6 py-4 my-6;
+    @apply antialiased bg-background text-foreground font-sans;
   }
 }
 
 @layer components {
-  /* Demo badge */
+  /* Demo badge - pill shaped like UIC OSF */
   .demo-badge {
-    @apply bg-uic-red text-white px-3 py-1 rounded-full text-sm font-bold uppercase tracking-wide;
+    @apply bg-uic-blue text-white px-4 py-1.5 rounded-full text-xs font-bold uppercase tracking-wider;
   }
 
-  /* UIC dividers */
-  .uic-divider {
-    @apply h-1 bg-uic-red max-w-32 mx-auto;
+  /* Decorative blur circles (UIC OSF style) */
+  .decorative-circle {
+    @apply absolute rounded-full pointer-events-none;
   }
 
-  .divider-line {
-    @apply h-px bg-white opacity-20 w-full;
+  .decorative-circle-blue {
+    @apply bg-gradient-to-br from-uic-blue/10 to-transparent blur-3xl;
   }
 
-  .divider-thick {
-    @apply h-0.5 bg-white opacity-20 w-full;
+  .decorative-circle-red {
+    @apply bg-gradient-to-tr from-uic-red/10 to-transparent blur-3xl;
   }
 
-  /* Hero section */
-  .hero-section {
-    @apply bg-uic-navy text-white py-hero;
+  /* Glassmorphism nav (UIC OSF sticky nav style) */
+  .glass-nav {
+    @apply bg-white/90 backdrop-blur-md;
   }
 
-  /* Content section */
-  .content-section {
-    @apply bg-uic-light-gray text-uic-navy py-section;
+  /* Section styling */
+  .section-gray {
+    @apply bg-gray-50;
   }
 
-  /* UIC accent text */
-  .uic-accent {
-    @apply text-uic-red;
+  .section-white {
+    @apply bg-white;
   }
 
-  /* Balanced text */
+  /* Card hover effect */
+  .card-interactive {
+    @apply transition-all duration-300 hover:shadow-card-hover hover:scale-[1.02];
+  }
+}
+
+@layer utilities {
+  /* Smooth transitions */
+  .transition-hover {
+    @apply transition-all duration-300;
+  }
+
+  /* Text balance */
   .text-balance {
     text-wrap: balance;
   }
 }
 
-@layer utilities {
-  /* Custom utilities for UIC branding */
-  .transition-hover {
-    @apply transition-all duration-300;
-  }
+/* Prevent scroll jumping when clicking form elements (Radix UI focus handling) */
+[data-radix-scroll-area-viewport] {
+  overflow-anchor: none;
+}
+
+/* Add scroll margin to cards to prevent jumping when focused elements are in view */
+[data-slot="card"],
+.space-y-4 > * {
+  scroll-margin-top: 1rem;
+}
+
+/* Prevent scroll restoration on radio/checkbox focus */
+[role="radio"]:focus,
+[role="checkbox"]:focus {
+  scroll-margin-top: 100px;
 }

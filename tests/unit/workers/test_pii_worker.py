@@ -20,7 +20,8 @@ def mock_services():
     storage = MagicMock()
     queue = AsyncMock()
     job = AsyncMock()
-    return storage, queue, job
+    s3_url = MagicMock()
+    return storage, queue, job, s3_url
 
 
 @pytest.mark.asyncio
@@ -30,7 +31,7 @@ async def test_pii_worker_requeues_on_shutdown(mock_services):
     Catches: Job loss during deployment rollouts - if this fails, jobs
     would disappear when workers restart.
     """
-    storage, queue, job = mock_services
+    storage, queue, job, s3_url = mock_services
 
     # Create test job payload with required created_at field
     job_payload = {
@@ -57,6 +58,7 @@ async def test_pii_worker_requeues_on_shutdown(mock_services):
         storage_service=storage,
         queue_service=queue,
         job_service=job,
+        s3_url_service=s3_url,
     )
 
     # Start worker - should dequeue, see shutdown, requeue, and exit

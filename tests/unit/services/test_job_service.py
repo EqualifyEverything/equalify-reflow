@@ -521,3 +521,104 @@ class TestCleanupOldJob:
 
         # Should still clean up (status will be 'unknown')
         assert deleted is True
+
+
+class TestStreamTokens:
+    """Tests for stream token creation and validation."""
+
+    @pytest.mark.asyncio
+    async def test_create_stream_token_returns_valid_token(self, job_service, mock_redis_client):
+        """Test stream token generation returns a valid token."""
+        mock_redis_client.set.return_value = True
+
+        token = await job_service.create_stream_token("job-123")
+
+        # Token should be 43 characters (256-bit base64url)
+        assert len(token) == 43
+        assert isinstance(token, str)
+
+    @pytest.mark.asyncio
+    async def test_create_stream_token_stores_with_5min_ttl(self, job_service, mock_redis_client):
+        """Test token is stored with 5-minute TTL."""
+        mock_redis_client.set.return_value = True
+
+        token = await job_service.create_stream_token("job-456")
+
+        # Verify Redis SET was called with correct key pattern and TTL
+        mock_redis_client.set.assert_called_once()
+        call_args = mock_redis_client.set.call_args
+
+        # Key should be eq-pdf:stream-token:{token}
+        key = call_args.args[0]
+        assert key.startswith("eq-pdf:stream-token:")
+        assert token in key
+
+        # Value should be job_id
+        value = call_args.args[1]
+        assert value == "job-456"
+
+        # TTL should be 300 seconds (5 minutes)
+        assert call_args.kwargs.get("ex") == 300
+
+    @pytest.mark.asyncio
+    async def test_create_stream_token_generates_unique_tokens(self, job_service, mock_redis_client):
+        """Test that each call generates a unique token."""
+        mock_redis_client.set.return_value = True
+
+        token1 = await job_service.create_stream_token("job-123")
+        token2 = await job_service.create_stream_token("job-123")
+
+        assert token1 != token2
+
+    @pytest.mark.asyncio
+    async def test_validate_and_consume_returns_job_id(self, job_service, mock_redis_client):
+        """Test valid token returns job_id."""
+        mock_redis_client.getdel.return_value = "job-789"
+
+        job_id = await job_service.validate_and_consume_stream_token("valid-token-abc123")
+
+        assert job_id == "job-789"
+        mock_redis_client.getdel.assert_called_once_with("eq-pdf:stream-token:valid-token-abc123")
+
+    @pytest.mark.asyncio
+    async def test_validate_and_consume_deletes_token(self, job_service, mock_redis_client):
+        """Test token is deleted after validation (single-use)."""
+        mock_redis_client.getdel.return_value = "job-123"
+
+        await job_service.validate_and_consume_stream_token("single-use-token")
+
+        # GETDEL atomically gets and deletes
+        mock_redis_client.getdel.assert_called_once()
+
+    @pytest.mark.asyncio
+    async def test_validate_and_consume_returns_none_for_invalid(self, job_service, mock_redis_client):
+        """Test invalid/expired token returns None."""
+        mock_redis_client.getdel.return_value = None
+
+        job_id = await job_service.validate_and_consume_stream_token("invalid-token")
+
+        assert job_id is None
+
+    @pytest.mark.asyncio
+    async def test_validate_and_consume_returns_none_for_reused(self, job_service, mock_redis_client):
+        """Test already-consumed token returns None (single-use enforcement)."""
+        # First call returns job_id, second call returns None (token deleted)
+        mock_redis_client.getdel.side_effect = ["job-123", None]
+
+        # First use - valid
+        job_id1 = await job_service.validate_and_consume_stream_token("one-time-token")
+        assert job_id1 == "job-123"
+
+        # Second use - invalid (already consumed)
+        job_id2 = await job_service.validate_and_consume_stream_token("one-time-token")
+        assert job_id2 is None
+
+    @pytest.mark.asyncio
+    async def test_validate_and_consume_decodes_bytes(self, job_service, mock_redis_client):
+        """Test bytes response from Redis is decoded properly."""
+        mock_redis_client.getdel.return_value = b"job-bytes-123"
+
+        job_id = await job_service.validate_and_consume_stream_token("token-xyz")
+
+        assert job_id == "job-bytes-123"
+        assert isinstance(job_id, str)

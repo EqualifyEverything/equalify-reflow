@@ -139,6 +139,8 @@ make aws-status   # Show ECS service status
 brew install --cask session-manager-plugin  # macOS
 ```
 
+**Cost Protection:** The deployment includes budget alerts, rate limiting, and CloudWatch alarms. Configure thresholds in `terraform/terraform.tfvars`. See [Cost Protection & Alerting](docs/aws-guide.md#cost-protection--alerting) for details.
+
 **For full deployment guide, troubleshooting, and operations:** See [AWS Guide](docs/aws-guide.md)
 
 ## Architecture

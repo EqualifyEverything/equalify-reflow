@@ -157,3 +157,4 @@ site/
 project-docs/local/
 project-docs/UIC Documents/
 .mypy_cache/
+debug_bundle/

@@ -223,7 +223,7 @@ async def test_redoc_endpoint_requires_auth(middleware_with_creds):
 async def test_non_docs_endpoint_bypasses_auth(middleware_with_creds):
     """Test that non-docs endpoints bypass auth."""
     # Setup
-    request = create_mock_request("/api/documents/submit", {})
+    request = create_mock_request("/api/v1/documents/submit", {})
     call_next = AsyncMock(return_value=Response(status_code=200))
 
     # Execute

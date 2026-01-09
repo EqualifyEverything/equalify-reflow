@@ -11,8 +11,8 @@ from fastapi import Depends
 
 from .config import settings
 from .services.application_service import ApplicationService
-from .services.consolidation_service import ConsolidationService
 from .services.correction_approval_service import CorrectionApprovalService
+from .services.document_processing_service import DocumentProcessingService
 from .services.job_service import JobService
 from .services.queue_service import QueueService
 from .services.rate_limit_service import RateLimitService
@@ -24,6 +24,7 @@ from .services.storage_service import StorageService
 # Singleton S3 client for connection reuse
 _s3_client = None
 
+
 @lru_cache
 def _get_s3_client_singleton() -> Any:
     """Create singleton S3 client for connection reuse across requests.
@@ -33,8 +34,8 @@ def _get_s3_client_singleton() -> Any:
     """
     retry_config = Config(
         retries={
-            'mode': 'adaptive',
-            'max_attempts': 3,
+            "mode": "adaptive",
+            "max_attempts": 3,
         },
         connect_timeout=10,
         read_timeout=60,
@@ -46,6 +47,7 @@ def _get_s3_client_singleton() -> Any:
 
     # Clear empty AWS_PROFILE to prevent boto3 profile lookup error
     import os
+
     if os.environ.get("AWS_PROFILE") == "":
         del os.environ["AWS_PROFILE"]
 
@@ -75,25 +77,42 @@ async def get_s3_client() -> AsyncGenerator[Any, None]:
     yield _get_s3_client_singleton()
 
 
+# Singleton Redis connection pool for connection reuse across requests
+_redis_pool: redis.ConnectionPool | None = None
+
+
+def _get_redis_pool() -> redis.ConnectionPool:
+    """Get or create singleton Redis connection pool.
+
+    Returns a shared connection pool that persists across requests,
+    eliminating per-request connection overhead.
+
+    Returns:
+        Singleton Redis ConnectionPool instance
+    """
+    global _redis_pool
+    if _redis_pool is None:
+        _redis_pool = redis.ConnectionPool.from_url(
+            settings.redis_url,
+            decode_responses=True,
+            max_connections=settings.redis_max_connections,
+        )
+    return _redis_pool
+
+
 async def get_redis_client() -> AsyncGenerator[Any, None]:
-    """Get Redis client with connection pool and cleanup.
+    """Get Redis client from singleton connection pool.
 
     Yields:
-        Configured Redis async client
+        Redis client using shared connection pool
 
     Note:
-        This is an async generator for FastAPI dependency injection.
-        The connection pool will be properly closed after the request completes.
+        Uses singleton connection pool for efficient connection reuse.
+        Connections return to pool automatically - no explicit close needed.
     """
-    client = redis.from_url(
-        settings.redis_url,
-        decode_responses=True,
-        max_connections=settings.redis_max_connections,
-    )
-    try:
-        yield client
-    finally:
-        await client.aclose()  # type: ignore[attr-defined]
+    client = redis.Redis(connection_pool=_get_redis_pool())
+    yield client
+    # No close - connection returns to pool automatically
 
 
 # Singleton StorageService for circuit breaker persistence
@@ -182,9 +201,7 @@ async def get_s3_cleanup_service() -> S3CleanupService:
     return _get_s3_cleanup_service_singleton()
 
 
-async def get_queue_service(
-    redis_client: Any = Depends(get_redis_client)
-) -> QueueService:
+async def get_queue_service(redis_client: Any = Depends(get_redis_client)) -> QueueService:
     """Get queue service instance.
 
     Args:
@@ -203,9 +220,7 @@ async def get_queue_service(
     return QueueService(redis_client=redis_client)
 
 
-async def get_job_service(
-    redis_client: Any = Depends(get_redis_client)
-) -> JobService:
+async def get_job_service(redis_client: Any = Depends(get_redis_client)) -> JobService:
     """Get job service instance.
 
     Args:
@@ -225,7 +240,7 @@ async def get_job_service(
 
 
 async def get_rate_limit_service(
-    redis_client: Any = Depends(get_redis_client)
+    redis_client: Any = Depends(get_redis_client),
 ) -> AsyncGenerator[RateLimitService, None]:
     """Get rate limit service instance.
 
@@ -249,7 +264,7 @@ async def get_rate_limit_service(
 async def get_correction_approval_service(
     redis: redis.Redis = Depends(get_redis_client),
     job_service: JobService = Depends(get_job_service),
-    storage: StorageService = Depends(get_storage_service)
+    storage: StorageService = Depends(get_storage_service),
 ) -> CorrectionApprovalService:
     """Get correction approval service instance.
 
@@ -280,11 +295,7 @@ async def get_correction_approval_service(
                 storage_service=storage_service
             )
     """
-    return CorrectionApprovalService(
-        redis_client=redis,
-        job_service=job_service,
-        storage_service=storage
-    )
+    return CorrectionApprovalService(redis_client=redis, job_service=job_service, storage_service=storage)
 
 
 async def get_remediation_storage(
@@ -312,29 +323,6 @@ async def get_remediation_storage(
     return RemediationStorageService(storage_service=storage)
 
 
-async def get_consolidation_service(
-    remediation_storage: RemediationStorageService = Depends(get_remediation_storage),
-) -> ConsolidationService:
-    """Get consolidation service instance.
-
-    Provides observation consolidation into proposals, including
-    re-consolidation for human-submitted observations.
-
-    Args:
-        remediation_storage: RemediationStorageService (injected)
-
-    Returns:
-        ConsolidationService instance
-
-    Note:
-        In FastAPI routes, use:
-            consolidation: ConsolidationService = Depends(
-                get_consolidation_service
-            )
-    """
-    return ConsolidationService(storage=remediation_storage)
-
-
 async def get_application_service(
     remediation_storage: RemediationStorageService = Depends(get_remediation_storage),
     storage: StorageService = Depends(get_storage_service),
@@ -343,7 +331,7 @@ async def get_application_service(
     """Get application service instance.
 
     Provides search-replace application of approved proposals
-    to markdown documents (PRD-017).
+    to markdown documents.
 
     Args:
         remediation_storage: RemediationStorageService (injected)
@@ -363,4 +351,39 @@ async def get_application_service(
         remediation_storage=remediation_storage,
         storage=storage,
         job_service=job_service,
+    )
+
+
+async def get_document_processing_service(
+    redis_client: Any = Depends(get_redis_client),
+    storage: StorageService = Depends(get_storage_service),
+    s3_url: S3URLService = Depends(get_s3_url_service),
+) -> DocumentProcessingService:
+    """Get document processing service instance.
+
+    Orchestrates the agentic document processing pipeline including:
+    - Docling PDF extraction
+    - Planning phase (structure inference)
+    - Execution phase (parallel workers)
+    - Verification phase
+    - Recovery phase (if needed)
+
+    Args:
+        redis_client: Redis client (injected)
+        storage: Storage service for S3 operations (injected)
+        s3_url: S3 URL service for generating presigned URLs (injected)
+
+    Returns:
+        DocumentProcessingService instance
+
+    Note:
+        In FastAPI routes, use:
+            processing: DocumentProcessingService = Depends(
+                get_document_processing_service
+            )
+    """
+    return DocumentProcessingService(
+        redis_client=redis_client,
+        storage_service=storage,
+        s3_url_service=s3_url,
     )

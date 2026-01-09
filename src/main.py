@@ -12,7 +12,7 @@ from fastapi import FastAPI
 from fastapi.openapi.utils import get_openapi
 from fastapi.staticfiles import StaticFiles
 
-from .api import approval, corrections, documents, health, review
+from .api import approval, corrections, documents, health, review, review_checklist
 from .config import settings
 from .dependencies import get_redis_client
 from .middleware import (
@@ -25,8 +25,8 @@ from .middleware import (
 )
 from .middleware.metrics import setup_metrics
 from .services.rate_limit_service import RateLimitService
+from .telemetry import init_telemetry, shutdown_telemetry
 from .workers.pii_worker import start_pii_worker
-from .workers.processing_worker import start_processing_worker
 from .workers.timeout_worker import start_timeout_worker
 
 # Configure logging
@@ -45,6 +45,12 @@ async def lifespan(app: FastAPI) -> AsyncIterator[None]:
     Starts background workers when the application starts
     and ensures cleanup on shutdown.
     """
+    # Initialize OpenTelemetry (if enabled)
+    if settings.telemetry_enabled:
+        logger.info("Initializing OpenTelemetry...")
+        init_telemetry(app)
+        logger.info("✅ OpenTelemetry initialized")
+
     # Startup: Initialize shared services
     logger.info("Initializing shared services...")
     redis_gen = get_redis_client()
@@ -67,12 +73,13 @@ async def lifespan(app: FastAPI) -> AsyncIterator[None]:
         shutdown_event = asyncio.Event()
 
         # Pass shutdown event to workers
+        # Note: Processing Worker removed - DocumentProcessingService runs
+        # inline via BackgroundTasks instead of queue-based processing
         worker_tasks = [
             asyncio.create_task(start_pii_worker(shutdown_event)),
-            asyncio.create_task(start_processing_worker(shutdown_event)),
             asyncio.create_task(start_timeout_worker(shutdown_event)),
         ]
-        logger.info("PII, Processing, and Timeout worker tasks created")
+        logger.info("PII and Timeout worker tasks created")
 
     yield
 
@@ -96,6 +103,12 @@ async def lifespan(app: FastAPI) -> AsyncIterator[None]:
                 await asyncio.gather(*worker_tasks, return_exceptions=True)
             except Exception as e:
                 logger.error(f"Error during forced shutdown: {e}")
+
+    # Shutdown OpenTelemetry (if enabled)
+    if settings.telemetry_enabled:
+        logger.info("Shutting down OpenTelemetry...")
+        shutdown_telemetry()
+        logger.info("✅ OpenTelemetry shutdown complete")
 
 
 # Create FastAPI app with lifespan
@@ -132,8 +145,9 @@ app.include_router(documents.router)
 app.include_router(approval.router)
 app.include_router(corrections.router)
 app.include_router(review.router)
+app.include_router(review_checklist.router)
 
-# Conditionally import dev monitoring endpoints (only in development)
+# Conditionally import dev-only endpoints (only in development)
 if settings.environment == "dev":
     from .api import dev_monitoring
     app.include_router(dev_monitoring.router)
@@ -184,25 +198,24 @@ async def root() -> dict[str, str]:
     }
 
 
-# Mount demo UI static files (if present in production build)
-# The static files are built and copied during Docker image creation
-_demo_ui_path = Path(__file__).parent.parent / "static" / "demo-ui"
-if _demo_ui_path.exists():
+# Mount Pipeline Viewer (standalone viewer app)
+_viewer_path = Path(__file__).parent.parent / "static" / "viewer"
+if _viewer_path.exists():
     from fastapi.responses import FileResponse
 
-    # Serve index.html for SPA client-side routes
-    # This must be defined BEFORE the StaticFiles mount
-    @app.get("/demo/{full_path:path}")
-    async def serve_spa(full_path: str) -> FileResponse:
-        """Serve index.html for all demo UI routes (SPA fallback)."""
-        # Check if requesting a static asset (has file extension)
+    @app.get("/viewer/{full_path:path}")
+    async def serve_viewer_spa(full_path: str) -> FileResponse:
+        """Serve index.html for Pipeline Viewer routes (SPA fallback)."""
         if "." in full_path.split("/")[-1]:
-            # Let StaticFiles handle actual files
-            file_path = _demo_ui_path / full_path
+            file_path = _viewer_path / full_path
             if file_path.exists():
                 return FileResponse(file_path)
-        # For all other paths, serve index.html (SPA routing)
-        return FileResponse(_demo_ui_path / "index.html")
+        return FileResponse(_viewer_path / "index.html")
 
-    app.mount("/demo", StaticFiles(directory=_demo_ui_path, html=True), name="demo-ui")
-    logger.info("✅ Demo UI mounted at /demo")
+    @app.get("/viewer")
+    async def serve_viewer_root() -> FileResponse:
+        """Serve Pipeline Viewer root."""
+        return FileResponse(_viewer_path / "index.html")
+
+    app.mount("/viewer", StaticFiles(directory=_viewer_path, html=True), name="pipeline-viewer")
+    logger.info("✅ Pipeline Viewer mounted at /viewer")

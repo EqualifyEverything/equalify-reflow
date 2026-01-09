@@ -23,5 +23,8 @@
         ]
       }
     ]
+  },
+  "enabledPlugins": {
+    "code-review@claude-code-plugins": true
   }
 }

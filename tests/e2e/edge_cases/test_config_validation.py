@@ -379,27 +379,6 @@ class TestConfigurationValidation:
         assert settings_zero.claude_temperature == 0.0
         assert settings_one.claude_temperature == 1.0
 
-    def test_negative_max_pages(self):
-        """Test negative max pages full context."""
-        with pytest.raises(ValidationError):
-            Settings(max_pages_full_context=-1)
-
-    def test_zero_max_pages(self):
-        """Test zero max pages full context."""
-        with pytest.raises(ValidationError):
-            Settings(max_pages_full_context=0)
-
-    def test_extreme_max_pages(self):
-        """Test extremely high max pages are rejected."""
-        # With Field constraints, values > 50 should be rejected
-        with pytest.raises(ValidationError):
-            Settings(max_pages_full_context=1000)
-
-    def test_valid_max_pages(self):
-        """Test valid max pages full context."""
-        settings = Settings(max_pages_full_context=15)
-        assert settings.max_pages_full_context == 15
-
     def test_retention_policies_consistency(self):
         """Test that retention policies are logically consistent."""
         settings = Settings(

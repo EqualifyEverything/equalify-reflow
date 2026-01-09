@@ -2,15 +2,31 @@ import { defineConfig } from 'vite'
 import react from '@vitejs/plugin-react'
 import path from 'path'
 
-// https://vitejs.dev/config/
+/**
+ * Vite config for Pipeline Viewer
+ * Builds to /viewer path for production
+ */
 export default defineConfig({
   plugins: [react()],
-  // Base path for production - serves from /demo/ in the container
-  // Development uses root path (VITE_API_URL handles API calls)
-  base: process.env.NODE_ENV === 'production' ? '/demo/' : '/',
+  // Serve from /viewer/ in production, root in development
+  base: process.env.NODE_ENV === 'production' ? '/viewer/' : '/',
   resolve: {
     alias: {
       '@': path.resolve(__dirname, './src'),
+    },
+  },
+  build: {
+    outDir: 'dist',
+    emptyOutDir: true,
+    rollupOptions: {
+      input: {
+        main: path.resolve(__dirname, 'viewer.html'),
+      },
+      output: {
+        entryFileNames: 'assets/[name]-[hash].js',
+        chunkFileNames: 'assets/[name]-[hash].js',
+        assetFileNames: 'assets/[name]-[hash].[ext]',
+      },
     },
   },
   server: {

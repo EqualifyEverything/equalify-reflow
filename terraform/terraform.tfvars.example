@@ -31,6 +31,10 @@ s3_temp_lifecycle_days = 7
 enable_cloudwatch_alarms = true
 alarm_email              = "your-email@example.com"
 
+# Budget Alerts (cost protection)
+bedrock_daily_budget_limit = "50"   # Daily Bedrock limit (alerts at 50%, 80%, 100%)
+monthly_budget_limit       = "500"  # Monthly total AWS limit (alerts at 50%, 80%, 100%)
+
 # AI Provider Configuration
 ai_provider = "bedrock" # Only "bedrock" is supported
 

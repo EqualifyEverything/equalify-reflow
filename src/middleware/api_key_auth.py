@@ -55,9 +55,7 @@ class APIKeyAuthMiddleware(BaseHTTPMiddleware):
         logger.info(f"Loaded {len(keys)} API key(s) for authentication")
         return keys
 
-    async def dispatch(
-        self, request: Request, call_next: Callable[[Request], Awaitable[Response]]
-    ) -> Response:
+    async def dispatch(self, request: Request, call_next: Callable[[Request], Awaitable[Response]]) -> Response:
         """
         Validate API key before processing request.
 
@@ -78,8 +76,7 @@ class APIKeyAuthMiddleware(BaseHTTPMiddleware):
         # Check if API key is provided
         if not api_key:
             logger.warning(
-                f"Missing API key for {request.method} {request.url.path} "
-                f"from {self._get_client_ip(request)}"
+                f"Missing API key for {request.method} {request.url.path} from {self._get_client_ip(request)}"
             )
             return self._unauthorized_response(
                 detail=f"Missing API key. Provide a valid key in the '{settings.api_key_header_name}' header."
@@ -88,12 +85,9 @@ class APIKeyAuthMiddleware(BaseHTTPMiddleware):
         # Validate API key using constant-time comparison
         if not self._is_valid_key(api_key):
             logger.warning(
-                f"Invalid API key for {request.method} {request.url.path} "
-                f"from {self._get_client_ip(request)}"
+                f"Invalid API key for {request.method} {request.url.path} from {self._get_client_ip(request)}"
             )
-            return self._unauthorized_response(
-                detail="Invalid API key"
-            )
+            return self._unauthorized_response(detail="Invalid API key")
 
         # API key is valid, add to request state for potential use in handlers
         request.state.api_key = api_key
@@ -134,12 +128,21 @@ class APIKeyAuthMiddleware(BaseHTTPMiddleware):
         if path == "/demo" or path.startswith("/demo/"):
             return True
 
+        # Viewer static files (have separate HTTP Basic auth)
+        if path == "/viewer" or path.startswith("/viewer/"):
+            return True
+
         # Development monitoring endpoints (public only in dev environment)
         if settings.environment == "dev" and path.startswith("/api/dev/monitoring"):
             return True
 
         # Allow same-origin requests from demo UI (protected by Basic Auth at /demo)
         if self._is_demo_ui_request(request):
+            return True
+
+        # Allow stream endpoints with token query parameter
+        # Token validation happens in the endpoint handler
+        if self._is_stream_token_request(request):
             return True
 
         return False
@@ -167,9 +170,9 @@ class APIKeyAuthMiddleware(BaseHTTPMiddleware):
         if request.headers.get(settings.api_key_header_name):
             return False
 
-        # Check Referer header for demo UI origin
+        # Check Referer header for demo UI or viewer origin
         referer = request.headers.get("Referer", "")
-        if "/demo" in referer:
+        if "/demo" in referer or "/viewer" in referer:
             return True
 
         # Check Origin header as fallback (for some browsers/requests)
@@ -183,6 +186,42 @@ class APIKeyAuthMiddleware(BaseHTTPMiddleware):
             return True
 
         return False
+
+    def _is_stream_token_request(self, request: Request) -> bool:
+        """
+        Check if request has stream token for SSE endpoint.
+
+        Stream tokens allow bypassing API key auth for browser EventSource
+        connections which cannot send custom headers.
+
+        This only checks if the endpoint qualifies for token-based auth.
+        Actual token validation and consumption happens in the endpoint handler.
+        We mark it as "public" here to bypass API key check, then the
+        endpoint validates the token.
+
+        Args:
+            request: Incoming request
+
+        Returns:
+            True if this is a stream endpoint with a token parameter
+        """
+        path = request.url.path
+
+        # Only applies to stream endpoints (not the token creation endpoint)
+        if not path.endswith("/stream"):
+            return False
+
+        # Must have token query parameter
+        token = request.query_params.get("token")
+        if not token:
+            return False
+
+        # Basic format validation (256-bit tokens are ~43 chars)
+        # Full validation happens in endpoint handler
+        if len(token) < 40:
+            return False
+
+        return True
 
     def _is_valid_key(self, provided_key: str) -> bool:
         """
@@ -247,10 +286,6 @@ class APIKeyAuthMiddleware(BaseHTTPMiddleware):
         """
         return JSONResponse(
             status_code=status.HTTP_401_UNAUTHORIZED,
-            content={
-                "detail": detail
-            },
-            headers={
-                "WWW-Authenticate": "ApiKey realm=\"API\", charset=\"UTF-8\""
-            }
+            content={"detail": detail},
+            headers={"WWW-Authenticate": 'ApiKey realm="API", charset="UTF-8"'},
         )

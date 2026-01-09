@@ -70,7 +70,7 @@ def create_mock_request(path: str, headers: dict = None, client_host: str = "127
 async def test_valid_api_key_allows_request(middleware_with_keys):
     """Test that valid API key allows request through."""
     # Setup
-    request = create_mock_request("/api/documents/submit", {"X-API-Key": "test-key-1"})
+    request = create_mock_request("/api/v1/documents/submit", {"X-API-Key": "test-key-1"})
     call_next = AsyncMock(return_value=Response(status_code=200))
 
     # Execute
@@ -87,7 +87,7 @@ async def test_valid_api_key_allows_request(middleware_with_keys):
 async def test_second_valid_api_key_allows_request(middleware_with_keys):
     """Test that second valid API key also works."""
     # Setup
-    request = create_mock_request("/api/documents/submit", {"X-API-Key": "test-key-2"})
+    request = create_mock_request("/api/v1/documents/submit", {"X-API-Key": "test-key-2"})
     call_next = AsyncMock(return_value=Response(status_code=200))
 
     # Execute
@@ -103,7 +103,7 @@ async def test_second_valid_api_key_allows_request(middleware_with_keys):
 async def test_invalid_api_key_rejects_request(middleware_with_keys):
     """Test that invalid API key rejects request."""
     # Setup
-    request = create_mock_request("/api/documents/submit", {"X-API-Key": "invalid-key"})
+    request = create_mock_request("/api/v1/documents/submit", {"X-API-Key": "invalid-key"})
     call_next = AsyncMock()
 
     # Execute
@@ -120,7 +120,7 @@ async def test_invalid_api_key_rejects_request(middleware_with_keys):
 async def test_missing_api_key_rejects_request(middleware_with_keys):
     """Test that missing API key rejects request."""
     # Setup
-    request = create_mock_request("/api/documents/submit", {})
+    request = create_mock_request("/api/v1/documents/submit", {})
     call_next = AsyncMock()
 
     # Execute
@@ -138,7 +138,7 @@ async def test_missing_api_key_rejects_request(middleware_with_keys):
 async def test_no_configured_keys_rejects_all_requests(middleware_no_keys):
     """Test that middleware without configured keys rejects all requests."""
     # Setup
-    request = create_mock_request("/api/documents/submit", {"X-API-Key": "any-key"})
+    request = create_mock_request("/api/v1/documents/submit", {"X-API-Key": "any-key"})
     call_next = AsyncMock()
 
     # Execute
@@ -226,7 +226,7 @@ async def test_dev_monitoring_requires_auth_in_production(middleware_with_keys):
 async def test_case_sensitive_api_key(middleware_with_keys):
     """Test that API key validation is case-sensitive."""
     # Setup - try uppercase version of valid key
-    request = create_mock_request("/api/documents/submit", {"X-API-Key": "TEST-KEY-1"})
+    request = create_mock_request("/api/v1/documents/submit", {"X-API-Key": "TEST-KEY-1"})
     call_next = AsyncMock()
 
     # Execute
@@ -250,7 +250,7 @@ async def test_whitespace_stripped_from_keys():
         mock_settings.api_keys.get_secret_value.return_value = " key-1 , key-2 , key-3 "
 
         middleware = APIKeyAuthMiddleware(mock_app)
-        request = create_mock_request("/api/documents/submit", {"X-API-Key": "key-1"})
+        request = create_mock_request("/api/v1/documents/submit", {"X-API-Key": "key-1"})
         call_next = AsyncMock(return_value=Response(status_code=200))
 
         # Execute
@@ -274,7 +274,7 @@ async def test_custom_header_name():
         mock_settings.api_keys.get_secret_value.return_value = "custom-key"
 
         middleware = APIKeyAuthMiddleware(mock_app)
-        request = create_mock_request("/api/documents/submit", {"Authorization": "custom-key"})
+        request = create_mock_request("/api/v1/documents/submit", {"Authorization": "custom-key"})
         call_next = AsyncMock(return_value=Response(status_code=200))
 
         # Execute
@@ -291,7 +291,7 @@ async def test_client_ip_extraction_from_x_forwarded_for(middleware_with_keys):
     """Test client IP extraction from X-Forwarded-For header."""
     # Setup
     request = create_mock_request(
-        "/api/documents/submit",
+        "/api/v1/documents/submit",
         {
             "X-Forwarded-For": "1.2.3.4, 5.6.7.8",
             "X-API-Key": "invalid-key"
@@ -311,7 +311,7 @@ async def test_client_ip_extraction_from_x_forwarded_for(middleware_with_keys):
 async def test_www_authenticate_header_in_response(middleware_with_keys):
     """Test that 401 response includes WWW-Authenticate header."""
     # Setup
-    request = create_mock_request("/api/documents/submit", {})
+    request = create_mock_request("/api/v1/documents/submit", {})
     call_next = AsyncMock()
 
     # Execute
@@ -426,7 +426,7 @@ async def test_cached_keys_used_on_multiple_requests():
             call_next = AsyncMock(return_value=Response(status_code=200))
 
             for _ in range(5):
-                request = create_mock_request("/api/documents/submit", {"X-API-Key": "test-key-1"})
+                request = create_mock_request("/api/v1/documents/submit", {"X-API-Key": "test-key-1"})
                 await middleware.dispatch(request, call_next)
 
             # Assert - _load_api_keys only called once during initialization

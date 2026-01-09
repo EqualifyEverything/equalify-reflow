@@ -1,7 +1,7 @@
 """Unit tests for PIIDetectionService.
 
 Tests PII routing logic: documents with PII go to approval queue,
-clean documents go directly to processing queue.
+clean documents trigger processing directly.
 
 These are Tier 1 tests - catching compliance violations (PII routing wrong).
 """
@@ -10,7 +10,7 @@ from unittest.mock import AsyncMock, MagicMock, patch
 
 import pytest
 from src.services.pii_service import PIIDetectionService
-from src.shared.constants.queues import APPROVAL_QUEUE, PROCESSING_QUEUE
+from src.shared.constants.queues import APPROVAL_QUEUE
 from src.shared.constants.statuses import (
     STATUS_AWAITING_APPROVAL,
     STATUS_PROCESSING,
@@ -38,6 +38,8 @@ class TestPIIDetectionRouting:
         mock = MagicMock()
         mock.enqueue = AsyncMock()
         mock.add_to_timeout_tracking = AsyncMock()
+        # Add redis attribute for processing service
+        mock.redis = MagicMock()
         return mock
 
     @pytest.fixture
@@ -46,15 +48,31 @@ class TestPIIDetectionRouting:
         mock = MagicMock()
         mock.update_job_status = AsyncMock()
         mock.store_approval_token_mapping = AsyncMock()
+        # Add get_job for processing flow
+        mock.get_job = AsyncMock(return_value={
+            "job_id": "test-job-id",
+            "original_filename": "test.pdf",
+            "review_mode": "auto",
+        })
         return mock
 
     @pytest.fixture
-    def pii_service(self, mock_storage_service, mock_queue_service, mock_job_service):
+    def mock_s3_url_service(self):
+        """Mock S3URLService for URL generation."""
+        mock = MagicMock()
+        mock.generate_url = AsyncMock(return_value="http://example.com/test.pdf")
+        mock.temp_bucket = "temp-bucket"
+        mock.results_bucket = "results-bucket"
+        return mock
+
+    @pytest.fixture
+    def pii_service(self, mock_storage_service, mock_queue_service, mock_job_service, mock_s3_url_service):
         """Create PIIDetectionService with mocked dependencies."""
         return PIIDetectionService(
             storage_service=mock_storage_service,
             queue_service=mock_queue_service,
             job_service=mock_job_service,
+            s3_url_service=mock_s3_url_service,
         )
 
     async def test_pii_found_routes_to_approval_queue(
@@ -101,13 +119,16 @@ class TestPIIDetectionRouting:
         # Verify: timeout tracking added (for approval expiration)
         mock_queue_service.add_to_timeout_tracking.assert_called_once()
 
-    async def test_clean_pdf_routes_to_processing_queue(
+    async def test_clean_pdf_triggers_processing_directly(
         self, pii_service, mock_queue_service, mock_job_service
     ):
-        """PDF without PII skips approval, goes directly to processing.
+        """PDF without PII skips approval, triggers processing directly.
 
         This test catches: clean documents incorrectly going to approval
         queue, causing unnecessary delays.
+
+        Note: Processing is now triggered directly via asyncio.create_task
+        instead of queuing to a processing queue (which had no consumer).
         """
         job = create_pii_queue_payload()
 
@@ -122,18 +143,33 @@ class TestPIIDetectionRouting:
                 "src.services.pii_service.extract_pdf_text",
                 return_value="Chapter 1: Introduction to Mathematics",
             ):
-                await pii_service.process_pii_job(job)
+                # Mock DocumentProcessingService (imported inside the function)
+                with patch(
+                    "src.services.document_processing_service.DocumentProcessingService"
+                ) as mock_processing_service_class:
+                    mock_processing_service = MagicMock()
+                    mock_processing_service.process_document = AsyncMock()
+                    mock_processing_service_class.return_value = mock_processing_service
 
-        # Verify: job queued to PROCESSING_QUEUE (not APPROVAL_QUEUE)
+                    # Mock asyncio.create_task to capture the call
+                    with patch("asyncio.create_task") as mock_create_task:
+                        await pii_service.process_pii_job(job)
+
+                        # Verify: processing service was instantiated
+                        mock_processing_service_class.assert_called_once()
+
+                        # Verify: create_task was called to trigger processing
+                        mock_create_task.assert_called_once()
+
+        # Verify: NO enqueue to any queue (processing triggered directly)
         enqueue_calls = mock_queue_service.enqueue.call_args_list
-        assert len(enqueue_calls) == 1
-        queue_name, payload = enqueue_calls[0][0]
-        assert queue_name == PROCESSING_QUEUE
+        assert len(enqueue_calls) == 0
 
         # Verify: job status set to processing
         status_calls = mock_job_service.update_job_status.call_args_list
-        final_status_call = status_calls[-1]
-        assert final_status_call[0][1] == STATUS_PROCESSING
+        # First call is STATUS_PII_SCANNING, second is STATUS_PROCESSING
+        processing_status_call = [c for c in status_calls if c[0][1] == STATUS_PROCESSING]
+        assert len(processing_status_call) == 1
 
         # Verify: NO timeout tracking (not needed for processing)
         mock_queue_service.add_to_timeout_tracking.assert_not_called()

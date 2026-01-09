@@ -18,6 +18,7 @@ from src.dependencies import (
 )
 from src.services.job_service import JobService
 from src.services.queue_service import QueueService
+from src.services.s3_url_service import S3URLService
 from src.services.storage_service import StorageService
 
 
@@ -164,54 +165,9 @@ class TestWorkerResourceManagement:
             mock_redis_gen.assert_called_once()
             mock_s3_gen.assert_called_once()
 
-    @pytest.mark.asyncio
-    @pytest.mark.timeout(10)  # Worker startup and shutdown can take time
-    async def test_processing_worker_initialization_pattern(self):
-        """Test that Processing worker uses correct initialization pattern."""
-        from src.workers.processing_worker import start_processing_worker
-
-        with patch('src.workers.processing_worker.get_redis_client') as mock_redis_gen, \
-             patch('src.workers.processing_worker.get_s3_client') as mock_s3_gen:
-
-            # Create mock clients
-            mock_redis = AsyncMock()
-            mock_s3 = MagicMock()
-
-            # Mock async generators
-            async def redis_gen():
-                yield mock_redis
-
-            async def s3_gen():
-                yield mock_s3
-
-            mock_redis_gen.return_value = redis_gen()
-            mock_s3_gen.return_value = s3_gen()
-
-            # Start worker in background
-            worker_task = asyncio.create_task(start_processing_worker())
-
-            # Wait for worker to be ready (with timeout)
-            from src.workers import processing_worker
-            worker = None
-            for _ in range(50):  # 50 * 0.01s = 0.5s max wait
-                worker = processing_worker._worker_instance
-                if worker and worker.running:
-                    break
-                await asyncio.sleep(0.01)
-
-            # Stop worker
-            from src.workers.processing_worker import stop_processing_worker
-            stop_processing_worker()
-
-            # Wait for worker to finish
-            try:
-                await asyncio.wait_for(worker_task, timeout=2.0)
-            except TimeoutError:
-                worker_task.cancel()
-
-            # Verify clients were created using anext pattern
-            mock_redis_gen.assert_called_once()
-            mock_s3_gen.assert_called_once()
+    # Note: test_processing_worker_initialization_pattern was removed
+    # because ProcessingWorker has been deleted as part of the agentic pipeline refactor.
+    # Processing is now triggered directly via ProcessingService, not through a queue worker.
 
 
 class TestConnectionPoolManagement:
@@ -273,12 +229,18 @@ class TestMultipleWorkerCycles:
             )
             queue_service = QueueService(redis_client=mock_redis)
             job_service = JobService(redis_client=mock_redis)
+            s3_url_service = S3URLService(
+                s3_client=mock_s3,
+                temp_bucket="test-temp",
+                results_bucket="test-results"
+            )
 
             # Create worker
             worker = PIIWorker(
                 storage_service=storage_service,
                 queue_service=queue_service,
-                job_service=job_service
+                job_service=job_service,
+                s3_url_service=s3_url_service
             )
 
             # Start worker
@@ -367,6 +329,11 @@ class TestResourceCleanupOnExceptions:
         )
         queue_service = QueueService(redis_client=mock_redis)
         job_service = JobService(redis_client=mock_redis)
+        s3_url_service = S3URLService(
+            s3_client=mock_s3,
+            temp_bucket="test",
+            results_bucket="test"
+        )
 
         # Mock dequeue to raise exception
         queue_service.dequeue = AsyncMock(side_effect=RuntimeError("Queue error"))
@@ -374,7 +341,8 @@ class TestResourceCleanupOnExceptions:
         worker = PIIWorker(
             storage_service=storage_service,
             queue_service=queue_service,
-            job_service=job_service
+            job_service=job_service,
+            s3_url_service=s3_url_service
         )
 
         # Start worker

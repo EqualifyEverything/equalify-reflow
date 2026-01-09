@@ -1,4 +1,4 @@
-"""Hint models for deterministic pre-analysis (PRD-012).
+"""Hint models for deterministic pre-analysis.
 
 This module defines the data models for storing accessibility hints
 detected by deterministic tools (VeraPDF, PyMarkdown) before LLM processing.

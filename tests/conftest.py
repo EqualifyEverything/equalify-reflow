@@ -18,7 +18,6 @@ from unittest.mock import AsyncMock, MagicMock
 
 import pytest
 from fastapi.testclient import TestClient
-from src.agents.accessibility_agent import PageImprovementResult
 from src.main import app
 from src.services.pdf_converter import PageData, PDFConversionResult
 from src.shared.models.queue import ProcessingQueuePayload
@@ -81,6 +80,41 @@ def sample_pdf():
     return pdf_content
 
 
+@pytest.fixture(autouse=True)
+def reset_agent_singletons():
+    """Reset all agent module singletons before and after each test.
+
+    This ensures test isolation by clearing cached agent instances.
+    Each test starts with a fresh agent state, preventing test pollution.
+
+    NOTE: The old multi-agent system was removed. The current agentic pipeline
+    uses lazy-loaded agents in worker.py, page_chain.py, etc. that have
+    module-level reset functions where needed.
+    """
+    # Import agentic pipeline modules that use singleton/cached agents
+    from src.agents import issue_fixer, page_chain, paragraph_agent, worker
+
+    # List of modules with reset functions
+    modules_with_reset = [
+        worker,
+        page_chain,
+        issue_fixer,
+        paragraph_agent,
+    ]
+
+    # Reset before test
+    for agent_module in modules_with_reset:
+        if hasattr(agent_module, "reset_agent"):
+            agent_module.reset_agent()
+
+    yield
+
+    # Reset after test (cleanup)
+    for agent_module in modules_with_reset:
+        if hasattr(agent_module, "reset_agent"):
+            agent_module.reset_agent()
+
+
 # ============================================================================
 # Core Pipeline Test Fixtures
 # ============================================================================
@@ -117,16 +151,6 @@ def sample_pdf_conversion_result(sample_page_data):
 
 
 @pytest.fixture
-def sample_page_improvement_result():
-    """Sample PageImprovementResult for testing."""
-    return PageImprovementResult(
-        improved_markdown="# Test Document\n\n![Description](image.png)\n\nSample content",
-        confidence_score=0.92,
-        processing_notes="Added alt text to image",
-    )
-
-
-@pytest.fixture
 def mock_storage_service():
     """Mock StorageService for unit tests.
 
@@ -135,16 +159,22 @@ def mock_storage_service():
     """
     mock = MagicMock()
     mock.download_temp_file = AsyncMock(return_value=b"fake_pdf_content")
-    mock.upload_result = AsyncMock(
-        return_value="s3://equalify-results/550e8400.../v20250101_120000/output.md"
-    )
+    mock.upload_result = AsyncMock(return_value="s3://equalify-results/550e8400.../v20250101_120000/output.md")
+    # PRD-027: save_processing_result for new review checklist workflow
+    mock.save_processing_result = AsyncMock(return_value="processing-results/550e8400.../result.json")
+    # PRD-027: load_processing_result for retrieving saved results
+    mock.load_processing_result = AsyncMock(return_value=None)
     return mock
 
 
 @pytest.fixture
 def mock_queue_service():
-    """Mock QueueService for unit tests."""
-    mock = AsyncMock()
+    """Mock QueueService for unit tests.
+
+    Uses MagicMock as container with AsyncMock for async methods.
+    This prevents unawaited coroutine warnings when tests access unmocked attributes.
+    """
+    mock = MagicMock()
     mock.enqueue = AsyncMock()
     mock.dequeue = AsyncMock()
     return mock
@@ -152,37 +182,25 @@ def mock_queue_service():
 
 @pytest.fixture
 def mock_job_service():
-    """Mock JobService for unit tests."""
-    mock = AsyncMock()
+    """Mock JobService for unit tests.
+
+    Uses MagicMock as container with AsyncMock for async methods.
+    This prevents unawaited coroutine warnings when tests access unmocked attributes.
+    """
+    mock = MagicMock()
     mock.update_job_status = AsyncMock()
     mock.get_job_status = AsyncMock(return_value="processing")
+    mock.get_job = AsyncMock(return_value=None)  # For debug service check
     return mock
 
 
 @pytest.fixture
 def mock_pdf_converter(sample_pdf_conversion_result):
-    """Mock PDFConverter for unit tests."""
-    mock = AsyncMock()
+    """Mock PDFConverter for unit tests.
+
+    Uses MagicMock as container with AsyncMock for async methods.
+    This prevents unawaited coroutine warnings when tests access unmocked attributes.
+    """
+    mock = MagicMock()
     mock.convert_with_page_images = AsyncMock(return_value=sample_pdf_conversion_result)
-    return mock
-
-
-@pytest.fixture
-def mock_ai_enhancement_service(sample_page_improvement_result):
-    """Mock AIEnhancementService for unit tests."""
-    mock = AsyncMock()
-    mock.process_pages_concurrently = AsyncMock(
-        return_value=[sample_page_improvement_result]
-    )
-    mock.combine_page_markdown = MagicMock(
-        return_value="# Test Document\n\n![Description](image.png)\n\nSample content"
-    )
-    return mock
-
-
-@pytest.fixture
-def mock_accessibility_agent(sample_page_improvement_result):
-    """Mock AccessibilityAgent for unit tests."""
-    mock = AsyncMock()
-    mock.process_page = AsyncMock(return_value=sample_page_improvement_result)
     return mock

@@ -1,48 +1,103 @@
-"""Application service for applying approved proposals to markdown.
+"""Application service for applying auto corrections to markdown.
 
-This service applies search-replace edits from approved proposals to the
+This service applies search-replace edits from AutoCorrection objects to the
 markdown document, using layered matching strategies to handle minor
 discrepancies.
 """
 
 import logging
 import re
-from dataclasses import dataclass
 from datetime import UTC, datetime
 from typing import Any
+
+from pydantic import BaseModel, ConfigDict, Field
 
 from src.services.job_service import JobService
 from src.services.remediation_storage_service import RemediationStorageService
 from src.services.storage_service import StorageService
+from src.shared.models.auto_correction import AutoCorrection
 from src.shared.models.observation import Observation
-from src.shared.models.proposal import Proposal
 
 logger = logging.getLogger(__name__)
 
 
-@dataclass
-class ApplicationResult:
-    """Result of applying proposals to markdown.
+class ApplicationResult(BaseModel):
+    """Result of applying auto corrections to markdown.
+
+    Contains metrics and outputs from applying a set of AutoCorrections
+    to a markdown document using the layered matching strategy.
 
     Attributes:
-        applied_count: Number of proposals successfully applied
-        failed_count: Number of proposals that failed to apply
-        skipped_count: Number of proposals skipped (not approved)
-        failed_proposals: Details of failed proposals
+        applied_count: Number of corrections successfully applied
+        failed_count: Number of corrections that failed to apply
+        skipped_count: Number of corrections skipped (already applied)
+        failed_corrections: Details of failed corrections
         final_markdown_url: S3 key of final markdown (None if no changes)
         validation_warnings: Non-blocking warnings from markdown validation
+
+    Example:
+        >>> result = ApplicationResult(
+        ...     applied_count=5,
+        ...     failed_count=1,
+        ...     skipped_count=0,
+        ...     failed_corrections=[
+        ...         {"correction_id": "corr-123", "error": "Search text not found"}
+        ...     ],
+        ...     final_markdown_url="results/job-123.md",
+        ...     validation_warnings=[]
+        ... )
     """
 
-    applied_count: int
-    failed_count: int
-    skipped_count: int
-    failed_proposals: list[dict[str, Any]]
-    final_markdown_url: str | None
-    validation_warnings: list[str]
+    applied_count: int = Field(
+        ...,
+        ge=0,
+        description="Number of corrections successfully applied"
+    )
+    failed_count: int = Field(
+        ...,
+        ge=0,
+        description="Number of corrections that failed to apply"
+    )
+    skipped_count: int = Field(
+        ...,
+        ge=0,
+        description="Number of corrections skipped (already applied)"
+    )
+    failed_corrections: list[dict[str, Any]] = Field(
+        default_factory=list,
+        description="Details of failed corrections"
+    )
+    final_markdown_url: str | None = Field(
+        default=None,
+        description="S3 key of final markdown (None if no changes)"
+    )
+    validation_warnings: list[str] = Field(
+        default_factory=list,
+        description="Non-blocking warnings from markdown validation"
+    )
+
+    model_config = ConfigDict(
+        json_schema_extra={
+            "example": {
+                "applied_count": 5,
+                "failed_count": 1,
+                "skipped_count": 0,
+                "failed_corrections": [
+                    {
+                        "correction_id": "corr-550e8400-e29b-41d4-a716-446655440000",
+                        "error": "Search text not found in document",
+                        "search_preview": "![](missing-image.png)"
+                    }
+                ],
+                "final_markdown_url": "results/job-123.md",
+                "validation_warnings": []
+            }
+        }
+    )
 
 
 class ApplicationService:
-    """Service for applying approved proposals to markdown.
+    """Service for applying auto corrections to markdown.
 
     Uses layered matching strategies:
     1. Exact match - search text must appear exactly once
@@ -50,8 +105,8 @@ class ApplicationService:
 
     Example:
         >>> service = ApplicationService(remediation_storage, storage, job_service)
-        >>> result = await service.apply_approved_proposals("job-123")
-        >>> print(f"Applied {result.applied_count} proposals")
+        >>> result = await service.apply_auto_corrections("job-123")
+        >>> print(f"Applied {result.applied_count} corrections")
     """
 
     def __init__(
@@ -71,13 +126,13 @@ class ApplicationService:
         self.storage = storage
         self.job_service = job_service
 
-    async def apply_approved_proposals(
+    async def apply_auto_corrections(
         self,
         job_id: str,
     ) -> ApplicationResult:
-        """Apply all approved proposals to the markdown document.
+        """Apply all unapplied auto corrections to the markdown document.
 
-        Loads the current markdown, filters to approved proposals, applies
+        Loads the current markdown, filters to unapplied corrections, applies
         each sequentially, and saves the result.
 
         Args:
@@ -91,69 +146,66 @@ class ApplicationService:
         """
         # Load current state
         markdown = await self.remediation_storage.load_current_markdown(job_id)
-        proposals = await self.remediation_storage.load_proposals(job_id)
+        corrections = await self.remediation_storage.load_auto_corrections(job_id)
         observations = await self.remediation_storage.load_observations(job_id)
 
         if not markdown:
             raise ValueError(f"No markdown found for job {job_id}")
 
-        # Filter to approved proposals
-        approved = [p for p in proposals if p.status == "approved"]
+        # Filter to unapplied corrections
+        unapplied = [c for c in corrections if not c.applied]
 
-        if not approved:
-            logger.info(f"Job {job_id}: No approved proposals to apply")
+        if not unapplied:
+            logger.info(f"Job {job_id}: No unapplied corrections to apply")
             return ApplicationResult(
                 applied_count=0,
                 failed_count=0,
-                skipped_count=len(proposals),
-                failed_proposals=[],
+                skipped_count=len(corrections),
+                failed_corrections=[],
                 final_markdown_url=None,
                 validation_warnings=[],
             )
 
-        logger.info(f"Job {job_id}: Applying {len(approved)} proposals")
+        logger.info(f"Job {job_id}: Applying {len(unapplied)} corrections")
 
         # Sort by page number for predictable ordering
-        approved.sort(key=lambda p: min(p.page_nums) if p.page_nums else 0)
+        unapplied.sort(key=lambda c: c.page_num if c.page_num else 0)
 
-        # Apply each proposal
+        # Apply each correction
         applied_count = 0
         failed_count = 0
-        skipped_count = len(proposals) - len(approved)
-        failed_proposals: list[dict[str, Any]] = []
+        skipped_count = len(corrections) - len(unapplied)
+        failed_corrections: list[dict[str, Any]] = []
         application_log: list[dict[str, Any]] = []
 
-        for proposal in approved:
-            result = self._apply_single_proposal(markdown, proposal)
+        for correction in unapplied:
+            result = self._apply_single_correction(markdown, correction)
 
             if result["success"]:
                 markdown = result["new_markdown"]
-                proposal.status = "applied"
+                correction.mark_applied()
                 applied_count += 1
 
-                # Mark resolved observations
-                for obs_id in proposal.resolves:
-                    self._mark_observation_resolved(observations, obs_id, proposal.id)
+                # Close the associated observation
+                self._close_observation(observations, correction.observation_id)
 
                 application_log.append({
-                    "proposal_id": proposal.id,
+                    "correction_id": correction.id,
                     "status": "applied",
                     "method": result["method"],
                     "timestamp": datetime.now(UTC).isoformat(),
                 })
 
             else:
-                proposal.status = "failed"
-                proposal.failure_reason = result["error"]
                 failed_count += 1
-                failed_proposals.append({
-                    "proposal_id": proposal.id,
+                failed_corrections.append({
+                    "correction_id": correction.id,
                     "error": result["error"],
-                    "search_preview": proposal.diff.search[:100] if proposal.diff.search else "",
+                    "search_preview": correction.search[:100] if correction.search else "",
                 })
 
                 application_log.append({
-                    "proposal_id": proposal.id,
+                    "correction_id": correction.id,
                     "status": "failed",
                     "error": result["error"],
                     "timestamp": datetime.now(UTC).isoformat(),
@@ -162,8 +214,8 @@ class ApplicationService:
         # Validate final markdown
         validation_warnings = self._validate_markdown(markdown)
 
-        # Save updated proposals and observations
-        await self.remediation_storage.save_proposals(job_id, proposals)
+        # Save updated corrections and observations
+        await self.remediation_storage.save_auto_corrections(job_id, corrections)
         await self.remediation_storage.save_observations(job_id, observations)
 
         # Save application log
@@ -197,17 +249,17 @@ class ApplicationService:
             applied_count=applied_count,
             failed_count=failed_count,
             skipped_count=skipped_count,
-            failed_proposals=failed_proposals,
+            failed_corrections=failed_corrections,
             final_markdown_url=final_url,
             validation_warnings=validation_warnings,
         )
 
-    def _apply_single_proposal(
+    def _apply_single_correction(
         self,
         markdown: str,
-        proposal: Proposal,
+        correction: AutoCorrection,
     ) -> dict[str, Any]:
-        """Apply a single proposal using layered matching.
+        """Apply a single correction using layered matching.
 
         Tries in order:
         1. Exact match
@@ -215,13 +267,13 @@ class ApplicationService:
 
         Args:
             markdown: Current markdown content
-            proposal: Proposal to apply
+            correction: AutoCorrection to apply
 
         Returns:
             Dict with success, new_markdown, method, or error
         """
-        search = proposal.diff.search
-        replace = proposal.diff.replace
+        search = correction.search
+        replace = correction.replace
 
         # Method 1: Exact match
         if search in markdown:
@@ -301,23 +353,20 @@ class ApplicationService:
 
         return {"success": False}
 
-    def _mark_observation_resolved(
+    def _close_observation(
         self,
         observations: list[Observation],
         obs_id: str,
-        proposal_id: str,
     ) -> None:
-        """Mark an observation as resolved by a proposal.
+        """Close an observation as fixed by an auto correction.
 
         Args:
             observations: List of all observations
-            obs_id: Observation ID to mark resolved
-            proposal_id: Proposal ID that resolved it
+            obs_id: Observation ID to close
         """
         for obs in observations:
-            if obs.id == obs_id:
-                obs.status = "resolved"
-                obs.resolved_by = proposal_id
+            if obs.id == obs_id and obs.status == "open":
+                obs.close("fixed")
                 break
 
     def _validate_markdown(self, markdown: str) -> list[str]:
@@ -361,14 +410,14 @@ class ApplicationService:
 
         return warnings
 
-    async def count_manual_observations(self, job_id: str) -> int:
-        """Count observations still in manual status.
+    async def count_open_observations(self, job_id: str) -> int:
+        """Count observations still open (not yet resolved).
 
         Args:
             job_id: Job identifier
 
         Returns:
-            Number of observations with status="manual"
+            Number of observations with status="open"
         """
         observations = await self.remediation_storage.load_observations(job_id)
-        return sum(1 for o in observations if o.status == "manual")
+        return sum(1 for o in observations if o.status == "open")

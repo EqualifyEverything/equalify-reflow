@@ -1,0 +1,1217 @@
+"""Pipeline Data Models.
+
+This module defines all the data structures for the hierarchical
+document processing pipeline with streaming ledger support.
+
+Architecture Overview:
+    - DocumentPlan: Output from Planner phase (structure + jobs)
+    - Job: A scoped unit of work for a Worker agent
+    - LedgerEntry: Immutable record of a change
+    - ValidationResult: Feedback from validation gate
+"""
+
+from __future__ import annotations
+
+from datetime import datetime
+from enum import Enum
+from typing import Literal
+from uuid import uuid4
+
+from pydantic import BaseModel, Field
+
+# =============================================================================
+# Enums
+# =============================================================================
+
+
+class DocumentType(str, Enum):
+    """Types of documents we can process."""
+
+    PAPER = "paper"
+    SYLLABUS = "syllabus"
+    SLIDES = "slides"
+    MANUAL = "manual"
+    REPORT = "report"
+    ARTICLE = "article"
+    OTHER = "other"
+
+
+class TaskType(str, Enum):
+    """Types of tasks that workers can perform."""
+
+    # Existing Worker tasks
+    ALT_TEXT = "alt_text"
+    TABLE_TRANSCRIPTION = "table_transcription"
+    HEADING_FIX = "heading_fix"
+    OCR_FIX = "ocr_fix"
+    FORMAT_FIX = "format_fix"
+    SPELLING_FIX = "spelling_fix"
+
+    # ParagraphAgent tasks
+    PAGE_ARTIFACT_REMOVAL = "page_artifact_removal"
+    FOOTNOTE_CORRECTION = "footnote_correction"
+    CITATION_LINKING = "citation_linking"
+    LIST_FIX = "list_fix"
+    TYPOGRAPHY_FIX = "typography_fix"
+    PARAGRAPH_MERGE = "paragraph_merge"
+
+
+class JobType(str, Enum):
+    """Job categories for prioritization."""
+
+    STRUCTURE = "structure"  # Heading fixes - run first
+    CONTENT = "content"  # Alt-text, tables - run after structure
+    PARAGRAPH = "paragraph"  # Text flow fixes - ParagraphAgent
+
+
+class PageType(str, Enum):
+    """Types of pages detected in quick scan."""
+
+    TITLE = "title"
+    TOC = "toc"
+    CONTENT = "content"
+    REFERENCES = "references"
+    APPENDIX = "appendix"
+    BLANK = "blank"
+
+
+# =============================================================================
+# Stage 1: Quick Scan Models
+# =============================================================================
+
+
+class PageSkeleton(BaseModel):
+    """Cheap extraction from a single page (no LLM required).
+
+    Extracted via regex/heuristics from the initial markdown.
+    Used to build the document structure before detailed analysis.
+    """
+
+    page_num: int = Field(..., description="1-indexed page number")
+
+    # Extracted via regex from markdown
+    headings: list[str] = Field(
+        default_factory=list,
+        description="Raw heading text found on this page",
+    )
+    heading_levels: list[int] = Field(
+        default_factory=list,
+        description="# count for each heading (1-6)",
+    )
+
+    # Counted from placeholders
+    figure_count: int = Field(default=0, description="Number of figures on page")
+    table_count: int = Field(default=0, description="Number of tables on page")
+
+    # Heuristics
+    word_count: int = Field(default=0, description="Approximate word count")
+    has_citations: bool = Field(
+        default=False,
+        description="Whether [1], [2] citation patterns found",
+    )
+    page_type: PageType = Field(
+        default=PageType.CONTENT,
+        description="Detected page type",
+    )
+
+
+# =============================================================================
+# Paragraph Issue Detection Models (for PageChainAgent)
+# =============================================================================
+
+
+class PageArtifactIssue(BaseModel):
+    """A page break artifact detected during planning."""
+
+    text: str = Field(..., description="The artifact text (---, split word)")
+    artifact_type: str = Field(..., description="page_break, split_word, column_break")
+    line_number: int = Field(..., description="Line number in page markdown")
+
+
+class FootnoteIssue(BaseModel):
+    """A footnote problem detected during planning."""
+
+    marker: str = Field(..., description="The footnote marker ([^1], ¹, etc.)")
+    issue_type: str = Field(..., description="missing_definition, misplaced, orphaned")
+    line_number: int = Field(default=0)
+
+
+class CitationIssue(BaseModel):
+    """A citation linking problem detected during planning."""
+
+    marker: str = Field(..., description="The citation marker ([1], (Author, 2023))")
+    issue_type: str = Field(..., description="unlinked, missing_reference")
+    line_number: int = Field(default=0)
+
+
+class ListIssue(BaseModel):
+    """A list structure problem detected during planning."""
+
+    location: str = Field(..., description="Line range or identifier")
+    issue_type: str = Field(..., description="nesting, numbering, mixed_types")
+    description: str = Field(default="")
+
+
+class TypographyIssue(BaseModel):
+    """Semantic typography needing markup."""
+
+    text: str = Field(..., description="The text that should have formatting")
+    formatting_type: str = Field(..., description="bold, italic, monospace")
+    semantic_purpose: str = Field(..., description="emphasis, definition, code, warning")
+    line_number: int = Field(default=0)
+
+
+# =============================================================================
+# Stage 2: Structure Inference Models
+# =============================================================================
+
+
+class OutlineEntry(BaseModel):
+    """A node in the document outline (TOC structure)."""
+
+    heading: str = Field(..., description="The heading text")
+    level: int = Field(..., ge=1, le=6, description="Heading level (1=H1, 2=H2, etc.)")
+    page_start: int = Field(..., description="First page of this section")
+    page_end: int = Field(..., description="Last page of this section")
+    children: list[OutlineEntry] = Field(
+        default_factory=list,
+        description="Child sections",
+    )
+
+    class Config:
+        """Allow self-referential model."""
+
+        arbitrary_types_allowed = True
+
+
+class HeadingFix(BaseModel):
+    """A heading that needs level adjustment."""
+
+    page: int = Field(..., description="Page number")
+    line: int = Field(default=0, description="Line number in markdown (0 if unknown)")
+    current_text: str = Field(..., description="Current heading text")
+    current_level: int = Field(..., description="Current heading level")
+    should_be_level: int = Field(..., description="Correct heading level")
+    reason: str = Field(..., description="Why this fix is needed")
+
+
+class DocumentStructure(BaseModel):
+    """LLM-inferred document structure from Stage 2.
+
+    This is the single source of truth for document organization.
+    Workers follow this structure, they don't question it.
+    """
+
+    title: str = Field(..., description="Document title")
+    document_type: DocumentType = Field(
+        default=DocumentType.OTHER,
+        description="Type of document",
+    )
+
+    outline: list[OutlineEntry] = Field(
+        default_factory=list,
+        description="Hierarchical table of contents",
+    )
+
+    # Heading corrections needed
+    heading_fixes: list[HeadingFix] = Field(
+        default_factory=list,
+        description="Headings that need level adjustment",
+    )
+
+    # Dictionary for spell-checking
+    key_terms: list[str] = Field(
+        default_factory=list,
+        description="Domain-specific terms (e.g., 'Docling', 'TableFormer')",
+    )
+    acronyms: dict[str, str] = Field(
+        default_factory=dict,
+        description="Acronym expansions (e.g., {'LLM': 'Large Language Model'})",
+    )
+
+
+# =============================================================================
+# Stage 3: Page Summary Models
+# =============================================================================
+
+
+class FigureContext(BaseModel):
+    """Context for a figure that needs alt-text."""
+
+    figure_index: int = Field(..., description="1-indexed figure number on page")
+    location: str = Field(
+        default="",
+        description="Where in document (e.g., 'after heading 2.1')",
+    )
+    appears_to_be: str = Field(
+        default="figure",
+        description="What the figure looks like (e.g., 'architecture diagram')",
+    )
+    surrounding_text: str = Field(
+        default="",
+        description="Caption or nearby text for context",
+    )
+    is_decorative: bool = Field(
+        default=False,
+        description="Whether this appears to be decorative (no alt needed)",
+    )
+
+
+class TableContext(BaseModel):
+    """Context for a table that needs transcription."""
+
+    table_index: int = Field(..., description="1-indexed table number on page")
+    location: str = Field(default="", description="Where in document")
+    appears_to_be: str = Field(
+        default="data table",
+        description="Table type (e.g., 'comparison table', 'data table')",
+    )
+    # Aliases for compatibility with page chain output
+    appears_to_contain: str = Field(
+        default="",
+        description="What data the table contains",
+    )
+    caption: str | None = Field(default=None, description="Table caption if visible")
+    estimated_rows: int = Field(default=0, description="Approximate row count")
+    estimated_cols: int = Field(default=0, description="Approximate column count")
+    row_count: int = Field(default=0, description="Row count (alias for estimated_rows)")
+    has_header: bool = Field(default=True, description="Whether table has header row")
+
+
+class PagePlan(BaseModel):
+    """Detailed analysis of a single page from Stage 3."""
+
+    page_num: int = Field(..., description="1-indexed page number")
+
+    # From Stage 3 LLM call
+    summary: str = Field(..., description="1-2 sentence page summary")
+    keywords: list[str] = Field(
+        default_factory=list,
+        description="Page-specific terms to add to dictionary",
+    )
+    section_context: str = Field(
+        ...,
+        description="Where this page fits (e.g., 'Part of 2.1 Architecture')",
+    )
+
+    # Work items detected
+    figures: list[FigureContext] = Field(
+        default_factory=list,
+        description="Figures needing alt-text",
+    )
+    tables: list[TableContext] = Field(
+        default_factory=list,
+        description="Tables needing transcription",
+    )
+
+    # Issues detected
+    ocr_errors: list[str] = Field(
+        default_factory=list,
+        description="Suspected typos/OCR errors",
+    )
+    formatting_issues: list[str] = Field(
+        default_factory=list,
+        description="Markdown formatting problems",
+    )
+
+    # Paragraph issues (for ParagraphAgent)
+    page_artifacts: list[PageArtifactIssue] = Field(
+        default_factory=list,
+        description="Page break artifacts found (---, split words)",
+    )
+    footnote_issues: list[FootnoteIssue] = Field(
+        default_factory=list,
+        description="Footnote problems (missing definitions, misplaced)",
+    )
+    citation_issues: list[CitationIssue] = Field(
+        default_factory=list,
+        description="Citation linking problems",
+    )
+    list_issues: list[ListIssue] = Field(
+        default_factory=list,
+        description="List structure problems",
+    )
+    typography_issues: list[TypographyIssue] = Field(
+        default_factory=list,
+        description="Semantic formatting needing markup",
+    )
+    has_page_continuation: bool = Field(
+        default=False,
+        description="True if page ends mid-sentence (for cross-page merge)",
+    )
+    last_100_chars: str = Field(
+        default="",
+        description="Last 100 chars of page text for merge detection",
+    )
+    first_100_chars: str = Field(
+        default="",
+        description="First 100 chars of page text for previous page merge",
+    )
+
+
+# =============================================================================
+# Stage 4: Job Generation Models
+# =============================================================================
+
+
+class Task(BaseModel):
+    """A single unit of work within a job."""
+
+    task_id: str = Field(
+        default_factory=lambda: str(uuid4())[:8],
+        description="Unique task identifier",
+    )
+    task_type: TaskType = Field(..., description="Type of task")
+    target: str = Field(..., description="Target identifier (e.g., 'fig:1', 'table:2')")
+    context: str = Field(..., description="Relevant context for this task")
+    priority: int = Field(default=1, ge=1, le=3, description="Priority (1=highest)")
+
+
+class JobContext(BaseModel):
+    """Slim context slice passed to a Worker agent.
+
+    Contains only what the worker needs - keeps token usage bounded.
+    """
+
+    document_title: str = Field(..., description="Document title")
+    document_type: DocumentType = Field(..., description="Document type")
+    section_context: str = Field(
+        ...,
+        description="Where this page fits in document",
+    )
+    dictionary: list[str] = Field(
+        default_factory=list,
+        description="Terms for spell-checking",
+    )
+
+    # Only the outline entries relevant to this page
+    relevant_outline: list[OutlineEntry] = Field(
+        default_factory=list,
+        description="Outline entries for this section",
+    )
+
+
+class Job(BaseModel):
+    """A scoped unit of work for a Worker agent.
+
+    Jobs are independent and can run in parallel.
+    Each job handles one page's worth of work.
+    """
+
+    job_id: str = Field(
+        default_factory=lambda: str(uuid4()),
+        description="Unique job identifier",
+    )
+    job_type: JobType = Field(..., description="Job category for prioritization")
+    priority: int = Field(default=1, ge=1, description="Lower = higher priority")
+
+    page: int = Field(..., description="Page number this job handles")
+    tasks: list[Task] = Field(..., description="Tasks to complete")
+    context: JobContext = Field(..., description="Context for the worker")
+
+    # The markdown content the worker will edit
+    page_markdown: str = Field(..., description="Current markdown for this page")
+
+    # Status tracking
+    status: Literal["pending", "running", "completed", "failed"] = Field(default="pending")
+    started_at: datetime | None = None
+    completed_at: datetime | None = None
+    error: str | None = None
+
+
+# =============================================================================
+# Document Plan (Complete Planner Output)
+# =============================================================================
+
+
+class DocumentPlan(BaseModel):
+    """Complete output from the Planner phase.
+
+    This is the single source of truth that workers follow.
+    Contains structure, page plans, and generated jobs.
+    """
+
+    document_id: str = Field(
+        default_factory=lambda: str(uuid4()),
+        description="Unique document identifier",
+    )
+    created_at: datetime = Field(default_factory=datetime.utcnow)
+
+    # Source info
+    filename: str = Field(..., description="Original filename")
+    total_pages: int = Field(..., description="Total page count")
+
+    # From Stage 2: Structure
+    structure: DocumentStructure = Field(..., description="Inferred document structure")
+
+    # From Stage 3: Page details
+    pages: dict[int, PagePlan] = Field(
+        default_factory=dict,
+        description="Page plans indexed by page number",
+    )
+
+    # From Stage 4: Jobs
+    jobs: list[Job] = Field(default_factory=list, description="Generated jobs")
+
+    # Aggregated dictionary (structure terms + page terms)
+    full_dictionary: list[str] = Field(
+        default_factory=list,
+        description="Complete dictionary for spell-checking",
+    )
+
+    # Planning phase stats
+    planning_duration_ms: int = Field(default=0)
+    planning_tokens_input: int = Field(default=0)
+    planning_tokens_output: int = Field(default=0)
+
+    # LLM call tracking for planning phase
+    llm_calls: list[LLMCallRecord] = Field(
+        default_factory=list,
+        description="LLM calls made during planning phase",
+    )
+
+
+# =============================================================================
+# Ledger Models
+# =============================================================================
+
+
+class LedgerEntry(BaseModel):
+    """Immutable record of a change made by a worker.
+
+    The ledger provides a complete audit trail of all modifications.
+    Entries are append-only and streamed to the UI in real-time.
+    """
+
+    entry_id: str = Field(
+        default_factory=lambda: str(uuid4()),
+        description="Unique entry identifier",
+    )
+    job_id: str = Field(..., description="Job that made this change")
+    page: int = Field(..., description="Page number affected")
+    timestamp: datetime = Field(default_factory=datetime.utcnow)
+
+    # What changed
+    action: TaskType = Field(..., description="Type of change")
+    target: str = Field(..., description="Target identifier (e.g., 'fig:1')")
+
+    before: str = Field(..., description="Original text/placeholder")
+    after: str = Field(..., description="New content")
+
+    reasoning: str = Field(..., description="Why this change was made")
+    confidence: float = Field(default=0.8, ge=0.0, le=1.0)
+
+    # Validation status
+    validated: bool = Field(default=False, description="Passed validation gate")
+    validation_feedback: str | None = Field(
+        default=None,
+        description="Feedback if validation failed",
+    )
+
+    # Review flag for low-confidence edits
+    needs_review: bool = Field(
+        default=False,
+        description="True if edit was applied with low confidence and needs human review",
+    )
+
+
+class Ledger(BaseModel):
+    """Append-only log of all document changes.
+
+    Provides complete audit trail and supports real-time streaming.
+    """
+
+    document_id: str = Field(..., description="Document being processed")
+    entries: list[LedgerEntry] = Field(default_factory=list)
+    created_at: datetime = Field(default_factory=datetime.utcnow)
+
+    def append(self, entry: LedgerEntry) -> None:
+        """Add an entry to the ledger."""
+        self.entries.append(entry)
+
+    def get_page_entries(self, page: int) -> list[LedgerEntry]:
+        """Get all entries for a specific page."""
+        return [e for e in self.entries if e.page == page]
+
+    def get_job_entries(self, job_id: str) -> list[LedgerEntry]:
+        """Get all entries for a specific job."""
+        return [e for e in self.entries if e.job_id == job_id]
+
+    @property
+    def total_edits(self) -> int:
+        """Count of validated edits."""
+        return sum(1 for e in self.entries if e.validated)
+
+
+# =============================================================================
+# Validation Models
+# =============================================================================
+
+
+class EditProposal(BaseModel):
+    """A proposed edit from a Worker agent (not yet applied)."""
+
+    target: str = Field(..., description="Target identifier")
+    task_type: TaskType = Field(..., description="Type of edit")
+    before: str = Field(..., description="Original text to replace")
+    after: str = Field(..., description="New text")
+    reasoning: str = Field(..., description="Why this edit is needed")
+
+
+class SpellIssue(BaseModel):
+    """A spelling issue found during validation."""
+
+    word: str = Field(..., description="The flagged word")
+    suggestion: str = Field(default="", description="Suggested correction")
+    in_dictionary: bool = Field(
+        default=False,
+        description="Whether word is in document dictionary",
+    )
+
+
+class ValidationResult(BaseModel):
+    """Result of validating a proposed edit."""
+
+    approved: bool = Field(..., description="Whether edit passed validation")
+    edit: EditProposal = Field(..., description="The edit that was validated")
+
+    # If not approved, why?
+    spell_issues: list[SpellIssue] = Field(default_factory=list)
+    lint_issues: list[str] = Field(default_factory=list)
+    consistency_issues: list[str] = Field(default_factory=list)
+
+    # Message to return to agent for revision
+    feedback: str | None = Field(
+        default=None,
+        description="Feedback for agent if validation failed",
+    )
+
+
+# =============================================================================
+# Verification Models
+# =============================================================================
+
+
+class PageVerification(BaseModel):
+    """Verification result for a single page."""
+
+    page_num: int = Field(..., description="Page number")
+    passed: bool = Field(..., description="Whether page passed verification")
+    issues: list[str] = Field(
+        default_factory=list,
+        description="Issues found during verification",
+    )
+    confidence: float = Field(default=0.8, ge=0.0, le=1.0)
+
+
+class VerificationReport(BaseModel):
+    """Final verification report for the complete document."""
+
+    document_id: str = Field(..., description="Document ID")
+    passed: bool = Field(..., description="Whether document passed overall")
+
+    pages: list[PageVerification] = Field(
+        default_factory=list,
+        description="Per-page verification results",
+    )
+
+    # Aggregated issues for human review
+    total_issues: int = Field(default=0)
+    critical_issues: list[str] = Field(default_factory=list)
+    warnings: list[str] = Field(default_factory=list)
+
+    # Stats
+    pages_passed: int = Field(default=0)
+    pages_failed: int = Field(default=0)
+    verification_duration_ms: int = Field(default=0)
+
+
+# =============================================================================
+# Recovery Phase Models
+# =============================================================================
+
+
+class RecoveryAttemptStatus(str, Enum):
+    """Status of a recovery attempt on a single page."""
+
+    PENDING = "pending"
+    IN_PROGRESS = "in_progress"
+    SUCCEEDED = "succeeded"
+    FAILED = "failed"
+    ACCEPTED_WITH_CAVEATS = "accepted_with_caveats"
+
+
+class IssueCategory(str, Enum):
+    """Categories of issues for recovery prioritization."""
+
+    UNFILLED_PLACEHOLDER = "unfilled_placeholder"
+    MISSING_ALT_TEXT = "missing_alt_text"
+    HEADING_HIERARCHY = "heading_hierarchy"
+    FORMATTING = "formatting"
+    COSMETIC = "cosmetic"
+
+
+class RecoveryAction(str, Enum):
+    """Actions the recovery agent can take."""
+
+    CLEANUP_EDIT = "cleanup_edit"
+    REMOVE_PLACEHOLDER = "remove_placeholder"
+    ACCEPT_WITH_CAVEAT = "accept_with_caveat"
+    ESCALATE = "escalate"
+
+
+class ProcessingStatus(str, Enum):
+    """Final processing status after recovery attempts."""
+
+    SUCCESS = "success"
+    PARTIAL_SUCCESS = "partial_success"
+    NEEDS_REVIEW = "needs_review"
+    FAILED = "failed"
+
+
+class RecoveryEdit(BaseModel):
+    """A single recovery edit made to fix an issue."""
+
+    edit_id: str = Field(
+        default_factory=lambda: str(uuid4())[:8],
+        description="Unique edit identifier",
+    )
+    page: int = Field(..., description="Page number")
+    action: RecoveryAction = Field(..., description="Type of recovery action")
+    target: str = Field(..., description="Target identifier (e.g., 'fig:1', 'heading')")
+    before: str = Field(..., description="Original text")
+    after: str = Field(..., description="Corrected text")
+    reasoning: str = Field(..., description="Why this recovery edit was made")
+    confidence: float = Field(default=0.7, ge=0.0, le=1.0)
+
+
+class RecoveryAttempt(BaseModel):
+    """Record of a recovery attempt on a single page."""
+
+    attempt_id: str = Field(
+        default_factory=lambda: str(uuid4())[:8],
+        description="Unique attempt identifier",
+    )
+    page_num: int = Field(..., description="Page number being recovered")
+    attempt_number: int = Field(..., ge=1, le=2, description="Attempt number (1 or 2)")
+    status: RecoveryAttemptStatus = Field(
+        default=RecoveryAttemptStatus.PENDING,
+        description="Status of this attempt",
+    )
+    original_issues: list[str] = Field(
+        default_factory=list,
+        description="Issues that triggered recovery",
+    )
+    edits_proposed: int = Field(default=0, description="Number of edits proposed")
+    edits_applied: int = Field(default=0, description="Number of edits successfully applied")
+    caveats: list[str] = Field(
+        default_factory=list,
+        description="Caveats for accepted-with-caveats status",
+    )
+    duration_ms: int = Field(default=0, description="Duration of recovery attempt")
+
+
+class RecoveryReport(BaseModel):
+    """Complete report of the recovery phase."""
+
+    document_id: str = Field(..., description="Document being recovered")
+    recovery_attempted: bool = Field(
+        default=False,
+        description="Whether recovery was attempted",
+    )
+    pages_recovered: list[int] = Field(
+        default_factory=list,
+        description="Pages successfully recovered",
+    )
+    pages_accepted_with_caveats: list[int] = Field(
+        default_factory=list,
+        description="Pages accepted with caveats",
+    )
+    pages_unrecoverable: list[int] = Field(
+        default_factory=list,
+        description="Pages that could not be recovered",
+    )
+    attempts: list[RecoveryAttempt] = Field(
+        default_factory=list,
+        description="All recovery attempts made",
+    )
+    total_recovery_edits: int = Field(
+        default=0,
+        description="Total edits applied during recovery",
+    )
+    recovery_duration_ms: int = Field(
+        default=0,
+        description="Total recovery phase duration",
+    )
+
+
+# =============================================================================
+# Multi-Round Processing Models
+# =============================================================================
+
+
+class PageBoundary(BaseModel):
+    """Boundary information for a single page in merged markdown.
+
+    Used to map line ranges back to source pages for visual reference.
+    """
+
+    page_num: int = Field(..., description="1-indexed page number")
+    start_line: int = Field(..., description="First line of this page (1-indexed)")
+    end_line: int = Field(..., description="Last line of this page (inclusive)")
+    start_char: int = Field(default=0, description="Character offset start")
+    end_char: int = Field(default=0, description="Character offset end")
+
+
+class PageBoundaryMap(BaseModel):
+    """Maps line numbers in merged markdown to source pages.
+
+    Enables pageless processing while retaining ability to reference
+    source page_images for visual context.
+    """
+
+    document_id: str = Field(..., description="Document identifier")
+    boundaries: list[PageBoundary] = Field(
+        default_factory=list,
+        description="Page boundaries in order",
+    )
+    total_lines: int = Field(default=0, description="Total lines in merged document")
+
+    def get_page_for_line(self, line: int) -> int | None:
+        """Get the page number containing a specific line.
+
+        Args:
+            line: Line number (1-indexed)
+
+        Returns:
+            Page number or None if line is out of bounds
+        """
+        for boundary in self.boundaries:
+            if boundary.start_line <= line <= boundary.end_line:
+                return boundary.page_num
+        return None
+
+    def get_pages_for_range(self, start: int, end: int) -> list[int]:
+        """Get all pages that overlap with a line range.
+
+        Args:
+            start: Start line (1-indexed)
+            end: End line (inclusive)
+
+        Returns:
+            List of page numbers that overlap the range
+        """
+        pages = []
+        for boundary in self.boundaries:
+            # Check if ranges overlap
+            if boundary.start_line <= end and boundary.end_line >= start:
+                pages.append(boundary.page_num)
+        return pages
+
+
+class IssueSeverity(str, Enum):
+    """Severity levels for issues found by CriticAgent."""
+
+    CRITICAL = "critical"  # Must fix before output
+    MAJOR = "major"        # Should fix, impacts accessibility
+    MINOR = "minor"        # Nice to fix, cosmetic impact
+    COSMETIC = "cosmetic"  # Optional polish
+
+
+class CriticIssue(BaseModel):
+    """An issue identified by the CriticAgent.
+
+    Contains location info (line ranges) for pageless targeting
+    plus source_pages for visual reference.
+    """
+
+    issue_id: str = Field(
+        default_factory=lambda: str(uuid4())[:8],
+        description="Unique issue identifier",
+    )
+    severity: IssueSeverity = Field(..., description="Issue severity")
+    category: str = Field(
+        ...,
+        description="Issue category: structure, accessibility, content, formatting",
+    )
+    description: str = Field(..., description="Human-readable issue description")
+    suggested_fix: str = Field(default="", description="Suggested fix approach")
+    line_start: int = Field(..., description="Start line in merged markdown (1-indexed)")
+    line_end: int = Field(..., description="End line in merged markdown (inclusive)")
+    search_text: str = Field(
+        default="",
+        description="Text snippet to locate the issue",
+    )
+    confidence: float = Field(default=0.7, ge=0.0, le=1.0)
+    reasoning: str = Field(default="", description="Why this is an issue")
+    source_pages: list[int] = Field(
+        default_factory=list,
+        description="Source page numbers for visual reference",
+    )
+
+
+class CriticReport(BaseModel):
+    """Report from CriticAgent analyzing merged markdown.
+
+    Contains all issues found and overall quality assessment.
+    """
+
+    document_id: str = Field(..., description="Document identifier")
+    round_number: int = Field(..., ge=1, description="Which round of processing")
+    issues: list[CriticIssue] = Field(
+        default_factory=list,
+        description="Issues identified",
+    )
+    critical_count: int = Field(default=0, description="Number of critical issues")
+    major_count: int = Field(default=0, description="Number of major issues")
+    overall_quality: float = Field(
+        default=0.0,
+        ge=0.0,
+        le=1.0,
+        description="Quality score (0-1)",
+    )
+    ready_for_output: bool = Field(
+        default=False,
+        description="Whether document is ready for output",
+    )
+    summary: str = Field(default="", description="Human-readable summary")
+    analysis_duration_ms: int = Field(default=0, description="Analysis duration")
+    input_tokens: int = Field(default=0, description="Input tokens used")
+    output_tokens: int = Field(default=0, description="Output tokens used")
+    llm_call: LLMCallRecord | None = Field(
+        default=None,
+        description="LLM call record for debug bundle",
+    )
+
+
+class DocumentJobType(str, Enum):
+    """Types of document-level jobs for Round N > 1."""
+
+    STRUCTURE_FIX = "structure_fix"
+    ACCESSIBILITY_FIX = "accessibility_fix"
+    CONTENT_FIX = "content_fix"
+    FORMATTING_FIX = "formatting_fix"
+
+
+class DocumentJob(BaseModel):
+    """A job targeting a line range in merged markdown.
+
+    Unlike page-based Job, this targets specific line ranges
+    in the pageless merged document.
+    """
+
+    job_id: str = Field(
+        default_factory=lambda: str(uuid4()),
+        description="Unique job identifier",
+    )
+    job_type: DocumentJobType = Field(..., description="Type of fix needed")
+    priority: int = Field(default=1, ge=1, description="Lower = higher priority")
+    line_start: int = Field(..., description="Start line in merged markdown")
+    line_end: int = Field(..., description="End line in merged markdown")
+    search_text: str = Field(default="", description="Text to locate the issue")
+    issue_description: str = Field(..., description="What needs to be fixed")
+    suggested_fix: str = Field(default="", description="Suggested approach")
+    source_pages: list[int] = Field(
+        default_factory=list,
+        description="Source pages for visual reference",
+    )
+    status: Literal["pending", "running", "completed", "failed"] = Field(
+        default="pending",
+        description="Job status",
+    )
+
+
+class RoundContext(BaseModel):
+    """Context and results for a single processing round.
+
+    Captures input, output, and metrics for one round of the
+    iterative refinement loop.
+    """
+
+    round_number: int = Field(..., ge=1, description="Round number (1-indexed)")
+    input_markdown: str = Field(..., description="Markdown at start of round")
+    page_boundary_map: PageBoundaryMap | None = Field(
+        default=None,
+        description="Page boundary mapping (if available)",
+    )
+    output_markdown: str = Field(default="", description="Markdown after round")
+    critic_report: CriticReport | None = Field(
+        default=None,
+        description="CriticAgent report (rounds 2+)",
+    )
+    jobs_executed: int = Field(default=0, description="Number of jobs run")
+    edits_applied: int = Field(default=0, description="Number of edits applied")
+    duration_ms: int = Field(default=0, description="Round duration")
+    quality_delta: float = Field(
+        default=0.0,
+        description="Change in quality from previous round",
+    )
+    input_tokens: int = Field(default=0, description="Total input tokens")
+    output_tokens: int = Field(default=0, description="Total output tokens")
+    llm_calls: list[LLMCallRecord] = Field(
+        default_factory=list,
+        description="All LLM calls this round (for debug bundle)",
+    )
+
+
+class ConvergenceReason(str, Enum):
+    """Reasons for stopping the multi-round loop."""
+
+    MAX_ROUNDS_REACHED = "max_rounds_reached"
+    QUALITY_THRESHOLD_MET = "quality_threshold_met"
+    NO_IMPROVEMENT = "no_improvement"
+    NO_ISSUES_FOUND = "no_issues_found"
+    CRITIC_MARKED_READY = "critic_marked_ready"
+    ERROR = "error"
+
+
+class RoundLoopResult(BaseModel):
+    """Final result of multi-round processing loop.
+
+    Contains the converged markdown, quality metrics, and
+    complete history of all rounds for debugging.
+    """
+
+    document_id: str = Field(..., description="Document identifier")
+    final_markdown: str = Field(..., description="Final corrected markdown")
+    final_quality: float = Field(
+        default=0.0,
+        ge=0.0,
+        le=1.0,
+        description="Final quality score",
+    )
+    rounds_completed: int = Field(default=1, description="Number of rounds run")
+    round_contexts: list[RoundContext] = Field(
+        default_factory=list,
+        description="Context for each round",
+    )
+    convergence_reason: ConvergenceReason = Field(
+        ...,
+        description="Why processing stopped",
+    )
+    total_edits: int = Field(default=0, description="Total edits across all rounds")
+    total_duration_ms: int = Field(default=0, description="Total processing time")
+    total_input_tokens: int = Field(default=0, description="Total input tokens")
+    total_output_tokens: int = Field(default=0, description="Total output tokens")
+    llm_calls: list[LLMCallRecord] = Field(
+        default_factory=list,
+        description="Aggregated LLM calls from all rounds",
+    )
+
+
+# =============================================================================
+# Image Reference for Debug Bundles
+# =============================================================================
+
+
+class ImageReference(BaseModel):
+    """Reference to an image stored separately in the debug bundle.
+
+    Used to replace inline binary/base64 image data with file path references,
+    significantly reducing artifact size (from ~2-3MB to <100KB per artifact).
+
+    Attributes:
+        ref_type: Type of image ("page", "element", "cropped")
+        identifier: Unique identifier (page number or element target)
+        path: Relative path in bundle (e.g., "images/page_001.png")
+        media_type: MIME type of the image (default: "image/png")
+        size_bytes: Original size of the image data in bytes
+    """
+
+    ref_type: str = Field(
+        ...,
+        description="Type of image: 'page' for full page, 'element' for cropped element",
+    )
+    identifier: str = Field(
+        ...,
+        description="Unique identifier (e.g., 'page_1', 'fig:1', 'table:2')",
+    )
+    path: str = Field(
+        ...,
+        description="Relative path in debug bundle (e.g., 'images/page_001.png')",
+    )
+    media_type: str = Field(
+        default="image/png",
+        description="MIME type of the image",
+    )
+    size_bytes: int = Field(
+        default=0,
+        description="Original size of the image data in bytes",
+    )
+
+
+class StoredFigure(BaseModel):
+    """Metadata for a figure image stored to S3.
+
+    Tracks figures extracted from PDFs and stored alongside the final markdown,
+    enabling markdown to use relative paths like `![alt](images/figure-1.png)`.
+
+    Attributes:
+        figure_id: Sequential identifier (e.g., "figure-1", "figure-2")
+        s3_key: Full S3 key (e.g., "results/job-123/images/figure-1.png")
+        page_num: Source page number (1-indexed)
+        alt_text: Generated alt text from worker (may be empty)
+        caption: Original caption from PDF extraction
+        ref_id: Original Docling reference (e.g., "#/pictures/0")
+    """
+
+    figure_id: str = Field(
+        ...,
+        description="Sequential identifier (e.g., 'figure-1')",
+    )
+    s3_key: str = Field(
+        ...,
+        description="Full S3 key in results bucket",
+    )
+    page_num: int = Field(
+        ...,
+        ge=1,
+        description="Source page number (1-indexed)",
+    )
+    alt_text: str = Field(
+        default="",
+        description="Generated alt text (filled in post-processing)",
+    )
+    caption: str = Field(
+        default="",
+        description="Original caption from PDF if available",
+    )
+    ref_id: str = Field(
+        ...,
+        description="Original Docling reference (e.g., '#/pictures/0')",
+    )
+
+
+# =============================================================================
+# LLM Call Tracking
+# =============================================================================
+
+
+class LLMCallRecord(BaseModel):
+    """Record of a single LLM agent call for cost tracking."""
+
+    agent: str = Field(
+        ...,
+        description="Agent that made the call: planner, worker, paragraph_agent, recovery, verification",
+    )
+    purpose: str = Field(
+        ...,
+        description="Purpose of call: document_structure, page_1_alt_text, page_merge_3-4, etc.",
+    )
+    page: int | None = Field(
+        default=None,
+        description="Page number if applicable",
+    )
+    input_tokens: int = Field(..., description="Input tokens consumed")
+    output_tokens: int = Field(..., description="Output tokens generated")
+    cost_cents: float = Field(..., description="Estimated cost in cents")
+    timestamp: datetime = Field(..., description="When the call was made")
+    duration_ms: int | None = Field(
+        default=None,
+        description="Duration of the call in milliseconds",
+    )
+
+    # Debug capture fields (only populated when debug_bundle_requested=true)
+    prompt_text: str | None = Field(
+        default=None,
+        description="Full prompt text sent to LLM (only captured for debug bundles)",
+    )
+    response_raw: str | None = Field(
+        default=None,
+        description="Raw LLM response text (only captured for debug bundles)",
+    )
+    model_id: str | None = Field(
+        default=None,
+        description="Model identifier used for this call",
+    )
+
+    # Image references for debug bundles (replaces inline binary data)
+    image_references: list[ImageReference] = Field(
+        default_factory=list,
+        description="References to images stored separately in debug bundle",
+    )
+
+
+# =============================================================================
+# Processing Result
+# =============================================================================
+
+
+class ProcessingResult(BaseModel):
+    """Final result of agentic pipeline processing."""
+
+    document_id: str = Field(..., description="Document ID")
+    success: bool = Field(..., description="Whether processing succeeded")
+
+    # Outputs
+    final_markdown: str = Field(..., description="Complete corrected markdown")
+    ledger: Ledger = Field(..., description="Complete change ledger")
+    verification: VerificationReport = Field(..., description="Verification report")
+    stored_figures: list[StoredFigure] = Field(
+        default_factory=list,
+        description="Figures stored to S3 with metadata for URL generation",
+    )
+
+    # Confidence
+    confidence_score: float = Field(
+        default=0.0,
+        ge=0.0,
+        le=1.0,
+        description="Document confidence score aggregated from verification",
+    )
+
+    # Stats
+    total_pages: int = Field(default=0)
+    total_edits: int = Field(default=0)
+    total_jobs: int = Field(default=0)
+
+    # Cost tracking
+    total_input_tokens: int = Field(default=0)
+    total_output_tokens: int = Field(default=0)
+    total_cost: float = Field(default=0.0)
+
+    # Per-call tracking
+    llm_calls: list[LLMCallRecord] = Field(
+        default_factory=list,
+        description="Detailed record of each LLM call for cost breakdown",
+    )
+
+    # Timing
+    total_duration_ms: int = Field(default=0)
+    planning_duration_ms: int = Field(default=0)
+    execution_duration_ms: int = Field(default=0)
+    verification_duration_ms: int = Field(default=0)
+
+    # Recovery phase (optional)
+    recovery_report: RecoveryReport | None = Field(
+        default=None,
+        description="Recovery phase report if recovery was attempted",
+    )
+
+
+# =============================================================================
+# Job Result
+# =============================================================================
+
+
+class JobResult(BaseModel):
+    """Result of executing a job (shared by Worker and ParagraphAgent)."""
+
+    job_id: str = Field(..., description="Job ID")
+    success: bool = Field(..., description="Whether job succeeded")
+    updated_markdown: str = Field(..., description="Updated markdown after job")
+    ledger_entries: list[LedgerEntry] = Field(
+        default_factory=list, description="Ledger entries from this job"
+    )
+
+    tasks_completed: int = Field(default=0, description="Number of tasks completed")
+    tasks_failed: int = Field(default=0, description="Number of tasks failed")
+
+    input_tokens: int = Field(default=0, description="Input tokens used")
+    output_tokens: int = Field(default=0, description="Output tokens used")
+    duration_ms: int = Field(default=0, description="Duration in milliseconds")
+
+    error: str | None = Field(default=None, description="Error message if failed")
+    llm_call: LLMCallRecord | None = Field(
+        default=None, description="LLM call record for cost tracking"
+    )

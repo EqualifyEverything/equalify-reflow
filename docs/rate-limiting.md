@@ -281,7 +281,7 @@ Located in `tests/test_rate_limit_middleware.py`:
 ```bash
 # Test submission rate limit (11 requests should trigger limit)
 for i in {1..11}; do
-  curl -X POST http://localhost:8080/api/documents/submit \
+  curl -X POST http://localhost:8080/api/v1/documents/submit \
     -F "file=@test.pdf" \
     -H "X-Forwarded-For: 203.0.113.1" \
     -w "\n%{http_code}\n"

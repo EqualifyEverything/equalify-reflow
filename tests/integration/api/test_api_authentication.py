@@ -67,7 +67,7 @@ async def test_api_key_required_for_protected_endpoint(enable_api_key_auth):
             base_url="http://test"
         ) as client:
             # Test without API key
-            response = await client.get("/api/documents/some-id")
+            response = await client.get("/api/v1/documents/some-id")
 
             # Should be rejected (401)
             assert response.status_code == 401
@@ -106,7 +106,7 @@ async def test_valid_api_key_allows_access(enable_api_key_auth):
                 headers={"X-API-Key": "test-key-123"}
             ) as client:
                 # Test with valid API key
-                response = await client.get("/api/documents/test-123")
+                response = await client.get("/api/v1/documents/test-123")
 
                 # Should succeed (200) or 404 if job not found, but NOT 401
                 assert response.status_code in [200, 404]
@@ -188,21 +188,21 @@ async def test_multiple_api_keys_supported(enable_api_key_auth):
             ) as client:
                 # Test with first key
                 response = await client.get(
-                    "/api/documents/test",
+                    "/api/v1/documents/test",
                     headers={"X-API-Key": "key-1"}
                 )
                 assert response.status_code != 401
 
                 # Test with second key
                 response = await client.get(
-                    "/api/documents/test",
+                    "/api/v1/documents/test",
                     headers={"X-API-Key": "key-2"}
                 )
                 assert response.status_code != 401
 
                 # Test with third key
                 response = await client.get(
-                    "/api/documents/test",
+                    "/api/v1/documents/test",
                     headers={"X-API-Key": "key-3"}
                 )
                 assert response.status_code != 401
@@ -332,7 +332,7 @@ async def test_both_auth_methods_work_together():
 
                 # Test API endpoint requires API key (not Basic auth)
                 response = await client.get(
-                    "/api/documents/test-id",
+                    "/api/v1/documents/test-id",
                     headers={"X-API-Key": "api-key-123"}
                 )
                 # Should not be 401 (might be 404 if job not found, but auth passed)

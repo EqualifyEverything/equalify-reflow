@@ -50,7 +50,7 @@ class RateLimitMiddleware(BaseHTTPMiddleware):
 
         # Check rate limits based on endpoint (fail-open on errors for availability)
         try:
-            if request.url.path == "/api/documents/submit" and request.method == "POST":
+            if request.url.path in ("/api/documents/submit", "/api/v1/documents/submit") and request.method == "POST":
                 # Submission endpoint - strict limits
                 allowed, retry_after = await rate_limiter.check_submit_rate_limit(client_ip)
 
@@ -78,7 +78,7 @@ class RateLimitMiddleware(BaseHTTPMiddleware):
 
         # Get quota info for response headers
         try:
-            if request.url.path == "/api/documents/submit":
+            if request.url.path in ("/api/documents/submit", "/api/v1/documents/submit"):
                 quota = await rate_limiter.get_remaining_quota(client_ip, "submit")
             elif "/status" in request.url.path:
                 quota = await rate_limiter.get_remaining_quota(client_ip, "status")

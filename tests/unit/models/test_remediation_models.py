@@ -1,11 +1,10 @@
 """Unit tests for remediation models (PageFeatures, DocumentManifest)."""
 
 import json
-from datetime import datetime, UTC
+from datetime import UTC, datetime
 
 import pytest
 from pydantic import ValidationError
-
 from src.shared.models.remediation import DocumentManifest, PageFeatures
 
 
@@ -141,6 +140,112 @@ class TestPageFeatures:
         assert features.page_num == 3
         assert features.has_images is True
         assert features.has_lists is True
+
+    # =========================================================================
+    # Validator Tests (consistency enforcement)
+    # =========================================================================
+
+    def test_image_consistency_auto_fix_count(self) -> None:
+        """Test that has_images=True with image_count=0 is auto-fixed."""
+        features = PageFeatures(
+            page_num=1,
+            has_images=True,
+            image_count=0,  # Inconsistent - should be auto-fixed to 1
+        )
+
+        # Validator should auto-fix to at least 1
+        assert features.has_images is True
+        assert features.image_count == 1
+
+    def test_image_consistency_auto_fix_flag(self) -> None:
+        """Test that has_images=False with image_count>0 is auto-fixed."""
+        features = PageFeatures(
+            page_num=1,
+            has_images=False,
+            image_count=3,  # Inconsistent - should be auto-fixed to 0
+        )
+
+        # Validator should auto-fix count to 0
+        assert features.has_images is False
+        assert features.image_count == 0
+
+    def test_image_consistency_valid_state(self) -> None:
+        """Test valid image states pass through unchanged."""
+        # has_images=True with count > 0
+        features1 = PageFeatures(page_num=1, has_images=True, image_count=3)
+        assert features1.has_images is True
+        assert features1.image_count == 3
+
+        # has_images=False with count == 0
+        features2 = PageFeatures(page_num=1, has_images=False, image_count=0)
+        assert features2.has_images is False
+        assert features2.image_count == 0
+
+    def test_table_consistency_auto_fix_count(self) -> None:
+        """Test that has_tables=True with table_count=0 is auto-fixed."""
+        features = PageFeatures(
+            page_num=1,
+            has_tables=True,
+            table_count=0,  # Inconsistent - should be auto-fixed to 1
+        )
+
+        assert features.has_tables is True
+        assert features.table_count == 1
+
+    def test_table_consistency_auto_fix_flag(self) -> None:
+        """Test that has_tables=False with table_count>0 is auto-fixed."""
+        features = PageFeatures(
+            page_num=1,
+            has_tables=False,
+            table_count=2,  # Inconsistent - should be auto-fixed to 0
+        )
+
+        assert features.has_tables is False
+        assert features.table_count == 0
+
+    def test_complexity_factors_cleared_for_low_score(self) -> None:
+        """Test that complexity_factors is cleared when score <= 0.3."""
+        features = PageFeatures(
+            page_num=1,
+            complexity_score=0.2,  # Low complexity
+            complexity_factors=["should", "be", "cleared"],
+        )
+
+        # Validator should clear factors for low complexity
+        assert features.complexity_score == 0.2
+        assert features.complexity_factors == []
+
+    def test_complexity_factors_kept_for_high_score(self) -> None:
+        """Test that complexity_factors is kept when score > 0.3."""
+        features = PageFeatures(
+            page_num=1,
+            complexity_score=0.7,  # High complexity
+            complexity_factors=["dense tables", "nested lists"],
+        )
+
+        # Factors should be preserved
+        assert features.complexity_score == 0.7
+        assert features.complexity_factors == ["dense tables", "nested lists"]
+
+    def test_complexity_factors_boundary_case(self) -> None:
+        """Test boundary case at complexity_score = 0.3."""
+        # At exactly 0.3, factors should be cleared (score <= 0.3)
+        features = PageFeatures(
+            page_num=1,
+            complexity_score=0.3,
+            complexity_factors=["some factor"],
+        )
+
+        assert features.complexity_factors == []
+
+        # Just above 0.3, factors should be kept
+        features2 = PageFeatures(
+            page_num=1,
+            complexity_score=0.31,
+            complexity_factors=["some factor"],
+        )
+
+        assert features2.complexity_factors == ["some factor"]
 
 
 class TestDocumentManifest:

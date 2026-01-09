@@ -1,4 +1,4 @@
-.PHONY: help dev prod up down logs health test test-fast test-unit test-integration test-concurrent test-e2e test-large-files test-slow test-all clean build build-demo-ui build-demo-ui-dev shell test-docker logs-api grafana-url prometheus-url metrics-url coverage coverage-html coverage-report aws-health aws-logs aws-status aws-deploy aws-shell localstack-debug
+.PHONY: help dev prod up down logs health test test-fast test-unit test-integration test-concurrent test-e2e test-large-files test-slow test-all clean build build-viewer build-viewer-dev shell test-docker logs-api grafana-url prometheus-url metrics-url coverage coverage-html coverage-report aws-health aws-logs aws-status aws-deploy aws-shell localstack-debug
 
 # Default target
 help:
@@ -28,7 +28,7 @@ help:
 	@echo ""
 	@echo "Docker:"
 	@echo "  make build        - Build Docker images"
-	@echo "  make build-demo-ui - Build demo UI (for dev, then restart)"
+	@echo "  make build-viewer - Build pipeline viewer (for dev, then restart)"
 	@echo "  make shell        - Access API container shell"
 	@echo "  make test-docker  - Run tests inside container"
 	@echo ""
@@ -55,7 +55,7 @@ help:
 	@echo ""
 
 # Development environment
-dev: build-demo-ui-dev
+dev: build-viewer-dev
 	@AWS_PROFILE=$${AWS_PROFILE:-uic}; \
 	if aws sts get-caller-identity --profile $$AWS_PROFILE > /dev/null 2>&1; then \
 		echo "✅ AWS credentials valid for profile $$AWS_PROFILE, exporting for Docker..."; \
@@ -72,9 +72,9 @@ dev: build-demo-ui-dev
 		docker compose -f docker-compose.yml -f docker-compose.dev.yml up -d; \
 	fi
 
-# Build demo UI (used by dev target)
-build-demo-ui-dev:
-	@cd frontend/demo-ui && pnpm install --silent 2>/dev/null && pnpm run build
+# Build pipeline viewer (used by dev target)
+build-viewer-dev:
+	@cd frontend/demo-ui && pnpm install --silent 2>/dev/null && pnpm run build 2>/dev/null && cp dist/viewer.html dist/index.html 2>/dev/null || echo "Viewer build skipped"
 
 # Production environment
 prod:
@@ -84,6 +84,9 @@ prod:
 down:
 	docker compose -f docker-compose.yml -f docker-compose.dev.yml down
 	docker compose -f docker-compose.yml -f docker-compose.prod.yml down
+
+# Restart services (down + dev)
+restart: down dev
 
 # View logs
 logs:
@@ -158,15 +161,17 @@ redis-cli:
 build:
 	docker compose -f docker-compose.yml -f docker-compose.dev.yml build
 
-# Build demo UI static files (for development)
-# After building, restart the API container to pick up changes
-build-demo-ui:
-	@echo "Building demo UI..."
+# Build pipeline viewer (standalone viewer at /viewer)
+build-viewer:
+	@echo "Building pipeline viewer..."
 	cd frontend/demo-ui && pnpm install && pnpm run build
+	cp frontend/demo-ui/dist/viewer.html frontend/demo-ui/dist/index.html
+	rm -rf static/viewer/* && cp -r frontend/demo-ui/dist/* static/viewer/
+	cp frontend/demo-ui/public/favicon.* static/viewer/
 	@echo ""
-	@echo "✅ Demo UI built to frontend/demo-ui/dist/"
+	@echo "✅ Pipeline viewer built to static/viewer/"
 	@echo "   Restart with: make down && make dev"
-	@echo "   Then access: http://localhost:8080/demo"
+	@echo "   Then access: http://localhost:8080/viewer"
 
 # Access API container shell for debugging
 shell:

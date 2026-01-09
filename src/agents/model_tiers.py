@@ -4,7 +4,7 @@ This module defines the model tiers used to balance cost and capability
 across different agent types in the remediation pipeline.
 
 Model Tiers:
-- REASONING: Claude Sonnet 4.5 - For analysis, consolidation, complex reasoning
+- REASONING: Claude Sonnet 4.5 - For analysis, auto-correction, complex reasoning
 - EFFICIENT: Claude Haiku 4.5 - For transcription, simple tasks, bulk processing
 
 Pricing (per 1M tokens via AWS Bedrock):
@@ -23,7 +23,7 @@ class ModelTier(str, Enum):
         EFFICIENT: Cost-effective tier (Haiku) for transcription and bulk work
     """
 
-    REASONING = "reasoning"  # Sonnet - analysis, consolidation
+    REASONING = "reasoning"  # Sonnet - analysis, auto-correction
     EFFICIENT = "efficient"  # Haiku - transcription, simple tasks
 
 

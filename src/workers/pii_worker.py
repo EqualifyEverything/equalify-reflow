@@ -2,6 +2,9 @@
 
 import asyncio
 import logging
+import time
+
+from opentelemetry import trace
 
 from ..config import settings
 from ..services.job_service import JobService
@@ -12,6 +15,7 @@ from ..services.metrics_service import (
 )
 from ..services.pii_service import PIIDetectionService
 from ..services.queue_service import QueueService
+from ..services.s3_url_service import S3URLService
 from ..services.storage_service import StorageService
 from ..shared.constants.queues import PII_QUEUE
 from ..shared.models.queue import PIIQueuePayload
@@ -30,7 +34,8 @@ class PIIWorker:
         self,
         storage_service: StorageService,
         queue_service: QueueService,
-        job_service: JobService
+        job_service: JobService,
+        s3_url_service: S3URLService,
     ):
         """Initialize PII worker.
 
@@ -38,11 +43,13 @@ class PIIWorker:
             storage_service: S3 storage operations
             queue_service: Redis queue operations
             job_service: Job status management
+            s3_url_service: S3 URL generation service (for processing trigger)
         """
         self.pii_service = PIIDetectionService(
             storage_service=storage_service,
             queue_service=queue_service,
-            job_service=job_service
+            job_service=job_service,
+            s3_url_service=s3_url_service,
         )
         self.queue = queue_service
         self.running = False
@@ -58,6 +65,8 @@ class PIIWorker:
         """
         self.running = True
         logger.info("PII worker started")
+
+        tracer = trace.get_tracer("equalify.workers")
 
         # Mark worker as active in Prometheus
         worker_active_gauge.labels(worker_name="pii").set(1)
@@ -80,8 +89,21 @@ class PIIWorker:
                             break
                         logger.info(f"Received PII job: {job.job_id}")
 
-                        # Process job
-                        await self.pii_service.process_pii_job(job)
+                        # Process job with OTel span
+                        job_start_time = time.time()
+                        with tracer.start_as_current_span(
+                            "worker.pii.job",
+                            kind=trace.SpanKind.CONSUMER,
+                        ) as span:
+                            span.set_attribute("job_id", job.job_id)
+                            span.set_attribute("worker.type", "pii")
+                            span.set_attribute("s3_key", job.s3_key)
+                            span.set_attribute("queue", PII_QUEUE)
+
+                            await self.pii_service.process_pii_job(job)
+
+                            job_duration_ms = (time.time() - job_start_time) * 1000
+                            span.set_attribute("duration_ms", job_duration_ms)
 
                         # Track successful processing
                         worker_jobs_processed_total.labels(
@@ -94,6 +116,7 @@ class PIIWorker:
 
                 except Exception as e:
                     logger.error(f"PII worker error: {e}", exc_info=True)
+
                     # Track error
                     worker_errors_total.labels(
                         worker_name="pii", error_type=type(e).__name__
@@ -107,6 +130,7 @@ class PIIWorker:
         finally:
             # Mark worker as inactive when shutting down
             worker_active_gauge.labels(worker_name="pii").set(0)
+
             logger.info("PII worker shutting down gracefully")
 
     def stop(self) -> None:
@@ -157,11 +181,19 @@ async def start_pii_worker(shutdown_event: asyncio.Event | None = None) -> None:
     queue_service = QueueService(redis_client=redis_client)
     job_service = JobService(redis_client=redis_client)
 
+    # Create S3URLService for processing trigger
+    s3_url_service = S3URLService(
+        s3_client=s3_client,
+        temp_bucket=settings.s3_temp_bucket,
+        results_bucket=settings.s3_results_bucket,
+    )
+
     # Create worker
     _worker_instance = PIIWorker(
         storage_service=storage_service,
         queue_service=queue_service,
-        job_service=job_service
+        job_service=job_service,
+        s3_url_service=s3_url_service,
     )
 
     logger.info("PII worker services initialized, starting worker loop...")

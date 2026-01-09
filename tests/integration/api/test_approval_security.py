@@ -26,8 +26,11 @@ async def test_approval_token_uniqueness():
 @pytest.mark.asyncio
 async def test_approval_token_expiration_enforced(api_key_headers):
     """Test that expired tokens are rejected."""
+    from src.dependencies import get_redis_client, get_s3_client
+
+    job_id = "expired-test-job"
     expired_job = {
-        "job_id": "expired-test-job",
+        "job_id": job_id,
         "s3_key": "temp/test.pdf",
         "status": "awaiting_approval",
         "approval_token": "expired-token-123",
@@ -36,27 +39,32 @@ async def test_approval_token_expiration_enforced(api_key_headers):
         "pii_findings": []
     }
 
-    with patch("src.api.approval.get_redis_client") as mock_redis_dep, \
-         patch("src.api.approval.get_s3_client") as mock_s3_dep:
+    # Mock Redis client - token lookup returns job_id, but job has expired timestamp
+    mock_redis = AsyncMock()
+    # For get_job_by_approval_token: redis.get(token_key) returns job_id
+    mock_redis.get.return_value = job_id
+    # For get_job: redis.hgetall(job_key) returns job with expired approval_expires_at
+    mock_redis.hgetall.return_value = expired_job
 
-        mock_redis = AsyncMock()
-        mock_redis.keys.return_value = [b"eq-pdf:job:expired-test-job"]
-        mock_redis.hgetall.return_value = expired_job
-        mock_redis_dep.return_value = mock_redis
+    mock_s3 = AsyncMock()
 
-        mock_s3 = AsyncMock()
-        mock_s3_dep.return_value = mock_s3
+    # Use dependency overrides (not patches)
+    app.dependency_overrides[get_redis_client] = lambda: mock_redis
+    app.dependency_overrides[get_s3_client] = lambda: mock_s3
 
+    try:
         # Attempt to get review details with API key headers
         async with AsyncClient(
             transport=ASGITransport(app=app),
             base_url="http://test"
         ) as client:
-            response = await client.get("/api/approval/expired-token-123/review", headers=api_key_headers)
+            response = await client.get("/api/v1/approval/expired-token-123/review", headers=api_key_headers)
 
         # Assert expired token rejected
         assert response.status_code == 404
         assert "Invalid or expired" in response.json()["detail"]
+    finally:
+        app.dependency_overrides.clear()
 
 
 @pytest.mark.asyncio
@@ -105,7 +113,7 @@ async def test_approval_no_pii_data_in_url(api_key_headers):
             transport=ASGITransport(app=app),
             base_url="http://test"
         ) as client:
-            response = await client.get("/api/approval/secure-token-456/review", headers=api_key_headers)
+            response = await client.get("/api/v1/approval/secure-token-456/review", headers=api_key_headers)
 
         # Assert PII data only in response body, not in URL
         assert response.status_code == 200
@@ -169,7 +177,7 @@ async def test_approval_decision_sanitization(api_key_headers):
             base_url="http://test"
         ) as client:
             response = await client.post(
-                "/api/approval/test-token-789/decision",
+                "/api/v1/approval/test-token-789/decision",
                 json=malicious_payload,
                 headers=api_key_headers
             )
@@ -215,7 +223,7 @@ async def test_approval_input_validation_boundaries(api_key_headers):
         ) as client:
             # Test justification too short (< 10 chars)
             response = await client.post(
-                "/api/approval/validation-token-999/decision",
+                "/api/v1/approval/validation-token-999/decision",
                 json={
                     "decision": "approved",
                     "justification": "Short",
@@ -227,7 +235,7 @@ async def test_approval_input_validation_boundaries(api_key_headers):
 
             # Test justification too long (> 1000 chars)
             response = await client.post(
-                "/api/approval/validation-token-999/decision",
+                "/api/v1/approval/validation-token-999/decision",
                 json={
                     "decision": "approved",
                     "justification": "A" * 1001,
@@ -239,7 +247,7 @@ async def test_approval_input_validation_boundaries(api_key_headers):
 
             # Test invalid decision value
             response = await client.post(
-                "/api/approval/validation-token-999/decision",
+                "/api/v1/approval/validation-token-999/decision",
                 json={
                     "decision": "maybe",  # Not "approved" or "denied"
                     "justification": "Valid justification text here",
@@ -251,7 +259,7 @@ async def test_approval_input_validation_boundaries(api_key_headers):
 
             # Test reviewed_by too short (< 3 chars)
             response = await client.post(
-                "/api/approval/validation-token-999/decision",
+                "/api/v1/approval/validation-token-999/decision",
                 json={
                     "decision": "approved",
                     "justification": "Valid justification text here",
@@ -282,7 +290,7 @@ async def test_approval_token_not_leaked_in_error_messages(api_key_headers):
             transport=ASGITransport(app=app),
             base_url="http://test"
         ) as client:
-            response = await client.get(f"/api/approval/{sensitive_token}/review", headers=api_key_headers)
+            response = await client.get(f"/api/v1/approval/{sensitive_token}/review", headers=api_key_headers)
 
         # Assert token not in error message
         assert response.status_code == 404
@@ -340,7 +348,7 @@ async def test_approval_decision_idempotency(api_key_headers):
         ) as client:
             # First submission
             response1 = await client.post(
-                "/api/approval/idempotent-token/decision",
+                "/api/v1/approval/idempotent-token/decision",
                 json=decision_payload,
                 headers=api_key_headers
             )
@@ -352,7 +360,7 @@ async def test_approval_decision_idempotency(api_key_headers):
 
             # Second submission (should be handled gracefully)
             response2 = await client.post(
-                "/api/approval/idempotent-token/decision",
+                "/api/v1/approval/idempotent-token/decision",
                 json=decision_payload,
                 headers=api_key_headers
             )

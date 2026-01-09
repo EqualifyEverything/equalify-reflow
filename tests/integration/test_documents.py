@@ -30,7 +30,7 @@ async def test_submit_document_success(client, sample_pdf, api_key_headers):
     try:
         # Submit document
         files = {"file": ("test.pdf", io.BytesIO(sample_pdf), "application/pdf")}
-        response = client.post("/api/documents/submit", files=files, headers=api_key_headers)
+        response = client.post("/api/v1/documents/submit", files=files, headers=api_key_headers)
 
         # Assertions
         assert response.status_code == status.HTTP_201_CREATED
@@ -57,7 +57,7 @@ def test_submit_document_invalid_type(client, api_key_headers):
 
     try:
         files = {"file": ("test.txt", io.BytesIO(b"not a pdf"), "text/plain")}
-        response = client.post("/api/documents/submit", files=files, headers=api_key_headers)
+        response = client.post("/api/v1/documents/submit", files=files, headers=api_key_headers)
 
         assert response.status_code == status.HTTP_400_BAD_REQUEST
     finally:
@@ -81,7 +81,7 @@ async def test_get_job_status_success(client, api_key_headers):
 
     try:
         # Get status
-        response = client.get("/api/documents/test-job-id", headers=api_key_headers)
+        response = client.get("/api/v1/documents/test-job-id", headers=api_key_headers)
 
         # Assertions
         assert response.status_code == status.HTTP_200_OK
@@ -104,7 +104,7 @@ async def test_get_job_status_not_found(client, api_key_headers):
 
     try:
         # Get status
-        response = client.get("/api/documents/nonexistent-job", headers=api_key_headers)
+        response = client.get("/api/v1/documents/nonexistent-job", headers=api_key_headers)
 
         # Assertions
         assert response.status_code == status.HTTP_404_NOT_FOUND
@@ -127,7 +127,8 @@ async def test_get_job_result_completed(client, api_key_headers):
         "correction_decision": "approved",
         "correction_reviewed_by": "",
         "correction_reviewed_at": "",
-        "correction_justification": ""
+        "correction_justification": "",
+        "markdown_url": "results/test-job-id/output.md"  # Required for completed jobs
     })
 
     mock_s3_url_service = MagicMock()
@@ -142,7 +143,7 @@ async def test_get_job_result_completed(client, api_key_headers):
 
     try:
         # Get result
-        response = client.get("/api/documents/test-job-id", headers=api_key_headers)
+        response = client.get("/api/v1/documents/test-job-id", headers=api_key_headers)
 
         # Assertions
         assert response.status_code == status.HTTP_200_OK
@@ -171,7 +172,7 @@ async def test_get_job_result_processing(client, api_key_headers):
 
     try:
         # Get status
-        response = client.get("/api/documents/test-job-id", headers=api_key_headers)
+        response = client.get("/api/v1/documents/test-job-id", headers=api_key_headers)
 
         # Assertions
         assert response.status_code == status.HTTP_200_OK
@@ -188,6 +189,8 @@ async def test_submit_document_skip_pii_scan(client, sample_pdf, api_key_headers
 
     Catches: PII bypass flow routing incorrectly (compliance risk if broken).
     """
+    from unittest.mock import patch
+
     # Use valid UUID format (required by ProcessingQueuePayload validation)
     test_job_id = "550e8400-e29b-41d4-a716-446655440000"
 
@@ -202,43 +205,60 @@ async def test_submit_document_skip_pii_scan(client, sample_pdf, api_key_headers
     mock_job = MagicMock()
     mock_job.create_job = AsyncMock()
 
+    # Mock redis client to prevent connection errors in background task
+    mock_redis = MagicMock()
+    mock_redis.hset = AsyncMock()
+    mock_redis.hget = AsyncMock(return_value=None)
+
     # Override dependencies
+    from src.dependencies import get_redis_client
     app.dependency_overrides[get_storage_service] = lambda: mock_storage
     app.dependency_overrides[get_queue_service] = lambda: mock_queue
     app.dependency_overrides[get_job_service] = lambda: mock_job
+    app.dependency_overrides[get_redis_client] = lambda: mock_redis
 
-    try:
-        # Submit document with skip_pii_scan=True
-        files = {"file": ("test.pdf", io.BytesIO(sample_pdf), "application/pdf")}
-        data = {"skip_pii_scan": "true", "skip_reason": "Pre-scanned document"}
-        response = client.post(
-            "/api/documents/submit",
-            files=files,
-            data=data,
-            headers=api_key_headers
-        )
+    # Mock the DocumentProcessingService to prevent actual processing
+    with patch(
+        "src.api.documents.DocumentProcessingService"
+    ) as mock_processing_class:
+        mock_processing_service = MagicMock()
+        mock_processing_service.process_document = AsyncMock()
+        mock_processing_class.return_value = mock_processing_service
 
-        # Assertions
-        assert response.status_code == status.HTTP_201_CREATED
-        response_data = response.json()
+        try:
+            # Submit document with skip_pii_scan=True
+            files = {"file": ("test.pdf", io.BytesIO(sample_pdf), "application/pdf")}
+            data = {"skip_pii_scan": "true", "skip_reason": "Pre-scanned document"}
+            response = client.post(
+                "/api/v1/documents/submit",
+                files=files,
+                data=data,
+                headers=api_key_headers
+            )
 
-        # Key assertion: status should be "processing", NOT "pii_scanning"
-        assert response_data["status"] == "processing"
-        assert response_data["job_id"] == test_job_id
+            # Assertions
+            assert response.status_code == status.HTTP_201_CREATED
+            response_data = response.json()
 
-        # Verify job was created with correct parameters
-        mock_job.create_job.assert_called_once()
-        call_kwargs = mock_job.create_job.call_args
-        # Check positional args: job_id, s3_key
-        assert call_kwargs[0][0] == test_job_id
-        assert call_kwargs[0][1] == f"temp/{test_job_id}.pdf"
-        # Check keyword args
-        assert call_kwargs[1]["status"] == "processing"
-        assert call_kwargs[1]["pii_skipped"] is True
-        assert call_kwargs[1]["pii_skip_reason"] == "Pre-scanned document"
+            # Key assertion: status should be "processing", NOT "pii_scanning"
+            assert response_data["status"] == "processing"
+            assert response_data["job_id"] == test_job_id
 
-        # Verify enqueue was called (to PROCESSING_QUEUE), NOT queue_pii_job
-        mock_queue.enqueue.assert_called_once()
-        mock_queue.queue_pii_job.assert_not_called()
-    finally:
-        app.dependency_overrides.clear()
+            # Verify job was created with correct parameters
+            mock_job.create_job.assert_called_once()
+            call_kwargs = mock_job.create_job.call_args
+            # Check positional args: job_id, s3_key
+            assert call_kwargs[0][0] == test_job_id
+            assert call_kwargs[0][1] == f"temp/{test_job_id}.pdf"
+            # Check keyword args
+            assert call_kwargs[1]["status"] == "processing"
+            assert call_kwargs[1]["pii_skipped"] is True
+            assert call_kwargs[1]["pii_skip_reason"] == "Pre-scanned document"
+
+            # Verify DocumentProcessingService was created (agentic pipeline used)
+            mock_processing_class.assert_called_once()
+
+            # Verify queue_pii_job was NOT called (PII bypass)
+            mock_queue.queue_pii_job.assert_not_called()
+        finally:
+            app.dependency_overrides.clear()

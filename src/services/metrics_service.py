@@ -94,6 +94,152 @@ s3_retry_attempts_total = Counter(
     ["operation", "attempt"]
 )
 
+# Prometheus Metrics for LLM Operations
+llm_tokens_total = Counter(
+    "llm_tokens_total",
+    "Total tokens consumed by LLM calls",
+    ["agent", "direction"],  # agent: planner/worker/paragraph, direction: input/output
+)
+
+llm_request_duration_seconds = Histogram(
+    "llm_request_duration_seconds",
+    "LLM API request duration in seconds",
+    ["agent"],
+    buckets=[0.5, 1.0, 2.0, 5.0, 10.0, 30.0, 60.0, 120.0, 300.0],  # 500ms to 5min
+)
+
+llm_cost_cents_total = Counter(
+    "llm_cost_cents_total",
+    "Total estimated LLM cost in cents",
+    ["agent"],
+)
+
+llm_requests_total = Counter(
+    "llm_requests_total",
+    "Total LLM API requests",
+    ["agent", "status"],  # status: success/error
+)
+
+# Prometheus Metrics for Multi-Round Processing
+round_processing_total = Counter(
+    "round_processing_total",
+    "Total rounds processed",
+    ["round_number", "convergence_reason"],  # round: "1","2","3"..., reason: max_rounds/quality_met/etc
+)
+
+round_duration_seconds = Histogram(
+    "round_duration_seconds",
+    "Round processing duration in seconds",
+    ["round_number"],
+    buckets=[5, 15, 30, 60, 120, 300, 600],  # 5s to 10min
+)
+
+critic_issues_total = Counter(
+    "critic_issues_total",
+    "Issues found by CriticAgent",
+    ["severity", "category"],  # severity: critical/major/minor/cosmetic
+)
+
+document_quality_score = Gauge(
+    "document_quality_score",
+    "Current document quality score (0-1)",
+    ["document_id", "round_number"],
+)
+
+convergence_events_total = Counter(
+    "convergence_events_total",
+    "Total convergence events by reason",
+    ["reason"],  # max_rounds_reached, quality_threshold_met, no_improvement, etc.
+)
+
+
+def record_llm_call(
+    agent: str,
+    input_tokens: int,
+    output_tokens: int,
+    cost_cents: float,
+    duration_ms: int,
+    success: bool = True,
+) -> None:
+    """Record Prometheus metrics for an LLM API call.
+
+    Args:
+        agent: Agent name (planner, worker, paragraph, recovery, verification)
+        input_tokens: Number of input tokens
+        output_tokens: Number of output tokens
+        cost_cents: Estimated cost in cents
+        duration_ms: Call duration in milliseconds
+        success: Whether the call succeeded
+    """
+    llm_tokens_total.labels(agent=agent, direction="input").inc(input_tokens)
+    llm_tokens_total.labels(agent=agent, direction="output").inc(output_tokens)
+    llm_cost_cents_total.labels(agent=agent).inc(cost_cents)
+    llm_request_duration_seconds.labels(agent=agent).observe(duration_ms / 1000)
+    llm_requests_total.labels(
+        agent=agent, status="success" if success else "error"
+    ).inc()
+
+
+def record_round_metrics(
+    round_number: int,
+    duration_ms: int,
+    quality_score: float,
+    document_id: str,
+    convergence_reason: str | None = None,
+    issues_by_severity: dict[str, int] | None = None,
+    issues_by_category: dict[str, int] | None = None,
+) -> None:
+    """Record Prometheus metrics for a processing round.
+
+    Args:
+        round_number: Round number (1-indexed)
+        duration_ms: Round duration in milliseconds
+        quality_score: Quality score after this round (0-1)
+        document_id: Document identifier
+        convergence_reason: If this is the final round, the convergence reason
+        issues_by_severity: Count of issues by severity (critic rounds only)
+        issues_by_category: Count of issues by category (critic rounds only)
+    """
+    # Record round duration
+    round_duration_seconds.labels(round_number=str(round_number)).observe(duration_ms / 1000)
+
+    # Record quality score
+    document_quality_score.labels(
+        document_id=document_id,
+        round_number=str(round_number),
+    ).set(quality_score)
+
+    # Record convergence if this is the final round
+    if convergence_reason:
+        round_processing_total.labels(
+            round_number=str(round_number),
+            convergence_reason=convergence_reason,
+        ).inc()
+        convergence_events_total.labels(reason=convergence_reason).inc()
+
+    # Record critic issues if provided
+    if issues_by_severity:
+        for severity, count in issues_by_severity.items():
+            for _ in range(count):
+                # We increment the counter for each issue
+                # This allows us to track issues over time
+                pass  # Issues are recorded per-issue, not per-round
+
+    if issues_by_category:
+        for category, count in issues_by_category.items():
+            for _ in range(count):
+                pass  # Issues are recorded per-issue, not per-round
+
+
+def record_critic_issue(severity: str, category: str) -> None:
+    """Record a single critic issue to Prometheus.
+
+    Args:
+        severity: Issue severity (critical, major, minor, cosmetic)
+        category: Issue category (structure, accessibility, content, formatting)
+    """
+    critic_issues_total.labels(severity=severity, category=category).inc()
+
 
 class MetricsService:
     """Service for metrics tracking and cleanup."""

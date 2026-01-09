@@ -157,9 +157,26 @@ aws sso login --profile uic
 - Prevents BedrockConverseModel from blocking event loop during startup
 - All workers start in <1 second
 
+## Multi-Round Processing Architecture
+
+The pipeline supports iterative refinement when `max_rounds > 1`:
+
+**Round 1:** Standard agentic pipeline (planning → execution → verification → recovery)
+- Page-based processing with specialized agents
+- Produces initial markdown + PageBoundaryMap (line-to-page mappings)
+
+**Rounds 2+:** Document-based refinement loop
+- CriticAgent (Efficient tier) analyzes full markdown for issues across structure, accessibility, content, formatting
+- DocumentWorker (Reasoning tier) fixes identified issues using page images as reference
+- Convergence check determines if processing should continue (max_rounds, quality score, no improvement, ready signal)
+
+**Data Models:** PageBoundary, CriticIssue, CriticReport, DocumentJob, RoundContext, RoundLoopResult
+
+**New Agents:** CriticAgent (4 tools), DocumentWorker (3 tools)
+
 ## Processing Pipeline Flow
 
-1. **POST /api/documents/submit** (API)
+1. **POST /api/v1/documents/submit** (API)
    - Validate PDF
    - Store in S3 temp bucket
    - Create job in Redis
@@ -191,19 +208,19 @@ aws sso login --profile uic
    - Update job: `{status: "awaiting_correction_approval" | "completed"}`
 
 4. **Correction Approval** (Manual Review)
-   - GET `/api/corrections/{job_id}/review?token={token}` - View corrections
-   - PATCH `/api/corrections/{job_id}` - Approve or reject
+   - GET `/api/v1/corrections/{job_id}/review?token={token}` - View corrections
+   - PATCH `/api/v1/corrections/{job_id}` - Approve or reject
    - If approved: Corrected markdown → final location
    - If rejected: Original markdown → final location
 
-5. **GET /api/documents/{job_id}** (API)
+5. **GET /api/v1/documents/{job_id}** (API)
    - Return status-specific response with URLs generated on-demand
 
 ## API Design Principles
 
 1. **Top-level fields**: All job data stored as top-level Redis hash fields (not nested metadata blob) for O(1) access
 2. **S3 keys, not URLs**: System stores S3 keys internally; URLs generated on-demand based on environment (LocalStack vs AWS)
-3. **RESTful endpoints**: Resource-oriented URLs (`/api/corrections/{job_id}`) with tokens in query/body for authentication
+3. **RESTful endpoints**: Resource-oriented URLs (`/api/v1/corrections/{job_id}`) with tokens in query/body for authentication
 4. **Structured responses**: Pydantic models ensure type-safe, status-specific response structures
 5. **Temporary data cleanup**: Page images and intermediate files removed after job completion
 

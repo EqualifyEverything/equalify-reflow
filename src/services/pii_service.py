@@ -1,12 +1,14 @@
 """PII detection service orchestration."""
 
+import asyncio
 import logging
 from datetime import UTC, datetime, timedelta
+from typing import TYPE_CHECKING
 
-from ..shared.constants.queues import APPROVAL_QUEUE, PROCESSING_QUEUE
+from ..shared.constants.queues import APPROVAL_QUEUE
 from ..shared.constants.statuses import STATUS_AWAITING_APPROVAL, STATUS_FAILED, STATUS_PII_SCANNING, STATUS_PROCESSING
 from ..shared.models.pii import PIIFinding
-from ..shared.models.queue import ApprovalQueuePayload, PIIQueuePayload, ProcessingQueuePayload
+from ..shared.models.queue import ApprovalQueuePayload, PIIQueuePayload
 from ..utils.retry_helpers import retry_with_backoff
 from ..utils.token_generator import generate_secure_token
 from .job_service import JobService
@@ -14,6 +16,9 @@ from .pdf_extractor import PDFExtractionError, extract_pdf_text
 from .pii_analyzer import get_pii_analyzer
 from .queue_service import QueueService
 from .storage_service import StorageService
+
+if TYPE_CHECKING:
+    from .s3_url_service import S3URLService
 
 logger = logging.getLogger(__name__)
 
@@ -26,14 +31,15 @@ class PIIDetectionService:
     """Orchestrates PII detection workflow.
 
     Coordinates PDF download, text extraction, PII scanning,
-    and routing to approval or processing queues.
+    and routing to approval or direct processing.
     """
 
     def __init__(
         self,
         storage_service: StorageService,
         queue_service: QueueService,
-        job_service: JobService
+        job_service: JobService,
+        s3_url_service: "S3URLService | None" = None,
     ):
         """Initialize PII detection service.
 
@@ -41,10 +47,12 @@ class PIIDetectionService:
             storage_service: S3 storage operations
             queue_service: Redis queue operations
             job_service: Job status management
+            s3_url_service: S3 URL generation service (required for processing trigger)
         """
         self.storage = storage_service
         self.queue = queue_service
         self.jobs = job_service
+        self.s3_url_service = s3_url_service
         self.pii_analyzer = get_pii_analyzer()
 
     async def process_pii_job(self, job: PIIQueuePayload, retry_count: int = 0) -> None:
@@ -194,7 +202,11 @@ class PIIDetectionService:
         )
 
     async def _queue_for_processing(self, job: PIIQueuePayload) -> None:
-        """Queue clean job directly for processing.
+        """Trigger document processing directly after PII scan passes.
+
+        Instead of queuing to an orphan queue, this method triggers the
+        DocumentProcessingService directly via asyncio.create_task, similar
+        to how skip_pii_scan works in the API layer.
 
         NOTE: This method does not include retry logic internally.
         Use _queue_for_processing_with_retry() for automatic retries on transient failures.
@@ -202,22 +214,57 @@ class PIIDetectionService:
         Args:
             job: Original PII queue payload
         """
-        logger.info(f"Queueing job {job.job_id} for processing (no PII detected)")
+        logger.info(f"Starting processing for job {job.job_id} (no PII detected)")
 
-        # Create processing queue payload
-        processing_payload = ProcessingQueuePayload(
-            job_id=job.job_id,
-            s3_key=job.s3_key,
-            approved_at=None  # No approval needed
-        )
-
-        # Push to processing queue
-        await self.queue.enqueue(PROCESSING_QUEUE, processing_payload)
-
-        # Update job status
+        # Update job status to processing
         await self.jobs.update_job_status(job.job_id, STATUS_PROCESSING)
 
-        logger.info(f"Job {job.job_id} queued for processing")
+        # Get job data for filename and review_mode
+        job_data = await self.jobs.get_job(job.job_id)
+        if not job_data:
+            logger.error(f"Job {job.job_id} not found in Redis, cannot process")
+            await self.jobs.update_job_status(
+                job.job_id,
+                STATUS_FAILED,
+                error="Job metadata not found after PII scan"
+            )
+            return
+
+        filename = job_data.get("original_filename", "document.pdf")
+        review_mode = job_data.get("review_mode", "auto")
+        max_rounds = int(job_data.get("max_rounds", "1"))
+
+        # Import here to avoid circular imports
+        from .document_processing_service import DocumentProcessingService
+
+        if self.s3_url_service is None:
+            logger.error(f"S3URLService not configured for job {job.job_id}")
+            await self.jobs.update_job_status(
+                job.job_id,
+                STATUS_FAILED,
+                error="S3URLService not configured"
+            )
+            return
+
+        # Create processing service
+        processing_service = DocumentProcessingService(
+            redis_client=self.queue.redis,  # Get redis client from queue service
+            storage_service=self.storage,
+            s3_url_service=self.s3_url_service,
+        )
+
+        # Trigger processing in background (non-blocking)
+        asyncio.create_task(
+            processing_service.process_document(
+                job_id=job.job_id,
+                s3_key=job.s3_key,
+                filename=filename,
+                review_mode=review_mode,
+                max_rounds=max_rounds,
+            )
+        )
+
+        logger.info(f"Job {job.job_id} processing started in background (max_rounds={max_rounds})")
 
     async def _queue_for_processing_with_retry(self, job: PIIQueuePayload) -> None:
         """Queue job for processing with retry logic for transient failures.

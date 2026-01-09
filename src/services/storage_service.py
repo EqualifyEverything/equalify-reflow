@@ -1,8 +1,11 @@
 """Storage service for S3 operations."""
 
+import asyncio
+import json
 import logging
 import uuid
-from typing import Any
+from io import BytesIO
+from typing import TYPE_CHECKING, Any
 
 from botocore.exceptions import ClientError
 from fastapi import HTTPException, UploadFile
@@ -10,6 +13,11 @@ from fastapi import HTTPException, UploadFile
 from ..config import settings
 from ..utils.circuit_breaker import CircuitBreaker, CircuitBreakerOpenError
 from ..utils.retry_helpers import retry_with_backoff_for_sync_func
+
+if TYPE_CHECKING:
+    from ..agents.models import StoredFigure
+    from ..services.pdf_converter import ExtractedImage
+    from ..shared.models.processing_result import ProcessingResult
 
 logger = logging.getLogger(__name__)
 
@@ -203,6 +211,68 @@ class StorageService:
                 detail=f"Unexpected error downloading file: {str(e)}"
             )
 
+    async def download_file(self, s3_key: str) -> bytes:
+        """
+        Download file from results bucket with retry and circuit breaker.
+
+        Args:
+            s3_key: S3 key of file to download
+
+        Returns:
+            File contents as bytes
+
+        Raises:
+            HTTPException: If download fails
+            CircuitBreakerOpenError: If S3 download circuit breaker is open
+        """
+        # Check circuit breaker
+        self.download_circuit.check_state()
+        if self.download_circuit.is_open:
+            raise CircuitBreakerOpenError(
+                "S3 download circuit breaker is open due to repeated failures"
+            )
+
+        try:
+            # Download with retry logic
+            response: Any = await retry_with_backoff_for_sync_func(
+                lambda: self.s3_client.get_object(
+                    Bucket=self.results_bucket,
+                    Key=s3_key
+                ),
+                max_attempts=3,
+                base_delay=1.0,
+                operation_name=f"download {s3_key}"
+            )
+
+            # Record success
+            self.download_circuit.record_success()
+
+            return response['Body'].read()  # type: ignore[no-any-return]
+
+        except CircuitBreakerOpenError:
+            raise
+        except ClientError as e:
+            # Record failure
+            self.download_circuit.record_failure()
+
+            if e.response['Error']['Code'] == 'NoSuchKey':
+                raise HTTPException(
+                    status_code=404,
+                    detail=f"File not found: {s3_key}"
+                )
+            raise HTTPException(
+                status_code=500,
+                detail=f"Failed to download file: {str(e)}"
+            )
+        except Exception as e:
+            # Record failure
+            self.download_circuit.record_failure()
+
+            raise HTTPException(
+                status_code=500,
+                detail=f"Unexpected error downloading file: {str(e)}"
+            )
+
     async def upload_result(
         self,
         job_id: str,
@@ -357,6 +427,98 @@ class StorageService:
                 detail=f"Failed to upload image {image_name}: {str(e)}"
             )
 
+    async def upload_figures(
+        self,
+        job_id: str,
+        extracted_figures: list["ExtractedImage"],
+    ) -> list["StoredFigure"]:
+        """Upload extracted figure images to results bucket.
+
+        Filters to only picture types (not tables), sorts by page then position,
+        and uploads each figure to S3. Returns metadata for URL rewriting.
+
+        Args:
+            job_id: Job identifier
+            extracted_figures: List of ExtractedImage objects (will filter to pictures only)
+
+        Returns:
+            List of StoredFigure with S3 keys and metadata
+
+        Raises:
+            Does NOT raise - failures are logged and skipped (best-effort)
+        """
+        from ..agents.models import StoredFigure
+
+        # Filter to only pictures (exclude tables)
+        pictures = [
+            img for img in extracted_figures
+            if img.image_type == "picture"
+        ]
+
+        if not pictures:
+            logger.info(f"Job {job_id}: No figures to upload")
+            return []
+
+        # Sort by page number, then by ref_id for consistent ordering
+        pictures.sort(key=lambda img: (img.page_num, img.ref_id))
+
+        stored_figures: list[StoredFigure] = []
+        semaphore = asyncio.Semaphore(5)  # Limit concurrent uploads
+
+        async def upload_single_figure(
+            idx: int,
+            img: "ExtractedImage",
+        ) -> StoredFigure | None:
+            """Upload a single figure and return metadata."""
+            async with semaphore:
+                figure_id = f"figure-{idx + 1}"
+                image_name = f"{figure_id}.png"
+
+                try:
+                    # Convert PIL image to PNG bytes
+                    buffer = BytesIO()
+                    img.pil_image.save(buffer, format="PNG")
+                    image_data = buffer.getvalue()
+
+                    # Upload using existing method
+                    s3_key = await self.upload_image(job_id, image_data, image_name)
+
+                    logger.debug(
+                        f"Job {job_id}: Uploaded {figure_id} from page {img.page_num} "
+                        f"({len(image_data)} bytes)"
+                    )
+
+                    return StoredFigure(
+                        figure_id=figure_id,
+                        s3_key=s3_key,
+                        page_num=img.page_num,
+                        alt_text="",  # Filled in during post-processing
+                        caption=img.caption,
+                        ref_id=img.ref_id,
+                    )
+
+                except Exception as e:
+                    logger.warning(
+                        f"Job {job_id}: Failed to upload {figure_id} from page {img.page_num}: {e}"
+                    )
+                    return None
+
+        # Upload all figures in parallel (with semaphore limiting)
+        tasks = [
+            upload_single_figure(idx, img)
+            for idx, img in enumerate(pictures)
+        ]
+        results = await asyncio.gather(*tasks)
+
+        # Filter out failed uploads
+        stored_figures = [fig for fig in results if fig is not None]
+
+        logger.info(
+            f"Job {job_id}: Uploaded {len(stored_figures)}/{len(pictures)} figures to S3"
+        )
+
+        return stored_figures
+
     async def upload_page_image(
         self,
         job_id: str,
@@ -452,6 +614,258 @@ class StorageService:
         except Exception:
             return False
 
+    async def load_processing_result(self, job_id: str) -> "ProcessingResult | None":
+        """Load ProcessingResult from S3.
 
+        Args:
+            job_id: Job identifier
 
+        Returns:
+            ProcessingResult if found, None if not found
 
+        Raises:
+            HTTPException: If download fails (other than not found)
+            CircuitBreakerOpenError: If S3 download circuit breaker is open
+        """
+        from ..shared.models.processing_result import ProcessingResult
+
+        # Check circuit breaker
+        self.download_circuit.check_state()
+        if self.download_circuit.is_open:
+            raise CircuitBreakerOpenError(
+                "S3 download circuit breaker is open due to repeated failures"
+            )
+
+        key = f"jobs/{job_id}/processing_result.json"
+
+        try:
+            response: Any = await retry_with_backoff_for_sync_func(
+                lambda: self.s3_client.get_object(
+                    Bucket=self.results_bucket,
+                    Key=key
+                ),
+                max_attempts=3,
+                base_delay=1.0,
+                operation_name=f"load processing result {job_id}"
+            )
+
+            # Record success
+            self.download_circuit.record_success()
+
+            data = json.loads(response['Body'].read().decode('utf-8'))
+            return ProcessingResult.model_validate(data)
+
+        except CircuitBreakerOpenError:
+            raise
+        except ClientError as e:
+            if e.response['Error']['Code'] == 'NoSuchKey':
+                return None
+            # Record failure
+            self.download_circuit.record_failure()
+            raise HTTPException(
+                status_code=500,
+                detail=f"Failed to load processing result: {str(e)}"
+            )
+        except Exception as e:
+            # Record failure
+            self.download_circuit.record_failure()
+            raise HTTPException(
+                status_code=500,
+                detail=f"Unexpected error loading processing result: {str(e)}"
+            )
+
+    async def save_processing_result(
+        self,
+        job_id: str,
+        result: "ProcessingResult"
+    ) -> str:
+        """Save ProcessingResult to S3.
+
+        Args:
+            job_id: Job identifier
+            result: ProcessingResult to save
+
+        Returns:
+            S3 key where result was saved
+
+        Raises:
+            HTTPException: If upload fails
+            CircuitBreakerOpenError: If S3 upload circuit breaker is open
+        """
+        # Check circuit breaker
+        self.upload_circuit.check_state()
+        if self.upload_circuit.is_open:
+            raise CircuitBreakerOpenError(
+                "S3 upload circuit breaker is open due to repeated failures"
+            )
+
+        key = f"jobs/{job_id}/processing_result.json"
+
+        try:
+            body = result.model_dump_json(indent=2)
+
+            await retry_with_backoff_for_sync_func(
+                lambda: self.s3_client.put_object(
+                    Bucket=self.results_bucket,
+                    Key=key,
+                    Body=body.encode('utf-8'),
+                    ContentType='application/json',
+                ),
+                max_attempts=3,
+                base_delay=1.0,
+                operation_name=f"save processing result {job_id}"
+            )
+
+            # Record success
+            self.upload_circuit.record_success()
+
+            logger.info(f"Saved ProcessingResult for job {job_id}")
+            return key
+
+        except CircuitBreakerOpenError:
+            raise
+        except ClientError as e:
+            # Record failure
+            self.upload_circuit.record_failure()
+            error_code = e.response.get('Error', {}).get('Code', 'Unknown')
+            raise HTTPException(
+                status_code=500,
+                detail=f"Failed to save processing result: {error_code}"
+            ) from e
+        except Exception as e:
+            # Record failure
+            self.upload_circuit.record_failure()
+            raise HTTPException(
+                status_code=500,
+                detail=f"Failed to save processing result: {str(e)}"
+            )
+
+    async def upload_final_markdown(self, job_id: str, markdown: str) -> str:
+        """Upload final reviewed markdown and return URL.
+
+        This is used after all reviews have been applied to save the
+        final accessible markdown document.
+
+        Args:
+            job_id: Job identifier
+            markdown: Final markdown content
+
+        Returns:
+            S3 key where markdown was saved
+
+        Raises:
+            HTTPException: If upload fails
+            CircuitBreakerOpenError: If S3 upload circuit breaker is open
+        """
+        # Check circuit breaker
+        self.upload_circuit.check_state()
+        if self.upload_circuit.is_open:
+            raise CircuitBreakerOpenError(
+                "S3 upload circuit breaker is open due to repeated failures"
+            )
+
+        key = f"jobs/{job_id}/final.md"
+
+        try:
+            await retry_with_backoff_for_sync_func(
+                lambda: self.s3_client.put_object(
+                    Bucket=self.results_bucket,
+                    Key=key,
+                    Body=markdown.encode('utf-8'),
+                    ContentType='text/markdown',
+                    CacheControl='public, max-age=31536000'
+                ),
+                max_attempts=3,
+                base_delay=1.0,
+                operation_name=f"upload final markdown {job_id}"
+            )
+
+            # Record success
+            self.upload_circuit.record_success()
+
+            logger.info(f"Uploaded final markdown for job {job_id}")
+            return key
+
+        except CircuitBreakerOpenError:
+            raise
+        except ClientError as e:
+            # Record failure
+            self.upload_circuit.record_failure()
+            error_code = e.response.get('Error', {}).get('Code', 'Unknown')
+            raise HTTPException(
+                status_code=500,
+                detail=f"Failed to upload final markdown: {error_code}"
+            ) from e
+        except Exception as e:
+            # Record failure
+            self.upload_circuit.record_failure()
+            raise HTTPException(
+                status_code=500,
+                detail=f"Failed to upload final markdown: {str(e)}"
+            )
+
+    async def upload_file(
+        self,
+        key: str,
+        content: bytes,
+        content_type: str = "application/octet-stream",
+    ) -> str:
+        """Upload a file to the results bucket.
+
+        Generic method for uploading any file to S3 results bucket.
+
+        Args:
+            key: S3 key (path) for the file
+            content: File content as bytes
+            content_type: MIME type of the content
+
+        Returns:
+            S3 key where file was saved
+
+        Raises:
+            HTTPException: If upload fails
+            CircuitBreakerOpenError: If S3 upload circuit breaker is open
+        """
+        # Check circuit breaker
+        self.upload_circuit.check_state()
+        if self.upload_circuit.is_open:
+            raise CircuitBreakerOpenError(
+                "S3 upload circuit breaker is open due to repeated failures"
+            )
+
+        try:
+            await retry_with_backoff_for_sync_func(
+                lambda: self.s3_client.put_object(
+                    Bucket=self.results_bucket,
+                    Key=key,
+                    Body=content,
+                    ContentType=content_type,
+                ),
+                max_attempts=3,
+                base_delay=1.0,
+                operation_name=f"upload file {key}"
+            )
+
+            # Record success
+            self.upload_circuit.record_success()
+
+            logger.info(f"Uploaded file to {key}")
+            return key
+
+        except CircuitBreakerOpenError:
+            raise
+        except ClientError as e:
+            # Record failure
+            self.upload_circuit.record_failure()
+            error_code = e.response.get('Error', {}).get('Code', 'Unknown')
+            raise HTTPException(
+                status_code=500,
+                detail=f"Failed to upload file: {error_code}"
+            ) from e
+        except Exception as e:
+            # Record failure
+            self.upload_circuit.record_failure()
+            raise HTTPException(
+                status_code=500,
+                detail=f"Failed to upload file: {str(e)}"
+            )

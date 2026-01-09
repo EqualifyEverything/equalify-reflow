@@ -177,6 +177,19 @@ variable "docs_password" {
   # Set via terraform.tfvars or TF_VAR_docs_password environment variable
 }
 
+# Budget Alerts
+variable "bedrock_daily_budget_limit" {
+  description = "Daily budget limit for Bedrock costs in USD (alerts at 50%, 80%, 100%)"
+  type        = string
+  default     = "50"
+}
+
+variable "monthly_budget_limit" {
+  description = "Monthly budget limit for PDF converter infrastructure in us-east-1 (alerts at 50%, 80%, 100%)"
+  type        = string
+  default     = "250" # Based on actual usage: ~$213/mo (ECS, ElastiCache, ALB, VPC, Bedrock, CloudWatch)
+}
+
 # Tags
 variable "additional_tags" {
   description = "Additional tags to apply to all resources"

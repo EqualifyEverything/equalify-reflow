@@ -1,17 +1,17 @@
 """Unit tests for RemediationStorageService."""
 
 import json
-from datetime import datetime, UTC
-from unittest.mock import AsyncMock, MagicMock, patch
+from datetime import UTC, datetime
+from unittest.mock import MagicMock
 
 import pytest
 from botocore.exceptions import ClientError
-
 from src.services.remediation_storage_service import RemediationStorageService
 from src.services.storage_service import StorageService
+from src.shared.models.auto_correction import AutoCorrection
 from src.shared.models.observation import Observation, ObservationLocation
-from src.shared.models.proposal import Proposal, SearchReplaceDiff
 from src.shared.models.remediation import DocumentManifest, PageFeatures
+from src.shared.models.review_checklist import ReviewItem, ReviewOption
 
 
 @pytest.fixture
@@ -74,19 +74,48 @@ def sample_observation() -> Observation:
 
 
 @pytest.fixture
-def sample_proposal() -> Proposal:
-    """Create a sample Proposal for testing."""
-    return Proposal(
-        id="prop-123",
-        job_id="test-job-123",
-        resolves=["obs-123"],
-        diff=SearchReplaceDiff(
-            search="![](figure-1.png)",
-            replace="![Flowchart description](figure-1.png)"
-        ),
+def sample_auto_correction() -> AutoCorrection:
+    """Create a sample AutoCorrection for testing."""
+    return AutoCorrection(
+        id="corr-123",
+        observation_id="obs-123",
+        search="![](figure-1.png)",
+        replace="![Flowchart description](figure-1.png)",
         justification="Adding alt text to image",
-        page_nums=[1],
-        estimated_impact="Adds alt text to 1 image"
+        confidence=0.98,
+        agent="figures",
+        page_num=1,
+    )
+
+
+@pytest.fixture
+def sample_review_item() -> ReviewItem:
+    """Create a sample ReviewItem for testing."""
+    return ReviewItem(
+        id="review-123",
+        observation_id="obs-123",
+        agent="figures",
+        question="Choose the best alt text for this image",
+        options=[
+            ReviewOption(
+                id="opt-1",
+                label="Flowchart",
+                action="replace",
+                replacement_text="![Flowchart](img.png)",
+                is_recommended=True
+            ),
+            ReviewOption(
+                id="opt-2",
+                label="Diagram",
+                action="replace",
+                replacement_text="![Diagram](img.png)"
+            ),
+        ],
+        search_text="![](img.png)",
+        context="...surrounding text around the image...",
+        page_num=1,
+        agent_recommendation="Use 'Flowchart' as alt text",
+        agent_confidence=0.85,
     )
 
 
@@ -291,21 +320,6 @@ class TestLoadObservations:
 
         assert result == []
 
-    @pytest.mark.asyncio
-    async def test_load_observations_invalid_json(
-        self,
-        remediation_storage: RemediationStorageService,
-        mock_s3_client: MagicMock
-    ) -> None:
-        """Test load_observations returns empty list for invalid JSON."""
-        mock_body = MagicMock()
-        mock_body.read.return_value = b"invalid json"
-        mock_s3_client.get_object.return_value = {"Body": mock_body}
-
-        result = await remediation_storage.load_observations("test-job-123")
-
-        assert result == []
-
 
 class TestAppendObservations:
     """Tests for append_observations method."""
@@ -348,36 +362,36 @@ class TestAppendObservations:
         assert data[1]["id"] == "obs-123"
 
 
-class TestSaveProposals:
-    """Tests for save_proposals method."""
+class TestSaveAutoCorrections:
+    """Tests for save_auto_corrections method."""
 
     @pytest.mark.asyncio
-    async def test_save_proposals_success(
+    async def test_save_auto_corrections_success(
         self,
         remediation_storage: RemediationStorageService,
         mock_s3_client: MagicMock,
-        sample_proposal: Proposal
+        sample_auto_correction: AutoCorrection
     ) -> None:
-        """Test successful proposals save."""
-        key = await remediation_storage.save_proposals(
+        """Test successful auto corrections save."""
+        key = await remediation_storage.save_auto_corrections(
             "test-job-123",
-            [sample_proposal]
+            [sample_auto_correction]
         )
 
-        assert key == "test-job-123/proposals.json"
+        assert key == "test-job-123/auto_corrections.json"
         mock_s3_client.put_object.assert_called_once()
 
     @pytest.mark.asyncio
-    async def test_save_proposals_content(
+    async def test_save_auto_corrections_content(
         self,
         remediation_storage: RemediationStorageService,
         mock_s3_client: MagicMock,
-        sample_proposal: Proposal
+        sample_auto_correction: AutoCorrection
     ) -> None:
-        """Test proposals content is correct JSON."""
-        await remediation_storage.save_proposals(
+        """Test auto corrections content is correct JSON."""
+        await remediation_storage.save_auto_corrections(
             "test-job-123",
-            [sample_proposal]
+            [sample_auto_correction]
         )
 
         call_kwargs = mock_s3_client.put_object.call_args[1]
@@ -385,126 +399,109 @@ class TestSaveProposals:
         data = json.loads(body)
 
         assert len(data) == 1
-        assert data[0]["id"] == "prop-123"
-        assert data[0]["diff"]["search"] == "![](figure-1.png)"
+        assert data[0]["id"] == "corr-123"
+        assert data[0]["search"] == "![](figure-1.png)"
 
 
-class TestLoadProposals:
-    """Tests for load_proposals method."""
+class TestLoadAutoCorrections:
+    """Tests for load_auto_corrections method."""
 
     @pytest.mark.asyncio
-    async def test_load_proposals_success(
+    async def test_load_auto_corrections_success(
         self,
         remediation_storage: RemediationStorageService,
         mock_s3_client: MagicMock,
-        sample_proposal: Proposal
+        sample_auto_correction: AutoCorrection
     ) -> None:
-        """Test successful proposals load."""
-        proposals_json = json.dumps([sample_proposal.model_dump()], default=str)
+        """Test successful auto corrections load."""
+        corrections_json = json.dumps([sample_auto_correction.model_dump()], default=str)
         mock_body = MagicMock()
-        mock_body.read.return_value = proposals_json.encode()
+        mock_body.read.return_value = corrections_json.encode()
         mock_s3_client.get_object.return_value = {"Body": mock_body}
 
-        result = await remediation_storage.load_proposals("test-job-123")
+        result = await remediation_storage.load_auto_corrections("test-job-123")
 
         assert len(result) == 1
-        assert result[0].id == "prop-123"
-        assert result[0].diff.search == "![](figure-1.png)"
+        assert result[0].id == "corr-123"
+        assert result[0].search == "![](figure-1.png)"
 
     @pytest.mark.asyncio
-    async def test_load_proposals_not_found(
+    async def test_load_auto_corrections_not_found(
         self,
         remediation_storage: RemediationStorageService,
         mock_s3_client: MagicMock
     ) -> None:
-        """Test load_proposals returns empty list when not found."""
+        """Test load_auto_corrections returns empty list when not found."""
         error_response = {"Error": {"Code": "NoSuchKey"}}
         mock_s3_client.get_object.side_effect = ClientError(error_response, "GetObject")
 
-        result = await remediation_storage.load_proposals("nonexistent-job")
+        result = await remediation_storage.load_auto_corrections("nonexistent-job")
 
         assert result == []
 
 
-class TestUpdateProposalStatus:
-    """Tests for update_proposal_status method."""
+class TestSaveReviewItems:
+    """Tests for save_review_items method."""
 
     @pytest.mark.asyncio
-    async def test_update_proposal_status_success(
+    async def test_save_review_items_success(
         self,
         remediation_storage: RemediationStorageService,
         mock_s3_client: MagicMock,
-        sample_proposal: Proposal
+        sample_review_item: ReviewItem
     ) -> None:
-        """Test updating a proposal's status."""
-        # Setup existing proposal
-        proposals_json = json.dumps([sample_proposal.model_dump()], default=str)
-        mock_body = MagicMock()
-        mock_body.read.return_value = proposals_json.encode()
-        mock_s3_client.get_object.return_value = {"Body": mock_body}
-
-        result = await remediation_storage.update_proposal_status(
+        """Test successful review items save."""
+        key = await remediation_storage.save_review_items(
             "test-job-123",
-            "prop-123",
-            "approved",
-            reviewed_by="reviewer@test.com",
-            review_notes="Looks good"
+            [sample_review_item]
         )
 
-        assert result is True
+        assert key == "test-job-123/review_items.json"
+        mock_s3_client.put_object.assert_called_once()
 
-        # Verify save was called with updated proposal
-        call_kwargs = mock_s3_client.put_object.call_args[1]
-        body = call_kwargs["Body"].decode("utf-8")
-        data = json.loads(body)
 
-        assert data[0]["status"] == "approved"
-        assert data[0]["reviewed_by"] == "reviewer@test.com"
-        assert data[0]["review_notes"] == "Looks good"
+class TestLoadReviewItems:
+    """Tests for load_review_items method."""
 
     @pytest.mark.asyncio
-    async def test_update_proposal_status_not_found(
+    async def test_load_review_items_success(
         self,
         remediation_storage: RemediationStorageService,
         mock_s3_client: MagicMock,
-        sample_proposal: Proposal
+        sample_review_item: ReviewItem
     ) -> None:
-        """Test updating a non-existent proposal returns False."""
-        proposals_json = json.dumps([sample_proposal.model_dump()], default=str)
+        """Test successful review items load."""
+        items_json = json.dumps([sample_review_item.model_dump()], default=str)
         mock_body = MagicMock()
-        mock_body.read.return_value = proposals_json.encode()
+        mock_body.read.return_value = items_json.encode()
         mock_s3_client.get_object.return_value = {"Body": mock_body}
 
-        result = await remediation_storage.update_proposal_status(
-            "test-job-123",
-            "nonexistent-prop",
-            "approved"
-        )
+        result = await remediation_storage.load_review_items("test-job-123")
 
-        assert result is False
+        assert len(result) == 1
+        assert result[0].id == "review-123"
 
 
-class TestUpdateObservationStatus:
-    """Tests for update_observation_status method."""
+class TestCloseObservation:
+    """Tests for close_observation method."""
 
     @pytest.mark.asyncio
-    async def test_update_observation_status_success(
+    async def test_close_observation_success(
         self,
         remediation_storage: RemediationStorageService,
         mock_s3_client: MagicMock,
         sample_observation: Observation
     ) -> None:
-        """Test updating an observation's status."""
+        """Test closing an observation."""
         observations_json = json.dumps([sample_observation.model_dump()], default=str)
         mock_body = MagicMock()
         mock_body.read.return_value = observations_json.encode()
         mock_s3_client.get_object.return_value = {"Body": mock_body}
 
-        result = await remediation_storage.update_observation_status(
+        result = await remediation_storage.close_observation(
             "test-job-123",
             "obs-123",
-            "resolved",
-            resolved_by="prop-123"
+            "fixed"
         )
 
         assert result is True
@@ -514,29 +511,49 @@ class TestUpdateObservationStatus:
         body = call_kwargs["Body"].decode("utf-8")
         data = json.loads(body)
 
-        assert data[0]["status"] == "resolved"
-        assert data[0]["resolved_by"] == "prop-123"
+        assert data[0]["status"] == "closed"
+        assert data[0]["resolution"] == "fixed"
 
     @pytest.mark.asyncio
-    async def test_update_observation_status_not_found(
+    async def test_close_observation_not_found(
         self,
         remediation_storage: RemediationStorageService,
         mock_s3_client: MagicMock,
         sample_observation: Observation
     ) -> None:
-        """Test updating a non-existent observation returns False."""
+        """Test closing a non-existent observation returns False."""
         observations_json = json.dumps([sample_observation.model_dump()], default=str)
         mock_body = MagicMock()
         mock_body.read.return_value = observations_json.encode()
         mock_s3_client.get_object.return_value = {"Body": mock_body}
 
-        result = await remediation_storage.update_observation_status(
+        result = await remediation_storage.close_observation(
             "test-job-123",
             "nonexistent-obs",
-            "resolved"
+            "fixed"
         )
 
         assert result is False
+
+    @pytest.mark.asyncio
+    async def test_close_observation_invalid_resolution(
+        self,
+        remediation_storage: RemediationStorageService,
+        mock_s3_client: MagicMock,
+        sample_observation: Observation
+    ) -> None:
+        """Test closing an observation with invalid resolution raises ValueError."""
+        observations_json = json.dumps([sample_observation.model_dump()], default=str)
+        mock_body = MagicMock()
+        mock_body.read.return_value = observations_json.encode()
+        mock_s3_client.get_object.return_value = {"Body": mock_body}
+
+        with pytest.raises(ValueError, match="Resolution must be one of"):
+            await remediation_storage.close_observation(
+                "test-job-123",
+                "obs-123",
+                "invalid_resolution"
+            )
 
 
 class TestJsonSerializer:

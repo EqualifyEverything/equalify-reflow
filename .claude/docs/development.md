@@ -4,7 +4,7 @@
 
 ### Adding an API Endpoint
 
-1. **Define route** in `src/api/documents.py`:
+1. **Define route** in `src/api/v1/documents.py`:
 
 ```python
 @router.post("/documents/submit")

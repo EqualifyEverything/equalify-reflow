@@ -25,7 +25,9 @@ from pydantic_ai import Agent
 from pydantic_ai.models.bedrock import BedrockConverseModel
 
 from src.agents.model_tiers import MODEL_TIER_MAP, ModelTier
+from src.agents.subagents import is_rate_limit_error, llm_circuit_breaker
 from src.services.metrics_service import record_llm_call
+from src.utils.circuit_breaker import CircuitBreakerOpenError
 
 from .debug_capture import extract_raw_response, serialize_text_prompt
 from .models import (
@@ -43,9 +45,66 @@ from .models import (
 )
 
 if TYPE_CHECKING:
-    pass
+    from .events import EventBus
 
 logger = logging.getLogger(__name__)
+
+
+# =============================================================================
+# Edge Text Extraction
+# =============================================================================
+
+
+def _extract_edge_text(text: str, position: str) -> str:
+    """Extract edge text from page content for merge detection.
+
+    Args:
+        text: The page markdown content
+        position: "first" for first 100 chars, "last" for last 100 chars
+
+    Returns:
+        First or last 100 characters with markdown formatting stripped
+    """
+    if not text:
+        return ""
+
+    # Strip markdown formatting patterns
+    # Remove headers (# symbols)
+    stripped = re.sub(r"^#{1,6}\s+", "", text, flags=re.MULTILINE)
+    # Remove bold (**text** or __text__)
+    stripped = re.sub(r"\*\*([^*]+)\*\*", r"\1", stripped)
+    stripped = re.sub(r"__([^_]+)__", r"\1", stripped)
+    # Remove italic (*text* or _text_)
+    stripped = re.sub(r"\*([^*]+)\*", r"\1", stripped)
+    stripped = re.sub(r"_([^_]+)_", r"\1", stripped)
+    # Remove links [text](url) -> text
+    stripped = re.sub(r"\[([^\]]+)\]\([^)]+\)", r"\1", stripped)
+    # Remove inline code `text`
+    stripped = re.sub(r"`([^`]+)`", r"\1", stripped)
+    # Remove image references ![alt](url)
+    stripped = re.sub(r"!\[[^\]]*\]\([^)]+\)", "", stripped)
+    # Remove HTML comments <!-- ... -->
+    stripped = re.sub(r"<!--.*?-->", "", stripped, flags=re.DOTALL)
+    # Remove horizontal rules (---, ***, ___)
+    stripped = re.sub(r"^[-*_]{3,}\s*$", "", stripped, flags=re.MULTILINE)
+    # Remove list markers (-, *, +, numbers)
+    stripped = re.sub(r"^\s*[-*+]\s+", "", stripped, flags=re.MULTILINE)
+    stripped = re.sub(r"^\s*\d+\.\s+", "", stripped, flags=re.MULTILINE)
+    # Normalize whitespace (collapse multiple spaces/newlines to single space)
+    stripped = re.sub(r"\s+", " ", stripped)
+    # Strip leading/trailing whitespace
+    stripped = stripped.strip()
+
+    if not stripped:
+        return ""
+
+    # Extract based on position
+    if position == "first":
+        return stripped[:100]
+    elif position == "last":
+        return stripped[-100:]
+    else:
+        return ""
 
 
 # =============================================================================
@@ -108,6 +167,14 @@ class PageChainState(BaseModel):
         default_factory=dict, description="Typography issues found per page"
     )
     page_continuations: dict[int, bool] = Field(default_factory=dict, description="Whether each page ends mid-sentence")
+
+    # Edge text for cross-page merge detection
+    first_100_chars_by_page: dict[int, str] = Field(
+        default_factory=dict, description="First 100 chars of each page for merge detection"
+    )
+    last_100_chars_by_page: dict[int, str] = Field(
+        default_factory=dict, description="Last 100 chars of each page for merge detection"
+    )
 
     class Config:
         arbitrary_types_allowed = True
@@ -396,55 +463,74 @@ async def analyze_page(
 
     Returns:
         Tuple of (PageAnalysisOutput, input_tokens, output_tokens, llm_call_record)
+
+    Raises:
+        CircuitBreakerOpenError: If LLM circuit breaker is open
     """
+    # Check circuit breaker before making LLM call
+    llm_circuit_breaker.check_state()
+
     start_time = time.time()
     agent = _get_page_analysis_agent()
     prompt = _build_page_prompt(page_num, markdown, state, total_pages)
 
-    result = await agent.run(prompt)
-    output = result.output
+    try:
+        result = await agent.run(prompt)
+        output = result.output
 
-    usage = result.usage()
-    input_tokens = usage.input_tokens or 0
-    output_tokens = usage.output_tokens or 0
-    duration_ms = int((time.time() - start_time) * 1000)
+        # Record success
+        llm_circuit_breaker.record_success()
 
-    # Create LLM call record
-    cost_cents = ((input_tokens * 0.00025) + (output_tokens * 0.00125)) / 10
+        usage = result.usage()
+        input_tokens = usage.input_tokens or 0
+        output_tokens = usage.output_tokens or 0
+        duration_ms = int((time.time() - start_time) * 1000)
 
-    # Capture debug data if requested
-    prompt_text = None
-    response_raw = None
-    model_id = None
-    if capture_debug:
-        prompt_text = serialize_text_prompt(prompt)
-        response_raw = extract_raw_response(result)
-        model_id = MODEL_TIER_MAP.get(ModelTier.EFFICIENT, "unknown")
+        # Create LLM call record
+        cost_cents = ((input_tokens * 0.00025) + (output_tokens * 0.00125)) / 10
 
-    llm_call = LLMCallRecord(
-        agent="planner",
-        purpose=f"page_{page_num}_analysis",
-        page=page_num,
-        input_tokens=input_tokens,
-        output_tokens=output_tokens,
-        cost_cents=cost_cents,
-        timestamp=datetime.now(UTC),
-        duration_ms=duration_ms,
-        prompt_text=prompt_text,
-        response_raw=response_raw,
-        model_id=model_id,
-    )
+        # Capture debug data if requested
+        prompt_text = None
+        response_raw = None
+        model_id = None
+        if capture_debug:
+            prompt_text = serialize_text_prompt(prompt)
+            response_raw = extract_raw_response(result)
+            model_id = MODEL_TIER_MAP.get(ModelTier.EFFICIENT, "unknown")
 
-    # Emit Prometheus metrics for this LLM call
-    record_llm_call(
-        agent="planner",
-        input_tokens=input_tokens,
-        output_tokens=output_tokens,
-        cost_cents=cost_cents,
-        duration_ms=duration_ms,
-    )
+        llm_call = LLMCallRecord(
+            agent="planner",
+            purpose=f"page_{page_num}_analysis",
+            page=page_num,
+            input_tokens=input_tokens,
+            output_tokens=output_tokens,
+            cost_cents=cost_cents,
+            timestamp=datetime.now(UTC),
+            duration_ms=duration_ms,
+            prompt_text=prompt_text,
+            response_raw=response_raw,
+            model_id=model_id,
+        )
 
-    return output, input_tokens, output_tokens, llm_call
+        # Emit Prometheus metrics for this LLM call
+        record_llm_call(
+            agent="planner",
+            input_tokens=input_tokens,
+            output_tokens=output_tokens,
+            cost_cents=cost_cents,
+            duration_ms=duration_ms,
+        )
+
+        return output, input_tokens, output_tokens, llm_call
+
+    except CircuitBreakerOpenError:
+        # Re-raise circuit breaker errors
+        raise
+    except Exception as e:
+        # Don't count rate limit errors as failures
+        if not is_rate_limit_error(e):
+            llm_circuit_breaker.record_failure()
+        raise
 
 
 def _normalize_for_matching(text: str) -> str:
@@ -653,12 +739,16 @@ def update_chain_state(
     # Store page continuation flag
     state.page_continuations[page_num] = output.has_page_continuation
 
+    # Extract and store edge text for cross-page merge detection
+    state.first_100_chars_by_page[page_num] = _extract_edge_text(markdown, "first")
+    state.last_100_chars_by_page[page_num] = _extract_edge_text(markdown, "last")
+
     return state
 
 
 async def run_page_chain(
     page_markdowns: dict[int, str],
-    event_bus=None,
+    event_bus: "EventBus | None" = None,
     capture_debug: bool = False,
 ) -> tuple[PageChainState, int, int, list[LLMCallRecord]]:
     """Run the page chain to analyze all pages sequentially.

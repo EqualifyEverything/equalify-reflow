@@ -244,6 +244,10 @@ def convert_chain_state_to_page_plans(
         typography_issues = chain_state.typography_issues_by_page.get(page_num, [])
         has_page_continuation = chain_state.page_continuations.get(page_num, False)
 
+        # Get edge text for cross-page merge detection
+        first_100_chars = chain_state.first_100_chars_by_page.get(page_num, "")
+        last_100_chars = chain_state.last_100_chars_by_page.get(page_num, "")
+
         page_plans[page_num] = PagePlan(
             page_num=page_num,
             summary=summary,
@@ -260,6 +264,9 @@ def convert_chain_state_to_page_plans(
             list_issues=list_issues,
             typography_issues=typography_issues,
             has_page_continuation=has_page_continuation,
+            # Edge text for cross-page merge detection
+            first_100_chars=first_100_chars,
+            last_100_chars=last_100_chars,
         )
 
     return page_plans
@@ -788,14 +795,14 @@ def stage4_generate_jobs(
 
     # Create a structure job for each page with heading fixes
     for page_num, fixes in sorted(heading_fixes_by_page.items()):
-        tasks: list[Task] = []
+        structure_tasks: list[Task] = []
 
         for fix in fixes:
             # Pre-compute exact before/after text - don't make the LLM do arithmetic
             before_text = f"{'#' * fix.current_level} {fix.current_text}"
             after_text = f"{'#' * fix.should_be_level} {fix.current_text}"
 
-            tasks.append(
+            structure_tasks.append(
                 Task(
                     task_type=TaskType.HEADING_FIX,
                     target=fix.current_text,
@@ -817,7 +824,7 @@ def stage4_generate_jobs(
             job_type=JobType.STRUCTURE,
             priority=1,  # Structure jobs run BEFORE content jobs (priority 2+)
             page=page_num,
-            tasks=tasks,
+            tasks=structure_tasks,
             context=context,
             page_markdown=page_markdowns.get(page_num, ""),
         )

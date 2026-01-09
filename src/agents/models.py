@@ -339,6 +339,14 @@ class PagePlan(BaseModel):
         default=False,
         description="True if page ends mid-sentence (for cross-page merge)",
     )
+    last_100_chars: str = Field(
+        default="",
+        description="Last 100 chars of page text for merge detection",
+    )
+    first_100_chars: str = Field(
+        default="",
+        description="First 100 chars of page text for previous page merge",
+    )
 
 
 # =============================================================================

@@ -17,6 +17,7 @@ from __future__ import annotations
 import logging
 import re
 import time
+from collections.abc import AsyncGenerator
 from datetime import UTC, datetime
 from typing import TYPE_CHECKING
 
@@ -748,7 +749,7 @@ def update_chain_state(
 
 async def run_page_chain(
     page_markdowns: dict[int, str],
-    event_bus: "EventBus | None" = None,
+    event_bus: EventBus | None = None,
     capture_debug: bool = False,
 ) -> tuple[PageChainState, int, int, list[LLMCallRecord]]:
     """Run the page chain to analyze all pages sequentially.
@@ -825,3 +826,80 @@ async def run_page_chain(
     )
 
     return state, total_input_tokens, total_output_tokens, llm_calls
+
+
+async def run_page_chain_streaming(
+    page_markdowns: dict[int, str],
+    event_bus: EventBus | None = None,
+    capture_debug: bool = False,
+) -> AsyncGenerator[tuple[int, PageChainState, int, int, LLMCallRecord | None], None]:
+    """Run the page chain and yield results after each page completes.
+
+    This is the streaming version that yields incremental results as each page
+    is analyzed, enabling execution to start on earlier pages while later pages
+    are still being planned.
+
+    Args:
+        page_markdowns: Dict mapping page number to markdown content
+        event_bus: Optional event bus for streaming events
+        capture_debug: If True, capture full prompt/response for debug bundle
+
+    Yields:
+        Tuple of (page_num, updated_state, input_tokens, output_tokens, llm_call)
+        after each page is analyzed. The state is cumulative - each yield contains
+        all information gathered up to and including that page.
+    """
+    state = PageChainState()
+    sorted_pages = sorted(page_markdowns.keys())
+    total_pages = len(sorted_pages)
+
+    logger.info(f"Starting streaming page chain analysis for {total_pages} pages")
+
+    for page_num in sorted_pages:
+        markdown = page_markdowns[page_num]
+
+        # Analyze this page
+        output, input_tokens, output_tokens, llm_call = await analyze_page(
+            page_num=page_num,
+            markdown=markdown,
+            state=state,
+            total_pages=total_pages,
+            capture_debug=capture_debug,
+        )
+
+        # Update state with results (pass markdown for actual heading extraction)
+        state = update_chain_state(state, page_num, output, markdown)
+
+        # Emit event if we have an event bus
+        if event_bus:
+            from .events import PageSummarizedEvent
+
+            event_bus.emit(
+                PageSummarizedEvent(
+                    document_id=event_bus.document_id,
+                    page_num=page_num,
+                    summary=output.summary,
+                    figures_found=len(output.figures),
+                    tables_found=len(output.tables),
+                    headings_found=len(output.headings),
+                    heading_fixes_needed=sum(1 for h in output.headings if h.current_level != h.correct_level),
+                )
+            )
+
+        logger.info(
+            f"Page {page_num}/{total_pages} (streaming): "
+            f"{len(output.headings)} headings, "
+            f"{len(output.figures)} figures, "
+            f"{len(output.tables)} tables, "
+            f"{len(output.terms)} terms"
+        )
+
+        # Yield the result for this page immediately
+        yield page_num, state, input_tokens, output_tokens, llm_call
+
+    logger.info(
+        f"Streaming page chain complete: "
+        f"{len(state.outline)} outline entries, "
+        f"{len(state.heading_fixes)} heading fixes, "
+        f"{len(state.dictionary)} dictionary terms"
+    )

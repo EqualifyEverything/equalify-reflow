@@ -15,6 +15,7 @@ import asyncio
 import logging
 import re
 import time
+from collections.abc import AsyncGenerator
 from typing import TYPE_CHECKING
 from uuid import uuid4
 
@@ -27,15 +28,20 @@ from .events import (
     ProcessingErrorEvent,
     RecoveryPhaseCompleteEvent,
     RecoveryPhaseStartedEvent,
+    StreamEvent,
     VerificationCompleteEvent,
     VerificationStartedEvent,
 )
 from .issue_fixer import detect_and_fix_issues_async
 from .models import (
     DocumentPlan,
+    DocumentStructure,
+    DocumentType,
+    Job,
     Ledger,
     LedgerEntry,
     LLMCallRecord,
+    PagePlan,
     PageVerification,
     ProcessingResult,
     ProcessingStatus,
@@ -51,7 +57,7 @@ from .plan_verification import (
     verify_table_accuracy_vision,
     verify_table_completeness,
 )
-from .planner import plan_document
+from .planner import plan_document, plan_document_streaming
 from .recovery import (
     MAX_RECOVERY_ATTEMPTS,
     attempt_page_recovery,
@@ -59,7 +65,7 @@ from .recovery import (
     should_attempt_recovery,
 )
 from .subagents.paragraph_merge import invoke_paragraph_merge_subagent
-from .worker import execute_jobs_parallel
+from .worker import execute_jobs_parallel, execute_page_jobs
 
 if TYPE_CHECKING:
     from PIL import Image
@@ -224,47 +230,49 @@ async def merge_cross_page_paragraphs(
 
         try:
             # Call merge subagent
-            result = await invoke_paragraph_merge_subagent(
+            merge_result = await invoke_paragraph_merge_subagent(
                 page1_end=page1_end,
                 page2_start=page2_start,
                 page1_image=page1_image,
                 page2_image=page2_image,
             )
 
-            if not result.should_merge:
-                logger.info(f"Merge not needed for pages {page_num}-{next_page}: {result.reasoning}")
+            if not merge_result.should_merge:
+                logger.info(f"Merge not needed for pages {page_num}-{next_page}: {merge_result.reasoning}")
                 continue
 
-            if result.confidence < 0.5:
+            if merge_result.confidence < 0.5:
                 logger.warning(
-                    f"Skipping low-confidence merge for pages {page_num}-{next_page}: confidence={result.confidence}"
+                    f"Skipping low-confidence merge for pages {page_num}-{next_page}: "
+                    f"confidence={merge_result.confidence}"
                 )
                 continue
 
             # Determine if edit needs human review
-            needs_review = result.confidence < 0.8
+            needs_review = merge_result.confidence < 0.8
 
             # Validate the merge before applying
             is_valid, error_msg = validate_merge_result(
                 page1_md=page1_md,
                 page2_md=page2_md,
-                page1_remove_chars=result.page1_remove_chars,
-                page2_remove_chars=result.page2_remove_chars,
-                merged_text=result.merged_text,
+                page1_remove_chars=merge_result.page1_remove_chars,
+                page2_remove_chars=merge_result.page2_remove_chars,
+                merged_text=merge_result.merged_text,
             )
 
             if not is_valid:
                 logger.warning(
                     f"Invalid merge for pages {page_num}-{next_page}: {error_msg}. "
-                    f"AI returned: remove {result.page1_remove_chars} from p1, {result.page2_remove_chars} from p2, "
-                    f"merge to '{result.merged_text[:50]}...'"
+                    f"AI returned: remove {merge_result.page1_remove_chars} from p1, "
+                    f"{merge_result.page2_remove_chars} from p2, "
+                    f"merge to '{merge_result.merged_text[:50]}...'"
                 )
                 continue  # Skip this invalid merge
 
             # Apply the merge - remove chars from end of page 1
-            if result.page1_remove_chars > 0:
-                old_end = page1_md[-result.page1_remove_chars :]
-                page_markdowns[page_num] = page1_md[: -result.page1_remove_chars]
+            if merge_result.page1_remove_chars > 0:
+                old_end = page1_md[-merge_result.page1_remove_chars :]
+                page_markdowns[page_num] = page1_md[: -merge_result.page1_remove_chars]
 
                 ledger.append(
                     LedgerEntry(
@@ -274,18 +282,18 @@ async def merge_cross_page_paragraphs(
                         target=f"page_end:{page_num}",
                         before=old_end,
                         after="",
-                        reasoning=f"Removed for merge: {result.reasoning}",
-                        confidence=result.confidence,
+                        reasoning=f"Removed for merge: {merge_result.reasoning}",
+                        confidence=merge_result.confidence,
                         validated=True,
                         needs_review=needs_review,
                     )
                 )
 
             # Replace start of page 2 with merged text
-            if result.page2_remove_chars > 0:
-                old_start = page2_md[: result.page2_remove_chars]
-                new_start = result.merged_text
-                page_markdowns[next_page] = new_start + page2_md[result.page2_remove_chars :]
+            if merge_result.page2_remove_chars > 0:
+                old_start = page2_md[: merge_result.page2_remove_chars]
+                new_start = merge_result.merged_text
+                page_markdowns[next_page] = new_start + page2_md[merge_result.page2_remove_chars :]
 
                 entry = LedgerEntry(
                     job_id=f"merge:{page_num}-{next_page}",
@@ -294,8 +302,8 @@ async def merge_cross_page_paragraphs(
                     target=f"page_start:{next_page}",
                     before=old_start,
                     after=new_start,
-                    reasoning=f"Merged paragraph: {result.reasoning}",
-                    confidence=result.confidence,
+                    reasoning=f"Merged paragraph: {merge_result.reasoning}",
+                    confidence=merge_result.confidence,
                     validated=True,
                     needs_review=needs_review,
                 )
@@ -306,12 +314,13 @@ async def merge_cross_page_paragraphs(
                         EditCommittedEvent(
                             document_id=event_bus.document_id,
                             ledger_entry=entry,
-                            content_preview=result.merged_text[:100],
+                            content_preview=merge_result.merged_text[:100],
                         )
                     )
 
             logger.info(
-                f"Merged pages {page_num}-{next_page} (method: {result.join_method}, confidence: {result.confidence})"
+                f"Merged pages {page_num}-{next_page} "
+                f"(method: {merge_result.join_method}, confidence: {merge_result.confidence})"
             )
 
         except Exception as e:
@@ -765,12 +774,12 @@ async def run_agentic_pipeline(
 
         # Build final markdowns from job results
         final_markdowns = dict(page_markdowns)  # Start with original
-        for result in job_results:
-            if result.success:
+        for job_result in job_results:
+            if job_result.success:
                 # Find the page for this job
-                job = next((j for j in plan.jobs if j.job_id == result.job_id), None)
+                job = next((j for j in plan.jobs if j.job_id == job_result.job_id), None)
                 if job:
-                    final_markdowns[job.page] = result.updated_markdown
+                    final_markdowns[job.page] = job_result.updated_markdown
 
         # Aggregate execution stats
         total_input_tokens = plan.planning_tokens_input + sum(r.input_tokens for r in job_results)
@@ -970,6 +979,330 @@ async def run_agentic_pipeline(
 
 
 # =============================================================================
+# Streaming Phase Handoff Pipeline
+# =============================================================================
+
+
+async def run_agentic_pipeline_with_streaming_handoff(
+    filename: str,
+    page_markdowns: dict[int, str],
+    page_images: dict[int, Image.Image],
+    element_bboxes: dict[tuple[int, str, int], tuple[float, float, float, float]],
+    page_width: float,
+    document_id: str | None = None,
+    max_concurrent_jobs: int = 3,
+    event_bus: EventBus | None = None,
+    capture_debug: bool = False,
+) -> tuple[ProcessingResult, EventBus]:
+    """Run the agentic pipeline with streaming phase handoff.
+
+    This version overlaps planning and execution so that page execution starts
+    as soon as each page is planned, rather than waiting for ALL pages to be
+    planned first.
+
+    The key difference from run_agentic_pipeline():
+    - Planning and execution run concurrently
+    - As each page completes planning, its jobs are immediately started
+    - Total latency is reduced because early pages execute while later pages plan
+
+    Args:
+        filename: Original document filename
+        page_markdowns: Initial markdown for each page (1-indexed)
+        page_images: Images for each page (1-indexed)
+        element_bboxes: Bounding boxes for figures/tables
+        page_width: Page width for bbox scaling
+        document_id: Optional document ID (generated if not provided)
+        max_concurrent_jobs: Max concurrent worker jobs across all pages
+        event_bus: Optional pre-created event bus for streaming
+        capture_debug: If True, capture full prompt/response for debug bundle
+
+    Returns:
+        Tuple of (ProcessingResult, EventBus)
+    """
+    start_time = time.time()
+    doc_id = document_id or str(uuid4())
+
+    # Use provided event bus or create new one
+    if event_bus is None:
+        event_bus = EventBus(doc_id)
+
+    # Create ledger
+    ledger = Ledger(document_id=doc_id)
+
+    logger.info(f"Starting streaming handoff pipeline for {filename} (id={doc_id})")
+
+    try:
+        # =================================================================
+        # Phase 1+2: Streaming Planning + Execution
+        # =================================================================
+        execution_start = time.time()
+
+        # Track all execution tasks and results
+        execution_tasks: list[asyncio.Task] = []
+        page_plans: dict[int, PagePlan] = {}
+        all_llm_calls: list[LLMCallRecord] = []
+        final_markdowns: dict[int, str] = dict(page_markdowns)
+        final_structure: DocumentStructure | None = None
+
+        # Use semaphore to limit concurrent execution
+        semaphore = asyncio.Semaphore(max_concurrent_jobs)
+
+        async def execute_with_semaphore(
+            page_num: int,
+            jobs: list[Job],
+        ) -> tuple[int, str, list[LedgerEntry], list[LLMCallRecord], int, int]:
+            """Execute jobs for a page with semaphore for concurrency control."""
+            async with semaphore:
+                page_image = page_images.get(page_num)
+                if page_image is None:
+                    logger.error(f"No image for page {page_num}")
+                    return page_num, page_markdowns.get(page_num, ""), [], [], 0, 0
+
+                updated_md, entries, llm_calls, inp_tokens, out_tokens = await execute_page_jobs(
+                    page_num=page_num,
+                    jobs=jobs,
+                    page_markdown=page_markdowns.get(page_num, ""),
+                    page_image=page_image,
+                    element_bboxes=element_bboxes,
+                    page_width=page_width,
+                    ledger=ledger,
+                    event_bus=event_bus,
+                    capture_debug=capture_debug,
+                )
+                return page_num, updated_md, entries, llm_calls, inp_tokens, out_tokens
+
+        # Stream through planning, launching execution as each page completes
+        total_input_tokens = 0
+        total_output_tokens = 0
+
+        plan_stream = plan_document_streaming(
+            filename=filename,
+            page_markdowns=page_markdowns,
+            page_images=page_images,
+            event_bus=event_bus,
+            capture_debug=capture_debug,
+        )
+        async for (
+            page_num,
+            jobs,
+            page_plan,
+            current_structure,
+            inp_tokens,
+            out_tokens,
+            llm_call,
+        ) in plan_stream:
+            # Track planning stats
+            total_input_tokens += inp_tokens
+            total_output_tokens += out_tokens
+            if llm_call:
+                all_llm_calls.append(llm_call)
+
+            # Store page plan
+            page_plans[page_num] = page_plan
+            final_structure = current_structure
+
+            # Launch execution for this page immediately
+            if jobs:
+                task = asyncio.create_task(execute_with_semaphore(page_num, jobs))
+                execution_tasks.append(task)
+                logger.info(f"Launched execution for page {page_num} with {len(jobs)} jobs")
+
+        # =================================================================
+        # Wait for all execution to complete
+        # =================================================================
+        if execution_tasks:
+            results = await asyncio.gather(*execution_tasks, return_exceptions=True)
+
+            for result in results:
+                if isinstance(result, BaseException):
+                    logger.error(f"Execution task failed: {result}")
+                    continue
+
+                page_num, updated_md, entries, llm_calls, inp_tokens, out_tokens = result
+                final_markdowns[page_num] = updated_md
+                total_input_tokens += inp_tokens
+                total_output_tokens += out_tokens
+                all_llm_calls.extend(llm_calls)
+
+        execution_duration_ms = int((time.time() - execution_start) * 1000)
+
+        # Build DocumentPlan for downstream phases (merge, verification, recovery)
+        from .planner import generate_jobs_for_page
+
+        all_jobs: list[Job] = []
+        for page_num in sorted(page_plans.keys()):
+            page_plan = page_plans[page_num]
+            if final_structure:
+                page_jobs = generate_jobs_for_page(
+                    page_num=page_num,
+                    page_plan=page_plan,
+                    page_markdown=page_markdowns.get(page_num, ""),
+                    structure=final_structure,
+                )
+                all_jobs.extend(page_jobs)
+
+        plan = DocumentPlan(
+            document_id=doc_id,
+            filename=filename,
+            total_pages=len(page_markdowns),
+            structure=final_structure or DocumentStructure(title="Unknown", document_type=DocumentType.OTHER),
+            pages=page_plans,
+            jobs=all_jobs,
+            full_dictionary=final_structure.key_terms if final_structure else [],
+            planning_duration_ms=0,  # Not tracked separately in streaming mode
+            planning_tokens_input=0,
+            planning_tokens_output=0,
+            llm_calls=[],  # LLM calls tracked in all_llm_calls
+        )
+
+        # =================================================================
+        # Phase 2.5: Cross-Page Merge Pass
+        # =================================================================
+        final_markdowns = await merge_cross_page_paragraphs(
+            page_markdowns=final_markdowns,
+            page_images=page_images,
+            plan=plan,
+            ledger=ledger,
+            event_bus=event_bus,
+        )
+
+        # =================================================================
+        # Phase 2.6: Structured Issue Detection & Fixing
+        # =================================================================
+        final_markdowns, fixes_applied, fixes_failed = await detect_and_fix_issues_async(
+            final_markdowns, plan, page_images
+        )
+        if fixes_applied:
+            logger.info(f"Issue fixer applied {len(fixes_applied)} fixes")
+        if fixes_failed:
+            logger.warning(f"Issue fixer failed on {len(fixes_failed)} issues")
+
+        # =================================================================
+        # Phase 3: Verification
+        # =================================================================
+        verification = await verify_document(
+            final_markdowns=final_markdowns,
+            page_images=page_images,
+            plan=plan,
+            ledger=ledger,
+            event_bus=event_bus,
+            element_bboxes=element_bboxes,
+            page_width=page_width,
+        )
+
+        # =================================================================
+        # Phase 4: Recovery (if needed)
+        # =================================================================
+        recovery_report: RecoveryReport | None = None
+        total_pages = len(page_markdowns)
+        pass_rate = verification.pages_passed / total_pages if total_pages > 0 else 0
+
+        if not verification.passed and pass_rate >= 0.5:
+            logger.info(f"Verification failed ({verification.pages_passed}/{total_pages} passed), attempting recovery")
+            final_markdowns, recovery_report = await run_recovery_phase(
+                verification=verification,
+                final_markdowns=final_markdowns,
+                page_images=page_images,
+                ledger=ledger,
+                event_bus=event_bus,
+            )
+
+        # Determine final status
+        final_status = determine_final_status(
+            verification=verification,
+            recovery_report=recovery_report,
+            total_pages=total_pages,
+        )
+
+        is_success = final_status in [ProcessingStatus.SUCCESS, ProcessingStatus.PARTIAL_SUCCESS]
+
+        # =================================================================
+        # Build final result
+        # =================================================================
+        total_duration_ms = int((time.time() - start_time) * 1000)
+
+        raw_markdown = "\n\n---\n\n".join(final_markdowns[p] for p in sorted(final_markdowns.keys()))
+        final_markdown = collect_footnotes_at_end(raw_markdown)
+
+        cost = (total_input_tokens * 0.00025 / 1000) + (total_output_tokens * 0.00125 / 1000)
+
+        page_confidences = [pv.confidence for pv in verification.pages]
+        recovery_edits = recovery_report.total_recovery_edits if recovery_report else 0
+
+        confidence_score = calculate_confidence_from_verification(
+            page_confidences=page_confidences,
+            critical_issues_count=len(verification.critical_issues),
+            recovery_edits=recovery_edits,
+        )
+
+        # Sort all LLM calls by timestamp
+        all_llm_calls.sort(key=lambda c: c.timestamp)
+
+        result = ProcessingResult(
+            document_id=doc_id,
+            success=is_success,
+            final_markdown=final_markdown,
+            ledger=ledger,
+            verification=verification,
+            confidence_score=confidence_score,
+            total_pages=len(page_markdowns),
+            total_edits=ledger.total_edits,
+            total_jobs=len(all_jobs),
+            total_input_tokens=total_input_tokens,
+            total_output_tokens=total_output_tokens,
+            total_cost=cost,
+            llm_calls=all_llm_calls,
+            total_duration_ms=total_duration_ms,
+            planning_duration_ms=0,  # Not tracked separately
+            execution_duration_ms=execution_duration_ms,
+            verification_duration_ms=verification.verification_duration_ms,
+            recovery_report=recovery_report,
+        )
+
+        event_bus.emit(
+            ProcessingCompleteEvent(
+                document_id=doc_id,
+                success=is_success,
+                total_edits=ledger.total_edits,
+                total_jobs=len(all_jobs),
+                total_cost=cost,
+                total_duration_ms=total_duration_ms,
+                result_url=f"/api/v1/documents/{doc_id}",
+            )
+        )
+
+        logger.info(
+            f"Streaming handoff pipeline complete: {ledger.total_edits} edits, "
+            f"${cost:.4f}, {total_duration_ms}ms, status={final_status.value}"
+        )
+
+        return result, event_bus
+
+    except Exception as e:
+        logger.error(f"Streaming handoff pipeline failed: {e}")
+
+        event_bus.emit(
+            ProcessingErrorEvent(
+                document_id=doc_id,
+                error=str(e),
+                phase="unknown",
+                recoverable=False,
+            )
+        )
+
+        return (
+            ProcessingResult(
+                document_id=doc_id,
+                success=False,
+                final_markdown="",
+                ledger=ledger,
+                verification=VerificationReport(document_id=doc_id, passed=False),
+            ),
+            event_bus,
+        )
+
+
+# =============================================================================
 # Async Generator for Streaming
 # =============================================================================
 
@@ -982,7 +1315,7 @@ async def run_agentic_pipeline_streaming(
     page_width: float,
     document_id: str | None = None,
     max_concurrent_jobs: int = 3,
-):
+) -> AsyncGenerator[StreamEvent, None]:
     """Process document with streaming events.
 
     This is an async generator that yields events as they occur.
@@ -998,7 +1331,7 @@ async def run_agentic_pipeline_streaming(
     queue = event_bus.subscribe()
 
     # Start processing in background
-    async def run_pipeline():
+    async def run_pipeline() -> None:
         try:
             await run_agentic_pipeline(
                 filename=filename,

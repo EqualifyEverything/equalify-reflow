@@ -21,6 +21,7 @@ import asyncio
 import logging
 import re
 import time
+from collections.abc import AsyncGenerator
 from typing import TYPE_CHECKING
 
 from pydantic import BaseModel, Field
@@ -47,6 +48,7 @@ from .models import (
     Job,
     JobContext,
     JobType,
+    LLMCallRecord,
     OutlineEntry,
     PagePlan,
     PageSkeleton,
@@ -58,6 +60,7 @@ from .models import (
 from .page_chain import (
     PageChainState,
     run_page_chain,
+    run_page_chain_streaming,
 )
 
 if TYPE_CHECKING:
@@ -1013,6 +1016,391 @@ def stage4_generate_jobs(
 
     logger.info(f"Stage 4 complete: {len(jobs)} jobs created")
     return jobs
+
+
+def generate_jobs_for_page(
+    page_num: int,
+    page_plan: PagePlan,
+    page_markdown: str,
+    structure: DocumentStructure,
+    event_bus: EventBus | None = None,
+) -> list[Job]:
+    """Generate jobs for a single page.
+
+    This extracts the per-page job generation logic from stage4_generate_jobs
+    to enable streaming/incremental job generation as pages are planned.
+
+    Args:
+        page_num: Page number to generate jobs for
+        page_plan: PagePlan for this page (from chain state conversion)
+        page_markdown: Markdown content for this page
+        structure: Current DocumentStructure (may be partial during streaming)
+        event_bus: Optional event bus for emitting job creation events
+
+    Returns:
+        List of jobs for this page (may include STRUCTURE, CONTENT, and PARAGRAPH jobs)
+    """
+    jobs: list[Job] = []
+
+    # Check for heading fixes on this page
+    heading_fixes = [fix for fix in structure.heading_fixes if fix.page == page_num]
+
+    # Create structure job if there are heading fixes
+    if heading_fixes:
+        structure_tasks: list[Task] = []
+        for fix in heading_fixes:
+            before_text = f"{'#' * fix.current_level} {fix.current_text}"
+            after_text = f"{'#' * fix.should_be_level} {fix.current_text}"
+
+            structure_tasks.append(
+                Task(
+                    task_type=TaskType.HEADING_FIX,
+                    target=fix.current_text,
+                    context=f"FIND: {before_text}\nREPLACE WITH: {after_text}\nReason: {fix.reason}",
+                    priority=1,
+                )
+            )
+
+        context = JobContext(
+            document_title=structure.title,
+            document_type=structure.document_type,
+            section_context=f"Heading fixes for page {page_num}",
+            dictionary=structure.key_terms,
+            relevant_outline=_get_relevant_outline(page_num, structure.outline),
+        )
+
+        job = Job(
+            job_type=JobType.STRUCTURE,
+            priority=1,
+            page=page_num,
+            tasks=structure_tasks,
+            context=context,
+            page_markdown=page_markdown,
+        )
+        jobs.append(job)
+
+        if event_bus:
+            event_bus.emit(
+                JobCreatedEvent(
+                    document_id=event_bus.document_id,
+                    job_id=job.job_id,
+                    job_type=job.job_type.value,
+                    page=job.page,
+                    task_count=len(job.tasks),
+                    task_types=[t.task_type.value for t in job.tasks],
+                    tasks_detail=[t.model_dump() for t in job.tasks],
+                    section_context=context.section_context,
+                )
+            )
+
+    # Create content job for figures, tables, OCR
+    content_tasks: list[Task] = []
+
+    for fig in page_plan.figures:
+        if not fig.is_decorative:
+            content_tasks.append(
+                Task(
+                    task_type=TaskType.ALT_TEXT,
+                    target=f"fig:{fig.figure_index}",
+                    context=f"{fig.appears_to_be}. {fig.surrounding_text}",
+                    priority=1,
+                )
+            )
+
+    for table in page_plan.tables:
+        content_tasks.append(
+            Task(
+                task_type=TaskType.TABLE_TRANSCRIPTION,
+                target=f"table:{table.table_index}",
+                context=f"{table.appears_to_be}. Caption: {table.caption or 'none'}",
+                priority=1,
+            )
+        )
+
+    for error in page_plan.ocr_errors:
+        content_tasks.append(
+            Task(
+                task_type=TaskType.OCR_FIX,
+                target=f"ocr:{error[:20]}",
+                context=error,
+                priority=2,
+            )
+        )
+
+    if content_tasks:
+        context = JobContext(
+            document_title=structure.title,
+            document_type=structure.document_type,
+            section_context=page_plan.section_context,
+            dictionary=structure.key_terms + page_plan.keywords,
+            relevant_outline=_get_relevant_outline(page_num, structure.outline),
+        )
+
+        job = Job(
+            job_type=JobType.CONTENT,
+            priority=page_num + 1,
+            page=page_num,
+            tasks=content_tasks,
+            context=context,
+            page_markdown=page_markdown,
+        )
+        jobs.append(job)
+
+        if event_bus:
+            event_bus.emit(
+                JobCreatedEvent(
+                    document_id=event_bus.document_id,
+                    job_id=job.job_id,
+                    job_type=job.job_type.value,
+                    page=job.page,
+                    task_count=len(job.tasks),
+                    task_types=[t.task_type.value for t in job.tasks],
+                    tasks_detail=[t.model_dump() for t in job.tasks],
+                    section_context=context.section_context,
+                )
+            )
+
+    # Create paragraph job for text flow fixes
+    paragraph_tasks: list[Task] = []
+
+    for artifact in page_plan.page_artifacts:
+        paragraph_tasks.append(
+            Task(
+                task_type=TaskType.PAGE_ARTIFACT_REMOVAL,
+                target=f"artifact:{page_num}:{artifact.line_number}",
+                context=f"{artifact.artifact_type}: {artifact.text[:50]}",
+                priority=1,
+            )
+        )
+
+    for fn in page_plan.footnote_issues:
+        paragraph_tasks.append(
+            Task(
+                task_type=TaskType.FOOTNOTE_CORRECTION,
+                target=f"footnote:{fn.marker}",
+                context=fn.issue_type,
+                priority=1,
+            )
+        )
+
+    for cite in page_plan.citation_issues:
+        paragraph_tasks.append(
+            Task(
+                task_type=TaskType.CITATION_LINKING,
+                target=f"citation:{cite.marker}",
+                context=cite.issue_type,
+                priority=2,
+            )
+        )
+
+    for lst in page_plan.list_issues:
+        paragraph_tasks.append(
+            Task(
+                task_type=TaskType.LIST_FIX,
+                target=f"list:{lst.location}",
+                context=f"{lst.issue_type}: {lst.description}",
+                priority=2,
+            )
+        )
+
+    for typo in page_plan.typography_issues:
+        paragraph_tasks.append(
+            Task(
+                task_type=TaskType.TYPOGRAPHY_FIX,
+                target=f"typography:{typo.text[:20]}",
+                context=f"{typo.formatting_type}: {typo.semantic_purpose}",
+                priority=3,
+            )
+        )
+
+    if paragraph_tasks:
+        context = JobContext(
+            document_title=structure.title,
+            document_type=structure.document_type,
+            section_context=page_plan.section_context,
+            dictionary=structure.key_terms + page_plan.keywords,
+            relevant_outline=_get_relevant_outline(page_num, structure.outline),
+        )
+
+        job = Job(
+            job_type=JobType.PARAGRAPH,
+            priority=page_num + 100,
+            page=page_num,
+            tasks=paragraph_tasks,
+            context=context,
+            page_markdown=page_markdown,
+        )
+        jobs.append(job)
+
+        if event_bus:
+            event_bus.emit(
+                JobCreatedEvent(
+                    document_id=event_bus.document_id,
+                    job_id=job.job_id,
+                    job_type=job.job_type.value,
+                    page=job.page,
+                    task_count=len(job.tasks),
+                    task_types=[t.task_type.value for t in job.tasks],
+                    tasks_detail=[t.model_dump() for t in job.tasks],
+                    section_context=context.section_context,
+                )
+            )
+
+    return jobs
+
+
+def _convert_chain_state_to_page_plan_single(
+    chain_state: PageChainState,
+    page_num: int,
+) -> PagePlan | None:
+    """Convert a single page from PageChainState to PagePlan.
+
+    Args:
+        chain_state: Current chain state (may be partial during streaming)
+        page_num: Page number to convert
+
+    Returns:
+        PagePlan for the page, or None if not in the chain state
+    """
+    if page_num not in chain_state.page_summaries:
+        return None
+
+    summary = chain_state.page_summaries[page_num]
+    figures = chain_state.figures_by_page.get(page_num, [])
+    tables = chain_state.tables_by_page.get(page_num, [])
+
+    page_artifacts = chain_state.page_artifacts_by_page.get(page_num, [])
+    footnote_issues = chain_state.footnote_issues_by_page.get(page_num, [])
+    citation_issues = chain_state.citation_issues_by_page.get(page_num, [])
+    list_issues = chain_state.list_issues_by_page.get(page_num, [])
+    typography_issues = chain_state.typography_issues_by_page.get(page_num, [])
+    has_page_continuation = chain_state.page_continuations.get(page_num, False)
+
+    first_100_chars = chain_state.first_100_chars_by_page.get(page_num, "")
+    last_100_chars = chain_state.last_100_chars_by_page.get(page_num, "")
+
+    return PagePlan(
+        page_num=page_num,
+        summary=summary,
+        section_context="",
+        keywords=[],
+        figures=figures,
+        tables=tables,
+        ocr_errors=[],
+        formatting_issues=[],
+        page_artifacts=page_artifacts,
+        footnote_issues=footnote_issues,
+        citation_issues=citation_issues,
+        list_issues=list_issues,
+        typography_issues=typography_issues,
+        has_page_continuation=has_page_continuation,
+        first_100_chars=first_100_chars,
+        last_100_chars=last_100_chars,
+    )
+
+
+async def plan_document_streaming(
+    filename: str,
+    page_markdowns: dict[int, str],
+    page_images: dict[int, Image.Image],
+    event_bus: EventBus | None = None,
+    capture_debug: bool = False,
+) -> AsyncGenerator[tuple[int, list[Job], PagePlan, DocumentStructure, int, int, LLMCallRecord | None], None]:
+    """Run planning and yield jobs as each page completes.
+
+    This is the streaming version of plan_document that yields jobs for each page
+    as soon as the page is analyzed, enabling execution to overlap with planning.
+
+    Stages:
+        1. Quick Scan - Extract headings, count elements (code) - run for all pages first
+        2. Page Chain Streaming - Analyze pages one by one (LLM), yield after each
+        3. Job Generation - Create jobs for each page as it completes (code)
+
+    Args:
+        filename: Original document filename
+        page_markdowns: Markdown for each page (1-indexed)
+        page_images: Images for each page (1-indexed)
+        event_bus: Optional event bus for streaming
+        capture_debug: If True, capture full prompt/response for debug bundle
+
+    Yields:
+        Tuple of (page_num, jobs, page_plan, current_structure, input_tokens, output_tokens, llm_call)
+        for each page as it completes planning.
+
+        - page_num: The page that was just planned
+        - jobs: List of jobs for this page
+        - page_plan: PagePlan for this page
+        - current_structure: Current DocumentStructure (accumulates as pages are processed)
+        - input_tokens: Tokens used for this page's analysis
+        - output_tokens: Tokens generated for this page's analysis
+        - llm_call: LLMCallRecord for this page (for cost tracking)
+    """
+
+    total_pages = len(page_markdowns)
+    document_id = event_bus.document_id if event_bus else "unknown"
+
+    if event_bus:
+        event_bus.emit(
+            PlanningStartedEvent(
+                document_id=document_id,
+                total_pages=total_pages,
+                filename=filename,
+            )
+        )
+
+    logger.info(f"Starting streaming planning for {filename} ({total_pages} pages)")
+
+    # Stage 1: Quick Scan (code only - fast, run for all pages first)
+    await stage1_quick_scan(page_markdowns, event_bus)
+
+    # Stage 2+3: Streaming Page Chain + Job Generation
+    # Process pages one by one, yield jobs as each completes
+    async for page_num, chain_state, input_tokens, output_tokens, llm_call in run_page_chain_streaming(
+        page_markdowns=page_markdowns,
+        event_bus=event_bus,
+        capture_debug=capture_debug,
+    ):
+        # Convert current chain state to structure (updates with each page)
+        current_structure = convert_chain_state_to_structure(chain_state)
+
+        # Convert just this page to a PagePlan
+        page_plan = _convert_chain_state_to_page_plan_single(chain_state, page_num)
+        if page_plan is None:
+            logger.warning(f"Page {page_num} not found in chain state")
+            continue
+
+        # Generate jobs for this page
+        page_jobs = generate_jobs_for_page(
+            page_num=page_num,
+            page_plan=page_plan,
+            page_markdown=page_markdowns.get(page_num, ""),
+            structure=current_structure,
+            event_bus=event_bus,
+        )
+
+        logger.info(f"Streaming planning: page {page_num} complete, {len(page_jobs)} jobs generated")
+
+        # Yield immediately so execution can start
+        yield page_num, page_jobs, page_plan, current_structure, input_tokens, output_tokens, llm_call
+
+    # Emit structure inferred event at the end
+    # Note: We emit this after all pages are processed in streaming mode
+    if event_bus:
+        # Get final chain state by looking at the structure we built
+        event_bus.emit(
+            StructureInferredEvent(
+                document_id=document_id,
+                document_title=current_structure.title,
+                document_type=current_structure.document_type,
+                outline=[o.model_dump() for o in current_structure.outline],
+                dictionary_size=len(current_structure.key_terms),
+                heading_fixes_needed=len(current_structure.heading_fixes),
+                dictionary_terms=current_structure.key_terms,
+                heading_fixes=[h.model_dump() for h in current_structure.heading_fixes],
+            )
+        )
+
+    logger.info(f"Streaming planning complete for {filename}")
 
 
 # =============================================================================

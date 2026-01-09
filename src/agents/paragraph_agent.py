@@ -51,6 +51,7 @@ from .events import (
 from .models import (
     EditProposal,
     Job,
+    JobResult,
     Ledger,
     LedgerEntry,
     LLMCallRecord,
@@ -1022,31 +1023,6 @@ def _get_paragraph_agent() -> Agent[ParagraphAgentDeps, ParagraphAgentOutput]:
         logger.info("ParagraphAgent initialized")
 
     return _paragraph_agent
-
-
-# =============================================================================
-# Job Result (shared with Worker)
-# =============================================================================
-
-
-@dataclass
-class JobResult:
-    """Result of executing a paragraph job."""
-
-    job_id: str
-    success: bool
-    updated_markdown: str
-    ledger_entries: list[LedgerEntry]
-
-    tasks_completed: int
-    tasks_failed: int
-
-    input_tokens: int
-    output_tokens: int
-    duration_ms: int
-
-    error: str | None = None
-    llm_call: LLMCallRecord | None = None
 
 
 # =============================================================================

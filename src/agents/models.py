@@ -887,3 +887,31 @@ class ProcessingResult(BaseModel):
         default=None,
         description="Recovery phase report if recovery was attempted",
     )
+
+
+# =============================================================================
+# Job Result
+# =============================================================================
+
+
+class JobResult(BaseModel):
+    """Result of executing a job (shared by Worker and ParagraphAgent)."""
+
+    job_id: str = Field(..., description="Job ID")
+    success: bool = Field(..., description="Whether job succeeded")
+    updated_markdown: str = Field(..., description="Updated markdown after job")
+    ledger_entries: list[LedgerEntry] = Field(
+        default_factory=list, description="Ledger entries from this job"
+    )
+
+    tasks_completed: int = Field(default=0, description="Number of tasks completed")
+    tasks_failed: int = Field(default=0, description="Number of tasks failed")
+
+    input_tokens: int = Field(default=0, description="Input tokens used")
+    output_tokens: int = Field(default=0, description="Output tokens used")
+    duration_ms: int = Field(default=0, description="Duration in milliseconds")
+
+    error: str | None = Field(default=None, description="Error message if failed")
+    llm_call: LLMCallRecord | None = Field(
+        default=None, description="LLM call record for cost tracking"
+    )

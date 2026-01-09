@@ -58,6 +58,7 @@ from .events import (
 from .models import (
     EditProposal,
     Job,
+    JobResult,
     JobType,
     Ledger,
     LedgerEntry,
@@ -1195,26 +1196,6 @@ Report which tasks you completed and which failed.
 """
 
 
-@dataclass
-class JobResult:
-    """Result of executing a job."""
-
-    job_id: str
-    success: bool
-    updated_markdown: str
-    ledger_entries: list[LedgerEntry]
-
-    tasks_completed: int
-    tasks_failed: int
-
-    input_tokens: int
-    output_tokens: int
-    duration_ms: int
-
-    error: str | None = None
-    llm_call: LLMCallRecord | None = None
-
-
 async def execute_job(
     job: Job,
     page_image: Image.Image,
@@ -1433,6 +1414,106 @@ async def execute_job(
             duration_ms=duration_ms,
             error=str(e),
         )
+
+
+# =============================================================================
+# Per-Page Job Execution Helper
+# =============================================================================
+
+
+async def execute_page_jobs(
+    page_num: int,
+    jobs: list[Job],
+    page_markdown: str,
+    page_image: Image.Image,
+    element_bboxes: dict[tuple[int, str, int], tuple[float, float, float, float]],
+    page_width: float,
+    ledger: Ledger,
+    event_bus: EventBus | None = None,
+    capture_debug: bool = False,
+) -> tuple[str, list[LedgerEntry], list[LLMCallRecord], int, int]:
+    """Execute all jobs for a single page and return the updated markdown.
+
+    This function enables streaming execution where jobs for a page can be
+    executed as soon as they are generated, without waiting for all pages
+    to be planned.
+
+    Args:
+        page_num: Page number being processed
+        jobs: List of jobs for this page (STRUCTURE, CONTENT, PARAGRAPH)
+        page_markdown: Current markdown content for the page
+        page_image: Image of the page
+        element_bboxes: Bounding boxes for elements on all pages
+        page_width: Page width for bbox scaling
+        ledger: Shared ledger to append entries to
+        event_bus: Optional event bus for streaming
+        capture_debug: If True, capture full prompt/response for debug bundle
+
+    Returns:
+        Tuple of:
+        - updated_markdown: The final markdown after all jobs complete
+        - ledger_entries: All ledger entries created by these jobs
+        - llm_calls: All LLM call records from these jobs
+        - total_input_tokens: Total input tokens used
+        - total_output_tokens: Total output tokens used
+    """
+    # Lazy import to avoid circular dependency
+    from .paragraph_agent import execute_with_paragraph_agent
+
+    if not jobs:
+        return page_markdown, [], [], 0, 0
+
+    # Sort jobs by priority (STRUCTURE first, then CONTENT, then PARAGRAPH)
+    sorted_jobs = sorted(jobs, key=lambda j: j.priority)
+
+    current_markdown = page_markdown
+    all_ledger_entries: list[LedgerEntry] = []
+    all_llm_calls: list[LLMCallRecord] = []
+    total_input_tokens = 0
+    total_output_tokens = 0
+
+    # Build full document markdown for paragraph agent (needed for citation linking)
+    # For streaming, we only have this page's markdown
+    full_document_markdown = current_markdown
+
+    for job in sorted_jobs:
+        # Update job's page_markdown with current state
+        job.page_markdown = current_markdown
+
+        # Route PARAGRAPH jobs to ParagraphAgent
+        if job.job_type == JobType.PARAGRAPH:
+            result = await execute_with_paragraph_agent(
+                job=job,
+                page_image=page_image,
+                current_markdown=current_markdown,
+                full_document_markdown=full_document_markdown,
+                ledger=ledger,
+                event_bus=event_bus,
+                dictionary=job.context.dictionary if job.context else None,
+                capture_debug=capture_debug,
+            )
+        else:
+            # Route STRUCTURE and CONTENT jobs to Worker
+            result = await execute_job(
+                job=job,
+                page_image=page_image,
+                element_bboxes=element_bboxes,
+                page_width=page_width,
+                ledger=ledger,
+                event_bus=event_bus,
+                capture_debug=capture_debug,
+            )
+
+        # Accumulate results
+        if result.success:
+            current_markdown = result.updated_markdown
+        all_ledger_entries.extend(result.ledger_entries)
+        if result.llm_call:
+            all_llm_calls.append(result.llm_call)
+        total_input_tokens += result.input_tokens
+        total_output_tokens += result.output_tokens
+
+    return current_markdown, all_ledger_entries, all_llm_calls, total_input_tokens, total_output_tokens
 
 
 # =============================================================================

@@ -30,7 +30,7 @@ from ..config import settings
 from .metrics_service import job_duration_seconds, jobs_completed_total
 
 if TYPE_CHECKING:
-    from ..agents.models import ProcessingResult, StoredFigure
+    from ..agents.models import ProcessingResult, RoundLoopResult, StoredFigure
 
 from .pdf_converter import ExtractedImage
 
@@ -83,6 +83,7 @@ class DocumentProcessingService:
         s3_key: str,
         filename: str,
         review_mode: Literal["auto", "human"] = "auto",
+        max_rounds: int = 1,
     ) -> ProcessingResult:
         """Process a document through the agentic pipeline.
 
@@ -101,6 +102,7 @@ class DocumentProcessingService:
             s3_key: S3 key where PDF is stored
             filename: Original filename
             review_mode: 'auto' (immediate completion) or 'human' (ledger available)
+            max_rounds: Maximum processing rounds (default 1). Use > 1 for multi-round improvement.
 
         Returns:
             ProcessingResult with final markdown, ledger, and stats
@@ -116,11 +118,12 @@ class DocumentProcessingService:
             DoclingCompleteEvent,
             DoclingStartedEvent,
             EventBus,
+            ProcessingCompleteEvent,
             VisionExtractionCompleteEvent,
             VisionExtractionStartedEvent,
             VisionPageExtractedEvent,
         )
-        from ..agents.orchestrator import run_agentic_pipeline
+        from ..agents.orchestrator import run_agentic_pipeline, run_multi_round_pipeline
         from ..services.vision_extraction_service import (
             VisualDocumentType,
             detect_visual_document_type,
@@ -391,19 +394,41 @@ class DocumentProcessingService:
             debug_bundle_requested = await self.redis.hget(job_key, "debug_bundle_requested")
             capture_debug = debug_bundle_requested == b"true" or debug_bundle_requested == "true"
 
-            # Run agentic pipeline
-            logger.info(f"Starting agentic pipeline for {filename} (debug_bundle={capture_debug})")
-            processing_result, event_bus = await run_agentic_pipeline(
-                filename=filename,
-                page_markdowns=page_markdowns,
-                page_images=page_images,
-                element_bboxes=element_bboxes,
-                page_width=page_width,
-                document_id=job_id,
-                event_bus=event_bus,
-                capture_debug=capture_debug,
-                stored_figures=stored_figures,
-            )
+            # Run agentic pipeline (single-round or multi-round based on max_rounds)
+            if max_rounds > 1:
+                logger.info(
+                    f"Starting multi-round pipeline for {filename} "
+                    f"(max_rounds={max_rounds}, debug_bundle={capture_debug})"
+                )
+                round_loop_result, event_bus = await run_multi_round_pipeline(
+                    filename=filename,
+                    page_markdowns=page_markdowns,
+                    page_images=page_images,
+                    element_bboxes=element_bboxes,
+                    page_width=page_width,
+                    document_id=job_id,
+                    max_rounds=max_rounds,
+                    event_bus=event_bus,
+                    capture_debug=capture_debug,
+                    stored_figures=stored_figures,
+                )
+                # Convert RoundLoopResult to ProcessingResult for downstream compatibility
+                processing_result = self._convert_round_loop_result(
+                    round_loop_result, job_id, len(page_markdowns), stored_figures
+                )
+            else:
+                logger.info(f"Starting agentic pipeline for {filename} (debug_bundle={capture_debug})")
+                processing_result, event_bus = await run_agentic_pipeline(
+                    filename=filename,
+                    page_markdowns=page_markdowns,
+                    page_images=page_images,
+                    element_bboxes=element_bboxes,
+                    page_width=page_width,
+                    document_id=job_id,
+                    event_bus=event_bus,
+                    capture_debug=capture_debug,
+                    stored_figures=stored_figures,
+                )
 
             # Save debug artifacts if requested
             if capture_debug:
@@ -443,6 +468,21 @@ class DocumentProcessingService:
                 llm_cost_cents=cost_cents,
                 llm_calls=[call.model_dump(mode="json") for call in processing_result.llm_calls],
                 stored_figures=stored_figures_json,
+            )
+
+            # Emit processing:complete AFTER markdown is stored and job state updated
+            # This ensures the markdown_url is available when the UI fetches it
+            processing_duration_ms = int((time.time() - processing_start_time) * 1000)
+            event_bus.emit(
+                ProcessingCompleteEvent(
+                    document_id=job_id,
+                    success=True,
+                    total_edits=processing_result.total_edits,
+                    total_jobs=processing_result.total_jobs,
+                    total_cost=processing_result.total_cost,
+                    total_duration_ms=processing_duration_ms,
+                    result_url=f"/api/v1/documents/{job_id}",
+                )
             )
 
             # Record job completion metrics
@@ -641,6 +681,66 @@ class DocumentProcessingService:
                     logger.warning(f"Failed to save debug artifact for {agent_name}: {e}")
 
         logger.info(f"Saved {saved_count} debug artifacts for job {job_id}")
+
+    def _convert_round_loop_result(
+        self,
+        round_result: RoundLoopResult,
+        job_id: str,
+        total_pages: int,
+        stored_figures: list,
+    ) -> ProcessingResult:
+        """Convert RoundLoopResult from multi-round pipeline to ProcessingResult.
+
+        Maps multi-round result to the standard ProcessingResult format for
+        downstream compatibility with ledger storage and state updates.
+
+        Args:
+            round_result: Result from run_multi_round_pipeline
+            job_id: Job identifier
+            total_pages: Total pages in document
+            stored_figures: List of StoredFigure objects from S3 upload
+
+        Returns:
+            ProcessingResult compatible with downstream processing
+        """
+        from ..agents.models import Ledger, ProcessingResult, VerificationReport
+
+        # Create a minimal ledger (multi-round doesn't have detailed ledger)
+        ledger = Ledger(document_id=job_id)
+
+        # Create a minimal verification report
+        verification = VerificationReport(
+            document_id=job_id,
+            passed=True,
+            issues_found=0,
+            confidence_scores={},
+            accuracy_estimate=round_result.final_quality,
+        )
+
+        # Calculate approximate cost (rough estimate based on tokens)
+        # Using typical Bedrock Claude 3 pricing: ~$0.003 per 1K input, ~$0.015 per 1K output
+        estimated_cost = (
+            (round_result.total_input_tokens / 1000) * 0.003
+            + (round_result.total_output_tokens / 1000) * 0.015
+        )
+
+        return ProcessingResult(
+            document_id=job_id,
+            success=True,
+            final_markdown=round_result.final_markdown,
+            ledger=ledger,
+            verification=verification,
+            stored_figures=stored_figures,  # Include uploaded figures
+            confidence_score=round_result.final_quality,
+            total_pages=total_pages,
+            total_edits=round_result.total_edits,
+            total_jobs=0,  # Multi-round doesn't track traditional jobs
+            total_input_tokens=round_result.total_input_tokens,
+            total_output_tokens=round_result.total_output_tokens,
+            total_cost=estimated_cost,
+            llm_calls=round_result.llm_calls,
+            total_duration_ms=round_result.total_duration_ms,
+        )
 
     def _map_purpose_to_phase(self, purpose: str) -> str:
         """Map LLMCallRecord purpose to debug bundle phase name.

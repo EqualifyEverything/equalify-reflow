@@ -146,6 +146,7 @@ async def submit_document(
     generate_debug_bundle: bool = Form(
         default=False, description="Generate debug bundle with all agent prompts and responses"
     ),
+    max_rounds: int = Form(default=1, ge=1, le=5, description="Max processing rounds for iterative refinement (1-5)"),
     storage: StorageService = Depends(get_storage_service),
     queue: QueueService = Depends(get_queue_service),
     job_service: JobService = Depends(get_job_service),
@@ -160,6 +161,7 @@ async def submit_document(
         skip_reason: Optional justification for skipping PII scan (recorded in audit trail)
         review_mode: 'auto' (immediate completion) or 'human' (ledger available for review)
         generate_debug_bundle: If True, save all agent prompts/responses for debugging
+        max_rounds: Maximum number of iterative refinement rounds (1-5, default: 1)
     """
     job_id, s3_key = await storage.store_document(file)
 
@@ -174,6 +176,7 @@ async def submit_document(
             pii_skip_reason=skip_reason or "User requested PII scan skip",
             debug_bundle_requested=generate_debug_bundle,
             review_mode=review_mode,
+            max_rounds=max_rounds,
         )
 
         # Record job submission metric
@@ -193,6 +196,7 @@ async def submit_document(
             s3_key=s3_key,
             filename=file.filename or "document.pdf",
             review_mode=review_mode,
+            max_rounds=max_rounds,
         )
 
         return JobSubmissionResponse(
@@ -211,6 +215,7 @@ async def submit_document(
             original_filename=file.filename,
             debug_bundle_requested=generate_debug_bundle,
             review_mode=review_mode,
+            max_rounds=max_rounds,
         )
         await queue.queue_pii_job(job_id, s3_key)
 

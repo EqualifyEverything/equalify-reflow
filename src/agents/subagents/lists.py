@@ -12,6 +12,8 @@ from pydantic_ai import Agent
 from pydantic_ai.messages import BinaryContent
 from pydantic_ai.models.bedrock import BedrockConverseModel
 
+from src.utils.circuit_breaker import CircuitBreakerOpenError
+
 from ..model_tiers import MODEL_TIER_MAP, ModelTier
 from .types import ListResult
 
@@ -95,6 +97,21 @@ async def invoke_list_subagent(
     Returns:
         ListResult with corrected markdown and details of fixes
     """
+    # Import here to avoid circular dependency
+    from . import is_rate_limit_error, llm_circuit_breaker
+
+    # Check circuit breaker before making LLM call
+    try:
+        llm_circuit_breaker.check_state()
+    except CircuitBreakerOpenError:
+        logger.warning("LLM circuit breaker open, skipping list subagent")
+        return ListResult(
+            confidence=0.0,
+            reasoning="LLM circuit breaker open - service unavailable",
+            corrected_markdown=list_markdown,
+            issues_fixed=[],
+        )
+
     try:
         agent = _get_list_subagent()
         image_content = _image_to_binary(page_image)
@@ -109,9 +126,19 @@ The page image is provided to verify the visual hierarchy matches the markdown s
 """
 
         result = await agent.run([prompt, image_content])
+
+        # Record success
+        llm_circuit_breaker.record_success()
         return result.output
 
+    except CircuitBreakerOpenError:
+        # Re-raise circuit breaker errors
+        raise
     except Exception as e:
+        # Don't count rate limit errors as failures
+        if not is_rate_limit_error(e):
+            llm_circuit_breaker.record_failure()
+
         logger.warning(f"List subagent failed: {e}")
         return ListResult(
             confidence=0.0,

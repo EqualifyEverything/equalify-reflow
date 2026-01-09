@@ -786,6 +786,48 @@ class ImageReference(BaseModel):
     )
 
 
+class StoredFigure(BaseModel):
+    """Metadata for a figure image stored to S3.
+
+    Tracks figures extracted from PDFs and stored alongside the final markdown,
+    enabling markdown to use relative paths like `![alt](images/figure-1.png)`.
+
+    Attributes:
+        figure_id: Sequential identifier (e.g., "figure-1", "figure-2")
+        s3_key: Full S3 key (e.g., "results/job-123/images/figure-1.png")
+        page_num: Source page number (1-indexed)
+        alt_text: Generated alt text from worker (may be empty)
+        caption: Original caption from PDF extraction
+        ref_id: Original Docling reference (e.g., "#/pictures/0")
+    """
+
+    figure_id: str = Field(
+        ...,
+        description="Sequential identifier (e.g., 'figure-1')",
+    )
+    s3_key: str = Field(
+        ...,
+        description="Full S3 key in results bucket",
+    )
+    page_num: int = Field(
+        ...,
+        ge=1,
+        description="Source page number (1-indexed)",
+    )
+    alt_text: str = Field(
+        default="",
+        description="Generated alt text (filled in post-processing)",
+    )
+    caption: str = Field(
+        default="",
+        description="Original caption from PDF if available",
+    )
+    ref_id: str = Field(
+        ...,
+        description="Original Docling reference (e.g., '#/pictures/0')",
+    )
+
+
 # =============================================================================
 # LLM Call Tracking
 # =============================================================================
@@ -851,6 +893,10 @@ class ProcessingResult(BaseModel):
     final_markdown: str = Field(..., description="Complete corrected markdown")
     ledger: Ledger = Field(..., description="Complete change ledger")
     verification: VerificationReport = Field(..., description="Verification report")
+    stored_figures: list[StoredFigure] = Field(
+        default_factory=list,
+        description="Figures stored to S3 with metadata for URL generation",
+    )
 
     # Confidence
     confidence_score: float = Field(

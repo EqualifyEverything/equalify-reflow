@@ -47,6 +47,7 @@ from .models import (
     ProcessingStatus,
     RecoveryAttemptStatus,
     RecoveryReport,
+    StoredFigure,
     TaskType,
     VerificationReport,
 )
@@ -120,6 +121,113 @@ def collect_footnotes_at_end(markdown: str) -> str:
         cleaned += footnote_section.rstrip()
 
     return cleaned
+
+
+# =============================================================================
+# Figure URL Rewriting
+# =============================================================================
+
+
+def rewrite_figure_urls(
+    markdown: str,
+    stored_figures: list[StoredFigure],
+) -> tuple[str, list[StoredFigure]]:
+    """Replace placeholder image URLs with relative paths to stored figures.
+
+    Transforms markdown image references to use relative paths pointing to
+    stored S3 images. Also extracts alt-text from the markdown to populate
+    the StoredFigure.alt_text field.
+
+    Patterns handled:
+    - ![alt text](image.png) -> ![alt text](images/figure-1.png)
+    - ![alt text](figure_N.png) -> ![alt text](images/figure-1.png)
+    - ![](decorative "title") -> ![](images/figure-1.png "title")
+    - Empty src like ![]() -> ![]() (unchanged, no figure to map)
+
+    Args:
+        markdown: Final markdown with placeholder image URLs
+        stored_figures: List of figures uploaded to S3
+
+    Returns:
+        Tuple of (updated_markdown, updated_stored_figures with alt_text filled)
+    """
+    if not stored_figures:
+        return markdown, stored_figures
+
+    # Pattern to match all markdown images: ![alt](url "optional title")
+    # Captures: alt text, url, optional title
+    img_pattern = re.compile(
+        r'!\[([^\]]*)\]\(([^)\s"]*)\s*(?:"([^"]*)")?\)',
+        re.MULTILINE,
+    )
+
+    # Find all image references in markdown
+    matches = list(img_pattern.finditer(markdown))
+
+    if not matches:
+        logger.debug("No image patterns found in markdown")
+        return markdown, stored_figures
+
+    # Map figures by index (sequential assignment based on appearance order)
+    # Assumption: figures appear in the same order as they were extracted
+    updated_figures = list(stored_figures)  # Copy to update alt_text
+    figure_idx = 0
+    replacements: list[tuple[int, int, str]] = []  # (start, end, replacement)
+
+    for match in matches:
+        alt_text = match.group(1)
+        url = match.group(2)
+        title = match.group(3)
+
+        # Skip if no URL (empty image reference)
+        if not url or url.strip() == "":
+            continue
+
+        # Skip if URL is already a proper relative path to images/
+        if url.startswith("images/figure-"):
+            continue
+
+        # Skip if we've run out of figures
+        if figure_idx >= len(updated_figures):
+            logger.warning(
+                f"More image references in markdown ({len(matches)}) "
+                f"than stored figures ({len(stored_figures)})"
+            )
+            break
+
+        # Get the corresponding figure
+        figure = updated_figures[figure_idx]
+        new_url = f"images/{figure.figure_id}.png"
+
+        # Build replacement string
+        if title:
+            replacement = f"![{alt_text}]({new_url} \"{title}\")"
+        else:
+            replacement = f"![{alt_text}]({new_url})"
+
+        replacements.append((match.start(), match.end(), replacement))
+
+        # Update the figure's alt_text if we have one
+        if alt_text and not updated_figures[figure_idx].alt_text:
+            updated_figures[figure_idx] = StoredFigure(
+                figure_id=figure.figure_id,
+                s3_key=figure.s3_key,
+                page_num=figure.page_num,
+                alt_text=alt_text,
+                caption=figure.caption,
+                ref_id=figure.ref_id,
+            )
+
+        figure_idx += 1
+
+    # Apply replacements in reverse order to preserve positions
+    result = markdown
+    for start, end, replacement in reversed(replacements):
+        result = result[:start] + replacement + result[end:]
+
+    logger.info(f"Rewrote {len(replacements)} image URLs to relative paths")
+
+    return result, updated_figures
 
 
 # =============================================================================
@@ -710,6 +818,7 @@ async def run_agentic_pipeline(
     max_concurrent_jobs: int = 3,
     event_bus: EventBus | None = None,
     capture_debug: bool = False,
+    stored_figures: list[StoredFigure] | None = None,
 ) -> tuple[ProcessingResult, EventBus]:
     """Run the complete agentic pipeline.
 
@@ -725,6 +834,7 @@ async def run_agentic_pipeline(
         max_concurrent_jobs: Max concurrent worker jobs
         event_bus: Optional pre-created event bus for streaming
         capture_debug: If True, capture full prompt/response for debug bundle
+        stored_figures: List of figures already uploaded to S3 for URL rewriting
 
     Returns:
         Tuple of (ProcessingResult, EventBus)
@@ -877,6 +987,13 @@ async def run_agentic_pipeline(
         # Post-process: collect footnotes at document end and remove page separators
         final_markdown = collect_footnotes_at_end(raw_markdown)
 
+        # Rewrite figure URLs to relative paths if figures were stored
+        final_stored_figures: list[StoredFigure] = []
+        if stored_figures:
+            final_markdown, final_stored_figures = rewrite_figure_urls(
+                final_markdown, stored_figures
+            )
+
         # Calculate cost (Haiku pricing)
         cost = (total_input_tokens * 0.00025 / 1000) + (total_output_tokens * 0.00125 / 1000)
 
@@ -916,6 +1033,7 @@ async def run_agentic_pipeline(
             final_markdown=final_markdown,
             ledger=ledger,
             verification=verification,
+            stored_figures=final_stored_figures,
             confidence_score=confidence_score,
             total_pages=len(page_markdowns),
             total_edits=ledger.total_edits,

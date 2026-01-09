@@ -189,6 +189,16 @@ class AgenticProcessingResponse(JobStatusBase):
     pii_skipped: bool | None = Field(None, description="Whether PII scan was skipped")
 
 
+class FigureAsset(BaseModel):
+    """Figure image stored with the document."""
+
+    figure_id: str = Field(..., description="Figure identifier (e.g., 'figure-1')")
+    url: str = Field(..., description="Presigned S3 URL to image")
+    page: int = Field(..., ge=1, description="Source page number")
+    alt_text: str = Field(default="", description="Generated alt text")
+    caption: str = Field(default="", description="Caption from PDF if available")
+
+
 class AgenticCompletedResponse(JobStatusBase):
     """Response when agentic pipeline job is completed."""
 
@@ -200,6 +210,14 @@ class AgenticCompletedResponse(JobStatusBase):
     ledger_url: str | None = Field(None, description="URL to change ledger (human mode only)")
     total_pages: int = Field(default=0, description="Total pages processed")
     total_edits: int = Field(default=0, description="Total edits made")
+    figures: list[FigureAsset] = Field(
+        default_factory=list,
+        description="Extracted figure images with presigned URLs"
+    )
+    bundle_url: str | None = Field(
+        None,
+        description="URL to download ZIP bundle with markdown and images"
+    )
 
 
 class LedgerEntryResponse(BaseModel):

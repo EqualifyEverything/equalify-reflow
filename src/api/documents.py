@@ -4,6 +4,7 @@ import asyncio
 import json
 import logging
 from collections import Counter
+from collections.abc import AsyncGenerator
 from datetime import UTC, datetime
 from io import BytesIO
 from typing import Any, Literal
@@ -23,6 +24,7 @@ from ..dependencies import (
 )
 from ..services import JobService, QueueService, S3URLService, StorageService
 from ..services.document_processing_service import DocumentProcessingService
+from ..services.figure_bundle_service import FigureBundleService
 from ..services.metrics_service import jobs_submitted_total
 from ..services.remediation_storage_service import RemediationStorageService
 from .schemas import (
@@ -41,6 +43,7 @@ from .schemas import (
     DocumentStatusResponse,
     ExtractionPhase,
     FailedResponse,
+    FigureAsset,
     LedgerEntryResponse,
     LedgerPageGroup,
     LedgerResponse,
@@ -391,6 +394,47 @@ async def get_job(
                 # Ledger is always available for completed agentic pipeline jobs
                 ledger_url = f"/api/v1/documents/{job_id}/ledger"
 
+                # Build figure assets from stored_figures
+                figure_assets: list[FigureAsset] = []
+                stored_figures_raw = job.get("stored_figures")
+                if stored_figures_raw:
+                    # Parse if stored as JSON string
+                    if isinstance(stored_figures_raw, str):
+                        try:
+                            stored_figures_data = json.loads(stored_figures_raw)
+                        except json.JSONDecodeError:
+                            stored_figures_data = []
+                    elif isinstance(stored_figures_raw, bytes):
+                        try:
+                            stored_figures_data = json.loads(stored_figures_raw.decode("utf-8"))
+                        except (json.JSONDecodeError, UnicodeDecodeError):
+                            stored_figures_data = []
+                    else:
+                        stored_figures_data = stored_figures_raw
+
+                    for fig in stored_figures_data:
+                        s3_key = fig.get("s3_key", "")
+                        if s3_key:
+                            figure_url = await url_service.generate_url(
+                                s3_key, bucket=url_service.results_bucket
+                            )
+                            figure_assets.append(
+                                FigureAsset(
+                                    figure_id=fig.get("figure_id", ""),
+                                    url=figure_url,
+                                    page=int(fig.get("page_num", 1)),
+                                    alt_text=fig.get("alt_text", ""),
+                                    caption=fig.get("caption", ""),
+                                )
+                            )
+
+                # Bundle URL is only available if there are figures
+                bundle_url = (
+                    f"/api/v1/documents/{job_id}/bundle"
+                    if figure_assets
+                    else None
+                )
+
                 return AgenticCompletedResponse(
                     **base,
                     review_mode=review_mode,
@@ -407,6 +451,8 @@ async def get_job(
                     ledger_url=ledger_url,
                     total_pages=int(job.get("total_pages", 0)),
                     total_edits=int(job.get("total_edits", 0)),
+                    figures=figure_assets,
+                    bundle_url=bundle_url,
                 )
             else:
                 # Legacy pipeline completed response
@@ -706,6 +752,98 @@ async def download_debug_bundle(
     )
 
 
+@router.get("/{job_id}/bundle")
+async def download_document_bundle(
+    job_id: str,
+    job_service: JobService = Depends(get_job_service),
+    storage: StorageService = Depends(get_storage_service),
+) -> StreamingResponse:
+    """Download document bundle with markdown and images as ZIP.
+
+    Returns a ZIP file containing:
+    - document.md: Final markdown with relative image paths
+    - images/: All extracted figure images
+
+    The markdown uses relative paths (images/figure-1.png) so the
+    bundle is self-contained and can be unzipped anywhere.
+
+    Args:
+        job_id: Job identifier
+
+    Returns:
+        Streaming ZIP file download
+
+    Raises:
+        HTTPException 404: Job not found or no figures available
+        HTTPException 400: Job not completed
+    """
+    # Get job and verify it's completed
+    job = await job_service.get_job(job_id)
+    if not job:
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND,
+            detail=f"Job {job_id} not found"
+        )
+
+    if job.get("status") != "completed":
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail=f"Job {job_id} is not completed (status: {job.get('status')})"
+        )
+
+    # Get markdown key
+    markdown_key = job.get("result_url") or job.get("markdown_url")
+    if not markdown_key:
+        raise HTTPException(
+            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+            detail="Job completed but markdown URL not set"
+        )
+
+    # Parse stored figures
+    stored_figures_raw = job.get("stored_figures")
+    stored_figures_data: list[dict] = []
+
+    if stored_figures_raw:
+        if isinstance(stored_figures_raw, str):
+            try:
+                stored_figures_data = json.loads(stored_figures_raw)
+            except json.JSONDecodeError:
+                stored_figures_data = []
+        elif isinstance(stored_figures_raw, bytes):
+            try:
+                stored_figures_data = json.loads(stored_figures_raw.decode("utf-8"))
+            except (json.JSONDecodeError, UnicodeDecodeError):
+                stored_figures_data = []
+        else:
+            stored_figures_data = stored_figures_raw
+
+    # Generate bundle
+    bundle_service = FigureBundleService(storage)
+    try:
+        zip_bytes = await bundle_service.generate_bundle(
+            job_id=job_id,
+            markdown_key=markdown_key,
+            stored_figures=stored_figures_data,
+        )
+    except Exception as e:
+        logger.error(f"Failed to generate bundle for job {job_id}: {e}")
+        raise HTTPException(
+            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+            detail=f"Failed to generate bundle: {str(e)}"
+        )
+
+    # Return as streaming download
+    filename = f"document_{job_id}.zip"
+    return StreamingResponse(
+        BytesIO(zip_bytes),
+        media_type="application/zip",
+        headers={
+            "Content-Disposition": f"attachment; filename={filename}",
+            "Content-Length": str(len(zip_bytes)),
+        },
+    )
+
+
 class StreamTokenResponse(BaseModel):
     """Response for stream token generation."""
 
@@ -801,7 +939,7 @@ async def stream_events(
     if not job:
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail=f"Job {job_id} not found")
 
-    async def event_generator():
+    async def event_generator() -> AsyncGenerator[str, None]:
         """Generate SSE events."""
         try:
             # Get event bus from registry
@@ -816,8 +954,8 @@ async def stream_events(
                 return
 
             # Wait for event bus to be available (up to 30 seconds)
-            max_wait = 30
-            waited = 0
+            max_wait = 30.0
+            waited = 0.0
             while event_bus is None and waited < max_wait:
                 await asyncio.sleep(0.5)
                 waited += 0.5

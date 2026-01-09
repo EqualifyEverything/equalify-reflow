@@ -1,8 +1,10 @@
 """Storage service for S3 operations."""
 
+import asyncio
 import json
 import logging
 import uuid
+from io import BytesIO
 from typing import TYPE_CHECKING, Any
 
 from botocore.exceptions import ClientError
@@ -13,6 +15,8 @@ from ..utils.circuit_breaker import CircuitBreaker, CircuitBreakerOpenError
 from ..utils.retry_helpers import retry_with_backoff_for_sync_func
 
 if TYPE_CHECKING:
+    from ..agents.models import StoredFigure
+    from ..services.pdf_converter import ExtractedImage
     from ..shared.models.processing_result import ProcessingResult
 
 logger = logging.getLogger(__name__)
@@ -422,6 +426,98 @@ class StorageService:
                 status_code=500,
                 detail=f"Failed to upload image {image_name}: {str(e)}"
             )
+
+    async def upload_figures(
+        self,
+        job_id: str,
+        extracted_figures: list["ExtractedImage"],
+    ) -> list["StoredFigure"]:
+        """Upload extracted figure images to results bucket.
+
+        Filters to only picture types (not tables), sorts by page then position,
+        and uploads each figure to S3. Returns metadata for URL rewriting.
+
+        Args:
+            job_id: Job identifier
+            extracted_figures: List of ExtractedImage objects (will filter to pictures only)
+
+        Returns:
+            List of StoredFigure with S3 keys and metadata
+
+        Raises:
+            Does NOT raise - failures are logged and skipped (best-effort)
+        """
+        from ..agents.models import StoredFigure
+
+        # Filter to only pictures (exclude tables)
+        pictures = [
+            img for img in extracted_figures
+            if img.image_type == "picture"
+        ]
+
+        if not pictures:
+            logger.info(f"Job {job_id}: No figures to upload")
+            return []
+
+        # Sort by page number, then by ref_id for consistent ordering
+        pictures.sort(key=lambda img: (img.page_num, img.ref_id))
+
+        stored_figures: list[StoredFigure] = []
+        semaphore = asyncio.Semaphore(5)  # Limit concurrent uploads
+
+        async def upload_single_figure(
+            idx: int,
+            img: "ExtractedImage",
+        ) -> StoredFigure | None:
+            """Upload a single figure and return metadata."""
+            async with semaphore:
+                figure_id = f"figure-{idx + 1}"
+                image_name = f"{figure_id}.png"
+
+                try:
+                    # Convert PIL image to PNG bytes
+                    buffer = BytesIO()
+                    img.pil_image.save(buffer, format="PNG")
+                    image_data = buffer.getvalue()
+
+                    # Upload using existing method
+                    s3_key = await self.upload_image(job_id, image_data, image_name)
+
+                    logger.debug(
+                        f"Job {job_id}: Uploaded {figure_id} from page {img.page_num} "
+                        f"({len(image_data)} bytes)"
+                    )
+
+                    return StoredFigure(
+                        figure_id=figure_id,
+                        s3_key=s3_key,
+                        page_num=img.page_num,
+                        alt_text="",  # Filled in during post-processing
+                        caption=img.caption,
+                        ref_id=img.ref_id,
+                    )
+
+                except Exception as e:
+                    logger.warning(
+                        f"Job {job_id}: Failed to upload {figure_id} from page {img.page_num}: {e}"
+                    )
+                    return None
+
+        # Upload all figures in parallel (with semaphore limiting)
+        tasks = [
+            upload_single_figure(idx, img)
+            for idx, img in enumerate(pictures)
+        ]
+        results = await asyncio.gather(*tasks)
+
+        # Filter out failed uploads
+        stored_figures = [fig for fig in results if fig is not None]
+
+        logger.info(
+            f"Job {job_id}: Uploaded {len(stored_figures)}/{len(pictures)} figures to S3"
+        )
+
+        return stored_figures
 
     async def upload_page_image(
         self,

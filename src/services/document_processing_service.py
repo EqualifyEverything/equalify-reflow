@@ -30,7 +30,9 @@ from ..config import settings
 from .metrics_service import job_duration_seconds, jobs_completed_total
 
 if TYPE_CHECKING:
-    from ..agents.models import ProcessingResult
+    from ..agents.models import ProcessingResult, StoredFigure
+
+from .pdf_converter import ExtractedImage
 
 logger = logging.getLogger(__name__)
 
@@ -168,6 +170,7 @@ class DocumentProcessingService:
                 do_ocr=False,  # We use LLM vision for scanned PDFs instead
                 do_table_structure=True,
                 generate_page_images=True,
+                generate_picture_images=True,  # Extract embedded figures for storage
                 images_scale=2.0,
             )
 
@@ -205,6 +208,37 @@ class DocumentProcessingService:
                     page_images[page_no] = page.image.pil_image
 
             logger.info(f"Extracted {len(page_images)} page images")
+
+            # Extract embedded figures (pictures) from document for storage
+            extracted_figures: list[ExtractedImage] = []
+            for pic in doc.pictures:
+                if pic.image and hasattr(pic.image, "pil_image") and pic.image.pil_image:
+                    bbox = None
+                    if pic.prov and pic.prov[0].bbox:
+                        bb = pic.prov[0].bbox
+                        bbox = (bb.l, bb.t, bb.r, bb.b)
+
+                    extracted_figures.append(
+                        ExtractedImage(
+                            ref_id=pic.self_ref,
+                            image_type="picture",
+                            caption=pic.caption_text(doc=doc) or "",
+                            page_num=pic.prov[0].page_no if pic.prov else 1,
+                            pil_image=pic.image.pil_image,
+                            bbox=bbox,
+                        )
+                    )
+
+            if extracted_figures:
+                logger.info(f"Extracted {len(extracted_figures)} figures from PDF")
+
+            # Upload figures to S3 (best-effort, non-blocking)
+            stored_figures: list[StoredFigure] = []
+            if extracted_figures:
+                try:
+                    stored_figures = await self.storage.upload_figures(job_id, extracted_figures)
+                except Exception as e:
+                    logger.warning(f"Failed to upload figures for job {job_id}: {e}")
 
             # Detect if PDF is scanned
             total_pages = len(doc.pages)
@@ -368,6 +402,7 @@ class DocumentProcessingService:
                 document_id=job_id,
                 event_bus=event_bus,
                 capture_debug=capture_debug,
+                stored_figures=stored_figures,
             )
 
             # Save debug artifacts if requested
@@ -385,6 +420,12 @@ class DocumentProcessingService:
             total_tokens = processing_result.total_input_tokens + processing_result.total_output_tokens
             cost_cents = processing_result.total_cost * 100  # Convert dollars to cents
 
+            # Serialize stored figures for API access
+            stored_figures_json = [
+                fig.model_dump(mode="json")
+                for fig in processing_result.stored_figures
+            ]
+
             await self._update_job_state(
                 job_id,
                 status="completed",
@@ -401,6 +442,7 @@ class DocumentProcessingService:
                 llm_total_tokens=total_tokens,
                 llm_cost_cents=cost_cents,
                 llm_calls=[call.model_dump(mode="json") for call in processing_result.llm_calls],
+                stored_figures=stored_figures_json,
             )
 
             # Record job completion metrics

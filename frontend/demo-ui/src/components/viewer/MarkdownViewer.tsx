@@ -1,5 +1,6 @@
 import { useState } from 'react';
 import ReactMarkdown from 'react-markdown';
+import remarkGfm from 'remark-gfm';
 import { motion, AnimatePresence } from 'framer-motion';
 import { cn } from '@/lib/utils';
 import { Button } from '@/components/ui/button';
@@ -64,6 +65,7 @@ export function MarkdownViewer({ content, className }: MarkdownViewerProps) {
               className="p-6 prose prose-slate max-w-none min-h-full"
             >
               <ReactMarkdown
+                remarkPlugins={[remarkGfm]}
                 components={{
                   // Custom heading styles with UIC colors
                   h1: ({ children }) => (

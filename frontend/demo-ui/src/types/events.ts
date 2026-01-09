@@ -24,6 +24,10 @@ export type StreamEventType =
   | 'final_pass:complete'
   | 'recovery:started'
   | 'recovery:complete'
+  | 'round:started'
+  | 'round:complete'
+  | 'critic:complete'
+  | 'convergence:reached'
   | 'processing:complete'
   | 'processing:error';
 
@@ -111,6 +115,37 @@ export interface RecoveryCompleteData extends BaseEventData {
   pages_recovered: number[];
 }
 
+export interface RoundStartedData extends BaseEventData {
+  round_number: number;
+  previous_quality: number;
+  max_rounds: number;
+}
+
+export interface RoundCompleteData extends BaseEventData {
+  round_number: number;
+  jobs_executed: number;
+  edits_applied: number;
+  quality_score: number;
+  quality_delta: number;
+  duration_ms: number;
+}
+
+export interface CriticCompleteData extends BaseEventData {
+  round_number: number;
+  issues_found: number;
+  critical_count: number;
+  quality_score: number;
+  ready_for_output: boolean;
+}
+
+export interface ConvergenceReachedData extends BaseEventData {
+  reason: string;
+  total_rounds: number;
+  final_quality: number;
+  total_edits: number;
+  total_duration_ms: number;
+}
+
 export interface ProcessingCompleteData extends BaseEventData {
   success: boolean;
   total_edits: number;
@@ -137,6 +172,10 @@ export type StreamEventData =
   | VerificationCompleteData
   | RecoveryStartedData
   | RecoveryCompleteData
+  | RoundStartedData
+  | RoundCompleteData
+  | CriticCompleteData
+  | ConvergenceReachedData
   | ProcessingCompleteData
   | ProcessingErrorData
   | BaseEventData;

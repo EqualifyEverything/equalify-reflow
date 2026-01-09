@@ -4,14 +4,25 @@ import remarkGfm from 'remark-gfm';
 import { motion, AnimatePresence } from 'framer-motion';
 import { cn } from '@/lib/utils';
 import { Button } from '@/components/ui/button';
-import { Eye, Code2 } from 'lucide-react';
+import { Eye, Code2, Download, Bug } from 'lucide-react';
 
 interface MarkdownViewerProps {
   content: string;
   className?: string;
+  isComplete?: boolean;
+  showDebugDownload?: boolean;
+  onDownloadMarkdown?: () => void;
+  onDownloadDebug?: () => void;
 }
 
-export function MarkdownViewer({ content, className }: MarkdownViewerProps) {
+export function MarkdownViewer({
+  content,
+  className,
+  isComplete = false,
+  showDebugDownload = false,
+  onDownloadMarkdown,
+  onDownloadDebug,
+}: MarkdownViewerProps) {
   const [showRaw, setShowRaw] = useState(false);
 
   return (
@@ -21,24 +32,52 @@ export function MarkdownViewer({ content, className }: MarkdownViewerProps) {
         <span className="text-sm font-medium text-muted-foreground">
           {showRaw ? 'Raw Markdown' : 'Rendered Preview'}
         </span>
-        <Button
-          variant="ghost"
-          size="sm"
-          onClick={() => setShowRaw(!showRaw)}
-          className="gap-2 text-uic-blue hover:text-uic-blue hover:bg-uic-blue/10"
-        >
-          {showRaw ? (
-            <>
-              <Eye className="w-4 h-4" />
-              Preview
-            </>
-          ) : (
-            <>
-              <Code2 className="w-4 h-4" />
-              Raw
-            </>
+        <div className="flex items-center gap-2">
+          {/* Download buttons - shown when complete */}
+          {isComplete && onDownloadMarkdown && (
+            <Button
+              variant="ghost"
+              size="sm"
+              onClick={onDownloadMarkdown}
+              title="Download Markdown"
+              className="gap-1.5 text-green-600 hover:text-green-700 hover:bg-green-50"
+            >
+              <Download className="w-4 h-4" />
+              <span className="text-xs">Markdown</span>
+            </Button>
           )}
-        </Button>
+          {isComplete && showDebugDownload && onDownloadDebug && (
+            <Button
+              variant="ghost"
+              size="sm"
+              onClick={onDownloadDebug}
+              title="Download Debug Bundle"
+              className="gap-1.5 text-purple-600 hover:text-purple-700 hover:bg-purple-50"
+            >
+              <Bug className="w-4 h-4" />
+              <span className="text-xs">Debug</span>
+            </Button>
+          )}
+          {/* Raw/Preview toggle */}
+          <Button
+            variant="ghost"
+            size="sm"
+            onClick={() => setShowRaw(!showRaw)}
+            className="gap-2 text-uic-blue hover:text-uic-blue hover:bg-uic-blue/10"
+          >
+            {showRaw ? (
+              <>
+                <Eye className="w-4 h-4" />
+                Preview
+              </>
+            ) : (
+              <>
+                <Code2 className="w-4 h-4" />
+                Raw
+              </>
+            )}
+          </Button>
+        </div>
       </div>
 
       {/* Content Area */}

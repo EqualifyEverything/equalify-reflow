@@ -463,6 +463,10 @@ export function useStream({
       'final_pass:complete',
       'recovery:started',
       'recovery:complete',
+      'round:started',
+      'round:complete',
+      'critic:complete',
+      'convergence:reached',
       'processing:complete',
       'processing:error',
     ];

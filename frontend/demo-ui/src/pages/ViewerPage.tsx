@@ -1,6 +1,6 @@
 import { useState, useCallback, useEffect, useRef } from 'react';
 import { useSearchParams } from 'react-router-dom';
-import { motion } from 'framer-motion';
+import { motion, AnimatePresence } from 'framer-motion';
 import { Panel, Group as PanelGroup, Separator as PanelResizeHandle } from 'react-resizable-panels';
 import { cn } from '@/lib/utils';
 import { Button } from '@/components/ui/button';
@@ -35,6 +35,9 @@ import {
   FileText,
   Activity,
   ListChecks,
+  RotateCcw,
+  Settings,
+  X,
 } from 'lucide-react';
 
 // Get API URL from environment or default
@@ -51,6 +54,10 @@ export function ViewerPage() {
   const [activeJobId, setActiveJobId] = useState<string | null>(searchParams.get('job_id'));
   const [selectedFile, setSelectedFile] = useState<File | null>(null);
   const [uploading, setUploading] = useState(false);
+  const [maxRounds, setMaxRounds] = useState(1);
+  const [generateDebugBundle, setGenerateDebugBundle] = useState(false);
+  const [showAdvancedSettings, setShowAdvancedSettings] = useState(false);
+  const [isProcessingComplete, setIsProcessingComplete] = useState(false);
 
   // Persist API key to localStorage
   useEffect(() => {
@@ -112,6 +119,8 @@ export function ViewerPage() {
         formData.append('skip_pii_scan', 'true');
         formData.append('skip_reason', 'Pipeline viewer direct submission');
         formData.append('review_mode', 'auto');
+        formData.append('max_rounds', String(maxRounds));
+        formData.append('generate_debug_bundle', String(generateDebugBundle));
 
         const response = await fetch(`${API_URL}/api/v1/documents/submit`, {
           method: 'POST',
@@ -141,7 +150,7 @@ export function ViewerPage() {
         setUploading(false);
       }
     },
-    [apiKey, clearEvents, connect, setSearchParams]
+    [apiKey, maxRounds, generateDebugBundle, clearEvents, connect, setSearchParams]
   );
 
   // Handle watch job
@@ -170,6 +179,84 @@ export function ViewerPage() {
     },
     [agentActivity]
   );
+
+  // Handle new job - reset state for a fresh start
+  const handleNewJob = useCallback(() => {
+    // Disconnect if connected
+    if (status === 'connected' || status === 'connecting') {
+      disconnect();
+    }
+    // Clear all state
+    clearEvents();
+    setActiveJobId(null);
+    setJobIdInput('');
+    setSelectedFile(null);
+    setMaxRounds(1);
+    setGenerateDebugBundle(false);
+    setIsProcessingComplete(false);
+    // Clear URL params
+    setSearchParams({});
+    // Reset file input
+    const fileInput = document.getElementById('file-upload') as HTMLInputElement;
+    if (fileInput) {
+      fileInput.value = '';
+    }
+  }, [status, disconnect, clearEvents, setSearchParams]);
+
+  // Download markdown result
+  const handleDownloadMarkdown = useCallback(async () => {
+    if (!activeJobId || !apiKey) return;
+
+    try {
+      // Fetch job to get markdown URL
+      const response = await fetch(`${API_URL}/api/v1/documents/${activeJobId}`, {
+        headers: { 'X-API-Key': apiKey },
+      });
+      if (!response.ok) throw new Error('Failed to fetch job');
+
+      const job = await response.json();
+      if (job.markdown_url) {
+        window.open(job.markdown_url, '_blank');
+      } else {
+        alert('Markdown not available yet');
+      }
+    } catch (error) {
+      console.error('Download error:', error);
+      alert('Failed to download markdown');
+    }
+  }, [activeJobId, apiKey]);
+
+  // Download debug bundle
+  const handleDownloadDebugBundle = useCallback(async () => {
+    if (!activeJobId || !apiKey) return;
+
+    try {
+      // Direct download from debug-bundle endpoint
+      const url = `${API_URL}/api/v1/documents/${activeJobId}/debug-bundle`;
+      const response = await fetch(url, {
+        headers: { 'X-API-Key': apiKey },
+      });
+
+      if (!response.ok) {
+        const error = await response.json();
+        throw new Error(error.detail || 'Failed to download debug bundle');
+      }
+
+      // Trigger download
+      const blob = await response.blob();
+      const downloadUrl = window.URL.createObjectURL(blob);
+      const a = document.createElement('a');
+      a.href = downloadUrl;
+      a.download = `debug-bundle-${activeJobId}.zip`;
+      document.body.appendChild(a);
+      a.click();
+      document.body.removeChild(a);
+      window.URL.revokeObjectURL(downloadUrl);
+    } catch (error) {
+      console.error('Download error:', error);
+      alert(`Failed to download debug bundle: ${error instanceof Error ? error.message : 'Unknown error'}`);
+    }
+  }, [activeJobId, apiKey]);
 
   // Connection status indicator
   const StatusIndicator = () => {
@@ -218,10 +305,111 @@ export function ViewerPage() {
     if (completeEvent && !completionAnnouncement.includes('complete')) {
       const pageCount = documentPlan?.totalPages || 0;
       setCompletionAnnouncement(`Processing complete. ${pageCount} pages converted.`);
+      setIsProcessingComplete(true);
     } else if (errorEvent && !completionAnnouncement.includes('failed')) {
       setCompletionAnnouncement('Processing failed. Check events for details.');
     }
   }, [events, documentPlan, completionAnnouncement]);
+
+  // Advanced Settings Modal
+  const AdvancedSettingsModal = () => (
+    <AnimatePresence>
+      {showAdvancedSettings && (
+        <>
+          {/* Backdrop */}
+          <motion.div
+            initial={{ opacity: 0 }}
+            animate={{ opacity: 1 }}
+            exit={{ opacity: 0 }}
+            transition={{ duration: 0.2 }}
+            className="fixed inset-0 bg-black/50 z-50"
+            onClick={() => setShowAdvancedSettings(false)}
+            aria-hidden="true"
+          />
+
+          {/* Modal Container - centered with flex */}
+          <div className="fixed inset-0 z-50 flex items-center justify-center pointer-events-none">
+            <motion.div
+              role="dialog"
+              aria-modal="true"
+              aria-labelledby="settings-modal-title"
+              initial={{ opacity: 0, scale: 0.95, y: 20 }}
+              animate={{ opacity: 1, scale: 1, y: 0 }}
+              exit={{ opacity: 0, scale: 0.95, y: 20 }}
+              transition={{ duration: 0.2, ease: 'easeOut' }}
+              className="w-full max-w-md bg-white rounded-xl shadow-2xl overflow-hidden pointer-events-auto"
+            >
+            {/* Header */}
+            <div className="flex items-center justify-between px-6 py-4 bg-uic-blue text-white">
+              <div className="flex items-center gap-2">
+                <Settings className="w-5 h-5" />
+                <h2 id="settings-modal-title" className="text-lg font-bold">Advanced Settings</h2>
+              </div>
+              <Button
+                variant="ghost"
+                size="icon"
+                onClick={() => setShowAdvancedSettings(false)}
+                aria-label="Close dialog"
+                className="text-white hover:bg-white/10"
+              >
+                <X className="w-5 h-5" />
+              </Button>
+            </div>
+
+            {/* Content */}
+            <div className="p-6 space-y-6">
+              {/* Max Rounds */}
+              <div className="space-y-2">
+                <label className="text-sm font-semibold text-slate-700">Processing Rounds</label>
+                <p className="text-xs text-slate-500">
+                  Number of iterative refinement rounds. Higher values improve quality but increase cost.
+                </p>
+                <div className="flex items-center gap-4 mt-2">
+                  <Input
+                    type="number"
+                    min={1}
+                    max={5}
+                    value={maxRounds}
+                    onChange={(e) => setMaxRounds(Math.min(5, Math.max(1, parseInt(e.target.value) || 1)))}
+                    className="w-20 text-center"
+                  />
+                  <span className="text-sm text-slate-500">rounds (1-5)</span>
+                </div>
+              </div>
+
+              {/* Debug Bundle */}
+              <div className="space-y-2">
+                <label className="text-sm font-semibold text-slate-700">Debug Bundle</label>
+                <p className="text-xs text-slate-500">
+                  Capture all agent prompts, responses, and intermediate outputs for debugging.
+                </p>
+                <label className="flex items-center gap-3 mt-2 cursor-pointer">
+                  <input
+                    type="checkbox"
+                    checked={generateDebugBundle}
+                    onChange={(e) => setGenerateDebugBundle(e.target.checked)}
+                    className="w-4 h-4 rounded border-slate-300 text-uic-blue focus:ring-uic-blue"
+                  />
+                  <span className="text-sm text-slate-700">Enable debug bundle generation</span>
+                </label>
+              </div>
+            </div>
+
+            {/* Footer */}
+            <div className="px-6 py-4 bg-slate-50 border-t border-slate-200 flex justify-end">
+              <Button
+                onClick={() => setShowAdvancedSettings(false)}
+                className="bg-uic-blue hover:bg-uic-blue/90"
+              >
+                Done
+              </Button>
+            </div>
+            </motion.div>
+          </div>
+        </>
+      )}
+    </AnimatePresence>
+  );
 
   return (
     <div className="flex flex-col h-screen bg-slate-100">
@@ -316,6 +504,30 @@ export function ViewerPage() {
 
           <div className="h-6 w-px bg-slate-200" />
 
+          {/* Advanced Settings Button */}
+          <Button
+            variant="outline"
+            size="sm"
+            onClick={() => setShowAdvancedSettings(true)}
+            title="Advanced Settings"
+            className="gap-2"
+          >
+            <Settings className="w-4 h-4" />
+            <span className="text-xs">
+              {maxRounds > 1 || generateDebugBundle ? (
+                <span className="text-uic-blue font-medium">
+                  {maxRounds > 1 ? `${maxRounds}R` : ''}
+                  {maxRounds > 1 && generateDebugBundle ? ' · ' : ''}
+                  {generateDebugBundle ? 'Debug' : ''}
+                </span>
+              ) : (
+                'Settings'
+              )}
+            </span>
+          </Button>
+
+          <div className="h-6 w-px bg-slate-200" />
+
           {/* File Upload */}
           <div className="flex items-center gap-2">
             <input
@@ -351,23 +563,41 @@ export function ViewerPage() {
 
           <div className="flex-1" />
 
-          {/* Control buttons */}
-          <div className="flex items-center gap-2">
+          {/* Control buttons - icon-only for compact layout */}
+          <div className="flex items-center gap-1">
+            <Button
+              variant="outline"
+              size="icon"
+              onClick={handleNewJob}
+              disabled={uploading}
+              title="New Job - Clear current job and start fresh"
+              aria-label="New Job"
+            >
+              <RotateCcw className="w-4 h-4" />
+            </Button>
             {status === 'connected' ? (
-              <Button variant="outline" onClick={disconnect}>
-                <Square className="w-4 h-4 mr-2" />
-                Stop
+              <Button
+                variant="outline"
+                size="icon"
+                onClick={disconnect}
+                title="Stop - Disconnect from stream"
+                aria-label="Stop"
+              >
+                <Square className="w-4 h-4" />
               </Button>
             ) : (
               <Button
                 variant="outline"
+                size="icon"
                 onClick={connect}
                 disabled={!activeJobId || !apiKey || status === 'connecting'}
+                title="Reconnect - Resume watching job"
+                aria-label="Reconnect"
               >
-                <RefreshCw className="w-4 h-4 mr-2" />
-                Reconnect
+                <RefreshCw className="w-4 h-4" />
               </Button>
             )}
+
           </div>
         </div>
       </div>
@@ -418,7 +648,14 @@ export function ViewerPage() {
                   <FileText className="w-5 h-5" />
                   <span className="font-semibold">Markdown Output</span>
                 </div>
-                <MarkdownViewer content={finalMarkdown} className="flex-1" />
+                <MarkdownViewer
+                  content={finalMarkdown}
+                  className="flex-1"
+                  isComplete={isProcessingComplete}
+                  showDebugDownload={generateDebugBundle}
+                  onDownloadMarkdown={handleDownloadMarkdown}
+                  onDownloadDebug={handleDownloadDebugBundle}
+                />
                 </motion.div>
               </section>
             </Panel>
@@ -482,6 +719,9 @@ export function ViewerPage() {
         page={agentModal.page}
         events={agentModal.events}
       />
+
+      {/* Advanced Settings Modal */}
+      <AdvancedSettingsModal />
     </div>
   );
 }

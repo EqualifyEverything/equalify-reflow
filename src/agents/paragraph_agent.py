@@ -8,9 +8,10 @@ apply edits based on confidence thresholds.
 ## Subagent Delegation Pattern
 
 1. Agent receives page with paragraph tasks
-2. Agent calls appropriate subagent tool for each task
-3. Subagent returns recommendation with confidence score
-4. Agent reviews and decides based on thresholds:
+2. Subagents are invoked IN PARALLEL before the main agent runs
+3. Pre-computed results are stored in deps.precomputed_subagent_results
+4. When agent calls subagent tools, they return pre-computed results instantly
+5. Agent reviews and decides based on thresholds:
    - >= 0.8: Auto-apply (needs_review=False)
    - >= 0.5: Apply with review flag (needs_review=True)
    - < 0.5: Skip, log for manual review
@@ -20,13 +21,14 @@ All edits go through the validation gate before being committed.
 
 from __future__ import annotations
 
+import asyncio
 import logging
 import re
 import time
 from dataclasses import dataclass, field
 from datetime import UTC, datetime
 from io import BytesIO
-from typing import TYPE_CHECKING
+from typing import TYPE_CHECKING, Any
 
 from pydantic import BaseModel, Field
 from pydantic_ai import Agent, RunContext
@@ -52,6 +54,7 @@ from .models import (
     Ledger,
     LedgerEntry,
     LLMCallRecord,
+    Task,
     TaskType,
 )
 from .subagents import (
@@ -62,6 +65,7 @@ from .subagents import (
     invoke_list_subagent,
     invoke_page_artifact_subagent,
     invoke_typography_subagent,
+    invoke_typography_subagent_batch,
 )
 from .subagents.types import (
     CitationResult,
@@ -190,6 +194,10 @@ class ParagraphAgentDeps:
     # Context
     dictionary: list[str] = field(default_factory=list)
     event_bus: EventBus | None = None
+
+    # Pre-computed subagent results (populated by _run_subagents_parallel)
+    # Keys are task identifiers, values are subagent result objects
+    precomputed_subagent_results: dict[str, Any] = field(default_factory=dict)
 
 
 # =============================================================================
@@ -392,12 +400,23 @@ async def remove_page_artifacts_tool(
     Invokes a specialized subagent that analyzes the text and page image
     to identify and remove extraction artifacts.
 
+    Note: Results may be pre-computed in parallel before this tool is called.
+    The tool checks for pre-computed results first and returns them instantly.
+
     Args:
         text_region: The markdown text that may contain artifacts
 
     Returns:
         PageArtifactResult with cleaned text and confidence score
     """
+    # Check for pre-computed result from parallel execution
+    for key, result in ctx.deps.precomputed_subagent_results.items():
+        if key.startswith(TaskType.PAGE_ARTIFACT_REMOVAL.value + ":"):
+            if isinstance(result, PageArtifactResult):
+                logger.debug(f"Using pre-computed page artifact result for {key}")
+                return result
+
+    # Fallback to direct invocation if no pre-computed result
     result = await invoke_page_artifact_subagent(
         text_region=text_region,
         page_image=ctx.deps.page_image,
@@ -414,9 +433,20 @@ async def correct_footnote_tool(
     Invokes a specialized subagent that finds footnote markers,
     locates definitions, and creates proper markdown linking.
 
+    Note: Results may be pre-computed in parallel before this tool is called.
+    The tool checks for pre-computed results first and returns them instantly.
+
     Returns:
         FootnoteResult with corrected markdown and confidence score
     """
+    # Check for pre-computed result from parallel execution
+    for key, result in ctx.deps.precomputed_subagent_results.items():
+        if key.startswith(TaskType.FOOTNOTE_CORRECTION.value + ":"):
+            if isinstance(result, FootnoteResult):
+                logger.debug(f"Using pre-computed footnote result for {key}")
+                return result
+
+    # Fallback to direct invocation if no pre-computed result
     result = await invoke_footnote_subagent(
         page_markdown=ctx.deps.current_markdown,
         page_image=ctx.deps.page_image,
@@ -434,9 +464,20 @@ async def fix_citation_links_tool(
     and matches them to references. Uses full document context
     to locate the bibliography section.
 
+    Note: Results may be pre-computed in parallel before this tool is called.
+    The tool checks for pre-computed results first and returns them instantly.
+
     Returns:
         CitationResult with linked citations and confidence score
     """
+    # Check for pre-computed result from parallel execution
+    for key, result in ctx.deps.precomputed_subagent_results.items():
+        if key.startswith(TaskType.CITATION_LINKING.value + ":"):
+            if isinstance(result, CitationResult):
+                logger.debug(f"Using pre-computed citation result for {key}")
+                return result
+
+    # Fallback to direct invocation if no pre-computed result
     result = await invoke_citation_subagent(
         page_markdown=ctx.deps.current_markdown,
         page_image=ctx.deps.page_image,
@@ -455,12 +496,23 @@ async def fix_list_semantics_tool(
     Invokes a specialized subagent that compares the visual
     list layout to the markdown structure.
 
+    Note: Results may be pre-computed in parallel before this tool is called.
+    The tool checks for pre-computed results first and returns them instantly.
+
     Args:
         list_markdown: The list section to analyze
 
     Returns:
         ListResult with corrected structure and confidence score
     """
+    # Check for pre-computed result from parallel execution
+    for key, result in ctx.deps.precomputed_subagent_results.items():
+        if key.startswith(TaskType.LIST_FIX.value + ":"):
+            if isinstance(result, ListResult):
+                logger.debug(f"Using pre-computed list result for {key}")
+                return result
+
+    # Fallback to direct invocation if no pre-computed result
     result = await invoke_list_subagent(
         list_markdown=list_markdown,
         page_image=ctx.deps.page_image,
@@ -478,18 +530,300 @@ async def fix_typography_tool(
     Invokes a specialized subagent that compares visual
     formatting to markdown and identifies semantic formatting.
 
+    Note: Results may be pre-computed in parallel before this tool is called.
+    The tool checks for pre-computed results first and returns them instantly.
+
     Args:
         text_region: The text to analyze for formatting
 
     Returns:
         TypographyResult with formatted text and confidence score
     """
+    # Check for pre-computed result from parallel execution
+    for key, result in ctx.deps.precomputed_subagent_results.items():
+        if key.startswith(TaskType.TYPOGRAPHY_FIX.value + ":"):
+            if isinstance(result, TypographyResult):
+                logger.debug(f"Using pre-computed typography result for {key}")
+                return result
+
+    # Fallback to direct invocation if no pre-computed result
     result = await invoke_typography_subagent(
         text_region=text_region,
         page_image=ctx.deps.page_image,
     )
 
     return result
+
+
+# =============================================================================
+# Parallel Subagent Execution
+# =============================================================================
+
+# Maximum concurrent subagent calls (for rate limiting)
+MAX_CONCURRENT_SUBAGENTS = 5
+
+
+def _get_subagent_key(task_type: TaskType, target: str) -> str:
+    """Generate a unique key for storing pre-computed subagent results.
+
+    Args:
+        task_type: The TaskType of the task
+        target: The task target identifier
+
+    Returns:
+        A unique string key for the result cache
+    """
+    return f"{task_type.value}:{target}"
+
+
+async def _run_subagents_parallel(
+    job: Job,
+    deps: ParagraphAgentDeps,
+) -> dict[str, Any]:
+    """Run subagent calls in parallel before the main agent reasoning loop.
+
+    This function groups tasks by type and invokes the appropriate subagent
+    for each task type concurrently. Results are stored in a dict keyed by
+    task identifier for fast lookup by the tool functions.
+
+    Typography tasks are batched into a single LLM call when there are multiple,
+    reducing token usage by 30-40%.
+
+    Args:
+        job: The Job containing tasks to process
+        deps: ParagraphAgentDeps with page image and markdown
+
+    Returns:
+        Dict mapping task keys to their subagent results
+    """
+    if not job.tasks:
+        return {}
+
+    # Separate typography tasks from other tasks for batch processing
+    typography_tasks: list[Task] = []
+    other_tasks: list[Task] = []
+
+    for task in job.tasks:
+        if task.task_type == TaskType.TYPOGRAPHY_FIX:
+            typography_tasks.append(task)
+        else:
+            other_tasks.append(task)
+
+    results: dict[str, Any] = {}
+
+    # Single task optimization: skip parallelization overhead
+    if len(job.tasks) == 1 and not typography_tasks:
+        task = job.tasks[0]
+        result = await _invoke_subagent_for_task(task, deps)
+        key = _get_subagent_key(task.task_type, task.target)
+        return {key: result}
+
+    # Semaphore to limit concurrent calls
+    semaphore = asyncio.Semaphore(MAX_CONCURRENT_SUBAGENTS)
+
+    async def run_with_semaphore(task: Task) -> tuple[str, Any]:
+        """Run a single subagent call with semaphore limiting."""
+        async with semaphore:
+            result = await _invoke_subagent_for_task(task, deps)
+            key = _get_subagent_key(task.task_type, task.target)
+            return key, result
+
+    async def run_typography_batch() -> dict[str, Any]:
+        """Run typography tasks as a batch."""
+        if not typography_tasks:
+            return {}
+
+        # Build list of (task_target, text_region) tuples
+        text_regions: list[tuple[str, str]] = []
+        for task in typography_tasks:
+            text_region = task.context if task.context else deps.current_markdown
+            text_regions.append((task.target, text_region))
+
+        # Call batch function
+        async with semaphore:
+            batch_results = await invoke_typography_subagent_batch(
+                text_regions=text_regions,
+                page_image=deps.page_image,
+            )
+
+        # Map results back to task keys
+        batch_dict: dict[str, Any] = {}
+        for task_target, result in batch_results:
+            # Find the corresponding task to get the proper key
+            for task in typography_tasks:
+                if task.target == task_target:
+                    key = _get_subagent_key(task.task_type, task.target)
+                    batch_dict[key] = result
+                    break
+
+        return batch_dict
+
+    # Build list of coroutines to run
+    coroutines: list = []
+
+    # Add individual non-typography tasks
+    for task in other_tasks:
+        coroutines.append(run_with_semaphore(task))
+
+    # Add batch typography task if there are typography tasks
+    if typography_tasks:
+        logger.info(
+            f"Batching {len(typography_tasks)} typography tasks into single LLM call"
+        )
+        coroutines.append(run_typography_batch())
+
+    # Run all coroutines in parallel
+    results_list = await asyncio.gather(*coroutines, return_exceptions=True)
+
+    # Process results for non-typography tasks
+    non_typo_results = results_list[: len(other_tasks)]
+    for i, result in enumerate(non_typo_results):
+        task = other_tasks[i]
+        key = _get_subagent_key(task.task_type, task.target)
+
+        if isinstance(result, Exception):
+            logger.warning(
+                f"Subagent for task {task.task_type.value} failed: {result}"
+            )
+            results[key] = _create_failed_result(task.task_type, str(result), deps)
+        else:
+            # Result is a tuple of (key, actual_result)
+            result_tuple: tuple[str, Any] = result  # type: ignore[assignment]
+            _, actual_result = result_tuple
+            results[key] = actual_result
+
+    # Process typography batch results
+    if typography_tasks:
+        typo_result = results_list[-1]
+        if isinstance(typo_result, Exception):
+            logger.warning(f"Typography batch failed: {typo_result}")
+            # Create failed results for all typography tasks
+            for task in typography_tasks:
+                key = _get_subagent_key(task.task_type, task.target)
+                results[key] = _create_failed_result(
+                    task.task_type, str(typo_result), deps
+                )
+        else:
+            # Merge batch results into main results dict
+            typo_dict: dict[str, Any] = typo_result  # type: ignore[assignment]
+            results.update(typo_dict)
+
+    return results
+
+
+async def _invoke_subagent_for_task(
+    task: Task,
+    deps: ParagraphAgentDeps,
+) -> Any:
+    """Invoke the appropriate subagent based on task type.
+
+    Args:
+        task: The task to process
+        deps: ParagraphAgentDeps with page image and markdown
+
+    Returns:
+        The subagent result (type depends on task_type)
+    """
+    task_type = task.task_type
+
+    if task_type == TaskType.PAGE_ARTIFACT_REMOVAL:
+        # Use task context as text region, or fall back to markdown
+        text_region = task.context if task.context else deps.current_markdown
+        return await invoke_page_artifact_subagent(
+            text_region=text_region,
+            page_image=deps.page_image,
+        )
+
+    elif task_type == TaskType.FOOTNOTE_CORRECTION:
+        return await invoke_footnote_subagent(
+            page_markdown=deps.current_markdown,
+            page_image=deps.page_image,
+        )
+
+    elif task_type == TaskType.CITATION_LINKING:
+        return await invoke_citation_subagent(
+            page_markdown=deps.current_markdown,
+            page_image=deps.page_image,
+            full_document=deps.full_document_markdown,
+        )
+
+    elif task_type == TaskType.LIST_FIX:
+        # Use task context as list markdown, or fall back to full markdown
+        list_markdown = task.context if task.context else deps.current_markdown
+        return await invoke_list_subagent(
+            list_markdown=list_markdown,
+            page_image=deps.page_image,
+        )
+
+    elif task_type == TaskType.TYPOGRAPHY_FIX:
+        # Use task context as text region, or fall back to markdown
+        text_region = task.context if task.context else deps.current_markdown
+        return await invoke_typography_subagent(
+            text_region=text_region,
+            page_image=deps.page_image,
+        )
+
+    else:
+        # Unsupported task type for parallel execution
+        logger.warning(f"Unsupported task type for parallel execution: {task_type}")
+        return None
+
+
+def _create_failed_result(
+    task_type: TaskType,
+    error_message: str,
+    deps: ParagraphAgentDeps,
+) -> Any:
+    """Create a failed result for a subagent that raised an exception.
+
+    Args:
+        task_type: The TaskType that failed
+        error_message: The error message
+        deps: ParagraphAgentDeps for fallback content
+
+    Returns:
+        An appropriate result object with confidence 0.0
+    """
+    if task_type == TaskType.PAGE_ARTIFACT_REMOVAL:
+        return PageArtifactResult(
+            confidence=0.0,
+            reasoning=f"Subagent error: {error_message}",
+            cleaned_text=deps.current_markdown,
+            artifacts_removed=[],
+            words_rejoined=[],
+        )
+    elif task_type == TaskType.FOOTNOTE_CORRECTION:
+        return FootnoteResult(
+            confidence=0.0,
+            reasoning=f"Subagent error: {error_message}",
+            corrected_markdown=deps.current_markdown,
+            footnotes_fixed=[],
+        )
+    elif task_type == TaskType.CITATION_LINKING:
+        return CitationResult(
+            confidence=0.0,
+            reasoning=f"Subagent error: {error_message}",
+            corrected_markdown=deps.current_markdown,
+            citations_linked=[],
+            bibliography_found=False,
+        )
+    elif task_type == TaskType.LIST_FIX:
+        return ListResult(
+            confidence=0.0,
+            reasoning=f"Subagent error: {error_message}",
+            corrected_markdown=deps.current_markdown,
+            issues_fixed=[],
+        )
+    elif task_type == TaskType.TYPOGRAPHY_FIX:
+        return TypographyResult(
+            confidence=0.0,
+            reasoning=f"Subagent error: {error_message}",
+            corrected_markdown=deps.current_markdown,
+            formatting_added=[],
+        )
+    else:
+        # Generic fallback
+        return None
 
 
 # =============================================================================
@@ -768,6 +1102,14 @@ async def execute_with_paragraph_agent(
         event_bus=event_bus,
     )
 
+    # Pre-compute subagent results in parallel before running the main agent
+    # This allows all subagent LLM calls to run concurrently instead of sequentially
+    logger.info(f"Running {len(job.tasks)} subagent(s) in parallel for page {job.page}")
+    deps.precomputed_subagent_results = await _run_subagents_parallel(job, deps)
+    logger.info(
+        f"Pre-computed {len(deps.precomputed_subagent_results)} subagent result(s)"
+    )
+
     # Build task prompt
     task_descriptions = "\n".join(
         f"- {t.task_type.value}: {t.context}" for t in job.tasks
@@ -927,6 +1269,7 @@ __all__ = [
     "PARAGRAPH_AGENT_SYSTEM_PROMPT",
     "CONFIDENCE_AUTO_APPLY",
     "CONFIDENCE_APPLY_WITH_REVIEW",
+    "MAX_CONCURRENT_SUBAGENTS",
     # Dependencies
     "ParagraphAgentDeps",
     # Output
@@ -938,6 +1281,11 @@ __all__ = [
     "ProposeEditResult",
     # Main functions
     "execute_with_paragraph_agent",
+    # Parallel execution (for testing)
+    "_run_subagents_parallel",
+    "_invoke_subagent_for_task",
+    "_get_subagent_key",
+    "_create_failed_result",
     # Agent (for testing)
     "_get_paragraph_agent",
     "reset_agent",

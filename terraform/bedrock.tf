@@ -12,8 +12,12 @@ resource "aws_iam_role_policy" "ecs_task_bedrock" {
       {
         Effect = "Allow"
         Action = [
-          "bedrock:InvokeModel",
-          "bedrock:InvokeModelWithResponseStream"
+          # Converse API (used by PydanticAI BedrockConverseModel)
+          "bedrock-runtime:Converse",
+          "bedrock-runtime:ConverseStream",
+          # InvokeModel API (fallback/legacy)
+          "bedrock-runtime:InvokeModel",
+          "bedrock-runtime:InvokeModelWithResponseStream"
         ]
         Resource = [
           # Claude 4.5 foundation models - ALL US regions for cross-region inference profiles

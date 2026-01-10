@@ -94,7 +94,7 @@ COPY src/ ./src/
 COPY config/ ./config/
 
 # Copy built frontend from frontend-builder stage
-COPY --from=frontend-builder /app/dist ./static/demo-ui
+COPY --from=frontend-builder /app/dist ./static/viewer
 
 # Health check for orchestration (ECS, Kubernetes, Docker Compose)
 # Checks /health endpoint every 30 seconds

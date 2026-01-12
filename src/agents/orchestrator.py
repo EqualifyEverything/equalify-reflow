@@ -19,6 +19,7 @@ from collections.abc import AsyncGenerator
 from typing import TYPE_CHECKING
 from uuid import uuid4
 
+from ..utils.confidence import calculate_confidence, collect_quality_signals
 from ..utils.confidence_scoring import calculate_confidence_from_verification
 from .events import (
     ConvergenceEvent,
@@ -1008,20 +1009,60 @@ async def run_agentic_pipeline(
         # Calculate cost (Haiku pricing)
         cost = (total_input_tokens * 0.00025 / 1000) + (total_output_tokens * 0.00125 / 1000)
 
-        # Calculate confidence from verification data
-        page_confidences = [pv.confidence for pv in verification.pages]
-        recovery_edits = recovery_report.total_recovery_edits if recovery_report else 0
+        # Calculate confidence using enhanced quality signals
+        # Collect metrics from processing state
+        tables_planned = sum(len(pp.tables) for pp in plan.pages.values())
+        tables_found = sum(
+            1 for page_md in final_markdowns.values()
+            if re.search(r'\|[^|]+\|', page_md)  # Simple table detection
+        )
+        total_images = sum(len(pp.figures) for pp in plan.pages.values())
+        images_with_alt = sum(
+            len(re.findall(r'!\[[^\]]+\]\([^)]+\)', page_md))
+            for page_md in final_markdowns.values()
+        )
+        headings_planned = len(plan.structure.outline) if plan.structure else 0
+        headings_found = sum(
+            len(re.findall(r'^#{1,6}\s', page_md, re.MULTILINE))
+            for page_md in final_markdowns.values()
+        )
 
-        confidence_score = calculate_confidence_from_verification(
+        # Collect quality signals
+        quality_signals = collect_quality_signals(
+            page_markdowns=final_markdowns,
+            vision_extraction_used=False,  # TODO: Pass from upstream when available
+            tables_planned=tables_planned,
+            tables_found=tables_found,
+            images_with_alt=images_with_alt,
+            total_images=total_images,
+            headings_planned=headings_planned,
+            headings_found=headings_found,
+        )
+
+        # Calculate confidence using hybrid approach (80% heuristics, 20% model)
+        # Use average page confidence as model self-assessment
+        page_confidences = [pv.confidence for pv in verification.pages]
+        avg_page_confidence = sum(page_confidences) / len(page_confidences) if page_confidences else 0.5
+
+        confidence_score = calculate_confidence(
+            signals=quality_signals,
+            model_confidence=avg_page_confidence,
+        )
+
+        # Also calculate legacy confidence for comparison/logging
+        recovery_edits = recovery_report.total_recovery_edits if recovery_report else 0
+        legacy_confidence = calculate_confidence_from_verification(
             page_confidences=page_confidences,
             critical_issues_count=len(verification.critical_issues),
             recovery_edits=recovery_edits,
         )
 
         logger.info(
-            f"Calculated confidence: {confidence_score:.3f} "
-            f"(pages={len(page_confidences)}, critical={len(verification.critical_issues)}, "
-            f"recovery={recovery_edits})"
+            f"Confidence calculated: {confidence_score:.3f} (legacy: {legacy_confidence:.3f}) "
+            f"[chars/page={quality_signals.chars_per_page:.0f}, "
+            f"placeholders={quality_signals.placeholder_count}, "
+            f"tables={tables_found}/{tables_planned}, "
+            f"images_alt={images_with_alt}/{total_images}]"
         )
 
         # Aggregate all LLM calls from planning and execution
@@ -1346,13 +1387,40 @@ async def run_agentic_pipeline_with_streaming_handoff(
 
         cost = (total_input_tokens * 0.00025 / 1000) + (total_output_tokens * 0.00125 / 1000)
 
-        page_confidences = [pv.confidence for pv in verification.pages]
-        recovery_edits = recovery_report.total_recovery_edits if recovery_report else 0
+        # Calculate confidence using enhanced quality signals
+        tables_planned = sum(len(pp.tables) for pp in plan.pages.values())
+        tables_found = sum(
+            1 for page_md in final_markdowns.values()
+            if re.search(r'\|[^|]+\|', page_md)
+        )
+        total_images = sum(len(pp.figures) for pp in plan.pages.values())
+        images_with_alt = sum(
+            len(re.findall(r'!\[[^\]]+\]\([^)]+\)', page_md))
+            for page_md in final_markdowns.values()
+        )
+        headings_planned = len(plan.structure.outline) if plan.structure else 0
+        headings_found = sum(
+            len(re.findall(r'^#{1,6}\s', page_md, re.MULTILINE))
+            for page_md in final_markdowns.values()
+        )
 
-        confidence_score = calculate_confidence_from_verification(
-            page_confidences=page_confidences,
-            critical_issues_count=len(verification.critical_issues),
-            recovery_edits=recovery_edits,
+        quality_signals = collect_quality_signals(
+            page_markdowns=final_markdowns,
+            vision_extraction_used=False,
+            tables_planned=tables_planned,
+            tables_found=tables_found,
+            images_with_alt=images_with_alt,
+            total_images=total_images,
+            headings_planned=headings_planned,
+            headings_found=headings_found,
+        )
+
+        page_confidences = [pv.confidence for pv in verification.pages]
+        avg_page_confidence = sum(page_confidences) / len(page_confidences) if page_confidences else 0.5
+
+        confidence_score = calculate_confidence(
+            signals=quality_signals,
+            model_confidence=avg_page_confidence,
         )
 
         # Sort all LLM calls by timestamp

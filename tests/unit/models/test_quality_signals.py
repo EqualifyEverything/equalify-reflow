@@ -123,12 +123,24 @@ class TestQualitySignalsSerialization:
 
         data = signals.model_dump()
 
-        assert data == {
-            "image_clarity": "blurry",
-            "text_legibility": "faded",
-            "structure_complexity": "complex",
-            "content_ambiguity": "highly_ambiguous",
-        }
+        # Check original quality signal fields
+        assert data["image_clarity"] == "blurry"
+        assert data["text_legibility"] == "faded"
+        assert data["structure_complexity"] == "complex"
+        assert data["content_ambiguity"] == "highly_ambiguous"
+
+        # Check new extraction metric fields have defaults
+        assert data["chars_per_page"] == 500.0
+        assert data["vision_extraction_used"] is False
+        assert data["placeholder_count"] == 0
+        assert data["total_elements"] == 1
+        assert data["spacing_artifact_count"] == 0
+        assert data["tables_found"] == 0
+        assert data["tables_planned"] == 0
+        assert data["images_with_alt"] == 0
+        assert data["total_images"] == 0
+        assert data["headings_found"] == 0
+        assert data["headings_planned"] == 0
 
     def test_serialize_to_json(self) -> None:
         """QualitySignals should serialize to JSON."""

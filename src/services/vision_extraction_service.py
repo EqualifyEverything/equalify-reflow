@@ -13,6 +13,7 @@ from __future__ import annotations
 import asyncio
 import base64
 import logging
+import re
 import time
 from dataclasses import dataclass
 from enum import Enum
@@ -173,7 +174,12 @@ def get_prompt_for_document_type(doc_type: VisualDocumentType) -> str:
 
 
 def is_scanned_pdf(docling_markdown: str, total_pages: int) -> bool:
-    """Detect if PDF is scanned based on extracted text density.
+    """Detect if PDF is scanned based on ACTUAL text density (excluding markup).
+
+    Strips HTML comments (<!-- image --> placeholders) and markdown image
+    references before calculating characters per page. This prevents scanned
+    documents with only image placeholders from being incorrectly classified
+    as having extractable text.
 
     Args:
         docling_markdown: Full markdown extracted by Docling
@@ -185,11 +191,18 @@ def is_scanned_pdf(docling_markdown: str, total_pages: int) -> bool:
     if total_pages == 0:
         return True
 
-    chars_per_page = len(docling_markdown) / total_pages
+    # Strip HTML comments (<!-- image --> placeholders from Docling)
+    text_only = re.sub(r"<!--.*?-->", "", docling_markdown)
+    # Strip markdown image references ![...](...)
+    text_only = re.sub(r"!\[.*?\]\(.*?\)", "", text_only)
+    # Strip remaining whitespace
+    text_only = text_only.strip()
+
+    chars_per_page = len(text_only) / total_pages
     is_scanned = chars_per_page < SCANNED_THRESHOLD_CHARS_PER_PAGE
 
     logger.info(
-        f"Scanned PDF detection: {len(docling_markdown)} chars / {total_pages} pages "
+        f"Scanned PDF detection: {len(text_only)} text chars / {total_pages} pages "
         f"= {chars_per_page:.1f} chars/page (threshold={SCANNED_THRESHOLD_CHARS_PER_PAGE}) "
         f"-> is_scanned={is_scanned}"
     )

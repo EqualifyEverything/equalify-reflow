@@ -30,6 +30,43 @@ def normalize_unicode(text: str) -> str:
     return unicodedata.normalize('NFKC', text)
 
 
+def collapse_letter_spacing(text: str) -> str:
+    """Collapse letter-spaced text back to normal words.
+
+    Some PDFs (especially PowerPoint exports) have letter-spacing styling that
+    gets baked into the text as actual space characters. This breaks screen
+    readers and text search.
+
+    Example:
+        "r e q u i r e m e n t s" → "requirements"
+        "H a s   d e t e r m i n e d" → "Has determined"
+
+    The pattern matches sequences of 4+ single letters separated by spaces.
+    This is safe because normal English words have consecutive letters,
+    while letter-spaced text alternates single-letter + space.
+
+    Args:
+        text: Input text with potential letter-spacing issues
+
+    Returns:
+        Text with letter-spacing collapsed
+
+    Examples:
+        >>> collapse_letter_spacing("the r e q u i r e m e n t s are met")
+        'the requirements are met'
+        >>> collapse_letter_spacing("normal text stays unchanged")
+        'normal text stays unchanged'
+    """
+    # Pattern matches: single letter, space, repeated 3+ times, ending with letter
+    # e.g., "r e q u i r e m e n t s" (at least 4 letters = 3 spaces minimum)
+    pattern = r'\b((?:[a-zA-Z] ){3,}[a-zA-Z])\b'
+
+    def collapse_match(match: re.Match[str]) -> str:
+        return match.group(0).replace(' ', '')
+
+    return re.sub(pattern, collapse_match, text)
+
+
 def fix_excessive_whitespace(text: str) -> str:
     """Remove excessive whitespace while preserving paragraph breaks.
 
@@ -172,10 +209,11 @@ def cleanup_markdown(text: str, log_warnings: bool = True) -> str:
     original_length = len(text)
 
     # Apply ONLY safe fixes that cannot introduce errors
-    text = normalize_quotes(text)        # SAFE: Always correct
-    text = normalize_unicode(text)       # SAFE: Canonical forms
-    text = fix_excessive_whitespace(text) # SAFE: Whitespace cleanup
-    text = fix_url_formatting(text)      # SAFE: Add protocols
+    text = normalize_quotes(text)         # SAFE: Always correct
+    text = normalize_unicode(text)        # SAFE: Canonical forms
+    text = collapse_letter_spacing(text)  # SAFE: Fix OCR letter-spacing
+    text = fix_excessive_whitespace(text)  # SAFE: Whitespace cleanup
+    text = fix_url_formatting(text)       # SAFE: Add protocols
 
     # LLM handles context-aware fixes (hyphenation, bibliography formatting)
 

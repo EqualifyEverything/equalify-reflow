@@ -2,6 +2,7 @@
 
 from src.utils.text_cleanup import (
     cleanup_markdown,
+    collapse_letter_spacing,
     fix_excessive_whitespace,
     fix_url_formatting,
     normalize_quotes,
@@ -30,10 +31,74 @@ class TestNormalizeUnicode:
         assert isinstance(result, str)
 
 
+class TestCollapseLetterSpacing:
+    """Tests for letter-spacing collapse."""
+
+    def test_collapses_spaced_word(self) -> None:
+        """Basic letter-spaced word should be collapsed."""
+        text = "the r e q u i r e m e n t s are met"
+        result = collapse_letter_spacing(text)
+        assert result == "the requirements are met"
+
+    def test_collapses_multiple_spaced_words(self) -> None:
+        """Multiple letter-spaced words in one text."""
+        # Note: "H a s" (3 letters) is below threshold, but "d e t e r m i n e d" (10 letters) is not
+        text = "H a s   d e t e r m i n e d its curriculum"
+        result = collapse_letter_spacing(text)
+        # Only "determined" gets collapsed, "H a s" is preserved (too short)
+        assert result == "H a s   determined its curriculum"
+
+    def test_preserves_normal_text(self) -> None:
+        """Normal text should not be affected."""
+        text = "normal text stays unchanged"
+        assert collapse_letter_spacing(text) == text
+
+    def test_preserves_short_sequences(self) -> None:
+        """Short sequences (3 letters or less) should not be collapsed."""
+        # "a b c" has only 2 spaces, minimum is 3 for safety
+        text = "a b c should stay"
+        assert collapse_letter_spacing(text) == text
+
+    def test_collapses_minimum_length(self) -> None:
+        """Sequences with 4+ letters should be collapsed."""
+        # "a b c d" has 3 spaces = minimum
+        text = "word a b c d word"
+        result = collapse_letter_spacing(text)
+        assert result == "word abcd word"
+
+    def test_handles_mixed_case(self) -> None:
+        """Mixed case letter-spacing should work."""
+        text = "P r o f e s s i o n a l Licensure"
+        result = collapse_letter_spacing(text)
+        assert result == "Professional Licensure"
+
+    def test_real_world_example(self) -> None:
+        """Test with actual OCR artifact from Professional Licensure PDF."""
+        text = "Has determined its curriculum meets the educational r e q u i r e m e n t s"
+        result = collapse_letter_spacing(text)
+        assert result == "Has determined its curriculum meets the educational requirements"
+
+    def test_preserves_markdown_structure(self) -> None:
+        """Should not break markdown formatting."""
+        text = "# H e a d i n g\n\nParagraph with s p a c e d words."
+        result = collapse_letter_spacing(text)
+        assert "# Heading" in result
+        assert "spaced" in result
+
+    def test_handles_empty_string(self) -> None:
+        """Empty string should return empty string."""
+        assert collapse_letter_spacing("") == ""
+
+    def test_handles_only_spaces(self) -> None:
+        """String with only spaces should return as-is."""
+        text = "   "
+        assert collapse_letter_spacing(text) == text
+
+
 class TestFixExcessiveWhitespace:
     """Tests for whitespace cleanup."""
 
-    def test_removes_multiple_spaces(self):
+    def test_removes_multiple_spaces(self) -> None:
         text = "hello    world"
         assert fix_excessive_whitespace(text) == "hello world"
 
@@ -201,9 +266,20 @@ population research."""
         assert "Dimen-" in result  # Hyphenation preserved
         assert "computa-" in result  # Hyphenation preserved
 
-    def test_url_and_quote_cleanup(self):
+    def test_url_and_quote_cleanup(self) -> None:
         text = 'Visit http://yt-project.org/ for \u201cmore info\u201d.'
         result = cleanup_markdown(text, log_warnings=False)
 
         # Quotes should be normalized (SAFE operation)
         assert '"more info"' in result
+
+    def test_letter_spacing_cleanup(self) -> None:
+        """Letter-spaced text from OCR should be collapsed."""
+        text = "The P r o f e s s i o n a l Licensure program has r e q u i r e m e n t s."
+        result = cleanup_markdown(text, log_warnings=False)
+
+        # Letter-spacing should be collapsed (SAFE operation)
+        assert "Professional" in result
+        assert "requirements" in result
+        # Original spaced text should be gone
+        assert "P r o f e s s i o n a l" not in result

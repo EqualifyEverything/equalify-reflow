@@ -293,7 +293,7 @@ def auto_fix_minor_issues(text: str) -> str:
     lines = [line.rstrip() for line in lines]
 
     # Remove excessive blank lines (more than 2)
-    result = []
+    result: list[str] = []
     blank_count = 0
     for line in lines:
         if not line:

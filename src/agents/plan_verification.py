@@ -528,7 +528,7 @@ def _extract_nth_table(markdown: str, n: int) -> str | None:
         re.MULTILINE,
     )
 
-    tables = table_pattern.findall(markdown)
+    tables: list[str] = table_pattern.findall(markdown)
     if 1 <= n <= len(tables):
         return tables[n - 1].strip()
 

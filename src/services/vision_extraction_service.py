@@ -15,6 +15,7 @@ import base64
 import logging
 import re
 import time
+from collections.abc import Callable
 from dataclasses import dataclass
 from enum import Enum
 
@@ -411,7 +412,7 @@ async def extract_all_pages_vision(
     page_images_base64: dict[int, str],
     document_type: str = "document",
     max_concurrent: int = 3,
-    on_page_complete: callable | None = None,
+    on_page_complete: Callable[[int, str, bool], None] | None = None,
     filename: str = "",
     auto_detect_visual_type: bool = True,
 ) -> tuple[dict[int, str], VisionExtractionStats]:
@@ -491,7 +492,7 @@ async def extract_all_pages_vision(
     for i, task_result in enumerate(task_results):
         page_num = sorted(page_images_base64.keys())[i]
 
-        if isinstance(task_result, Exception):
+        if isinstance(task_result, BaseException):
             logger.error(f"Page {page_num} extraction exception: {task_result}")
             page_markdowns[page_num] = f"<!-- Page {page_num} extraction failed: {task_result} -->"
         else:

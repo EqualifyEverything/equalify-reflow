@@ -403,7 +403,7 @@ class ReviewChecklist(BaseModel):
                 "summary": "3 items need review: 1 figures, 2 typography",
                 "by_category": {"alt_text": [], "ocr": []},
                 "by_agent": {"figures": [], "typography": []},
-                "by_page": {1: [], 3: []},
+                "by_page": {1: [], 3: []},  # type: ignore[dict-item]  # int keys valid at runtime
                 "total_items": 3,
                 "critical_items": 0,
                 "completed_items": 0

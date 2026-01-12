@@ -336,7 +336,7 @@ def _get_document_worker_agent() -> Agent[DocumentWorkerDeps, None]:
         # Use REASONING tier (Sonnet) for quality document-level fixes
         model = BedrockConverseModel(MODEL_TIER_MAP[ModelTier.REASONING])
 
-        _document_worker_agent = Agent(
+        _document_worker_agent = Agent(  # type: ignore[call-overload]
             model=model,
             deps_type=DocumentWorkerDeps,
             output_type=None,

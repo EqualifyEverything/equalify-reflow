@@ -61,14 +61,14 @@ class DocumentProcessingService:
 
     def __init__(
         self,
-        redis_client: Redis,
+        redis_client: Redis[Any] | None,
         storage_service: Any,  # StorageService
         s3_url_service: Any,  # S3URLService
     ) -> None:
         """Initialize document processing service.
 
         Args:
-            redis_client: Redis async client for job state
+            redis_client: Redis async client for job state (optional for read-only ops)
             storage_service: Storage service for S3 operations
             s3_url_service: Service for generating S3 URLs
         """
@@ -109,7 +109,7 @@ class DocumentProcessingService:
         """
         # Import here to avoid circular imports
         from docling.datamodel.base_models import InputFormat
-        from docling.datamodel.document import DocumentStream
+        from docling.datamodel.document import DocumentStream  # type: ignore[attr-defined]
         from docling.datamodel.pipeline_options import PdfPipelineOptions
         from docling.document_converter import DocumentConverter, PdfFormatOption
         from PIL import Image
@@ -390,6 +390,7 @@ class DocumentProcessingService:
             )
 
             # Check if debug bundle was requested
+            assert self.redis is not None, "Redis client required for process_document"
             job_key = f"{self.status_prefix}{job_id}"
             debug_bundle_requested = await self.redis.hget(job_key, "debug_bundle_requested")
             capture_debug = debug_bundle_requested == b"true" or debug_bundle_requested == "true"
@@ -525,6 +526,7 @@ class DocumentProcessingService:
             elif value is not None:
                 update_data[key] = str(value)
 
+        assert self.redis is not None, "Redis client required for _update_job_status"
         await self.redis.hset(f"{self.status_prefix}{job_id}", mapping=update_data)
 
         # Set TTL based on status if changed
@@ -540,6 +542,7 @@ class DocumentProcessingService:
         else:
             ttl = settings.job_ttl_active
 
+        assert self.redis is not None, "Redis client required for _set_job_ttl"
         await self.redis.expire(f"{self.status_prefix}{job_id}", ttl)
 
     async def _store_ledger(self, job_id: str, result: ProcessingResult) -> str:
@@ -632,7 +635,8 @@ class DocumentProcessingService:
 
         try:
             content = await self.storage.download_file(s3_key)
-            return json.loads(content.decode("utf-8"))
+            result: dict[str, Any] = json.loads(content.decode("utf-8"))
+            return result
         except Exception as e:
             logger.warning(f"Failed to retrieve ledger for job {job_id}: {e}")
             return None
@@ -712,9 +716,7 @@ class DocumentProcessingService:
         verification = VerificationReport(
             document_id=job_id,
             passed=True,
-            issues_found=0,
-            confidence_scores={},
-            accuracy_estimate=round_result.final_quality,
+            total_issues=0,
         )
 
         # Calculate approximate cost (rough estimate based on tokens)

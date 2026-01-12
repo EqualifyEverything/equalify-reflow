@@ -16,7 +16,7 @@ from __future__ import annotations
 
 import logging
 import time
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from io import BytesIO
 from typing import TYPE_CHECKING
 
@@ -79,14 +79,8 @@ class RecoveryDeps:
     event_bus: EventBus | None = None
 
     # Mutable state
-    edits_applied: list[RecoveryEdit] = None
-    caveats: list[str] = None
-
-    def __post_init__(self):
-        if self.edits_applied is None:
-            self.edits_applied = []
-        if self.caveats is None:
-            self.caveats = []
+    edits_applied: list[RecoveryEdit] = field(default_factory=list)
+    caveats: list[str] = field(default_factory=list)
 
 
 # =============================================================================

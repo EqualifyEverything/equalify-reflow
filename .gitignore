@@ -126,6 +126,14 @@ credentials/
 *.cer
 *.der
 
+# Terraform
+terraform/.terraform/
+terraform/*.tfstate
+terraform/*.tfstate.*
+terraform/terraform.tfvars
+terraform/.terraform.lock.hcl
+!terraform/terraform.tfvars.example
+
 # Node.js (for future frontend)
 node_modules/
 npm-debug.log

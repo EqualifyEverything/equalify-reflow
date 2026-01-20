@@ -17,7 +17,10 @@ resource "aws_iam_role_policy" "ecs_task_bedrock" {
           "bedrock-runtime:ConverseStream",
           # InvokeModel API (fallback/legacy)
           "bedrock-runtime:InvokeModel",
-          "bedrock-runtime:InvokeModelWithResponseStream"
+          "bedrock-runtime:InvokeModelWithResponseStream",
+          # Bedrock inference profiles may require bedrock: namespace actions
+          "bedrock:InvokeModel",
+          "bedrock:Converse"
         ]
         Resource = [
           # Claude 4.5 foundation models - ALL US regions for cross-region inference profiles
@@ -28,8 +31,9 @@ resource "aws_iam_role_policy" "ecs_task_bedrock" {
           "arn:aws:bedrock:us-east-2::foundation-model/anthropic.claude-haiku-4-5-*",
           "arn:aws:bedrock:us-west-2::foundation-model/anthropic.claude-haiku-4-5-*",
           # Inference profiles (Claude 4.5 - cross-region routing)
-          "arn:aws:bedrock:${var.aws_region}:${data.aws_caller_identity.current.account_id}:inference-profile/us.anthropic.claude-sonnet-4-5-*",
-          "arn:aws:bedrock:${var.aws_region}:${data.aws_caller_identity.current.account_id}:inference-profile/us.anthropic.claude-haiku-4-5-*"
+          # Use broad wildcard to match versioned profiles like us.anthropic.claude-haiku-4-5-20251001-v1:0
+          "arn:aws:bedrock:${var.aws_region}:${data.aws_caller_identity.current.account_id}:inference-profile/us.anthropic.claude-*",
+          "arn:aws:bedrock:${var.aws_region}:${data.aws_caller_identity.current.account_id}:inference-profile/us.anthropic.*"
         ]
       },
       {

@@ -40,8 +40,10 @@ import {
   X,
 } from 'lucide-react';
 
-// Get API URL from environment or default
-const API_URL = import.meta.env.VITE_API_URL || 'http://localhost:8080';
+// Get API URL from environment
+// In production (VITE_API_URL unset), use relative URLs (empty string = same origin)
+// In development, VITE_API_URL should be set to 'http://localhost:8080'
+const API_URL = import.meta.env.VITE_API_URL ?? '';
 const API_KEY_STORAGE_KEY = 'pipeline-viewer-api-key';
 
 export function ViewerPage() {

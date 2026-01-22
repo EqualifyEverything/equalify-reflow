@@ -25,7 +25,7 @@ from ..dependencies import get_document_processing_service, get_job_service, get
 from ..services.document_processing_service import DocumentProcessingService
 from ..services.job_service import JobService
 from ..services.storage_service import StorageService
-from .adapters import FastAPIRequest, RedisLaunchDataStorage, parse_form_data
+from .adapters import FastAPICookieService, FastAPIMessageLaunch, FastAPIOIDCLogin, FastAPIRequest, FastAPISessionService, RedisLaunchDataStorage, parse_form_data
 from .config import get_canvas_config_json, get_tool_config
 from .keys import get_jwks
 from .models import LTIConfigResponse, LTIErrorResponse
@@ -76,7 +76,7 @@ async def oidc_login(
     request: Request,
     redis: Redis = Depends(get_redis_client),
 ) -> RedirectResponse:
-    """Handle OIDC login initiation from Canvas.
+    """Handle OIDC login initiation from Canvas using pylti1p3.
 
     This is step 1 of the LTI 1.3 launch flow. Canvas sends:
     - iss: Issuer (Canvas URL)
@@ -84,10 +84,8 @@ async def oidc_login(
     - target_link_uri: Where to redirect after auth
     - lti_message_hint: Optional message context
 
-    We respond by redirecting to Canvas's auth endpoint with:
-    - state: CSRF protection token (stored in Redis)
-    - nonce: Replay protection token (stored in Redis)
-    - Other OIDC parameters
+    We use pylti1p3's OIDCLogin class which properly sets up the
+    session state that MessageLaunch expects during the launch phase.
 
     Returns:
         Redirect to Canvas authorization endpoint
@@ -95,73 +93,92 @@ async def oidc_login(
     # Parse form data
     form_data = await parse_form_data(request)
 
-    # Extract required parameters
-    iss = form_data.get("iss")
-    login_hint = form_data.get("login_hint")
-    target_link_uri = form_data.get("target_link_uri")
-    lti_message_hint = form_data.get("lti_message_hint")
-    client_id = form_data.get("client_id")
-    lti_deployment_id = form_data.get("lti_deployment_id")
+    # Log what Canvas sends for debugging
+    logger.debug(f"OIDC login form_data keys: {list(form_data.keys())}")
+    if form_data.get("target_link_uri"):
+        logger.info(f"Canvas target_link_uri: {form_data.get('target_link_uri')}")
+    if form_data.get("lti_message_hint"):
+        hint = form_data.get("lti_message_hint")
+        # Decode the JWT payload to see file context
+        try:
+            import base64
+            import json as json_mod
+            jwt_parts = hint.split(".")
+            if len(jwt_parts) >= 2:
+                payload_b64 = jwt_parts[1]
+                padding = 4 - len(payload_b64) % 4
+                if padding != 4:
+                    payload_b64 += "=" * padding
+                payload_bytes = base64.urlsafe_b64decode(payload_b64)
+                hint_payload = json_mod.loads(payload_bytes)
+                logger.info(f"Canvas lti_message_hint payload: {json_mod.dumps(hint_payload, indent=2)}")
+        except Exception as e:
+            logger.info(f"Canvas lti_message_hint (raw): {hint[:100]}... (could not decode: {e})")
 
-    # Validate required parameters
-    if not iss:
-        logger.warning("OIDC login missing issuer")
-        raise HTTPException(status_code=400, detail="Missing issuer (iss) parameter")
+    # Create storage and services
+    storage = RedisLaunchDataStorage(redis)
 
-    if not login_hint:
-        logger.warning("OIDC login missing login_hint")
-        raise HTTPException(status_code=400, detail="Missing login_hint parameter")
+    # Create request adapter
+    lti_request = FastAPIRequest(request, form_data)
 
-    if not target_link_uri:
-        # Default to our launch endpoint
-        target_link_uri = str(request.base_url).rstrip("/") + "/lti/launch"
+    # Create session service for state management
+    session_service = FastAPISessionService(lti_request, storage)
+    lti_request.set_session_service(session_service)
 
-    # Validate issuer matches configured platform
-    if iss != settings.lti_issuer:
-        logger.warning(f"OIDC login from unknown issuer: {iss}")
-        raise HTTPException(
-            status_code=400,
-            detail=f"Unknown issuer. Expected: {settings.lti_issuer}",
+    # Create cookie service for session management
+    cookie_service = FastAPICookieService(storage)
+    lti_request.set_cookie_service(cookie_service)
+
+    # Get tool config
+    tool_config = get_tool_config()
+
+    try:
+        # Use our FastAPI OIDC Login implementation
+        oidc_login = FastAPIOIDCLogin(
+            lti_request,
+            tool_config,
+            session_service=session_service,
+            cookie_service=cookie_service,
+            launch_data_storage=storage,
         )
 
-    # Generate state and nonce for security
-    state = secrets.token_urlsafe(32)
-    nonce = secrets.token_urlsafe(32)
+        # Get the redirect URL - pylti1p3 handles state/nonce generation
+        target_link_uri = form_data.get("target_link_uri")
+        if not target_link_uri:
+            target_link_uri = str(request.base_url).rstrip("/") + "/lti/launch"
 
-    # Store state in Redis for validation during launch
-    storage = RedisLaunchDataStorage(redis)
-    await storage.set_value_async(
-        state,
-        {
-            "nonce": nonce,
-            "target_link_uri": target_link_uri,
-            "client_id": client_id or settings.lti_client_id,
-            "deployment_id": lti_deployment_id or settings.lti_deployment_id,
-        },
-    )
+        # Get redirect URL - disable cookie checks since we use Redis for state
+        # Note: enable_check_cookies() enables cookie check, we need disable_check_cookies()
+        redirect_url = oidc_login.disable_check_cookies().redirect(target_link_uri)
 
-    # Build redirect URL to Canvas auth endpoint
-    auth_params = {
-        "scope": "openid",
-        "response_type": "id_token",
-        "response_mode": "form_post",
-        "prompt": "none",
-        "client_id": settings.lti_client_id,
-        "redirect_uri": str(request.base_url).rstrip("/") + "/lti/launch",
-        "state": state,
-        "nonce": nonce,
-        "login_hint": login_hint,
-    }
+        # Extract state and nonce from the generated redirect URL and store them
+        # pylti1p3 generates these but stores them with session prefixes we can't easily retrieve
+        from urllib.parse import parse_qs, urlparse
 
-    if lti_message_hint:
-        auth_params["lti_message_hint"] = lti_message_hint
+        parsed = urlparse(redirect_url)
+        params = parse_qs(parsed.query)
+        state = params.get("state", [None])[0]
+        nonce = params.get("nonce", [None])[0]
 
-    auth_url = f"{settings.lti_auth_login_url}?{urlencode(auth_params)}"
+        if state and nonce:
+            # Store state -> nonce mapping directly in Redis for launch validation
+            # Also store lti_message_hint which may contain file context
+            state_data = {
+                "nonce": nonce,
+                "target_link_uri": target_link_uri,
+                "lti_message_hint": form_data.get("lti_message_hint", ""),
+            }
+            await storage.set_value_async(state, state_data)
+            logger.info(f"Stored state {state[:20]}... with nonce {nonce[:20]}...")
 
-    logger.info(f"OIDC login initiated, redirecting to Canvas auth")
-    logger.debug(f"Auth URL: {auth_url[:100]}...")
+        logger.info(f"OIDC login initiated, redirecting to: {redirect_url[:100]}...")
+        logger.debug(f"Full auth URL: {redirect_url}")
 
-    return RedirectResponse(url=auth_url, status_code=302)
+        return RedirectResponse(url=redirect_url, status_code=302)
+
+    except Exception as e:
+        logger.error(f"OIDC login failed: {e}", exc_info=True)
+        raise HTTPException(status_code=400, detail=f"OIDC login failed: {str(e)}")
 
 
 @router.post("/launch")
@@ -218,23 +235,61 @@ async def lti_launch(
 
     try:
         # Validate JWT using pylti1p3
-        from pylti1p3.message_launch import MessageLaunch
+        # Note: We use FastAPIMessageLaunch instead of base MessageLaunch
+        # because it implements the required _get_request_param() method
+        import base64
+        import json as json_module
+
+        # Debug: Decode and log JWT claims before validation
+        try:
+            jwt_parts = id_token.split(".")
+            if len(jwt_parts) >= 2:
+                # Decode the body (second part)
+                body_b64 = jwt_parts[1]
+                # Add padding if needed
+                padding = 4 - len(body_b64) % 4
+                if padding != 4:
+                    body_b64 += "=" * padding
+                body_bytes = base64.urlsafe_b64decode(body_b64)
+                jwt_body = json_module.loads(body_bytes)
+                logger.info(f"JWT issuer (iss): {jwt_body.get('iss')}")
+                logger.info(f"JWT audience (aud): {jwt_body.get('aud')}")
+                logger.info(f"JWT deployment_id: {jwt_body.get('https://purl.imsglobal.org/spec/lti/claim/deployment_id')}")
+        except Exception as jwt_debug_err:
+            logger.warning(f"Could not decode JWT for debugging: {jwt_debug_err}")
 
         # Get tool config
         tool_config = get_tool_config()
 
-        # Create request adapter
+        # Create request adapter first (session/cookie services added after)
         lti_request = FastAPIRequest(request, form_data)
 
-        # Validate the launch
-        message_launch: Any = MessageLaunch(
+        # Create session service and link it to the request
+        session_service = FastAPISessionService(lti_request, storage)
+        lti_request.set_session_service(session_service)
+
+        # Create cookie service and link it to the request
+        cookie_service = FastAPICookieService(storage, state)
+        lti_request.set_cookie_service(cookie_service)
+
+        # Validate the launch using our FastAPI-specific MessageLaunch
+        # Note: Cookie checks are bypassed by:
+        # 1. RedisLaunchDataStorage.get_session_cookie_name() returns None
+        # 2. FastAPICookieService.get_cookie(state) returns state (for state validation fallback)
+        message_launch: Any = FastAPIMessageLaunch(
             lti_request,
             tool_config,
+            session_service=session_service,
+            cookie_service=cookie_service,
             launch_data_storage=storage,
         )
 
         # Get validated claims
         launch_data: dict[str, Any] = message_launch.get_launch_data()
+
+        # Debug: Log all claims to diagnose file menu data
+        import json as json_debug
+        logger.info(f"Full LTI claims: {json_debug.dumps(launch_data, indent=2, default=str)}")
 
         if not launch_data:
             logger.error("LTI launch validation succeeded but no launch data")
@@ -264,11 +319,83 @@ async def lti_launch(
         # Parse launch claims into our model
         parsed_launch = parse_launch_claims(launch_data)
 
+        # Try to extract file_id from various sources (fallback for local Canvas)
+        file_id_from_url = None
+
+        # Source 1: Try to decode lti_message_hint JWT (Canvas stores file context here)
+        lti_message_hint = stored_state.get("lti_message_hint", "")
+        if lti_message_hint and not file_id_from_url:
+            try:
+                # Decode JWT payload without verification (we just need to read it)
+                import base64
+                jwt_parts = lti_message_hint.split(".")
+                if len(jwt_parts) >= 2:
+                    payload_b64 = jwt_parts[1]
+                    # Add padding if needed
+                    padding = 4 - len(payload_b64) % 4
+                    if padding != 4:
+                        payload_b64 += "=" * padding
+                    payload_bytes = base64.urlsafe_b64decode(payload_b64)
+                    hint_data = json_module.loads(payload_bytes)
+                    logger.debug(f"lti_message_hint payload: {hint_data}")
+
+                    # Canvas may include file ID in various fields
+                    if "file_id" in hint_data:
+                        file_id_from_url = str(hint_data["file_id"])
+                        logger.info(f"Extracted file_id from lti_message_hint: {file_id_from_url}")
+                    elif "content_item" in hint_data:
+                        # Some Canvas versions use content_item
+                        content = hint_data.get("content_item", {})
+                        if isinstance(content, dict) and "file_id" in content:
+                            file_id_from_url = str(content["file_id"])
+                            logger.info(f"Extracted file_id from content_item: {file_id_from_url}")
+            except Exception as e:
+                logger.debug(f"Could not decode lti_message_hint: {e}")
+
+        # Source 2: Check stored target_link_uri for files[] parameter
+        if not file_id_from_url:
+            stored_target_uri = stored_state.get("target_link_uri", "")
+            if stored_target_uri:
+                from urllib.parse import parse_qs, urlparse
+                parsed_uri = urlparse(stored_target_uri)
+                query_params = parse_qs(parsed_uri.query)
+                files_param = query_params.get("files[]") or query_params.get("files")
+                if files_param:
+                    file_id_from_url = files_param[0]
+                    logger.info(f"Extracted file_id from target_link_uri: {file_id_from_url}")
+
+        # Source 3: Check referrer header
+        if not file_id_from_url:
+            referer = request.headers.get("referer", "")
+            if "files" in referer:
+                from urllib.parse import parse_qs, urlparse
+                parsed_ref = urlparse(referer)
+                query_params = parse_qs(parsed_ref.query)
+                files_param = query_params.get("files[]") or query_params.get("files")
+                if files_param:
+                    file_id_from_url = files_param[0]
+                    logger.info(f"Extracted file_id from referer: {file_id_from_url}")
+
+        # Source 4: Check launch_presentation return_url (may contain file context)
+        if not file_id_from_url:
+            return_url = launch_data.get("https://purl.imsglobal.org/spec/lti/claim/launch_presentation", {}).get("return_url", "")
+            if return_url and "files" in return_url:
+                from urllib.parse import parse_qs, urlparse
+                parsed_return = urlparse(return_url)
+                query_params = parse_qs(parsed_return.query)
+                files_param = query_params.get("files[]") or query_params.get("files")
+                if files_param:
+                    file_id_from_url = files_param[0]
+                    logger.info(f"Extracted file_id from return_url: {file_id_from_url}")
+
         # Process the launch (download file, create job)
         lti_service = LTIService(storage_service, job_service)
 
         try:
-            response, s3_key = await lti_service.process_file_menu_launch(parsed_launch)
+            response, s3_key = await lti_service.process_file_menu_launch(
+                parsed_launch,
+                file_id_from_url=file_id_from_url,
+            )
         except LTIServiceError as e:
             logger.error(f"LTI launch processing failed: {e}")
             return _error_response(f"Failed to process launch: {str(e)}")
@@ -287,8 +414,12 @@ async def lti_launch(
         return _redirect_response(response.viewer_url, response.file_name)
 
     except Exception as e:
-        logger.error(f"LTI launch validation failed: {e}", exc_info=True)
-        return _error_response(f"Launch validation failed: {str(e)}")
+        import traceback
+        tb_str = traceback.format_exc()
+        logger.error(f"LTI launch validation failed: {e}\n{tb_str}")
+        # Include more detail in error for debugging
+        error_detail = str(e) if str(e) else type(e).__name__
+        return _error_response(f"Launch validation failed: {error_detail}")
 
 
 async def _process_document_async(

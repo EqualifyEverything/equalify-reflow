@@ -246,6 +246,7 @@ class Settings(BaseSettings):
 
     # Canvas API Configuration (for file downloads)
     canvas_api_url: str = Field(default="", description="Canvas API base URL (e.g., https://canvas.instructure.com/api/v1)")
+    canvas_api_token: str = Field(default="", description="Canvas API access token for file downloads")
 
     # LTI State Storage Configuration
     lti_state_ttl_seconds: int = Field(

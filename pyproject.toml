@@ -31,6 +31,9 @@ dependencies = [
     "pymarkdownlnt>=0.9.0",
     "textual>=6.11.0",
     "httpx-sse>=0.4.0",
+    "httpx>=0.27.0",
+    "pylti1p3>=2.0.0",
+    "jwcrypto>=1.5.0",
 ]
 
 [project.optional-dependencies]
@@ -127,6 +130,16 @@ disable_error_code = ["type-arg"]
 [[tool.mypy.overrides]]
 module = ["redis.*"]
 ignore_missing_imports = true
+
+[[tool.mypy.overrides]]
+module = ["pylti1p3.*", "jwcrypto.*"]
+ignore_missing_imports = true
+
+[[tool.mypy.overrides]]
+module = ["src.lti.*"]
+# LTI module integrates with pylti1p3 which has no type stubs
+# and requires some method signature adaptations for async patterns
+disable_error_code = ["override", "no-any-return", "abstract", "arg-type", "attr-defined"]
 
 [tool.ruff]
 target-version = "py311"

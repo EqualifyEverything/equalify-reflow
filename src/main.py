@@ -153,6 +153,12 @@ if settings.environment == "dev":
     app.include_router(dev_monitoring.router)
     logger.info("✅ Dev monitoring endpoints enabled at /api/dev/monitoring/queues")
 
+# Conditionally enable LTI 1.3 integration
+if settings.lti_enabled:
+    from .lti import router as lti_router
+    app.include_router(lti_router)
+    logger.info("✅ LTI 1.3 endpoints enabled at /lti/*")
+
 
 def custom_openapi() -> dict[str, object]:
     """Generate custom OpenAPI schema with API key security."""

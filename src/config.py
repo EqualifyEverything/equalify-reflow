@@ -216,5 +216,41 @@ class Settings(BaseSettings):
         default=False, description="Log full LLM prompts and outputs in traces (WARNING: may contain document content)"
     )
 
+    # LTI 1.3 Configuration
+    lti_enabled: bool = Field(default=False, description="Enable LTI 1.3 integration endpoints")
+
+    # Canvas LMS Platform Configuration
+    lti_issuer: str = Field(default="", description="Canvas instance URL (e.g., https://canvas.instructure.com)")
+    lti_client_id: str = Field(default="", description="Canvas Developer Key client ID")
+    lti_deployment_id: str = Field(default="", description="Canvas deployment ID (usually same as client_id)")
+
+    # Canvas OAuth/OIDC Endpoints
+    lti_auth_login_url: str = Field(
+        default="", description="Canvas OIDC authorization URL (e.g., https://canvas.instructure.com/api/lti/authorize)"
+    )
+    lti_auth_token_url: str = Field(
+        default="", description="Canvas OAuth token URL (e.g., https://canvas.instructure.com/login/oauth2/token)"
+    )
+    lti_jwks_url: str = Field(
+        default="",
+        description="Canvas JWKS URL for verifying Canvas signatures (e.g., https://canvas.instructure.com/api/lti/security/jwks)",
+    )
+
+    # Tool RSA Key Configuration
+    lti_private_key_path: str = Field(
+        default="/app/keys/lti_private.pem", description="Path to tool's RSA private key for signing JWTs"
+    )
+    lti_public_key_path: str = Field(
+        default="/app/keys/lti_public.pem", description="Path to tool's RSA public key for JWKS endpoint"
+    )
+
+    # Canvas API Configuration (for file downloads)
+    canvas_api_url: str = Field(default="", description="Canvas API base URL (e.g., https://canvas.instructure.com/api/v1)")
+
+    # LTI State Storage Configuration
+    lti_state_ttl_seconds: int = Field(
+        ge=60, le=3600, default=600, description="TTL for LTI OIDC state in Redis (10 minutes default)"
+    )
+
 
 settings = Settings()

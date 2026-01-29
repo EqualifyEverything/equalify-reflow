@@ -32,12 +32,7 @@ class _CanvasRenderer(mistune.HTMLRenderer):
         safe_alt = alt or ""
 
         if alt:
-            return (
-                f"<figure>"
-                f'<img src="{safe_url}" alt="{safe_alt}">'
-                f"<figcaption>{safe_alt}</figcaption>"
-                f"</figure>\n"
-            )
+            return f'<figure><img src="{safe_url}" alt="{safe_alt}"><figcaption>{safe_alt}</figcaption></figure>\n'
         return f'<img src="{safe_url}" alt="">\n'
 
     def _resolve_image_url(self, url: str) -> str:

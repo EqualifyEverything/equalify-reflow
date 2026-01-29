@@ -88,11 +88,13 @@ class DownloadBundleService:
         )
 
         # 5. Generate presigned URL (7-day expiry)
+        zip_filename = f"{base_name}-reflow.zip"
         url = self.storage.s3_client.generate_presigned_url(
             "get_object",
             Params={
                 "Bucket": self.storage.results_bucket,
                 "Key": bundle_key,
+                "ResponseContentDisposition": f"attachment; filename=\"{zip_filename}\"",
             },
             ExpiresIn=_SEVEN_DAYS_SECONDS,
         )

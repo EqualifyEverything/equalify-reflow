@@ -79,6 +79,7 @@ class TestCreateBundle:
             Params={
                 "Bucket": "equalify-results",
                 "Key": "results/job-1/bundle.zip",
+                "ResponseContentDisposition": 'attachment; filename="notes-reflow.zip"',
             },
             ExpiresIn=7 * 24 * 60 * 60,
         )
@@ -120,6 +121,46 @@ class TestCreateBundle:
         assert len(upload_calls) == 1
         assert upload_calls[0]["key"] == "results/job-1/bundle.zip"
         assert upload_calls[0]["content_type"] == "application/zip"
+
+
+class TestPresignedUrlDownloadFilename:
+    """Presigned URL uses ResponseContentDisposition for download filename."""
+
+    @pytest.mark.asyncio
+    async def test_download_filename_uses_original_stem_reflow(self, service, mock_storage):
+        """Presigned URL sets download filename to {original_stem}-reflow.zip."""
+        mock_storage.s3_client.list_objects_v2.return_value = {"Contents": []}
+        mock_storage.s3_client.generate_presigned_url.return_value = "https://url"
+
+        await service.create_bundle("j1", "lecture_notes.pdf")
+
+        call_kwargs = mock_storage.s3_client.generate_presigned_url.call_args
+        params = call_kwargs[1]["Params"] if "Params" in call_kwargs[1] else call_kwargs[0][1]
+        assert params["ResponseContentDisposition"] == 'attachment; filename="lecture_notes-reflow.zip"'
+
+    @pytest.mark.asyncio
+    async def test_download_filename_with_multiple_dots(self, service, mock_storage):
+        """Multi-dot filenames strip only the last extension."""
+        mock_storage.s3_client.list_objects_v2.return_value = {"Contents": []}
+        mock_storage.s3_client.generate_presigned_url.return_value = "https://url"
+
+        await service.create_bundle("j1", "my.file.name.pdf")
+
+        call_kwargs = mock_storage.s3_client.generate_presigned_url.call_args
+        params = call_kwargs[1]["Params"] if "Params" in call_kwargs[1] else call_kwargs[0][1]
+        assert params["ResponseContentDisposition"] == 'attachment; filename="my.file.name-reflow.zip"'
+
+    @pytest.mark.asyncio
+    async def test_download_filename_without_extension(self, service, mock_storage):
+        """Filename with no extension still gets -reflow.zip suffix."""
+        mock_storage.s3_client.list_objects_v2.return_value = {"Contents": []}
+        mock_storage.s3_client.generate_presigned_url.return_value = "https://url"
+
+        await service.create_bundle("j1", "readme")
+
+        call_kwargs = mock_storage.s3_client.generate_presigned_url.call_args
+        params = call_kwargs[1]["Params"] if "Params" in call_kwargs[1] else call_kwargs[0][1]
+        assert params["ResponseContentDisposition"] == 'attachment; filename="readme-reflow.zip"'
 
 
 class TestBundleErrorOnMissingMarkdown:

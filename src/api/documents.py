@@ -3,6 +3,7 @@
 import asyncio
 import json
 import logging
+import os
 from collections import Counter
 from collections.abc import AsyncGenerator
 from datetime import UTC, datetime
@@ -838,12 +839,14 @@ async def download_document_bundle(
         )
 
     # Return as streaming download
-    filename = f"document_{job_id}.zip"
+    original_filename = job.get("original_filename", "document")
+    base_name = os.path.splitext(original_filename)[0]
+    filename = f"{base_name}-reflow.zip"
     return StreamingResponse(
         BytesIO(zip_bytes),
         media_type="application/zip",
         headers={
-            "Content-Disposition": f"attachment; filename={filename}",
+            "Content-Disposition": f"attachment; filename=\"{filename}\"",
             "Content-Length": str(len(zip_bytes)),
         },
     )

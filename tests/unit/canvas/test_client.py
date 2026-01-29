@@ -747,6 +747,109 @@ class TestModulesAPI:
             call_data = mock_req.call_args.kwargs["data"]
             assert "module_item[position]" not in call_data
 
+    @pytest.mark.asyncio
+    async def test_create_module_item_api_error(self, client):
+        """Test that Canvas API errors propagate as CanvasAPIError."""
+        with patch.object(client, "_request", new_callable=AsyncMock) as mock_req:
+            mock_req.side_effect = CanvasAPIError("Canvas API POST /api/v1/courses/1/modules/2/items failed: HTTP 422")
+
+            with pytest.raises(CanvasAPIError, match="HTTP 422"):
+                await client.create_module_item(
+                    course_id="1",
+                    module_id="2",
+                    title="Bad Item",
+                    item_type="Page",
+                    page_url="bad-page",
+                )
+
+    @pytest.mark.asyncio
+    async def test_create_module_item_file_type(self, client):
+        """Test creating a File-type module item."""
+        item = {"id": 20, "title": "Lecture Notes", "type": "File"}
+
+        with patch.object(client, "_request", new_callable=AsyncMock) as mock_req:
+            mock_req.return_value = _make_response(json_data=item)
+
+            result = await client.create_module_item(
+                course_id="100",
+                module_id="200",
+                title="Lecture Notes",
+                item_type="File",
+                page_url="lecture-notes",
+            )
+
+            assert result == item
+            call_data = mock_req.call_args.kwargs["data"]
+            assert call_data["module_item[type]"] == "File"
+
+    @pytest.mark.asyncio
+    async def test_create_module_item_position_zero(self, client):
+        """Test that position=0 is included in the request data."""
+        with patch.object(client, "_request", new_callable=AsyncMock) as mock_req:
+            mock_req.return_value = _make_response(json_data={"id": 1})
+
+            await client.create_module_item(
+                course_id="1",
+                module_id="2",
+                title="First Item",
+                item_type="Page",
+                page_url="first-item",
+                position=0,
+            )
+
+            call_data = mock_req.call_args.kwargs["data"]
+            assert call_data["module_item[position]"] == "0"
+
+    @pytest.mark.asyncio
+    async def test_create_module_item_returns_full_response(self, client):
+        """Test that the full Canvas response dict is returned."""
+        item = {
+            "id": 30,
+            "title": "Week 1 Reading",
+            "type": "Page",
+            "position": 1,
+            "module_id": 456,
+            "page_url": "week-1-reading",
+            "html_url": "https://canvas.example.com/courses/123/modules/items/30",
+        }
+
+        with patch.object(client, "_request", new_callable=AsyncMock) as mock_req:
+            mock_req.return_value = _make_response(json_data=item)
+
+            result = await client.create_module_item(
+                course_id="123",
+                module_id="456",
+                title="Week 1 Reading",
+                item_type="Page",
+                page_url="week-1-reading",
+                position=1,
+            )
+
+            assert result["id"] == 30
+            assert result["page_url"] == "week-1-reading"
+            assert result["html_url"] == "https://canvas.example.com/courses/123/modules/items/30"
+            assert result["position"] == 1
+
+    @pytest.mark.asyncio
+    async def test_create_module_item_special_characters_in_title(self, client):
+        """Test creating an item with special characters in the title."""
+        item = {"id": 40, "title": "Lecture: Week 1 — Introduction & Overview", "type": "Page"}
+
+        with patch.object(client, "_request", new_callable=AsyncMock) as mock_req:
+            mock_req.return_value = _make_response(json_data=item)
+
+            result = await client.create_module_item(
+                course_id="1",
+                module_id="2",
+                title="Lecture: Week 1 — Introduction & Overview",
+                item_type="Page",
+                page_url="lecture-week-1-introduction-and-overview",
+            )
+
+            assert result["title"] == "Lecture: Week 1 — Introduction & Overview"
+            call_data = mock_req.call_args.kwargs["data"]
+            assert call_data["module_item[title]"] == "Lecture: Week 1 — Introduction & Overview"
+
 
 class TestParseNextLink:
     """Tests for Link header parsing."""

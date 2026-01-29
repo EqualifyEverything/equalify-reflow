@@ -382,6 +382,12 @@ class TestBuildZip:
         assert zf.namelist() == ["my-reflow/my.md"]
         assert zf.read("my-reflow/my.md") == b"# Content"
 
+    def test_build_zip_no_images_folder_when_figures_empty(self):
+        """No images/ directory entry exists when figures list is empty."""
+        result = DownloadBundleService._build_zip("doc-reflow", "doc", b"# Doc", [])
+        zf = zipfile.ZipFile(io.BytesIO(result))
+        assert not any("images" in name for name in zf.namelist())
+
     def test_build_zip_with_figures(self):
         figures = [("fig1.png", b"png1"), ("fig2.png", b"png2")]
         result = DownloadBundleService._build_zip("doc-reflow", "doc", b"# Doc", figures)
@@ -397,6 +403,12 @@ class TestBuildZip:
         zf = zipfile.ZipFile(io.BytesIO(result))
         info = zf.getinfo("a-reflow/a.md")
         assert info.compress_type == zipfile.ZIP_DEFLATED
+
+    def test_build_zip_returns_bytes(self):
+        """Zip is built in memory — _build_zip returns raw bytes, no temp files."""
+        result = DownloadBundleService._build_zip("r", "r", b"md", [])
+        assert isinstance(result, bytes)
+        assert zipfile.is_zipfile(io.BytesIO(result))
 
 
 class TestFigureDownloadErrors:
@@ -436,6 +448,40 @@ class TestFigureDownloadErrors:
         names = zf.namelist()
         assert "doc-reflow/images/fig_good.png" in names
         assert "doc-reflow/images/fig_bad.png" not in names
+
+    @pytest.mark.asyncio
+    async def test_all_figures_fail_no_images_folder(self, service, mock_storage):
+        """When every figure download fails, zip has no images/ folder."""
+
+        async def download_failing(key):
+            if key.endswith(".md"):
+                return b"# Doc"
+            raise HTTPException(status_code=500, detail="S3 failure")
+
+        mock_storage.download_file = download_failing
+        mock_storage.s3_client.list_objects_v2.return_value = {
+            "Contents": [
+                {"Key": "results/j1/figures/fig1.png"},
+                {"Key": "results/j1/figures/fig2.png"},
+            ]
+        }
+        mock_storage.s3_client.generate_presigned_url.return_value = "https://url"
+
+        uploaded = {}
+
+        async def capture(key, content, content_type="application/octet-stream"):
+            uploaded["bytes"] = content
+            return key
+
+        mock_storage.upload_file = capture
+
+        await service.create_bundle("j1", "doc.pdf")
+
+        zf = zipfile.ZipFile(io.BytesIO(uploaded["bytes"]))
+        names = zf.namelist()
+        assert len(names) == 1
+        assert names[0] == "doc-reflow/doc.md"
+        assert not any("images" in name for name in names)
 
     @pytest.mark.asyncio
     async def test_list_objects_failure_returns_no_figures(self, service, mock_storage):

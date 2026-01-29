@@ -162,6 +162,44 @@ class TestImages:
             renderer.render(md)
         assert "Image path not found" not in caplog.text
 
+    def test_image_not_in_map_keeps_original_no_alt(self, renderer, caplog):
+        """Image without alt text keeps original path and logs warning when not in map."""
+        image_map = {"images/other.png": "https://canvas.uic.edu/files/99/preview"}
+        md = "![](images/missing.png)"
+        with caplog.at_level(logging.WARNING, logger="src.canvas.renderer"):
+            result = renderer.render(md, image_url_map=image_map)
+        assert 'src="images/missing.png"' in result
+        assert 'alt=""' in result
+        assert "Image path not found in image_url_map: images/missing.png" in caplog.text
+
+    def test_image_not_in_map_empty_map_no_warning(self, renderer, caplog):
+        """Empty image_url_map does not trigger a warning."""
+        md = "![Alt](images/figure_1.png)"
+        with caplog.at_level(logging.WARNING, logger="src.canvas.renderer"):
+            result = renderer.render(md, image_url_map={})
+        assert 'src="images/figure_1.png"' in result
+        assert "Image path not found" not in caplog.text
+
+    def test_image_not_in_map_preserves_special_chars(self, renderer, caplog):
+        """Original path with special characters is HTML-escaped when kept."""
+        image_map = {"images/other.png": "https://canvas.uic.edu/files/1/preview"}
+        md = "![Chart](images/fig&chart.png)"
+        with caplog.at_level(logging.WARNING, logger="src.canvas.renderer"):
+            result = renderer.render(md, image_url_map=image_map)
+        assert 'src="images/fig&amp;chart.png"' in result
+        assert "Image path not found in image_url_map: images/fig&chart.png" in caplog.text
+
+    def test_image_not_in_map_multiple_missing(self, renderer, caplog):
+        """Multiple missing images each log a warning and keep original paths."""
+        image_map = {"images/exists.png": "https://canvas.uic.edu/files/1/preview"}
+        md = "![A](images/miss1.png)\n\n![B](images/miss2.png)"
+        with caplog.at_level(logging.WARNING, logger="src.canvas.renderer"):
+            result = renderer.render(md, image_url_map=image_map)
+        assert 'src="images/miss1.png"' in result
+        assert 'src="images/miss2.png"' in result
+        assert "images/miss1.png" in caplog.text
+        assert "images/miss2.png" in caplog.text
+
     def test_image_alt_text_html_escaped(self, renderer):
         md = '![Description with <tags> & "quotes"](images/fig.png)'
         result = renderer.render(md)

@@ -118,6 +118,9 @@ class DownloadBundleService:
     async def _list_and_download_figures(self, job_id: str) -> list[tuple[str, bytes]]:
         """List and download all figures for a job.
 
+        Uses StorageService.download_file for each figure to gain circuit
+        breaker protection and retry-with-backoff logic.
+
         Returns:
             List of (filename, data) tuples. Empty if no figures exist.
         """
@@ -138,13 +141,9 @@ class DownloadBundleService:
             if not filename:
                 continue
             try:
-                file_response = self.storage.s3_client.get_object(
-                    Bucket=self.storage.results_bucket,
-                    Key=key,
-                )
-                data: bytes = file_response["Body"].read()
+                data = await self.storage.download_file(key)
                 figures.append((filename, data))
-            except ClientError as e:
+            except Exception as e:
                 logger.warning(f"Job {job_id}: Failed to download figure {key}: {e}")
 
         return figures

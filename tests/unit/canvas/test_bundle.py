@@ -19,13 +19,6 @@ def _make_client_error(code: str = "NoSuchKey") -> ClientError:
     )
 
 
-def _s3_get_object_response(body: bytes) -> dict:
-    """Build a mock S3 get_object response."""
-    body_stream = MagicMock()
-    body_stream.read.return_value = body
-    return {"Body": body_stream}
-
-
 @pytest.fixture
 def mock_storage():
     """Create a mock StorageService."""
@@ -214,12 +207,13 @@ class TestZipStructure:
     async def test_figures_in_images_subfolder(self, service, mock_storage):
         """Figures go in {folder}/images/{filename}."""
 
-        # Markdown via download_file, figures via s3_client.get_object
-        async def return_doc(key):
-            return b"# Doc"
+        # download_file returns markdown or figure bytes based on key
+        async def download_by_key(key):
+            if key.endswith(".md"):
+                return b"# Doc"
+            return b"\x89PNG-data"
 
-        mock_storage.download_file = return_doc
-        mock_storage.s3_client.get_object.return_value = _s3_get_object_response(b"\x89PNG-data")
+        mock_storage.download_file = download_by_key
         mock_storage.s3_client.list_objects_v2.return_value = {
             "Contents": [
                 {"Key": "results/j1/figures/figure_1.png"},
@@ -287,8 +281,14 @@ class TestS3Operations:
 
     @pytest.mark.asyncio
     async def test_downloads_each_listed_figure(self, service, mock_storage):
-        # Figures still use raw s3_client.get_object
-        mock_storage.s3_client.get_object.return_value = _s3_get_object_response(b"img-bytes")
+        """Each listed figure is downloaded via StorageService.download_file."""
+        download_keys: list[str] = []
+
+        async def track_download(key):
+            download_keys.append(key)
+            return b"img-bytes"
+
+        mock_storage.download_file = track_download
         mock_storage.s3_client.list_objects_v2.return_value = {
             "Contents": [
                 {"Key": "results/j1/figures/fig1.png"},
@@ -297,18 +297,13 @@ class TestS3Operations:
         }
         mock_storage.s3_client.generate_presigned_url.return_value = "https://url"
 
-        uploaded = {}
-
-        async def capture(key, content, content_type="application/octet-stream"):
-            uploaded["bytes"] = content
-            return key
-
-        mock_storage.upload_file = capture
-
         await service.create_bundle("j1", "doc.pdf")
 
-        # Markdown now uses download_file; only 2 figure get_object calls
-        assert mock_storage.s3_client.get_object.call_count == 2
+        # 1 markdown + 2 figure downloads
+        assert len(download_keys) == 3
+        assert download_keys[0] == "results/j1/result.md"
+        assert "results/j1/figures/fig1.png" in download_keys
+        assert "results/j1/figures/fig2.png" in download_keys
 
 
 class TestZipInMemory:
@@ -368,13 +363,14 @@ class TestFigureDownloadErrors:
 
     @pytest.mark.asyncio
     async def test_skips_failed_figure_download(self, service, mock_storage):
-        # Figures still use raw s3_client.get_object
-        def get_object_side_effect(**kwargs):
-            if "fig_bad" in kwargs["Key"]:
-                raise _make_client_error("InternalError")
-            return _s3_get_object_response(b"good-img")
+        """Failed figure downloads via StorageService are skipped."""
 
-        mock_storage.s3_client.get_object.side_effect = get_object_side_effect
+        async def download_with_failure(key):
+            if "fig_bad" in key:
+                raise HTTPException(status_code=500, detail="S3 failure")
+            return b"good-img"
+
+        mock_storage.download_file = download_with_failure
         mock_storage.s3_client.list_objects_v2.return_value = {
             "Contents": [
                 {"Key": "results/j1/figures/fig_bad.png"},
@@ -436,8 +432,12 @@ class TestLogging:
 
     @pytest.mark.asyncio
     async def test_logs_file_count_with_figures(self, service, mock_storage, caplog):
-        # Figures still use raw s3_client.get_object
-        mock_storage.s3_client.get_object.return_value = _s3_get_object_response(b"img")
+        async def download_any(key):
+            if key.endswith(".md"):
+                return b"# Hello"
+            return b"img"
+
+        mock_storage.download_file = download_any
         mock_storage.s3_client.list_objects_v2.return_value = {
             "Contents": [
                 {"Key": "results/j1/figures/f1.png"},

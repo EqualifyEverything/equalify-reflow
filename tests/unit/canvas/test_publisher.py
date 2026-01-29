@@ -449,6 +449,37 @@ class TestFigureUpload:
         assert result.canvas_file_ids == []
         mock_canvas_client.upload_file.assert_not_awaited()
 
+    @pytest.mark.asyncio
+    async def test_s3_listing_failure_is_non_fatal(self, service, mock_storage, mock_redis):
+        """If listing figures in S3 fails, publish continues with no figures."""
+        mock_storage.s3_client.list_objects_v2.side_effect = Exception("S3 unavailable")
+        result = await service.publish(
+            job_id="job-1",
+            course_id="101",
+            original_filename="notes.pdf",
+            canvas_file_id="500",
+            redis_client=mock_redis,
+        )
+        assert result.figure_count == 0
+        assert result.canvas_file_ids == []
+
+    @pytest.mark.asyncio
+    async def test_canvas_upload_returns_no_id(
+        self, service, mock_canvas_client, storage_with_figures, mock_redis
+    ):
+        """If Canvas upload returns a file without an id, skip that figure."""
+        service.storage = storage_with_figures
+        mock_canvas_client.upload_file = AsyncMock(return_value={"url": "https://canvas.example.com/files/unknown"})
+        result = await service.publish(
+            job_id="job-1",
+            course_id="101",
+            original_filename="notes.pdf",
+            canvas_file_id="500",
+            redis_client=mock_redis,
+        )
+        assert result.figure_count == 0
+        assert result.canvas_file_ids == []
+
 
 # --- R6: Module placement ---
 

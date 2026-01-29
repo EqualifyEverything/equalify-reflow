@@ -201,6 +201,47 @@ class TestTables:
         result = renderer.render(md)
         assert result.count("<tr>") == 4  # 1 header row + 3 body rows
 
+    def test_table_header_uses_th_not_td(self, renderer):
+        """Header cells must be <th>, not <td>."""
+        md = "| Name | Age |\n|------|-----|\n| Alice | 30 |"
+        result = renderer.render(md)
+        assert "<th" in result
+        assert "Name" in result
+        # Body cells are <td>, not <th>
+        assert "<td>Alice</td>" in result
+        assert "<td>30</td>" in result
+
+    def test_table_inline_formatting_in_cells(self, renderer):
+        """Inline formatting (bold, italic, code) is preserved inside table cells."""
+        md = "| Feature | Status |\n|---------|--------|\n| **Auth** | *done* |"
+        result = renderer.render(md)
+        assert "<strong>Auth</strong>" in result
+        assert "<em>done</em>" in result
+
+    def test_table_single_column(self, renderer):
+        """A single-column table renders correctly."""
+        md = "| Item |\n|------|\n| One  |\n| Two  |"
+        result = renderer.render(md)
+        assert "<table>" in result
+        assert '<th scope="col">Item</th>' in result
+        assert "<td>One</td>" in result
+        assert "<td>Two</td>" in result
+
+    def test_table_empty_cells(self, renderer):
+        """Empty cells render as empty <td> elements."""
+        md = "| A | B |\n|---|---|\n|   | X |"
+        result = renderer.render(md)
+        assert "<td></td>" in result
+        assert "<td>X</td>" in result
+
+    def test_table_thead_before_tbody(self, renderer):
+        """<thead> must appear before <tbody> in the output."""
+        md = "| H1 | H2 |\n|----|----|\n| D1 | D2 |"
+        result = renderer.render(md)
+        thead_pos = result.index("<thead>")
+        tbody_pos = result.index("<tbody>")
+        assert thead_pos < tbody_pos
+
 
 class TestCodeBlocks:
     """R2: Code blocks with <pre><code class="language-{lang}">."""

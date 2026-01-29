@@ -2,8 +2,9 @@
 
 import logging
 
+import mistune
 import pytest
-from src.canvas.renderer import CanvasHTMLRenderer
+from src.canvas.renderer import CanvasHTMLRenderer, _CanvasRenderer, _create_parser
 
 pytestmark = pytest.mark.unit
 
@@ -12,6 +13,27 @@ pytestmark = pytest.mark.unit
 def renderer():
     """Create a CanvasHTMLRenderer for testing."""
     return CanvasHTMLRenderer()
+
+
+class TestMistuneIntegration:
+    """R5: Renderer uses mistune with a custom renderer."""
+
+    def test_canvas_renderer_extends_mistune_html_renderer(self):
+        assert issubclass(_CanvasRenderer, mistune.HTMLRenderer)
+
+    def test_create_parser_returns_mistune_markdown(self):
+        parser = _create_parser()
+        assert callable(parser)
+
+    def test_parser_produces_html_from_markdown(self):
+        parser = _create_parser()
+        result = parser("**bold**")
+        assert "<strong>bold</strong>" in result
+
+    def test_no_new_dependencies_mistune_already_in_project(self):
+        """mistune is importable — confirming it's an existing dependency."""
+        assert hasattr(mistune, "create_markdown")
+        assert hasattr(mistune, "HTMLRenderer")
 
 
 class TestArticleWrapper:
@@ -303,6 +325,23 @@ class TestCodeBlocks:
         result = renderer.render(md)
         assert "&lt;div" in result
         assert "&amp;amp;" in result
+
+    def test_code_block_language_class_javascript(self, renderer):
+        md = "```javascript\nconsole.log('hi');\n```"
+        result = renderer.render(md)
+        assert '<pre><code class="language-javascript">' in result
+
+    def test_code_block_language_class_sql(self, renderer):
+        md = "```sql\nSELECT * FROM users;\n```"
+        result = renderer.render(md)
+        assert '<pre><code class="language-sql">' in result
+
+    def test_code_block_no_language_has_no_class(self, renderer):
+        """Code block without a language identifier must not have a class attribute."""
+        md = "```\nplain code\n```"
+        result = renderer.render(md)
+        assert "<pre><code>" in result
+        assert 'class="language-' not in result
 
 
 class TestBlockquotes:

@@ -124,6 +124,7 @@ class CanvasAPIClient:
             )
             await self._handle_rate_limit(response)
             response.raise_for_status()
+            logger.debug(f"Canvas API response: {method} {path} -> {response.status_code}")
             return response
 
         except httpx.HTTPStatusError as e:
@@ -257,7 +258,9 @@ class CanvasAPIClient:
             f"/api/v1/courses/{course_id}/pages/{page_url}",
             data=data,
         )
-        return response.json()
+        result = response.json()
+        logger.info(f"Updated page '{page_url}' in course {course_id}")
+        return result
 
     async def get_page(self, course_id: str, page_url: str) -> dict | None:
         """Get a Canvas page by URL slug.
@@ -279,7 +282,9 @@ class CanvasAPIClient:
                 "GET",
                 f"/api/v1/courses/{course_id}/pages/{page_url}",
             )
-            return response.json()
+            result = response.json()
+            logger.debug(f"Retrieved page '{page_url}' from course {course_id}")
+            return result
         except CanvasAPIError as e:
             if "HTTP 404" in str(e):
                 logger.debug(f"Page '{page_url}' not found in course {course_id}")
@@ -429,7 +434,7 @@ class CanvasAPIClient:
         Raises:
             CanvasAPIError: If the API call fails
         """
-        logger.debug(f"Listing files in course {course_id}")
+        logger.info(f"Listing files in course {course_id}")
 
         params: dict[str, str | int] = {
             "sort": sort,
@@ -458,6 +463,7 @@ class CanvasAPIClient:
             else:
                 path = ""
 
+        logger.debug(f"Listed {len(all_files)} files in course {course_id}")
         return all_files
 
     # --- Modules API ---
@@ -479,7 +485,7 @@ class CanvasAPIClient:
         Raises:
             CanvasAPIError: If the API call fails
         """
-        logger.debug(f"Listing modules in course {course_id}")
+        logger.info(f"Listing modules in course {course_id}")
 
         params: dict[str, str | int] = {"per_page": 50}
         if include_items:
@@ -504,6 +510,7 @@ class CanvasAPIClient:
             else:
                 path = ""
 
+        logger.debug(f"Listed {len(all_modules)} modules in course {course_id}")
         return all_modules
 
     async def create_module_item(
@@ -546,7 +553,9 @@ class CanvasAPIClient:
             f"/api/v1/courses/{course_id}/modules/{module_id}/items",
             data=data,
         )
-        return response.json()
+        result = response.json()
+        logger.info(f"Created module item '{title}' with id={result.get('id')}")
+        return result
 
     @staticmethod
     def _parse_next_link(response: httpx.Response) -> str | None:

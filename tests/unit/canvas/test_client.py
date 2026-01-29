@@ -1356,6 +1356,7 @@ class TestLogging:
 
             info_messages = [r.message for r in caplog.records if r.levelno == logging.INFO]
             assert any("Updating page" in m for m in info_messages)
+            assert any("Updated page" in m for m in info_messages)
 
     @pytest.mark.asyncio
     async def test_get_page_logs_debug(self, client, caplog):
@@ -1367,6 +1368,7 @@ class TestLogging:
 
             debug_messages = [r.message for r in caplog.records if r.levelno == logging.DEBUG]
             assert any("Getting page" in m for m in debug_messages)
+            assert any("Retrieved page" in m for m in debug_messages)
 
     @pytest.mark.asyncio
     async def test_upload_file_logs_info(self, client, caplog):
@@ -1400,26 +1402,30 @@ class TestLogging:
         assert any("Uploaded file" in m for m in info_messages)
 
     @pytest.mark.asyncio
-    async def test_list_course_files_logs_debug(self, client, caplog):
+    async def test_list_course_files_logs_info_and_debug(self, client, caplog):
         with patch.object(client, "_request", new_callable=AsyncMock) as mock_req:
-            mock_req.return_value = _make_response(json_data=[])
+            mock_req.return_value = _make_response(json_data=[{"id": 1}])
 
             with caplog.at_level(logging.DEBUG, logger="src.canvas.client"):
                 await client.list_course_files(course_id="1")
 
+        info_messages = [r.message for r in caplog.records if r.levelno == logging.INFO]
+        assert any("Listing files" in m for m in info_messages)
         debug_messages = [r.message for r in caplog.records if r.levelno == logging.DEBUG]
-        assert any("Listing files" in m for m in debug_messages)
+        assert any("Listed 1 files" in m for m in debug_messages)
 
     @pytest.mark.asyncio
-    async def test_list_modules_logs_debug(self, client, caplog):
+    async def test_list_modules_logs_info_and_debug(self, client, caplog):
         with patch.object(client, "_request", new_callable=AsyncMock) as mock_req:
-            mock_req.return_value = _make_response(json_data=[])
+            mock_req.return_value = _make_response(json_data=[{"id": 1}, {"id": 2}])
 
             with caplog.at_level(logging.DEBUG, logger="src.canvas.client"):
                 await client.list_modules(course_id="1")
 
+        info_messages = [r.message for r in caplog.records if r.levelno == logging.INFO]
+        assert any("Listing modules" in m for m in info_messages)
         debug_messages = [r.message for r in caplog.records if r.levelno == logging.DEBUG]
-        assert any("Listing modules" in m for m in debug_messages)
+        assert any("Listed 2 modules" in m for m in debug_messages)
 
     @pytest.mark.asyncio
     async def test_create_module_item_logs_info(self, client, caplog):
@@ -1434,6 +1440,7 @@ class TestLogging:
 
         info_messages = [r.message for r in caplog.records if r.levelno == logging.INFO]
         assert any("Creating module item" in m for m in info_messages)
+        assert any("Created module item" in m for m in info_messages)
 
     @pytest.mark.asyncio
     async def test_request_logs_debug(self, client, caplog):
@@ -1449,6 +1456,7 @@ class TestLogging:
 
         debug_messages = [r.message for r in caplog.records if r.levelno == logging.DEBUG]
         assert any("Canvas API request" in m for m in debug_messages)
+        assert any("Canvas API response" in m for m in debug_messages)
 
     @pytest.mark.asyncio
     async def test_rate_limit_logs_debug(self, client, caplog):

@@ -438,6 +438,186 @@ class TestFilesAPI:
                 )
 
     @pytest.mark.asyncio
+    async def test_upload_file_201_with_url(self, client):
+        """Test upload when step 2 returns 201 with url in response."""
+        step1_resp = _make_response(
+            json_data={
+                "upload_url": "https://s3.example.com/upload",
+                "upload_params": {"token": "xyz"},
+            }
+        )
+
+        step2_resp = _make_response(
+            status_code=201,
+            json_data={"id": 55, "url": "https://canvas.example.com/files/55"},
+        )
+
+        with patch.object(client, "_request", new_callable=AsyncMock) as mock_req:
+            mock_req.return_value = step1_resp
+
+            mock_http = AsyncMock()
+            mock_http.post = AsyncMock(return_value=step2_resp)
+
+            with patch.object(client, "_get_client", return_value=mock_http):
+                result = await client.upload_file(
+                    course_id="1",
+                    file_content=b"image-data",
+                    filename="image.png",
+                    content_type="image/png",
+                )
+
+            assert result["id"] == 55
+            assert result["url"] == "https://canvas.example.com/files/55"
+
+    @pytest.mark.asyncio
+    async def test_upload_file_200_needs_confirm(self, client):
+        """Test upload when step 2 returns 200 without url, requiring confirmation."""
+        step1_resp = _make_response(
+            json_data={
+                "upload_url": "https://s3.example.com/upload",
+                "upload_params": {},
+            }
+        )
+
+        # Step 2: returns id but no url — needs confirmation
+        step2_resp = _make_response(
+            status_code=200,
+            json_data={"id": 77},
+        )
+
+        # Step 3: confirmation response with url
+        confirm_resp = _make_response(
+            json_data={"id": 77, "url": "https://canvas.example.com/files/77"},
+        )
+
+        with patch.object(client, "_request", new_callable=AsyncMock) as mock_req:
+            mock_req.side_effect = [step1_resp, confirm_resp]
+
+            mock_http = AsyncMock()
+            mock_http.post = AsyncMock(return_value=step2_resp)
+
+            with patch.object(client, "_get_client", return_value=mock_http):
+                result = await client.upload_file(
+                    course_id="1",
+                    file_content=b"content",
+                    filename="doc.pdf",
+                    content_type="application/pdf",
+                )
+
+            assert result["id"] == 77
+            assert result["url"] == "https://canvas.example.com/files/77"
+
+            # Verify confirmation POST was made
+            assert mock_req.call_count == 2
+            confirm_call = mock_req.call_args_list[1]
+            assert confirm_call.args == ("POST", "/api/v1/files/77/confirm")
+
+    @pytest.mark.asyncio
+    async def test_upload_file_step2_timeout(self, client):
+        """Test that step 2 timeout raises CanvasAPIError."""
+        step1_resp = _make_response(
+            json_data={
+                "upload_url": "https://s3.example.com/upload",
+                "upload_params": {},
+            }
+        )
+
+        with patch.object(client, "_request", new_callable=AsyncMock) as mock_req:
+            mock_req.return_value = step1_resp
+
+            mock_http = AsyncMock()
+            mock_http.post = AsyncMock(side_effect=httpx.TimeoutException("upload timed out"))
+
+            with patch.object(client, "_get_client", return_value=mock_http):
+                with pytest.raises(CanvasAPIError, match="timed out"):
+                    await client.upload_file(
+                        course_id="1",
+                        file_content=b"content",
+                        filename="big.pdf",
+                        content_type="application/pdf",
+                    )
+
+    @pytest.mark.asyncio
+    async def test_upload_file_docker_redirect_rewrite(self, docker_client):
+        """Test that redirect location is rewritten for Docker URLs."""
+        step1_resp = _make_response(
+            json_data={
+                "upload_url": "http://host.docker.internal:3000/upload",
+                "upload_params": {},
+            }
+        )
+
+        step2_resp = _make_response(
+            status_code=301,
+            headers={"location": "http://localhost:3000/api/v1/files/42/confirm"},
+        )
+
+        step3_resp = _make_response(
+            json_data={"id": 42, "url": "http://localhost:3000/files/42"},
+        )
+
+        with patch.object(docker_client, "_request", new_callable=AsyncMock) as mock_req:
+            mock_req.return_value = step1_resp
+
+            mock_http = AsyncMock()
+            mock_http.post = AsyncMock(return_value=step2_resp)
+            mock_http.get = AsyncMock(return_value=step3_resp)
+
+            with patch.object(docker_client, "_get_client", return_value=mock_http):
+                result = await docker_client.upload_file(
+                    course_id="1",
+                    file_content=b"content",
+                    filename="file.pdf",
+                    content_type="application/pdf",
+                )
+
+            assert result["id"] == 42
+
+            # Verify the redirect URL was rewritten from localhost:3000 to docker host
+            get_call = mock_http.get.call_args
+            called_url = get_call.args[0] if get_call.args else get_call.kwargs.get("url", "")
+            assert "host.docker.internal" in called_url
+
+            # Verify Docker headers were set
+            get_headers = get_call.kwargs.get("headers", {})
+            assert get_headers.get("Host") == "localhost:3000"
+            assert "Authorization" in get_headers
+
+    @pytest.mark.asyncio
+    async def test_upload_file_custom_folder(self, client):
+        """Test upload with custom parent_folder_path."""
+        step1_resp = _make_response(
+            json_data={
+                "upload_url": "https://s3.example.com/upload",
+                "upload_params": {},
+            }
+        )
+
+        step2_resp = _make_response(
+            status_code=200,
+            json_data={"id": 10, "url": "https://canvas.example.com/files/10"},
+        )
+
+        with patch.object(client, "_request", new_callable=AsyncMock) as mock_req:
+            mock_req.return_value = step1_resp
+
+            mock_http = AsyncMock()
+            mock_http.post = AsyncMock(return_value=step2_resp)
+
+            with patch.object(client, "_get_client", return_value=mock_http):
+                await client.upload_file(
+                    course_id="1",
+                    file_content=b"content",
+                    filename="file.pdf",
+                    content_type="application/pdf",
+                    parent_folder_path="custom/folder",
+                )
+
+            # Verify custom folder path was sent
+            call_data = mock_req.call_args.kwargs["data"]
+            assert call_data["parent_folder_path"] == "custom/folder"
+
+    @pytest.mark.asyncio
     async def test_list_course_files(self, client):
         files = [{"id": 1, "display_name": "test.pdf"}]
 

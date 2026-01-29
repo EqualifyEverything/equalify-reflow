@@ -45,6 +45,20 @@ class TestHeadings:
         assert "<h2>Subtitle</h2>" in result
         assert "<h3>Section</h3>" in result
 
+    def test_heading_with_inline_formatting(self, renderer):
+        md = "## A **bold** and *italic* heading"
+        result = renderer.render(md)
+        assert "<h2>A <strong>bold</strong> and <em>italic</em> heading</h2>" in result
+
+    def test_heading_preserves_level_not_demoted(self, renderer):
+        """Verify headings are not demoted or promoted — level is preserved exactly."""
+        md = "#### Deep Heading"
+        result = renderer.render(md)
+        assert "<h4>Deep Heading</h4>" in result
+        assert "<h1>" not in result
+        assert "<h2>" not in result
+        assert "<h3>" not in result
+
 
 class TestParagraphs:
     """R2: Paragraphs as <p> tags."""
@@ -87,7 +101,7 @@ class TestImages:
     """R2/R3: Image rendering and URL rewriting."""
 
     def test_image_with_alt_text_renders_figure(self, renderer):
-        md = '![Description of figure](images/figure_1.png)'
+        md = "![Description of figure](images/figure_1.png)"
         result = renderer.render(md)
         assert "<figure>" in result
         assert '<img src="images/figure_1.png" alt="Description of figure">' in result
@@ -95,21 +109,21 @@ class TestImages:
         assert "</figure>" in result
 
     def test_image_without_alt_text_no_figure(self, renderer):
-        md = '![](images/figure_1.png)'
+        md = "![](images/figure_1.png)"
         result = renderer.render(md)
         assert "<figure>" not in result
         assert '<img src="images/figure_1.png" alt="">' in result
 
     def test_image_url_rewriting(self, renderer):
         image_map = {"images/figure_1.png": "https://canvas.uic.edu/courses/1/files/42/preview"}
-        md = '![A chart](images/figure_1.png)'
+        md = "![A chart](images/figure_1.png)"
         result = renderer.render(md, image_url_map=image_map)
         assert 'src="https://canvas.uic.edu/courses/1/files/42/preview"' in result
         assert "images/figure_1.png" not in result
 
     def test_image_url_not_in_map_keeps_original(self, renderer, caplog):
         image_map = {"images/other.png": "https://canvas.uic.edu/courses/1/files/99/preview"}
-        md = '![Missing image](images/figure_1.png)'
+        md = "![Missing image](images/figure_1.png)"
         with caplog.at_level(logging.WARNING, logger="src.canvas.renderer"):
             result = renderer.render(md, image_url_map=image_map)
         assert 'src="images/figure_1.png"' in result
@@ -120,13 +134,13 @@ class TestImages:
             "images/fig1.png": "https://canvas.uic.edu/files/1/preview",
             "images/fig2.png": "https://canvas.uic.edu/files/2/preview",
         }
-        md = '![Fig 1](images/fig1.png)\n\n![Fig 2](images/fig2.png)'
+        md = "![Fig 1](images/fig1.png)\n\n![Fig 2](images/fig2.png)"
         result = renderer.render(md, image_url_map=image_map)
         assert 'src="https://canvas.uic.edu/files/1/preview"' in result
         assert 'src="https://canvas.uic.edu/files/2/preview"' in result
 
     def test_image_no_map_no_warning(self, renderer, caplog):
-        md = '![Alt](images/figure_1.png)'
+        md = "![Alt](images/figure_1.png)"
         with caplog.at_level(logging.WARNING, logger="src.canvas.renderer"):
             renderer.render(md)
         assert "Image path not found" not in caplog.text

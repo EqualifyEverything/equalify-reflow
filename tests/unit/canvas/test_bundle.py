@@ -6,6 +6,7 @@ from unittest.mock import MagicMock
 
 import pytest
 from botocore.exceptions import ClientError
+from fastapi import HTTPException
 from src.canvas.bundle import BundleError, DownloadBundleService
 
 pytestmark = pytest.mark.unit
@@ -31,10 +32,18 @@ def mock_storage():
     storage = MagicMock()
     storage.results_bucket = "equalify-results"
     storage.s3_client = MagicMock()
+
     # Make upload_file async
     async def upload_file(key, content, content_type="application/octet-stream"):
         return key
+
     storage.upload_file = upload_file
+
+    # Make download_file async — returns markdown bytes by default
+    async def download_file(key):
+        return b"# Hello"
+
+    storage.download_file = download_file
     return storage
 
 
@@ -58,13 +67,8 @@ class TestCreateBundle:
     @pytest.mark.asyncio
     async def test_returns_presigned_url(self, service, mock_storage):
         """create_bundle returns the presigned URL string."""
-        mock_storage.s3_client.get_object.return_value = _s3_get_object_response(
-            b"# Hello"
-        )
         mock_storage.s3_client.list_objects_v2.return_value = {"Contents": []}
-        mock_storage.s3_client.generate_presigned_url.return_value = (
-            "https://s3.example.com/bundle.zip?sig=abc"
-        )
+        mock_storage.s3_client.generate_presigned_url.return_value = "https://s3.example.com/bundle.zip?sig=abc"
 
         url = await service.create_bundle("job-1", "lecture_notes.pdf")
 
@@ -72,9 +76,6 @@ class TestCreateBundle:
 
     @pytest.mark.asyncio
     async def test_presigned_url_has_seven_day_expiry(self, service, mock_storage):
-        mock_storage.s3_client.get_object.return_value = _s3_get_object_response(
-            b"# Hello"
-        )
         mock_storage.s3_client.list_objects_v2.return_value = {"Contents": []}
         mock_storage.s3_client.generate_presigned_url.return_value = "https://url"
 
@@ -90,34 +91,35 @@ class TestCreateBundle:
         )
 
     @pytest.mark.asyncio
-    async def test_downloads_result_md(self, service, mock_storage):
-        """create_bundle downloads results/{job_id}/result.md."""
-        mock_storage.s3_client.get_object.return_value = _s3_get_object_response(
-            b"# Test"
-        )
+    async def test_downloads_result_md_via_storage_service(self, service, mock_storage):
+        """create_bundle downloads results/{job_id}/result.md via StorageService."""
+        download_calls = []
+
+        async def track_download(key):
+            download_calls.append(key)
+            return b"# Test"
+
+        mock_storage.download_file = track_download
         mock_storage.s3_client.list_objects_v2.return_value = {"Contents": []}
         mock_storage.s3_client.generate_presigned_url.return_value = "https://url"
 
         await service.create_bundle("j1", "doc.pdf")
 
-        # First get_object call is for the markdown
-        first_call = mock_storage.s3_client.get_object.call_args_list[0]
-        assert first_call.kwargs["Bucket"] == "equalify-results"
-        assert first_call.kwargs["Key"] == "results/j1/result.md"
+        assert len(download_calls) == 1
+        assert download_calls[0] == "results/j1/result.md"
 
     @pytest.mark.asyncio
     async def test_uploads_zip_to_correct_key(self, service, mock_storage):
-        mock_storage.s3_client.get_object.return_value = _s3_get_object_response(
-            b"# Hello"
-        )
         mock_storage.s3_client.list_objects_v2.return_value = {"Contents": []}
         mock_storage.s3_client.generate_presigned_url.return_value = "https://url"
 
         # Track upload_file calls
         upload_calls = []
+
         async def track_upload(key, content, content_type="application/octet-stream"):
             upload_calls.append({"key": key, "content_type": content_type})
             return key
+
         mock_storage.upload_file = track_upload
 
         await service.create_bundle("job-1", "doc.pdf")
@@ -131,47 +133,51 @@ class TestBundleErrorOnMissingMarkdown:
     """R4: If result.md doesn't exist, raise BundleError."""
 
     @pytest.mark.asyncio
-    async def test_raises_bundle_error_on_no_such_key(self, service, mock_storage):
-        mock_storage.s3_client.get_object.side_effect = _make_client_error("NoSuchKey")
+    async def test_raises_bundle_error_on_404(self, service, mock_storage):
+        """StorageService.download_file raises HTTPException(404) for missing files."""
+
+        async def raise_not_found(key):
+            raise HTTPException(status_code=404, detail="File not found")
+
+        mock_storage.download_file = raise_not_found
 
         with pytest.raises(BundleError, match="No result markdown found for job job-1"):
             await service.create_bundle("job-1", "doc.pdf")
 
     @pytest.mark.asyncio
-    async def test_raises_bundle_error_on_404(self, service, mock_storage):
-        mock_storage.s3_client.get_object.side_effect = _make_client_error("404")
+    async def test_reraises_non_404_http_exceptions(self, service, mock_storage):
+        """Non-404 HTTPExceptions from StorageService are re-raised."""
 
-        with pytest.raises(BundleError, match="No result markdown found for job"):
+        async def raise_server_error(key):
+            raise HTTPException(status_code=500, detail="S3 failure")
+
+        mock_storage.download_file = raise_server_error
+
+        with pytest.raises(HTTPException) as exc_info:
             await service.create_bundle("job-1", "doc.pdf")
-
-    @pytest.mark.asyncio
-    async def test_reraises_other_client_errors(self, service, mock_storage):
-        mock_storage.s3_client.get_object.side_effect = _make_client_error(
-            "InternalError"
-        )
-
-        with pytest.raises(ClientError):
-            await service.create_bundle("job-1", "doc.pdf")
+        assert exc_info.value.status_code == 500
 
 
 class TestZipStructure:
     """R2: Zip file structure and naming."""
 
     @pytest.mark.asyncio
-    async def test_zip_named_folder_uses_original_filename_stem(
-        self, service, mock_storage
-    ):
+    async def test_zip_named_folder_uses_original_filename_stem(self, service, mock_storage):
         """Root folder is {original_filename_without_extension}-reflow."""
-        mock_storage.s3_client.get_object.return_value = _s3_get_object_response(
-            b"# Content"
-        )
+
+        async def return_content(key):
+            return b"# Content"
+
+        mock_storage.download_file = return_content
         mock_storage.s3_client.list_objects_v2.return_value = {"Contents": []}
         mock_storage.s3_client.generate_presigned_url.return_value = "https://url"
 
         uploaded_content = {}
+
         async def capture_upload(key, content, content_type="application/octet-stream"):
             uploaded_content["bytes"] = content
             return key
+
         mock_storage.upload_file = capture_upload
 
         await service.create_bundle("j1", "lecture_notes.pdf")
@@ -182,16 +188,19 @@ class TestZipStructure:
 
     @pytest.mark.asyncio
     async def test_markdown_at_root_of_folder(self, service, mock_storage):
-        mock_storage.s3_client.get_object.return_value = _s3_get_object_response(
-            b"# Hello"
-        )
+        async def return_hello(key):
+            return b"# Hello"
+
+        mock_storage.download_file = return_hello
         mock_storage.s3_client.list_objects_v2.return_value = {"Contents": []}
         mock_storage.s3_client.generate_presigned_url.return_value = "https://url"
 
         uploaded = {}
+
         async def capture(key, content, content_type="application/octet-stream"):
             uploaded["bytes"] = content
             return key
+
         mock_storage.upload_file = capture
 
         await service.create_bundle("j1", "my_doc.pdf")
@@ -204,15 +213,13 @@ class TestZipStructure:
     @pytest.mark.asyncio
     async def test_figures_in_images_subfolder(self, service, mock_storage):
         """Figures go in {folder}/images/{filename}."""
-        # Return markdown on first call, figure on subsequent calls
-        call_count = {"n": 0}
-        def get_object_side_effect(**kwargs):
-            call_count["n"] += 1
-            if kwargs["Key"].endswith("result.md"):
-                return _s3_get_object_response(b"# Doc")
-            return _s3_get_object_response(b"\x89PNG-data")
 
-        mock_storage.s3_client.get_object.side_effect = get_object_side_effect
+        # Markdown via download_file, figures via s3_client.get_object
+        async def return_doc(key):
+            return b"# Doc"
+
+        mock_storage.download_file = return_doc
+        mock_storage.s3_client.get_object.return_value = _s3_get_object_response(b"\x89PNG-data")
         mock_storage.s3_client.list_objects_v2.return_value = {
             "Contents": [
                 {"Key": "results/j1/figures/figure_1.png"},
@@ -222,9 +229,11 @@ class TestZipStructure:
         mock_storage.s3_client.generate_presigned_url.return_value = "https://url"
 
         uploaded = {}
+
         async def capture(key, content, content_type="application/octet-stream"):
             uploaded["bytes"] = content
             return key
+
         mock_storage.upload_file = capture
 
         await service.create_bundle("j1", "slides.pdf")
@@ -237,16 +246,20 @@ class TestZipStructure:
     @pytest.mark.asyncio
     async def test_no_images_folder_when_no_figures(self, service, mock_storage):
         """R4: If no figures exist, zip contains only the markdown (no images/ folder)."""
-        mock_storage.s3_client.get_object.return_value = _s3_get_object_response(
-            b"# Solo"
-        )
+
+        async def return_solo(key):
+            return b"# Solo"
+
+        mock_storage.download_file = return_solo
         mock_storage.s3_client.list_objects_v2.return_value = {"Contents": []}
         mock_storage.s3_client.generate_presigned_url.return_value = "https://url"
 
         uploaded = {}
+
         async def capture(key, content, content_type="application/octet-stream"):
             uploaded["bytes"] = content
             return key
+
         mock_storage.upload_file = capture
 
         await service.create_bundle("j1", "solo.pdf")
@@ -262,9 +275,6 @@ class TestS3Operations:
 
     @pytest.mark.asyncio
     async def test_lists_figures_with_correct_prefix(self, service, mock_storage):
-        mock_storage.s3_client.get_object.return_value = _s3_get_object_response(
-            b"# md"
-        )
         mock_storage.s3_client.list_objects_v2.return_value = {"Contents": []}
         mock_storage.s3_client.generate_presigned_url.return_value = "https://url"
 
@@ -277,12 +287,8 @@ class TestS3Operations:
 
     @pytest.mark.asyncio
     async def test_downloads_each_listed_figure(self, service, mock_storage):
-        def get_object_side_effect(**kwargs):
-            if kwargs["Key"].endswith("result.md"):
-                return _s3_get_object_response(b"# md")
-            return _s3_get_object_response(b"img-bytes")
-
-        mock_storage.s3_client.get_object.side_effect = get_object_side_effect
+        # Figures still use raw s3_client.get_object
+        mock_storage.s3_client.get_object.return_value = _s3_get_object_response(b"img-bytes")
         mock_storage.s3_client.list_objects_v2.return_value = {
             "Contents": [
                 {"Key": "results/j1/figures/fig1.png"},
@@ -292,15 +298,17 @@ class TestS3Operations:
         mock_storage.s3_client.generate_presigned_url.return_value = "https://url"
 
         uploaded = {}
+
         async def capture(key, content, content_type="application/octet-stream"):
             uploaded["bytes"] = content
             return key
+
         mock_storage.upload_file = capture
 
         await service.create_bundle("j1", "doc.pdf")
 
-        # 1 markdown + 2 figures = 3 get_object calls
-        assert mock_storage.s3_client.get_object.call_count == 3
+        # Markdown now uses download_file; only 2 figure get_object calls
+        assert mock_storage.s3_client.get_object.call_count == 2
 
 
 class TestZipInMemory:
@@ -308,16 +316,19 @@ class TestZipInMemory:
 
     @pytest.mark.asyncio
     async def test_uploaded_content_is_valid_zip(self, service, mock_storage):
-        mock_storage.s3_client.get_object.return_value = _s3_get_object_response(
-            b"# Valid"
-        )
+        async def return_valid(key):
+            return b"# Valid"
+
+        mock_storage.download_file = return_valid
         mock_storage.s3_client.list_objects_v2.return_value = {"Contents": []}
         mock_storage.s3_client.generate_presigned_url.return_value = "https://url"
 
         uploaded = {}
+
         async def capture(key, content, content_type="application/octet-stream"):
             uploaded["bytes"] = content
             return key
+
         mock_storage.upload_file = capture
 
         await service.create_bundle("j1", "test.pdf")
@@ -330,18 +341,14 @@ class TestBuildZip:
     """Static _build_zip method."""
 
     def test_build_zip_with_markdown_only(self):
-        result = DownloadBundleService._build_zip(
-            "my-reflow", "my", b"# Content", []
-        )
+        result = DownloadBundleService._build_zip("my-reflow", "my", b"# Content", [])
         zf = zipfile.ZipFile(io.BytesIO(result))
         assert zf.namelist() == ["my-reflow/my.md"]
         assert zf.read("my-reflow/my.md") == b"# Content"
 
     def test_build_zip_with_figures(self):
         figures = [("fig1.png", b"png1"), ("fig2.png", b"png2")]
-        result = DownloadBundleService._build_zip(
-            "doc-reflow", "doc", b"# Doc", figures
-        )
+        result = DownloadBundleService._build_zip("doc-reflow", "doc", b"# Doc", figures)
         zf = zipfile.ZipFile(io.BytesIO(result))
         names = zf.namelist()
         assert "doc-reflow/doc.md" in names
@@ -350,9 +357,7 @@ class TestBuildZip:
         assert zf.read("doc-reflow/images/fig1.png") == b"png1"
 
     def test_build_zip_uses_deflated_compression(self):
-        result = DownloadBundleService._build_zip(
-            "a-reflow", "a", b"x" * 1000, []
-        )
+        result = DownloadBundleService._build_zip("a-reflow", "a", b"x" * 1000, [])
         zf = zipfile.ZipFile(io.BytesIO(result))
         info = zf.getinfo("a-reflow/a.md")
         assert info.compress_type == zipfile.ZIP_DEFLATED
@@ -363,11 +368,8 @@ class TestFigureDownloadErrors:
 
     @pytest.mark.asyncio
     async def test_skips_failed_figure_download(self, service, mock_storage):
-        call_count = {"n": 0}
+        # Figures still use raw s3_client.get_object
         def get_object_side_effect(**kwargs):
-            call_count["n"] += 1
-            if kwargs["Key"].endswith("result.md"):
-                return _s3_get_object_response(b"# md")
             if "fig_bad" in kwargs["Key"]:
                 raise _make_client_error("InternalError")
             return _s3_get_object_response(b"good-img")
@@ -382,9 +384,11 @@ class TestFigureDownloadErrors:
         mock_storage.s3_client.generate_presigned_url.return_value = "https://url"
 
         uploaded = {}
+
         async def capture(key, content, content_type="application/octet-stream"):
             uploaded["bytes"] = content
             return key
+
         mock_storage.upload_file = capture
 
         url = await service.create_bundle("j1", "doc.pdf")
@@ -398,18 +402,15 @@ class TestFigureDownloadErrors:
 
     @pytest.mark.asyncio
     async def test_list_objects_failure_returns_no_figures(self, service, mock_storage):
-        mock_storage.s3_client.get_object.return_value = _s3_get_object_response(
-            b"# md"
-        )
-        mock_storage.s3_client.list_objects_v2.side_effect = _make_client_error(
-            "InternalError"
-        )
+        mock_storage.s3_client.list_objects_v2.side_effect = _make_client_error("InternalError")
         mock_storage.s3_client.generate_presigned_url.return_value = "https://url"
 
         uploaded = {}
+
         async def capture(key, content, content_type="application/octet-stream"):
             uploaded["bytes"] = content
             return key
+
         mock_storage.upload_file = capture
 
         url = await service.create_bundle("j1", "doc.pdf")
@@ -424,9 +425,6 @@ class TestLogging:
 
     @pytest.mark.asyncio
     async def test_logs_bundle_info(self, service, mock_storage, caplog):
-        mock_storage.s3_client.get_object.return_value = _s3_get_object_response(
-            b"# md"
-        )
         mock_storage.s3_client.list_objects_v2.return_value = {"Contents": []}
         mock_storage.s3_client.generate_presigned_url.return_value = "https://url"
 
@@ -438,12 +436,8 @@ class TestLogging:
 
     @pytest.mark.asyncio
     async def test_logs_file_count_with_figures(self, service, mock_storage, caplog):
-        def get_object_side_effect(**kwargs):
-            if kwargs["Key"].endswith("result.md"):
-                return _s3_get_object_response(b"# md")
-            return _s3_get_object_response(b"img")
-
-        mock_storage.s3_client.get_object.side_effect = get_object_side_effect
+        # Figures still use raw s3_client.get_object
+        mock_storage.s3_client.get_object.return_value = _s3_get_object_response(b"img")
         mock_storage.s3_client.list_objects_v2.return_value = {
             "Contents": [
                 {"Key": "results/j1/figures/f1.png"},
@@ -463,16 +457,15 @@ class TestFilenameEdgeCases:
 
     @pytest.mark.asyncio
     async def test_filename_without_extension(self, service, mock_storage):
-        mock_storage.s3_client.get_object.return_value = _s3_get_object_response(
-            b"# md"
-        )
         mock_storage.s3_client.list_objects_v2.return_value = {"Contents": []}
         mock_storage.s3_client.generate_presigned_url.return_value = "https://url"
 
         uploaded = {}
+
         async def capture(key, content, content_type="application/octet-stream"):
             uploaded["bytes"] = content
             return key
+
         mock_storage.upload_file = capture
 
         await service.create_bundle("j1", "readme")
@@ -482,16 +475,15 @@ class TestFilenameEdgeCases:
 
     @pytest.mark.asyncio
     async def test_filename_with_multiple_dots(self, service, mock_storage):
-        mock_storage.s3_client.get_object.return_value = _s3_get_object_response(
-            b"# md"
-        )
         mock_storage.s3_client.list_objects_v2.return_value = {"Contents": []}
         mock_storage.s3_client.generate_presigned_url.return_value = "https://url"
 
         uploaded = {}
+
         async def capture(key, content, content_type="application/octet-stream"):
             uploaded["bytes"] = content
             return key
+
         mock_storage.upload_file = capture
 
         await service.create_bundle("j1", "my.file.name.pdf")
@@ -502,9 +494,6 @@ class TestFilenameEdgeCases:
     @pytest.mark.asyncio
     async def test_empty_figures_prefix_entry_skipped(self, service, mock_storage):
         """list_objects_v2 can return the prefix itself as a key — skip it."""
-        mock_storage.s3_client.get_object.return_value = _s3_get_object_response(
-            b"# md"
-        )
         mock_storage.s3_client.list_objects_v2.return_value = {
             "Contents": [
                 {"Key": "results/j1/figures/"},  # prefix-only entry
@@ -513,9 +502,11 @@ class TestFilenameEdgeCases:
         mock_storage.s3_client.generate_presigned_url.return_value = "https://url"
 
         uploaded = {}
+
         async def capture(key, content, content_type="application/octet-stream"):
             uploaded["bytes"] = content
             return key
+
         mock_storage.upload_file = capture
 
         await service.create_bundle("j1", "doc.pdf")

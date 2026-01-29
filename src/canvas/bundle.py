@@ -21,6 +21,7 @@ import zipfile
 from typing import TYPE_CHECKING
 
 from botocore.exceptions import ClientError
+from fastapi import HTTPException
 
 if TYPE_CHECKING:
     from ..services.storage_service import StorageService
@@ -76,10 +77,7 @@ class DownloadBundleService:
         zip_bytes = self._build_zip(folder_name, base_name, markdown_content, figures)
 
         file_count = 1 + len(figures)
-        logger.info(
-            f"Job {job_id}: Created bundle with {file_count} files "
-            f"({len(zip_bytes)} bytes)"
-        )
+        logger.info(f"Job {job_id}: Created bundle with {file_count} files ({len(zip_bytes)} bytes)")
 
         # 4. Upload zip to S3
         bundle_key = f"results/{job_id}/bundle.zip"
@@ -104,26 +102,20 @@ class DownloadBundleService:
     async def _download_result_markdown(self, job_id: str, key: str) -> bytes:
         """Download result.md from S3 results bucket.
 
+        Uses StorageService.download_file for circuit breaker protection
+        and retry logic.
+
         Raises:
             BundleError: If the markdown file does not exist.
         """
         try:
-            response = self.storage.s3_client.get_object(
-                Bucket=self.storage.results_bucket,
-                Key=key,
-            )
-            return response["Body"].read()  # type: ignore[no-any-return]
-        except ClientError as e:
-            error_code = e.response.get("Error", {}).get("Code", "")
-            if error_code in ("NoSuchKey", "404"):
-                raise BundleError(
-                    f"No result markdown found for job {job_id}"
-                ) from e
+            return await self.storage.download_file(key)
+        except HTTPException as e:
+            if e.status_code == 404:
+                raise BundleError(f"No result markdown found for job {job_id}") from e
             raise
 
-    async def _list_and_download_figures(
-        self, job_id: str
-    ) -> list[tuple[str, bytes]]:
+    async def _list_and_download_figures(self, job_id: str) -> list[tuple[str, bytes]]:
         """List and download all figures for a job.
 
         Returns:
@@ -142,7 +134,7 @@ class DownloadBundleService:
 
         for obj in response.get("Contents", []):
             key = obj["Key"]
-            filename = key[len(prefix):]
+            filename = key[len(prefix) :]
             if not filename:
                 continue
             try:

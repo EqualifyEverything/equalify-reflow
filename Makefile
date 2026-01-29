@@ -40,7 +40,7 @@ help:
 	@echo "  make clean        - Remove containers and volumes"
 	@echo ""
 	@echo "Observability:"
-	@echo "  make grafana-url  - Open Grafana (http://localhost:3000)"
+	@echo "  make grafana-url  - Open Grafana (http://localhost:3001)"
 	@echo "  make prometheus-url - Open Prometheus (http://localhost:9090)"
 	@echo "  make metrics-url  - Open API metrics (http://localhost:8080/metrics)"
 	@echo ""
@@ -192,9 +192,9 @@ clean:
 
 # Observability URLs
 grafana-url:
-	@echo "Opening Grafana at http://localhost:3000"
+	@echo "Opening Grafana at http://localhost:3001"
 	@echo "Default credentials: admin / admin"
-	@open http://localhost:3000 2>/dev/null || xdg-open http://localhost:3000 2>/dev/null || echo "Please open http://localhost:3000 in your browser"
+	@open http://localhost:3001 2>/dev/null || xdg-open http://localhost:3001 2>/dev/null || echo "Please open http://localhost:3001 in your browser"
 
 prometheus-url:
 	@echo "Opening Prometheus at http://localhost:9090"

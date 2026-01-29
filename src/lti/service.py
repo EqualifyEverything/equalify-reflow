@@ -56,6 +56,22 @@ class LTIService:
         # Default to settings if not provided
         self.canvas_base_url = canvas_base_url or getattr(settings, 'canvas_api_url', '').replace('/api/v1', '') or 'http://localhost:3000'
 
+    @staticmethod
+    def _rewrite_canvas_url(url: str) -> str:
+        """Rewrite localhost Canvas URLs to host.docker.internal for container networking.
+
+        Canvas redirects often point to localhost:3000, which doesn't resolve
+        inside Docker containers. This rewrites them to host.docker.internal.
+        """
+        if "host.docker.internal" in url:
+            return url
+        return url.replace("http://localhost:3000", "http://host.docker.internal:3000")
+
+    @staticmethod
+    def _is_docker_rewritten_url(url: str) -> bool:
+        """Check if a URL has been rewritten for Docker container networking."""
+        return "host.docker.internal" in url
+
     async def process_file_menu_launch(
         self,
         launch_data: LTILaunchData,
@@ -99,13 +115,10 @@ class LTIService:
 
             # Try to get file ID from various sources
             file_id = file_id_from_url
-            logger.debug(f"[DEBUG] file_id_from_url={file_id_from_url}")
             if not file_id and file_info.file_id and not file_info.file_id.startswith("$"):
                 file_id = file_info.file_id
-            logger.debug(f"[DEBUG] After check: file_id={file_id}")
 
             if not file_id:
-                logger.debug("[DEBUG] Entering 'file_id is None' branch")
                 # Last resort for local Canvas: try to get the most recent PDF from the course
                 course_id = file_info.course_id or launch_data.canvas_course_id
                 if course_id:
@@ -113,10 +126,7 @@ class LTIService:
                     fetched_file_info = await self._fetch_recent_file_from_course(course_id)
                     if fetched_file_info and fetched_file_info.file_download_url:
                         logger.info(f"Found file via course listing: {fetched_file_info.file_name}")
-                        logger.debug(f"[DEBUG] fetched_file_info.file_id={fetched_file_info.file_id}")
-                        logger.debug(f"[DEBUG] fetched_file_info.file_download_url={fetched_file_info.file_download_url}")
-                        file_info = fetched_file_info  # Use the fetched file info
-                        logger.debug(f"[DEBUG] file_info now set to fetched_file_info, file_info.file_id={file_info.file_id}")
+                        file_info = fetched_file_info
                     else:
                         raise LTIServiceError(
                             "Cannot determine file ID. Canvas variable substitution may not be supported. "
@@ -128,7 +138,6 @@ class LTIService:
                         "File ID was not found in launch claims or URL parameters."
                     )
             else:
-                logger.debug(f"[DEBUG] Entering 'file_id is NOT None' branch, file_id={file_id}")
                 # We have a file_id, fetch file info from Canvas API
                 course_id = file_info.course_id or launch_data.canvas_course_id
                 file_info = await self._fetch_file_info_from_canvas(file_id, course_id)
@@ -204,13 +213,37 @@ class LTIService:
             logger.debug("Using Canvas API token for file download")
 
         try:
+            # Rewrite localhost URLs to host.docker.internal for container networking.
+            # Canvas redirects file downloads to localhost:3000, which doesn't resolve
+            # inside Docker. We also set Host: localhost:3000 so Canvas recognizes
+            # the request as local (Canvas validates the Host header for sf_verifier).
+            download_url = self._rewrite_canvas_url(download_url)
+
+            # If URL was rewritten for Docker, spoof the Host header so Canvas
+            # treats the request as coming from localhost (required for sf_verifier auth)
+            if self._is_docker_rewritten_url(download_url):
+                headers["Host"] = "localhost:3000"
+
             async with httpx.AsyncClient(
                 timeout=httpx.Timeout(30.0, connect=10.0),
-                follow_redirects=True,
+                follow_redirects=False,
             ) as client:
                 logger.debug(f"Downloading file from Canvas: {download_url[:100]}...")
 
                 response = await client.get(download_url, headers=headers)
+
+                # Handle redirects manually to rewrite localhost URLs.
+                # On redirects, strip the Authorization header (Canvas uses the
+                # sf_verifier JWT in the URL for auth after the first hop) but
+                # keep the Host header for Docker networking.
+                max_redirects = 5
+                redirect_headers = {"Host": "localhost:3000"} if self._is_docker_rewritten_url(download_url) else {}
+                while response.is_redirect and max_redirects > 0:
+                    redirect_url = str(response.headers.get("location", ""))
+                    redirect_url = self._rewrite_canvas_url(redirect_url)
+                    logger.debug(f"Following redirect to: {redirect_url[:100]}...")
+                    response = await client.get(redirect_url, headers=redirect_headers)
+                    max_redirects -= 1
                 response.raise_for_status()
 
                 # Validate content type
@@ -288,6 +321,14 @@ class LTIService:
                 endpoints.append(f"/api/v1/courses/{course_id}/files/{file_id}")
             endpoints.append(f"/api/v1/files/{file_id}")
 
+            # Build headers for Canvas API requests
+            api_headers: dict[str, str] = {}
+            canvas_api_token = getattr(settings, 'canvas_api_token', None)
+            if canvas_api_token and canvas_api_token != "your-canvas-test-token-here":
+                api_headers["Authorization"] = f"Bearer {canvas_api_token}"
+            if self._is_docker_rewritten_url(self.canvas_base_url):
+                api_headers["Host"] = "localhost:3000"
+
             async with httpx.AsyncClient(
                 timeout=httpx.Timeout(30.0, connect=10.0),
                 follow_redirects=True,
@@ -295,13 +336,13 @@ class LTIService:
                 file_data = None
                 last_error = None
 
-                logger.debug(f"[DEBUG] _fetch_file_info_from_canvas called with file_id={file_id}, course_id={course_id}")
+                logger.debug(f"Fetching file info: file_id={file_id}, course_id={course_id}")
                 for endpoint in endpoints:
                     url = f"{self.canvas_base_url}{endpoint}"
                     logger.debug(f"Fetching file info from Canvas: {url}")
 
                     try:
-                        response = await client.get(url)
+                        response = await client.get(url, headers=api_headers)
                         if response.status_code == 200:
                             file_data = response.json()
                             break

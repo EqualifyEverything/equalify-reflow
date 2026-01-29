@@ -1,6 +1,7 @@
 """Unit tests for Canvas API client."""
 
 import json
+import logging
 from unittest.mock import AsyncMock, patch
 
 import httpx
@@ -1141,3 +1142,346 @@ class TestConfigSettings:
         assert "canvas_autopublish_enabled" in field_names
         assert "canvas_polling_interval_seconds" in field_names
         assert "canvas_rate_limit_buffer" in field_names
+
+
+class TestAuthHeaderOnAllMethods:
+    """Verify every public method sends Authorization: Bearer {api_token}.
+
+    The _request() helper sets the header, so methods that route through it
+    are covered. upload_file step 3 (redirect confirm) sets the header
+    manually, so we check that path separately.
+    """
+
+    @pytest.mark.asyncio
+    async def test_create_page_sends_auth(self, client):
+        response = _make_response(json_data={"url": "p"})
+
+        with patch.object(client, "_get_client") as mock_get:
+            mock_http = AsyncMock()
+            mock_http.request = AsyncMock(return_value=response)
+            mock_get.return_value = mock_http
+
+            await client.create_page(course_id="1", title="T", body="B")
+
+            headers = mock_http.request.call_args.kwargs["headers"]
+            assert headers["Authorization"] == "Bearer test-token-123"
+
+    @pytest.mark.asyncio
+    async def test_update_page_sends_auth(self, client):
+        response = _make_response(json_data={"url": "p"})
+
+        with patch.object(client, "_get_client") as mock_get:
+            mock_http = AsyncMock()
+            mock_http.request = AsyncMock(return_value=response)
+            mock_get.return_value = mock_http
+
+            await client.update_page(course_id="1", page_url="p", body="B")
+
+            headers = mock_http.request.call_args.kwargs["headers"]
+            assert headers["Authorization"] == "Bearer test-token-123"
+
+    @pytest.mark.asyncio
+    async def test_get_page_sends_auth(self, client):
+        response = _make_response(json_data={"url": "p"})
+
+        with patch.object(client, "_get_client") as mock_get:
+            mock_http = AsyncMock()
+            mock_http.request = AsyncMock(return_value=response)
+            mock_get.return_value = mock_http
+
+            await client.get_page(course_id="1", page_url="p")
+
+            headers = mock_http.request.call_args.kwargs["headers"]
+            assert headers["Authorization"] == "Bearer test-token-123"
+
+    @pytest.mark.asyncio
+    async def test_list_course_files_sends_auth(self, client):
+        response = _make_response(json_data=[])
+
+        with patch.object(client, "_get_client") as mock_get:
+            mock_http = AsyncMock()
+            mock_http.request = AsyncMock(return_value=response)
+            mock_get.return_value = mock_http
+
+            await client.list_course_files(course_id="1")
+
+            headers = mock_http.request.call_args.kwargs["headers"]
+            assert headers["Authorization"] == "Bearer test-token-123"
+
+    @pytest.mark.asyncio
+    async def test_list_modules_sends_auth(self, client):
+        response = _make_response(json_data=[])
+
+        with patch.object(client, "_get_client") as mock_get:
+            mock_http = AsyncMock()
+            mock_http.request = AsyncMock(return_value=response)
+            mock_get.return_value = mock_http
+
+            await client.list_modules(course_id="1")
+
+            headers = mock_http.request.call_args.kwargs["headers"]
+            assert headers["Authorization"] == "Bearer test-token-123"
+
+    @pytest.mark.asyncio
+    async def test_create_module_item_sends_auth(self, client):
+        response = _make_response(json_data={"id": 1})
+
+        with patch.object(client, "_get_client") as mock_get:
+            mock_http = AsyncMock()
+            mock_http.request = AsyncMock(return_value=response)
+            mock_get.return_value = mock_http
+
+            await client.create_module_item(
+                course_id="1", module_id="2", title="T",
+                item_type="Page", page_url="p",
+            )
+
+            headers = mock_http.request.call_args.kwargs["headers"]
+            assert headers["Authorization"] == "Bearer test-token-123"
+
+    @pytest.mark.asyncio
+    async def test_upload_file_step1_sends_auth(self, client):
+        """Step 1 goes through _request, which adds auth."""
+        step1_resp = _make_response(
+            json_data={
+                "upload_url": "https://s3.example.com/upload",
+                "upload_params": {},
+            }
+        )
+        step2_resp = _make_response(
+            status_code=200,
+            json_data={"id": 1, "url": "https://canvas.example.com/files/1"},
+        )
+
+        with patch.object(client, "_get_client") as mock_get:
+            mock_http = AsyncMock()
+            mock_http.request = AsyncMock(return_value=step1_resp)
+            mock_http.post = AsyncMock(return_value=step2_resp)
+            mock_get.return_value = mock_http
+
+            await client.upload_file(
+                course_id="1", file_content=b"data",
+                filename="f.pdf", content_type="application/pdf",
+            )
+
+            # Step 1 request goes through _request which adds auth
+            step1_headers = mock_http.request.call_args.kwargs["headers"]
+            assert step1_headers["Authorization"] == "Bearer test-token-123"
+
+    @pytest.mark.asyncio
+    async def test_upload_file_step2_omits_auth(self, client):
+        """Step 2 uploads to an external URL (e.g. S3) — no auth header."""
+        step1_resp = _make_response(
+            json_data={
+                "upload_url": "https://s3.example.com/upload",
+                "upload_params": {"key": "val"},
+            }
+        )
+        step2_resp = _make_response(
+            status_code=200,
+            json_data={"id": 1, "url": "https://canvas.example.com/files/1"},
+        )
+
+        with patch.object(client, "_get_client") as mock_get:
+            mock_http = AsyncMock()
+            mock_http.request = AsyncMock(return_value=step1_resp)
+            mock_http.post = AsyncMock(return_value=step2_resp)
+            mock_get.return_value = mock_http
+
+            await client.upload_file(
+                course_id="1", file_content=b"data",
+                filename="f.pdf", content_type="application/pdf",
+            )
+
+            # Step 2 posts to external S3 URL — no Authorization header
+            step2_headers = mock_http.post.call_args.kwargs["headers"]
+            assert "Authorization" not in step2_headers
+
+    @pytest.mark.asyncio
+    async def test_upload_file_step3_redirect_sends_auth(self, client):
+        """Step 3 confirm (redirect) must include auth header."""
+        step1_resp = _make_response(
+            json_data={
+                "upload_url": "https://s3.example.com/upload",
+                "upload_params": {},
+            }
+        )
+        step2_resp = _make_response(
+            status_code=301,
+            headers={"location": "https://canvas.example.com/api/v1/files/42/confirm"},
+        )
+        step3_resp = _make_response(
+            json_data={"id": 42, "url": "https://canvas.example.com/files/42"},
+        )
+
+        with patch.object(client, "_get_client") as mock_get:
+            mock_http = AsyncMock()
+            mock_http.request = AsyncMock(return_value=step1_resp)
+            mock_http.post = AsyncMock(return_value=step2_resp)
+            mock_http.get = AsyncMock(return_value=step3_resp)
+            mock_get.return_value = mock_http
+
+            await client.upload_file(
+                course_id="1", file_content=b"data",
+                filename="f.pdf", content_type="application/pdf",
+            )
+
+            # Step 3 GET confirm must include Authorization
+            step3_headers = mock_http.get.call_args.kwargs["headers"]
+            assert step3_headers["Authorization"] == "Bearer test-token-123"
+
+
+class TestLogging:
+    """Verify all methods log at INFO (operations) and DEBUG (request/response details)."""
+
+    @pytest.mark.asyncio
+    async def test_create_page_logs_info(self, client, caplog):
+        with patch.object(client, "_request", new_callable=AsyncMock) as mock_req:
+            mock_req.return_value = _make_response(json_data={"url": "my-page"})
+
+            with caplog.at_level(logging.INFO, logger="src.canvas.client"):
+                await client.create_page(course_id="1", title="My Page", body="B")
+
+            info_messages = [r.message for r in caplog.records if r.levelno == logging.INFO]
+            assert any("Creating page" in m for m in info_messages)
+            assert any("Created page" in m for m in info_messages)
+
+    @pytest.mark.asyncio
+    async def test_update_page_logs_info(self, client, caplog):
+        with patch.object(client, "_request", new_callable=AsyncMock) as mock_req:
+            mock_req.return_value = _make_response(json_data={"url": "pg"})
+
+            with caplog.at_level(logging.INFO, logger="src.canvas.client"):
+                await client.update_page(course_id="1", page_url="pg", body="B")
+
+            info_messages = [r.message for r in caplog.records if r.levelno == logging.INFO]
+            assert any("Updating page" in m for m in info_messages)
+
+    @pytest.mark.asyncio
+    async def test_get_page_logs_debug(self, client, caplog):
+        with patch.object(client, "_request", new_callable=AsyncMock) as mock_req:
+            mock_req.return_value = _make_response(json_data={"url": "pg"})
+
+            with caplog.at_level(logging.DEBUG, logger="src.canvas.client"):
+                await client.get_page(course_id="1", page_url="pg")
+
+            debug_messages = [r.message for r in caplog.records if r.levelno == logging.DEBUG]
+            assert any("Getting page" in m for m in debug_messages)
+
+    @pytest.mark.asyncio
+    async def test_upload_file_logs_info(self, client, caplog):
+        step1_resp = _make_response(
+            json_data={
+                "upload_url": "https://s3.example.com/upload",
+                "upload_params": {},
+            }
+        )
+        step2_resp = _make_response(
+            status_code=200,
+            json_data={"id": 1, "url": "https://canvas.example.com/files/1"},
+        )
+
+        with patch.object(client, "_request", new_callable=AsyncMock) as mock_req:
+            mock_req.return_value = step1_resp
+            mock_http = AsyncMock()
+            mock_http.post = AsyncMock(return_value=step2_resp)
+
+            with (
+                patch.object(client, "_get_client", return_value=mock_http),
+                caplog.at_level(logging.INFO, logger="src.canvas.client"),
+            ):
+                await client.upload_file(
+                    course_id="1", file_content=b"data",
+                    filename="test.pdf", content_type="application/pdf",
+                )
+
+        info_messages = [r.message for r in caplog.records if r.levelno == logging.INFO]
+        assert any("Uploading file" in m for m in info_messages)
+        assert any("Uploaded file" in m for m in info_messages)
+
+    @pytest.mark.asyncio
+    async def test_list_course_files_logs_debug(self, client, caplog):
+        with patch.object(client, "_request", new_callable=AsyncMock) as mock_req:
+            mock_req.return_value = _make_response(json_data=[])
+
+            with caplog.at_level(logging.DEBUG, logger="src.canvas.client"):
+                await client.list_course_files(course_id="1")
+
+        debug_messages = [r.message for r in caplog.records if r.levelno == logging.DEBUG]
+        assert any("Listing files" in m for m in debug_messages)
+
+    @pytest.mark.asyncio
+    async def test_list_modules_logs_debug(self, client, caplog):
+        with patch.object(client, "_request", new_callable=AsyncMock) as mock_req:
+            mock_req.return_value = _make_response(json_data=[])
+
+            with caplog.at_level(logging.DEBUG, logger="src.canvas.client"):
+                await client.list_modules(course_id="1")
+
+        debug_messages = [r.message for r in caplog.records if r.levelno == logging.DEBUG]
+        assert any("Listing modules" in m for m in debug_messages)
+
+    @pytest.mark.asyncio
+    async def test_create_module_item_logs_info(self, client, caplog):
+        with patch.object(client, "_request", new_callable=AsyncMock) as mock_req:
+            mock_req.return_value = _make_response(json_data={"id": 1})
+
+            with caplog.at_level(logging.INFO, logger="src.canvas.client"):
+                await client.create_module_item(
+                    course_id="1", module_id="2", title="Item",
+                    item_type="Page", page_url="item",
+                )
+
+        info_messages = [r.message for r in caplog.records if r.levelno == logging.INFO]
+        assert any("Creating module item" in m for m in info_messages)
+
+    @pytest.mark.asyncio
+    async def test_request_logs_debug(self, client, caplog):
+        response = _make_response(json_data={"ok": True})
+
+        with patch.object(client, "_get_client") as mock_get:
+            mock_http = AsyncMock()
+            mock_http.request = AsyncMock(return_value=response)
+            mock_get.return_value = mock_http
+
+            with caplog.at_level(logging.DEBUG, logger="src.canvas.client"):
+                await client._request("GET", "/api/v1/test")
+
+        debug_messages = [r.message for r in caplog.records if r.levelno == logging.DEBUG]
+        assert any("Canvas API request" in m for m in debug_messages)
+
+    @pytest.mark.asyncio
+    async def test_rate_limit_logs_debug(self, client, caplog):
+        response = _make_response(headers={"X-Rate-Limit-Remaining": "100"})
+
+        with caplog.at_level(logging.DEBUG, logger="src.canvas.client"):
+            await client._handle_rate_limit(response)
+
+        debug_messages = [r.message for r in caplog.records if r.levelno == logging.DEBUG]
+        assert any("rate limit remaining" in m for m in debug_messages)
+
+    @pytest.mark.asyncio
+    async def test_rate_limit_logs_warning_when_low(self, client, caplog):
+        response = _make_response(headers={"X-Rate-Limit-Remaining": "20"})
+
+        with (
+            patch("src.canvas.client.asyncio.sleep"),
+            caplog.at_level(logging.WARNING, logger="src.canvas.client"),
+        ):
+            await client._handle_rate_limit(response)
+
+        warning_messages = [r.message for r in caplog.records if r.levelno == logging.WARNING]
+        assert any("rate limit approaching" in m for m in warning_messages)
+
+    @pytest.mark.asyncio
+    async def test_rate_limit_logs_warning_when_exhausted(self, client, caplog):
+        response = _make_response(headers={"X-Rate-Limit-Remaining": "0"})
+
+        with (
+            patch("src.canvas.client.asyncio.sleep"),
+            caplog.at_level(logging.WARNING, logger="src.canvas.client"),
+        ):
+            await client._handle_rate_limit(response)
+
+        warning_messages = [r.message for r in caplog.records if r.levelno == logging.WARNING]
+        assert any("rate limit exhausted" in m for m in warning_messages)

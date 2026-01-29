@@ -328,6 +328,122 @@ class TestStoreMarkdown:
         assert content == markdown_content.encode("utf-8")
 
 
+class TestStoreFigures:
+    """Tests for _store_figures method."""
+
+    @pytest.fixture
+    def stored_figures(self):
+        """Create mock StoredFigure objects."""
+        from src.agents.models import StoredFigure
+
+        return [
+            StoredFigure(
+                figure_id="figure-1",
+                s3_key="job-123/images/figure-1.png",
+                page_num=1,
+                alt_text="A diagram",
+                caption="Figure 1",
+                ref_id="#/pictures/0",
+            ),
+            StoredFigure(
+                figure_id="figure-2",
+                s3_key="job-123/images/figure-2.png",
+                page_num=3,
+                alt_text="A chart",
+                caption="Figure 2",
+                ref_id="#/pictures/1",
+            ),
+        ]
+
+    @pytest.mark.asyncio
+    async def test_copies_figures_to_results_prefix(
+        self, document_processing_service, mock_storage_service, stored_figures
+    ):
+        """Test that figures are downloaded from original key and re-uploaded under results/."""
+        mock_storage_service.download_file = AsyncMock(return_value=b"\x89PNG\r\n\x1a\n")
+
+        await document_processing_service._store_figures("job-123", stored_figures)
+
+        # Should download from original keys
+        download_calls = [c.args[0] for c in mock_storage_service.download_file.call_args_list]
+        assert "job-123/images/figure-1.png" in download_calls
+        assert "job-123/images/figure-2.png" in download_calls
+
+        # Should upload to results/{job_id}/figures/ prefix
+        upload_calls = mock_storage_service.upload_file.call_args_list
+        upload_keys = [c.kwargs["key"] for c in upload_calls]
+        assert "results/job-123/figures/figure-1.png" in upload_keys
+        assert "results/job-123/figures/figure-2.png" in upload_keys
+
+    @pytest.mark.asyncio
+    async def test_uploads_with_image_png_content_type(
+        self, document_processing_service, mock_storage_service, stored_figures
+    ):
+        """Test that figures are uploaded with image/png content type."""
+        mock_storage_service.download_file = AsyncMock(return_value=b"\x89PNG\r\n\x1a\n")
+
+        await document_processing_service._store_figures("job-123", stored_figures)
+
+        for call in mock_storage_service.upload_file.call_args_list:
+            assert call.kwargs["content_type"] == "image/png"
+
+    @pytest.mark.asyncio
+    async def test_uploads_correct_file_content(
+        self, document_processing_service, mock_storage_service, stored_figures
+    ):
+        """Test that the downloaded bytes are passed through to upload."""
+        figure_data = b"\x89PNG\r\n\x1a\nfake-image-data"
+        mock_storage_service.download_file = AsyncMock(return_value=figure_data)
+
+        await document_processing_service._store_figures("job-123", stored_figures)
+
+        for call in mock_storage_service.upload_file.call_args_list:
+            assert call.kwargs["content"] == figure_data
+
+    @pytest.mark.asyncio
+    async def test_skips_when_no_figures(self, document_processing_service, mock_storage_service):
+        """Test that nothing happens when stored_figures is empty."""
+        await document_processing_service._store_figures("job-123", [])
+
+        mock_storage_service.download_file.assert_not_called()
+        mock_storage_service.upload_file.assert_not_called()
+
+    @pytest.mark.asyncio
+    async def test_individual_failure_does_not_fail(
+        self, document_processing_service, mock_storage_service, stored_figures
+    ):
+        """Test that a single figure failure doesn't prevent others from being copied."""
+        call_count = 0
+
+        async def download_side_effect(key):
+            nonlocal call_count
+            call_count += 1
+            if call_count == 1:
+                raise Exception("S3 download failed")
+            return b"\x89PNG\r\n\x1a\n"
+
+        mock_storage_service.download_file = AsyncMock(side_effect=download_side_effect)
+
+        # Should not raise
+        await document_processing_service._store_figures("job-123", stored_figures)
+
+        # Second figure should still be uploaded
+        assert mock_storage_service.upload_file.call_count == 1
+        call_kwargs = mock_storage_service.upload_file.call_args.kwargs
+        assert call_kwargs["key"] == "results/job-123/figures/figure-2.png"
+
+    @pytest.mark.asyncio
+    async def test_upload_failure_does_not_fail(
+        self, document_processing_service, mock_storage_service, stored_figures
+    ):
+        """Test that an upload failure is non-fatal."""
+        mock_storage_service.download_file = AsyncMock(return_value=b"\x89PNG")
+        mock_storage_service.upload_file = AsyncMock(side_effect=Exception("Upload failed"))
+
+        # Should not raise
+        await document_processing_service._store_figures("job-123", stored_figures)
+
+
 class TestStoreEventBus:
     """Tests for _store_event_bus method."""
 

@@ -441,16 +441,16 @@ class DocumentProcessingService:
             # Store final markdown to S3
             markdown_s3_key = await self._store_markdown(job_id, processing_result.final_markdown)
 
+            # Store figures to results/{job_id}/figures/ for publisher and bundle access
+            await self._store_figures(job_id, processing_result.stored_figures)
+
             # Update final job state (store S3 key, not presigned URL - API generates URLs on demand)
             # Note: field names must match what _build_llm_cost() expects in api/documents.py
             total_tokens = processing_result.total_input_tokens + processing_result.total_output_tokens
             cost_cents = processing_result.total_cost * 100  # Convert dollars to cents
 
             # Serialize stored figures for API access
-            stored_figures_json = [
-                fig.model_dump(mode="json")
-                for fig in processing_result.stored_figures
-            ]
+            stored_figures_json = [fig.model_dump(mode="json") for fig in processing_result.stored_figures]
 
             await self._update_job_state(
                 job_id,
@@ -607,6 +607,45 @@ class DocumentProcessingService:
 
         return s3_key
 
+    async def _store_figures(
+        self,
+        job_id: str,
+        stored_figures: list[StoredFigure],
+    ) -> None:
+        """Copy extracted figures to the results prefix for publisher access.
+
+        Figures are initially uploaded at ``{job_id}/images/figure-N.png``
+        by :meth:`StorageService.upload_figures`.  The Canvas publisher and
+        download-bundle services list figures at
+        ``results/{job_id}/figures/``, so this method downloads each figure
+        from its original key and re-uploads it under the ``results/`` prefix.
+
+        Individual failures are logged and skipped (best-effort).
+
+        Args:
+            job_id: Job identifier
+            stored_figures: Figures already uploaded to S3
+        """
+        if not stored_figures:
+            return
+
+        for fig in stored_figures:
+            original_key = fig.s3_key
+            filename = f"{fig.figure_id}.png"
+            dest_key = f"results/{job_id}/figures/{filename}"
+
+            try:
+                data = await self.storage.download_file(original_key)
+                await self.storage.upload_file(
+                    key=dest_key,
+                    content=data,
+                    content_type="image/png",
+                )
+            except Exception as e:
+                logger.warning(f"Job {job_id}: Failed to copy figure {fig.figure_id} to {dest_key}: {e}")
+
+        logger.info(f"Job {job_id}: Copied {len(stored_figures)} figures to results/{job_id}/figures/")
+
     async def _store_event_bus(self, job_id: str, event_bus: Any) -> None:
         """Store event bus reference for SSE streaming.
 
@@ -721,10 +760,9 @@ class DocumentProcessingService:
 
         # Calculate approximate cost (rough estimate based on tokens)
         # Using typical Bedrock Claude 3 pricing: ~$0.003 per 1K input, ~$0.015 per 1K output
-        estimated_cost = (
-            (round_result.total_input_tokens / 1000) * 0.003
-            + (round_result.total_output_tokens / 1000) * 0.015
-        )
+        estimated_cost = (round_result.total_input_tokens / 1000) * 0.003 + (
+            round_result.total_output_tokens / 1000
+        ) * 0.015
 
         return ProcessingResult(
             document_id=job_id,

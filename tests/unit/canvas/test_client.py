@@ -195,6 +195,79 @@ class TestRateLimit:
             await client._handle_rate_limit(response)
             mock_sleep.assert_not_called()
 
+    @pytest.mark.asyncio
+    async def test_sleeps_10s_when_negative(self, client):
+        """Negative remaining is treated as exhausted."""
+        response = _make_response(headers={"X-Rate-Limit-Remaining": "-5"})
+
+        with patch("src.canvas.client.asyncio.sleep") as mock_sleep:
+            await client._handle_rate_limit(response)
+            mock_sleep.assert_called_once_with(10)
+
+    @pytest.mark.asyncio
+    async def test_no_sleep_at_exact_buffer(self, client):
+        """Remaining exactly equal to buffer should not trigger sleep."""
+        response = _make_response(headers={"X-Rate-Limit-Remaining": "50"})
+
+        with patch("src.canvas.client.asyncio.sleep") as mock_sleep:
+            await client._handle_rate_limit(response)
+            mock_sleep.assert_not_called()
+
+    @pytest.mark.asyncio
+    async def test_sleeps_just_below_buffer(self, client):
+        """Remaining just below buffer (49) triggers a short sleep."""
+        response = _make_response(headers={"X-Rate-Limit-Remaining": "49"})
+
+        with patch("src.canvas.client.asyncio.sleep") as mock_sleep:
+            await client._handle_rate_limit(response)
+            mock_sleep.assert_called_once()
+            sleep_time = mock_sleep.call_args[0][0]
+            assert 1.0 <= sleep_time <= 5.0
+
+    @pytest.mark.asyncio
+    async def test_handles_float_remaining(self, client):
+        """Canvas may return fractional remaining values."""
+        response = _make_response(headers={"X-Rate-Limit-Remaining": "25.5"})
+
+        with patch("src.canvas.client.asyncio.sleep") as mock_sleep:
+            await client._handle_rate_limit(response)
+            mock_sleep.assert_called_once()
+            sleep_time = mock_sleep.call_args[0][0]
+            assert 1.0 <= sleep_time <= 5.0
+
+    @pytest.mark.asyncio
+    async def test_sleep_time_scales_with_remaining(self, client):
+        """Lower remaining values should produce longer sleep times."""
+        resp_low = _make_response(headers={"X-Rate-Limit-Remaining": "5"})
+        resp_high = _make_response(headers={"X-Rate-Limit-Remaining": "40"})
+
+        with patch("src.canvas.client.asyncio.sleep") as mock_sleep:
+            await client._handle_rate_limit(resp_low)
+            low_sleep = mock_sleep.call_args[0][0]
+
+        with patch("src.canvas.client.asyncio.sleep") as mock_sleep:
+            await client._handle_rate_limit(resp_high)
+            high_sleep = mock_sleep.call_args[0][0]
+
+        assert low_sleep > high_sleep
+
+    @pytest.mark.asyncio
+    async def test_request_calls_handle_rate_limit(self, client):
+        """Verify _request invokes _handle_rate_limit on response."""
+        response = _make_response(json_data={"ok": True})
+
+        with (
+            patch.object(client, "_get_client") as mock_get,
+            patch.object(client, "_handle_rate_limit", new_callable=AsyncMock) as mock_rl,
+        ):
+            mock_http = AsyncMock()
+            mock_http.request = AsyncMock(return_value=response)
+            mock_get.return_value = mock_http
+
+            await client._request("GET", "/api/v1/test")
+
+            mock_rl.assert_called_once_with(response)
+
 
 class TestPagesAPI:
     """Tests for Pages API methods."""

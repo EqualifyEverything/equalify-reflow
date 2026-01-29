@@ -197,32 +197,45 @@ class CanvasAPIClient:
         self,
         course_id: str,
         page_url: str,
-        body: str,
+        body: str | None = None,
         title: str | None = None,
         published: bool | None = None,
+        editing_roles: str | None = None,
     ) -> dict:
         """Update an existing Canvas page.
+
+        Only provided (non-None) fields are sent to Canvas, allowing
+        partial updates such as changing just the title or publish state.
 
         Args:
             course_id: Canvas course ID
             page_url: Page URL slug (e.g., "my-page-title")
-            body: Updated HTML body content
+            body: Optional updated HTML body content
             title: Optional new title
             published: Optional publish state
+            editing_roles: Optional editing roles (e.g., "teachers")
 
         Returns:
             Updated Canvas page object dict
 
         Raises:
             CanvasAPIError: If the API call fails
+            ValueError: If no fields are provided to update
         """
         logger.info(f"Updating page '{page_url}' in course {course_id}")
 
-        data: dict[str, str] = {"wiki_page[body]": body}
+        data: dict[str, str] = {}
+        if body is not None:
+            data["wiki_page[body]"] = body
         if title is not None:
             data["wiki_page[title]"] = title
         if published is not None:
             data["wiki_page[published]"] = str(published).lower()
+        if editing_roles is not None:
+            data["wiki_page[editing_roles]"] = editing_roles
+
+        if not data:
+            raise ValueError("update_page requires at least one field to update")
 
         response = await self._request(
             "PUT",

@@ -238,7 +238,7 @@ class TestPagesAPI:
             assert call_data["wiki_page[editing_roles]"] == "teachers"
 
     @pytest.mark.asyncio
-    async def test_update_page(self, client):
+    async def test_update_page_all_fields(self, client):
         updated = {"url": "my-page", "title": "Updated"}
 
         with patch.object(client, "_request", new_callable=AsyncMock) as mock_req:
@@ -250,6 +250,7 @@ class TestPagesAPI:
                 body="<p>New content</p>",
                 title="Updated",
                 published=True,
+                editing_roles="teachers,students",
             )
 
             assert result == updated
@@ -260,6 +261,7 @@ class TestPagesAPI:
                     "wiki_page[body]": "<p>New content</p>",
                     "wiki_page[title]": "Updated",
                     "wiki_page[published]": "true",
+                    "wiki_page[editing_roles]": "teachers,students",
                 },
             )
 
@@ -271,9 +273,32 @@ class TestPagesAPI:
             await client.update_page(course_id="1", page_url="pg", body="New body")
 
             call_data = mock_req.call_args.kwargs["data"]
-            assert "wiki_page[body]" in call_data
-            assert "wiki_page[title]" not in call_data
-            assert "wiki_page[published]" not in call_data
+            assert call_data == {"wiki_page[body]": "New body"}
+
+    @pytest.mark.asyncio
+    async def test_update_page_title_only(self, client):
+        with patch.object(client, "_request", new_callable=AsyncMock) as mock_req:
+            mock_req.return_value = _make_response(json_data={"url": "pg"})
+
+            await client.update_page(course_id="1", page_url="pg", title="New Title")
+
+            call_data = mock_req.call_args.kwargs["data"]
+            assert call_data == {"wiki_page[title]": "New Title"}
+
+    @pytest.mark.asyncio
+    async def test_update_page_published_only(self, client):
+        with patch.object(client, "_request", new_callable=AsyncMock) as mock_req:
+            mock_req.return_value = _make_response(json_data={"url": "pg"})
+
+            await client.update_page(course_id="1", page_url="pg", published=False)
+
+            call_data = mock_req.call_args.kwargs["data"]
+            assert call_data == {"wiki_page[published]": "false"}
+
+    @pytest.mark.asyncio
+    async def test_update_page_no_fields_raises(self, client):
+        with pytest.raises(ValueError, match="at least one field"):
+            await client.update_page(course_id="1", page_url="pg")
 
     @pytest.mark.asyncio
     async def test_get_page_found(self, client):

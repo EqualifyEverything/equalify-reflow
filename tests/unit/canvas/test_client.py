@@ -1,0 +1,605 @@
+"""Unit tests for Canvas API client."""
+
+import json
+from unittest.mock import AsyncMock, patch
+
+import httpx
+import pytest
+from src.canvas.client import CanvasAPIClient, CanvasAPIError
+
+pytestmark = pytest.mark.unit
+
+
+@pytest.fixture
+def client():
+    """Create a CanvasAPIClient for testing."""
+    return CanvasAPIClient(
+        base_url="https://canvas.example.com",
+        api_token="test-token-123",
+        rate_limit_buffer=50,
+    )
+
+
+@pytest.fixture
+def docker_client():
+    """Create a CanvasAPIClient with Docker host rewriting."""
+    return CanvasAPIClient(
+        base_url="http://host.docker.internal:3000",
+        api_token="test-token-123",
+        rate_limit_buffer=50,
+    )
+
+
+def _make_response(
+    status_code: int = 200,
+    json_data: dict | list | None = None,
+    headers: dict | None = None,
+    text: str = "",
+) -> httpx.Response:
+    """Build a mock httpx.Response with proper content."""
+    resp_headers = dict(headers or {})
+    if json_data is not None:
+        content = json.dumps(json_data).encode()
+        resp_headers.setdefault("content-type", "application/json")
+    else:
+        content = text.encode() if text else b""
+
+    return httpx.Response(
+        status_code=status_code,
+        content=content,
+        headers=resp_headers,
+        request=httpx.Request("GET", "https://canvas.example.com/test"),
+    )
+
+
+class TestInit:
+    """Tests for client initialization."""
+
+    def test_strips_trailing_slash(self):
+        c = CanvasAPIClient(base_url="https://canvas.example.com/", api_token="t")
+        assert c.base_url == "https://canvas.example.com"
+
+    def test_strips_api_v1_suffix(self):
+        c = CanvasAPIClient(base_url="https://canvas.example.com/api/v1", api_token="t")
+        assert c.base_url == "https://canvas.example.com"
+
+    def test_stores_token_and_buffer(self):
+        c = CanvasAPIClient(
+            base_url="https://canvas.example.com",
+            api_token="my-token",
+            rate_limit_buffer=100,
+        )
+        assert c.api_token == "my-token"
+        assert c.rate_limit_buffer == 100
+
+    def test_docker_url_detection(self, docker_client):
+        assert docker_client._is_docker_url is True
+
+    def test_non_docker_url_detection(self, client):
+        assert client._is_docker_url is False
+
+
+class TestRequest:
+    """Tests for the internal _request method."""
+
+    @pytest.mark.asyncio
+    async def test_sets_auth_header(self, client):
+        response = _make_response(json_data={"ok": True})
+
+        with patch.object(client, "_get_client") as mock_get:
+            mock_http = AsyncMock()
+            mock_http.request = AsyncMock(return_value=response)
+            mock_get.return_value = mock_http
+
+            await client._request("GET", "/api/v1/test")
+
+            call_kwargs = mock_http.request.call_args
+            headers = call_kwargs.kwargs.get("headers") or call_kwargs[1].get("headers", {})
+            assert headers["Authorization"] == "Bearer test-token-123"
+
+    @pytest.mark.asyncio
+    async def test_sets_host_header_for_docker(self, docker_client):
+        response = _make_response(json_data={"ok": True})
+
+        with patch.object(docker_client, "_get_client") as mock_get:
+            mock_http = AsyncMock()
+            mock_http.request = AsyncMock(return_value=response)
+            mock_get.return_value = mock_http
+
+            await docker_client._request("GET", "/api/v1/test")
+
+            call_kwargs = mock_http.request.call_args
+            headers = call_kwargs.kwargs.get("headers") or call_kwargs[1].get("headers", {})
+            assert headers["Host"] == "localhost:3000"
+
+    @pytest.mark.asyncio
+    async def test_no_host_header_for_non_docker(self, client):
+        response = _make_response(json_data={"ok": True})
+
+        with patch.object(client, "_get_client") as mock_get:
+            mock_http = AsyncMock()
+            mock_http.request = AsyncMock(return_value=response)
+            mock_get.return_value = mock_http
+
+            await client._request("GET", "/api/v1/test")
+
+            call_kwargs = mock_http.request.call_args
+            headers = call_kwargs.kwargs.get("headers") or call_kwargs[1].get("headers", {})
+            assert "Host" not in headers
+
+    @pytest.mark.asyncio
+    async def test_raises_on_http_error(self, client):
+        error_response = _make_response(status_code=500, text="Server Error")
+
+        with patch.object(client, "_get_client") as mock_get:
+            mock_http = AsyncMock()
+            mock_http.request = AsyncMock(return_value=error_response)
+            mock_get.return_value = mock_http
+
+            with pytest.raises(CanvasAPIError, match="HTTP 500"):
+                await client._request("GET", "/api/v1/test")
+
+    @pytest.mark.asyncio
+    async def test_raises_on_timeout(self, client):
+        with patch.object(client, "_get_client") as mock_get:
+            mock_http = AsyncMock()
+            mock_http.request = AsyncMock(side_effect=httpx.TimeoutException("timed out"))
+            mock_get.return_value = mock_http
+
+            with pytest.raises(CanvasAPIError, match="timed out"):
+                await client._request("GET", "/api/v1/test")
+
+
+class TestRateLimit:
+    """Tests for rate limit handling."""
+
+    @pytest.mark.asyncio
+    async def test_no_sleep_when_header_missing(self, client):
+        response = _make_response(headers={})
+
+        with patch("src.canvas.client.asyncio.sleep") as mock_sleep:
+            await client._handle_rate_limit(response)
+            mock_sleep.assert_not_called()
+
+    @pytest.mark.asyncio
+    async def test_no_sleep_when_above_buffer(self, client):
+        response = _make_response(headers={"X-Rate-Limit-Remaining": "100"})
+
+        with patch("src.canvas.client.asyncio.sleep") as mock_sleep:
+            await client._handle_rate_limit(response)
+            mock_sleep.assert_not_called()
+
+    @pytest.mark.asyncio
+    async def test_sleeps_when_below_buffer(self, client):
+        response = _make_response(headers={"X-Rate-Limit-Remaining": "20"})
+
+        with patch("src.canvas.client.asyncio.sleep") as mock_sleep:
+            await client._handle_rate_limit(response)
+            mock_sleep.assert_called_once()
+            sleep_time = mock_sleep.call_args[0][0]
+            assert sleep_time > 0
+
+    @pytest.mark.asyncio
+    async def test_sleeps_10s_when_exhausted(self, client):
+        response = _make_response(headers={"X-Rate-Limit-Remaining": "0"})
+
+        with patch("src.canvas.client.asyncio.sleep") as mock_sleep:
+            await client._handle_rate_limit(response)
+            mock_sleep.assert_called_once_with(10)
+
+    @pytest.mark.asyncio
+    async def test_handles_non_numeric_header(self, client):
+        response = _make_response(headers={"X-Rate-Limit-Remaining": "invalid"})
+
+        with patch("src.canvas.client.asyncio.sleep") as mock_sleep:
+            await client._handle_rate_limit(response)
+            mock_sleep.assert_not_called()
+
+
+class TestPagesAPI:
+    """Tests for Pages API methods."""
+
+    @pytest.mark.asyncio
+    async def test_create_page(self, client):
+        page_data = {"url": "my-page", "title": "My Page"}
+
+        with patch.object(client, "_request", new_callable=AsyncMock) as mock_req:
+            mock_req.return_value = _make_response(json_data=page_data)
+
+            result = await client.create_page(
+                course_id="123",
+                title="My Page",
+                body="<p>Content</p>",
+                published=True,
+                editing_roles="teachers",
+            )
+
+            assert result == page_data
+            mock_req.assert_called_once_with(
+                "POST",
+                "/api/v1/courses/123/pages",
+                data={
+                    "wiki_page[title]": "My Page",
+                    "wiki_page[body]": "<p>Content</p>",
+                    "wiki_page[published]": "true",
+                    "wiki_page[editing_roles]": "teachers",
+                },
+            )
+
+    @pytest.mark.asyncio
+    async def test_create_page_defaults(self, client):
+        with patch.object(client, "_request", new_callable=AsyncMock) as mock_req:
+            mock_req.return_value = _make_response(json_data={"url": "test"})
+
+            await client.create_page(course_id="1", title="Test", body="Body")
+
+            call_data = mock_req.call_args.kwargs["data"]
+            assert call_data["wiki_page[published]"] == "false"
+            assert call_data["wiki_page[editing_roles]"] == "teachers"
+
+    @pytest.mark.asyncio
+    async def test_update_page(self, client):
+        updated = {"url": "my-page", "title": "Updated"}
+
+        with patch.object(client, "_request", new_callable=AsyncMock) as mock_req:
+            mock_req.return_value = _make_response(json_data=updated)
+
+            result = await client.update_page(
+                course_id="123",
+                page_url="my-page",
+                body="<p>New content</p>",
+                title="Updated",
+                published=True,
+            )
+
+            assert result == updated
+            mock_req.assert_called_once_with(
+                "PUT",
+                "/api/v1/courses/123/pages/my-page",
+                data={
+                    "wiki_page[body]": "<p>New content</p>",
+                    "wiki_page[title]": "Updated",
+                    "wiki_page[published]": "true",
+                },
+            )
+
+    @pytest.mark.asyncio
+    async def test_update_page_body_only(self, client):
+        with patch.object(client, "_request", new_callable=AsyncMock) as mock_req:
+            mock_req.return_value = _make_response(json_data={"url": "pg"})
+
+            await client.update_page(course_id="1", page_url="pg", body="New body")
+
+            call_data = mock_req.call_args.kwargs["data"]
+            assert "wiki_page[body]" in call_data
+            assert "wiki_page[title]" not in call_data
+            assert "wiki_page[published]" not in call_data
+
+    @pytest.mark.asyncio
+    async def test_get_page_found(self, client):
+        page = {"url": "my-page", "title": "Found"}
+
+        with patch.object(client, "_request", new_callable=AsyncMock) as mock_req:
+            mock_req.return_value = _make_response(json_data=page)
+
+            result = await client.get_page(course_id="123", page_url="my-page")
+
+            assert result == page
+            mock_req.assert_called_once_with(
+                "GET",
+                "/api/v1/courses/123/pages/my-page",
+            )
+
+    @pytest.mark.asyncio
+    async def test_get_page_not_found(self, client):
+        with patch.object(client, "_request", new_callable=AsyncMock) as mock_req:
+            mock_req.side_effect = CanvasAPIError("Canvas API GET /api/v1/courses/123/pages/missing failed: HTTP 404")
+
+            result = await client.get_page(course_id="123", page_url="missing")
+
+            assert result is None
+
+    @pytest.mark.asyncio
+    async def test_get_page_other_error_raises(self, client):
+        with patch.object(client, "_request", new_callable=AsyncMock) as mock_req:
+            mock_req.side_effect = CanvasAPIError("Canvas API GET failed: HTTP 500")
+
+            with pytest.raises(CanvasAPIError):
+                await client.get_page(course_id="123", page_url="bad")
+
+
+class TestFilesAPI:
+    """Tests for Files API methods."""
+
+    @pytest.mark.asyncio
+    async def test_upload_file_3_step(self, client):
+        """Test the full 3-step upload process."""
+        # Step 1 response: upload URL + params
+        step1_resp = _make_response(
+            json_data={
+                "upload_url": "https://s3.example.com/upload",
+                "upload_params": {"key": "value", "token": "abc"},
+            }
+        )
+
+        # Step 2 response: redirect to confirm
+        step2_resp = _make_response(
+            status_code=301,
+            headers={"location": "https://canvas.example.com/api/v1/files/42/confirm"},
+        )
+        # Mark as redirect
+        step2_resp.headers["location"] = "https://canvas.example.com/api/v1/files/42/confirm"
+
+        # Step 3 response: confirmed file
+        step3_resp = _make_response(json_data={"id": 42, "url": "https://canvas.example.com/files/42"})
+
+        with patch.object(client, "_request", new_callable=AsyncMock) as mock_req:
+            mock_req.return_value = step1_resp
+
+            mock_http = AsyncMock()
+            # Step 2: POST to upload URL returns redirect
+            # Step 3: GET confirm URL
+            mock_http.post = AsyncMock(return_value=step2_resp)
+            mock_http.get = AsyncMock(return_value=step3_resp)
+
+            with patch.object(client, "_get_client", return_value=mock_http):
+                result = await client.upload_file(
+                    course_id="123",
+                    file_content=b"fake-pdf-content",
+                    filename="test.pdf",
+                    content_type="application/pdf",
+                )
+
+            assert result["id"] == 42
+            assert "url" in result
+
+            # Verify step 1 called with correct data
+            mock_req.assert_called_once_with(
+                "POST",
+                "/api/v1/courses/123/files",
+                data={
+                    "name": "test.pdf",
+                    "size": str(len(b"fake-pdf-content")),
+                    "content_type": "application/pdf",
+                    "parent_folder_path": "equalify-reflow",
+                },
+            )
+
+    @pytest.mark.asyncio
+    async def test_upload_file_no_redirect(self, client):
+        """Test upload when step 2 returns 200 with file data."""
+        step1_resp = _make_response(
+            json_data={
+                "upload_url": "https://s3.example.com/upload",
+                "upload_params": {},
+            }
+        )
+
+        step2_resp = _make_response(
+            status_code=200,
+            json_data={"id": 99, "url": "https://canvas.example.com/files/99"},
+        )
+
+        with patch.object(client, "_request", new_callable=AsyncMock) as mock_req:
+            mock_req.return_value = step1_resp
+
+            mock_http = AsyncMock()
+            mock_http.post = AsyncMock(return_value=step2_resp)
+
+            with patch.object(client, "_get_client", return_value=mock_http):
+                result = await client.upload_file(
+                    course_id="1",
+                    file_content=b"content",
+                    filename="file.png",
+                    content_type="image/png",
+                )
+
+            assert result["id"] == 99
+
+    @pytest.mark.asyncio
+    async def test_upload_file_missing_upload_url(self, client):
+        """Test error when step 1 returns no upload_url."""
+        step1_resp = _make_response(json_data={"upload_params": {}})
+
+        with patch.object(client, "_request", new_callable=AsyncMock) as mock_req:
+            mock_req.return_value = step1_resp
+
+            with pytest.raises(CanvasAPIError, match="no upload_url"):
+                await client.upload_file(
+                    course_id="1",
+                    file_content=b"content",
+                    filename="file.pdf",
+                    content_type="application/pdf",
+                )
+
+    @pytest.mark.asyncio
+    async def test_list_course_files(self, client):
+        files = [{"id": 1, "display_name": "test.pdf"}]
+
+        with patch.object(client, "_request", new_callable=AsyncMock) as mock_req:
+            mock_req.return_value = _make_response(json_data=files)
+
+            result = await client.list_course_files(
+                course_id="123",
+                content_types=["application/pdf"],
+                sort="created_at",
+                order="desc",
+                per_page=25,
+            )
+
+            assert result == files
+            mock_req.assert_called_once_with(
+                "GET",
+                "/api/v1/courses/123/files",
+                params={
+                    "sort": "created_at",
+                    "order": "desc",
+                    "per_page": 25,
+                    "content_types[]": "application/pdf",
+                },
+            )
+
+    @pytest.mark.asyncio
+    async def test_list_course_files_no_filter(self, client):
+        with patch.object(client, "_request", new_callable=AsyncMock) as mock_req:
+            mock_req.return_value = _make_response(json_data=[])
+
+            await client.list_course_files(course_id="1")
+
+            call_params = mock_req.call_args.kwargs["params"]
+            assert "content_types[]" not in call_params
+
+
+class TestModulesAPI:
+    """Tests for Modules API methods."""
+
+    @pytest.mark.asyncio
+    async def test_list_modules_single_page(self, client):
+        modules = [{"id": 1, "name": "Module 1", "items": []}]
+
+        with patch.object(client, "_request", new_callable=AsyncMock) as mock_req:
+            resp = _make_response(json_data=modules)
+            mock_req.return_value = resp
+
+            result = await client.list_modules(course_id="123")
+
+            assert result == modules
+            call_params = mock_req.call_args.kwargs["params"]
+            assert call_params["include[]"] == "items"
+
+    @pytest.mark.asyncio
+    async def test_list_modules_without_items(self, client):
+        with patch.object(client, "_request", new_callable=AsyncMock) as mock_req:
+            mock_req.return_value = _make_response(json_data=[])
+
+            await client.list_modules(course_id="123", include_items=False)
+
+            call_params = mock_req.call_args.kwargs["params"]
+            assert "include[]" not in call_params
+
+    @pytest.mark.asyncio
+    async def test_list_modules_pagination(self, client):
+        page1_modules = [{"id": 1, "name": "Mod 1"}]
+        page2_modules = [{"id": 2, "name": "Mod 2"}]
+
+        page1_resp = _make_response(
+            json_data=page1_modules,
+            headers={"Link": '<https://canvas.example.com/api/v1/courses/1/modules?page=2>; rel="next"'},
+        )
+        page2_resp = _make_response(json_data=page2_modules)
+
+        with patch.object(client, "_request", new_callable=AsyncMock) as mock_req:
+            mock_req.side_effect = [page1_resp, page2_resp]
+
+            result = await client.list_modules(course_id="1")
+
+            assert len(result) == 2
+            assert result[0]["id"] == 1
+            assert result[1]["id"] == 2
+            assert mock_req.call_count == 2
+
+    @pytest.mark.asyncio
+    async def test_create_module_item(self, client):
+        item = {"id": 10, "title": "New Page", "type": "Page"}
+
+        with patch.object(client, "_request", new_callable=AsyncMock) as mock_req:
+            mock_req.return_value = _make_response(json_data=item)
+
+            result = await client.create_module_item(
+                course_id="123",
+                module_id="456",
+                title="New Page",
+                item_type="Page",
+                page_url="new-page",
+                position=3,
+            )
+
+            assert result == item
+            mock_req.assert_called_once_with(
+                "POST",
+                "/api/v1/courses/123/modules/456/items",
+                data={
+                    "module_item[title]": "New Page",
+                    "module_item[type]": "Page",
+                    "module_item[page_url]": "new-page",
+                    "module_item[position]": "3",
+                },
+            )
+
+    @pytest.mark.asyncio
+    async def test_create_module_item_no_position(self, client):
+        with patch.object(client, "_request", new_callable=AsyncMock) as mock_req:
+            mock_req.return_value = _make_response(json_data={"id": 1})
+
+            await client.create_module_item(
+                course_id="1",
+                module_id="2",
+                title="Item",
+                item_type="Page",
+                page_url="item-page",
+            )
+
+            call_data = mock_req.call_args.kwargs["data"]
+            assert "module_item[position]" not in call_data
+
+
+class TestParseNextLink:
+    """Tests for Link header parsing."""
+
+    def test_parses_next_link(self):
+        response = _make_response(
+            headers={
+                "Link": '<https://canvas.example.com/api?page=2>; rel="next", '
+                '<https://canvas.example.com/api?page=1>; rel="prev"'
+            }
+        )
+        assert CanvasAPIClient._parse_next_link(response) == "https://canvas.example.com/api?page=2"
+
+    def test_returns_none_when_no_next(self):
+        response = _make_response(headers={"Link": '<https://canvas.example.com/api?page=1>; rel="prev"'})
+        assert CanvasAPIClient._parse_next_link(response) is None
+
+    def test_returns_none_when_no_link_header(self):
+        response = _make_response(headers={})
+        assert CanvasAPIClient._parse_next_link(response) is None
+
+
+class TestClose:
+    """Tests for client cleanup."""
+
+    @pytest.mark.asyncio
+    async def test_close_when_client_exists(self, client):
+        # Force client creation
+        client._get_client()
+        assert client._client is not None
+
+        await client.close()
+        assert client._client is None
+
+    @pytest.mark.asyncio
+    async def test_close_when_no_client(self, client):
+        # Should not raise
+        await client.close()
+
+
+class TestConfigSettings:
+    """Tests for Canvas configuration in Settings."""
+
+    def test_canvas_autopublish_defaults(self):
+        from src.config import Settings
+
+        s = Settings(
+            _env_file=None,
+            redis_url="redis://localhost:6379",
+        )
+        assert s.canvas_autopublish_enabled is False
+        assert s.canvas_polling_interval_seconds == 120
+        assert s.canvas_rate_limit_buffer == 50
+
+    def test_canvas_config_fields_exist(self):
+        from src.config import Settings
+
+        field_names = set(Settings.model_fields.keys())
+        assert "canvas_autopublish_enabled" in field_names
+        assert "canvas_polling_interval_seconds" in field_names
+        assert "canvas_rate_limit_buffer" in field_names

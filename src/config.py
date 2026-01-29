@@ -248,6 +248,17 @@ class Settings(BaseSettings):
     canvas_api_url: str = Field(default="", description="Canvas API base URL (e.g., https://canvas.instructure.com/api/v1)")
     canvas_api_token: str = Field(default="", description="Canvas API access token for file downloads")
 
+    # Canvas Auto-Publishing Configuration
+    canvas_autopublish_enabled: bool = Field(
+        default=False, description="Enable automatic PDF-to-Canvas Page publishing"
+    )
+    canvas_polling_interval_seconds: int = Field(
+        ge=30, le=600, default=120, description="How often to poll Canvas for new PDFs (seconds)"
+    )
+    canvas_rate_limit_buffer: int = Field(
+        ge=10, le=200, default=50, description="Pause API calls when Canvas rate limit remaining is below this"
+    )
+
     # LTI State Storage Configuration
     lti_state_ttl_seconds: int = Field(
         ge=60, le=3600, default=600, description="TTL for LTI OIDC state in Redis (10 minutes default)"

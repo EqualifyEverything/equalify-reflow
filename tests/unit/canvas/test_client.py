@@ -654,6 +654,77 @@ class TestFilesAPI:
             call_params = mock_req.call_args.kwargs["params"]
             assert "content_types[]" not in call_params
 
+    @pytest.mark.asyncio
+    async def test_list_course_files_pagination(self, client):
+        """Test that list_course_files follows Link header pagination."""
+        page1_files = [{"id": 1, "display_name": "a.pdf"}]
+        page2_files = [{"id": 2, "display_name": "b.pdf"}]
+
+        page1_resp = _make_response(
+            json_data=page1_files,
+            headers={"Link": '<https://canvas.example.com/api/v1/courses/123/files?page=2>; rel="next"'},
+        )
+        page2_resp = _make_response(json_data=page2_files)
+
+        with patch.object(client, "_request", new_callable=AsyncMock) as mock_req:
+            mock_req.side_effect = [page1_resp, page2_resp]
+
+            result = await client.list_course_files(course_id="123")
+
+            assert len(result) == 2
+            assert result[0]["id"] == 1
+            assert result[1]["id"] == 2
+            assert mock_req.call_count == 2
+
+    @pytest.mark.asyncio
+    async def test_list_course_files_pagination_three_pages(self, client):
+        """Test pagination across three pages."""
+        page1_files = [{"id": 1, "display_name": "a.pdf"}]
+        page2_files = [{"id": 2, "display_name": "b.pdf"}]
+        page3_files = [{"id": 3, "display_name": "c.pdf"}]
+
+        page1_resp = _make_response(
+            json_data=page1_files,
+            headers={"Link": '<https://canvas.example.com/api/v1/courses/1/files?page=2>; rel="next"'},
+        )
+        page2_resp = _make_response(
+            json_data=page2_files,
+            headers={"Link": '<https://canvas.example.com/api/v1/courses/1/files?page=3>; rel="next"'},
+        )
+        page3_resp = _make_response(json_data=page3_files)
+
+        with patch.object(client, "_request", new_callable=AsyncMock) as mock_req:
+            mock_req.side_effect = [page1_resp, page2_resp, page3_resp]
+
+            result = await client.list_course_files(course_id="1")
+
+            assert len(result) == 3
+            assert [f["id"] for f in result] == [1, 2, 3]
+            assert mock_req.call_count == 3
+
+    @pytest.mark.asyncio
+    async def test_list_course_files_pagination_clears_params(self, client):
+        """Test that params are cleared after first page (they're in the URL)."""
+        link_url = "https://canvas.example.com/api/v1/courses/1/files?page=2&sort=created_at&order=desc&per_page=50"
+        page1_resp = _make_response(
+            json_data=[{"id": 1}],
+            headers={"Link": f'<{link_url}>; rel="next"'},
+        )
+        page2_resp = _make_response(json_data=[{"id": 2}])
+
+        with patch.object(client, "_request", new_callable=AsyncMock) as mock_req:
+            mock_req.side_effect = [page1_resp, page2_resp]
+
+            await client.list_course_files(course_id="1")
+
+            # First call has params
+            first_call = mock_req.call_args_list[0]
+            assert first_call.kwargs["params"]["sort"] == "created_at"
+
+            # Second call has empty params (they're in the URL already)
+            second_call = mock_req.call_args_list[1]
+            assert second_call.kwargs["params"] == {}
+
 
 class TestModulesAPI:
     """Tests for Modules API methods."""

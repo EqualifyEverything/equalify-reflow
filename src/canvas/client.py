@@ -396,7 +396,7 @@ class CanvasAPIClient:
         order: str = "desc",
         per_page: int = 50,
     ) -> list[dict]:
-        """List files in a Canvas course.
+        """List files in a Canvas course with pagination.
 
         Args:
             course_id: Canvas course ID
@@ -421,12 +421,26 @@ class CanvasAPIClient:
         if content_types:
             params["content_types[]"] = ",".join(content_types)
 
-        response = await self._request(
-            "GET",
-            f"/api/v1/courses/{course_id}/files",
-            params=params,
-        )
-        return response.json()
+        all_files: list[dict] = []
+        path = f"/api/v1/courses/{course_id}/files"
+
+        while path:
+            response = await self._request("GET", path, params=params)
+            all_files.extend(response.json())
+
+            # Handle Link header pagination
+            next_url = self._parse_next_link(response)
+            if next_url:
+                # Strip base_url to get the path for next request
+                if next_url.startswith(self.base_url):
+                    path = next_url[len(self.base_url) :]
+                else:
+                    path = next_url
+                params = {}  # params are already in the URL
+            else:
+                path = ""
+
+        return all_files
 
     # --- Modules API ---
 

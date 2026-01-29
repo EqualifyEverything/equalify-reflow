@@ -2,7 +2,7 @@
 
 import io
 import zipfile
-from unittest.mock import MagicMock
+from unittest.mock import MagicMock, patch
 
 import pytest
 from botocore.exceptions import ClientError
@@ -370,6 +370,36 @@ class TestZipInMemory:
         await service.create_bundle("j1", "test.pdf")
 
         # Should be valid zip
+        assert zipfile.is_zipfile(io.BytesIO(uploaded["bytes"]))
+
+    @pytest.mark.asyncio
+    async def test_no_temp_files_written_to_disk(self, service, mock_storage):
+        """Zip construction uses only io.BytesIO — no temp files on disk."""
+
+        async def download_by_key(key):
+            if key.endswith(".md"):
+                return b"# Document"
+            return b"\x89PNG-data"
+
+        mock_storage.download_file = download_by_key
+        mock_storage.s3_client.list_objects_v2.return_value = {
+            "Contents": [
+                {"Key": "results/j1/figures/fig1.png"},
+            ]
+        }
+        mock_storage.s3_client.generate_presigned_url.return_value = "https://url"
+
+        uploaded = {}
+
+        async def capture(key, content, content_type="application/octet-stream"):
+            uploaded["bytes"] = content
+            return key
+
+        mock_storage.upload_file = capture
+
+        with patch("builtins.open", side_effect=AssertionError("open() called — no disk I/O expected")):
+            await service.create_bundle("j1", "doc.pdf")
+
         assert zipfile.is_zipfile(io.BytesIO(uploaded["bytes"]))
 
 

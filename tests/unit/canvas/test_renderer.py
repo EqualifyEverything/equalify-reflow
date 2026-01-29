@@ -112,7 +112,24 @@ class TestImages:
         md = "![](images/figure_1.png)"
         result = renderer.render(md)
         assert "<figure>" not in result
+        assert "<figcaption>" not in result
         assert '<img src="images/figure_1.png" alt="">' in result
+
+    def test_image_without_alt_text_url_rewriting(self, renderer):
+        image_map = {"images/figure_1.png": "https://canvas.uic.edu/courses/1/files/42/preview"}
+        md = "![](images/figure_1.png)"
+        result = renderer.render(md, image_url_map=image_map)
+        assert "<figure>" not in result
+        assert "<figcaption>" not in result
+        assert 'src="https://canvas.uic.edu/courses/1/files/42/preview"' in result
+        assert 'alt=""' in result
+
+    def test_image_without_alt_text_special_chars_in_url(self, renderer):
+        md = "![](images/fig&1.png)"
+        result = renderer.render(md)
+        assert "<figure>" not in result
+        assert 'src="images/fig&amp;1.png"' in result
+        assert 'alt=""' in result
 
     def test_image_url_rewriting(self, renderer):
         image_map = {"images/figure_1.png": "https://canvas.uic.edu/courses/1/files/42/preview"}

@@ -6,6 +6,7 @@ host rewriting for local development and Canvas rate limit headers.
 
 import asyncio
 import logging
+from urllib.parse import urlparse
 
 import httpx
 
@@ -51,6 +52,20 @@ class CanvasAPIClient:
         """Check if base_url uses host.docker.internal."""
         return "host.docker.internal" in self.base_url
 
+    @property
+    def _docker_host_header(self) -> str:
+        """Derive the Host header value for Docker-rewritten URLs.
+
+        When base_url uses host.docker.internal, Canvas still expects the
+        Host header to say "localhost" with the correct port. This parses
+        the port from the base_url rather than hardcoding "localhost:3000".
+        """
+        parsed = urlparse(self.base_url)
+        port = parsed.port
+        if port:
+            return f"localhost:{port}"
+        return "localhost"
+
     def _get_client(self) -> httpx.AsyncClient:
         """Get or create the httpx AsyncClient."""
         if self._client is None or self._client.is_closed:
@@ -89,7 +104,7 @@ class CanvasAPIClient:
         headers: dict[str, str] = {"Authorization": f"Bearer {self.api_token}"}
 
         if self._is_docker_url:
-            headers["Host"] = "localhost:3000"
+            headers["Host"] = self._docker_host_header
 
         # Merge any caller-provided headers
         if "headers" in kwargs:
@@ -337,7 +352,7 @@ class CanvasAPIClient:
             # Canvas upload URLs may be external (e.g., S3), so no auth header
             step2_headers: dict[str, str] = {}
             if self._is_docker_url and "host.docker.internal" in upload_url:
-                step2_headers["Host"] = "localhost:3000"
+                step2_headers["Host"] = self._docker_host_header
 
             step2_response = await client.post(
                 upload_url,
@@ -358,11 +373,14 @@ class CanvasAPIClient:
         if step2_response.is_redirect:
             location = step2_response.headers.get("location", "")
             if self._is_docker_url:
-                location = location.replace("http://localhost:3000", self.base_url)
+                parsed = urlparse(self.base_url)
+                port = parsed.port
+                localhost_origin = f"http://localhost:{port}" if port else "http://localhost"
+                location = location.replace(localhost_origin, self.base_url)
 
             confirm_headers: dict[str, str] = {"Authorization": f"Bearer {self.api_token}"}
             if self._is_docker_url:
-                confirm_headers["Host"] = "localhost:3000"
+                confirm_headers["Host"] = self._docker_host_header
 
             confirm_response = await client.get(
                 location,

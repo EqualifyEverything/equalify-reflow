@@ -78,6 +78,23 @@ class TestInit:
     def test_non_docker_url_detection(self, client):
         assert client._is_docker_url is False
 
+    def test_docker_host_header_with_port(self, docker_client):
+        assert docker_client._docker_host_header == "localhost:3000"
+
+    def test_docker_host_header_custom_port(self):
+        c = CanvasAPIClient(
+            base_url="http://host.docker.internal:8080",
+            api_token="t",
+        )
+        assert c._docker_host_header == "localhost:8080"
+
+    def test_docker_host_header_no_port(self):
+        c = CanvasAPIClient(
+            base_url="http://host.docker.internal",
+            api_token="t",
+        )
+        assert c._docker_host_header == "localhost"
+
 
 class TestRequest:
     """Tests for the internal _request method."""
@@ -111,6 +128,25 @@ class TestRequest:
             call_kwargs = mock_http.request.call_args
             headers = call_kwargs.kwargs.get("headers") or call_kwargs[1].get("headers", {})
             assert headers["Host"] == "localhost:3000"
+
+    @pytest.mark.asyncio
+    async def test_sets_host_header_for_docker_custom_port(self):
+        custom_port_client = CanvasAPIClient(
+            base_url="http://host.docker.internal:8080",
+            api_token="test-token-123",
+        )
+        response = _make_response(json_data={"ok": True})
+
+        with patch.object(custom_port_client, "_get_client") as mock_get:
+            mock_http = AsyncMock()
+            mock_http.request = AsyncMock(return_value=response)
+            mock_get.return_value = mock_http
+
+            await custom_port_client._request("GET", "/api/v1/test")
+
+            call_kwargs = mock_http.request.call_args
+            headers = call_kwargs.kwargs.get("headers") or call_kwargs[1].get("headers", {})
+            assert headers["Host"] == "localhost:8080"
 
     @pytest.mark.asyncio
     async def test_no_host_header_for_non_docker(self, client):
@@ -655,6 +691,56 @@ class TestFilesAPI:
             get_headers = get_call.kwargs.get("headers", {})
             assert get_headers.get("Host") == "localhost:3000"
             assert "Authorization" in get_headers
+
+    @pytest.mark.asyncio
+    async def test_upload_file_docker_redirect_rewrite_custom_port(self):
+        """Test that redirect location rewrite uses the correct port."""
+        custom_docker = CanvasAPIClient(
+            base_url="http://host.docker.internal:8080",
+            api_token="test-token-123",
+        )
+
+        step1_resp = _make_response(
+            json_data={
+                "upload_url": "http://host.docker.internal:8080/upload",
+                "upload_params": {},
+            }
+        )
+
+        step2_resp = _make_response(
+            status_code=301,
+            headers={"location": "http://localhost:8080/api/v1/files/50/confirm"},
+        )
+
+        step3_resp = _make_response(
+            json_data={"id": 50, "url": "http://localhost:8080/files/50"},
+        )
+
+        with patch.object(custom_docker, "_request", new_callable=AsyncMock) as mock_req:
+            mock_req.return_value = step1_resp
+
+            mock_http = AsyncMock()
+            mock_http.post = AsyncMock(return_value=step2_resp)
+            mock_http.get = AsyncMock(return_value=step3_resp)
+
+            with patch.object(custom_docker, "_get_client", return_value=mock_http):
+                result = await custom_docker.upload_file(
+                    course_id="1",
+                    file_content=b"content",
+                    filename="file.pdf",
+                    content_type="application/pdf",
+                )
+
+            assert result["id"] == 50
+
+            # Verify the redirect URL was rewritten using the correct port
+            get_call = mock_http.get.call_args
+            called_url = get_call.args[0] if get_call.args else get_call.kwargs.get("url", "")
+            assert "host.docker.internal:8080" in called_url
+
+            # Verify Docker headers use correct port
+            get_headers = get_call.kwargs.get("headers", {})
+            assert get_headers.get("Host") == "localhost:8080"
 
     @pytest.mark.asyncio
     async def test_upload_file_custom_folder(self, client):

@@ -327,6 +327,59 @@ class TestPageCreationAndUpdate:
         )
         mock_canvas_client.create_page.assert_awaited_once()
 
+    @pytest.mark.asyncio
+    async def test_update_skips_module_placement(self, service, mock_canvas_client, mock_redis):
+        """When re-processing updates an existing page, module placement is skipped to avoid duplicates."""
+        mock_canvas_client.get_page.return_value = {
+            "url": "notes-reflow",
+            "page_id": 42,
+        }
+        mock_canvas_client.list_modules.return_value = [
+            {
+                "id": 10,
+                "name": "Week 1",
+                "items": [
+                    {"content_id": 500, "type": "File", "position": 3},
+                ],
+            }
+        ]
+        await service.publish(
+            job_id="job-1",
+            course_id="101",
+            original_filename="notes.pdf",
+            canvas_file_id="500",
+            redis_client=mock_redis,
+        )
+        mock_canvas_client.update_page.assert_awaited_once()
+        # Module placement should be skipped entirely — no list_modules or create_module_item calls
+        mock_canvas_client.list_modules.assert_not_awaited()
+        mock_canvas_client.create_module_item.assert_not_awaited()
+
+    @pytest.mark.asyncio
+    async def test_create_performs_module_placement(self, service, mock_canvas_client, mock_redis):
+        """When creating a new page, module placement proceeds normally."""
+        mock_canvas_client.get_page.return_value = None
+        mock_canvas_client.list_modules.return_value = [
+            {
+                "id": 10,
+                "name": "Week 1",
+                "items": [
+                    {"content_id": 500, "type": "File", "position": 3},
+                ],
+            }
+        ]
+        await service.publish(
+            job_id="job-1",
+            course_id="101",
+            original_filename="notes.pdf",
+            canvas_file_id="500",
+            redis_client=mock_redis,
+        )
+        mock_canvas_client.create_page.assert_awaited_once()
+        mock_canvas_client.create_module_item.assert_awaited_once()
+        call_kwargs = mock_canvas_client.create_module_item.call_args.kwargs
+        assert call_kwargs["position"] == 4  # PDF position (3) + 1
+
 
 # --- R3: Image upload to Canvas Files ---
 

@@ -124,13 +124,18 @@ class CanvasPublisherService:
 
         # 5. Create or update Canvas Page
         page_title = self._build_page_title(original_filename)
-        page_data = await self._create_or_update_page(job_id, course_id, page_title, html_body, publish_page)
+        page_data, was_update = await self._create_or_update_page(
+            job_id, course_id, page_title, html_body, publish_page
+        )
 
         page_url = page_data.get("url", "")
         page_id = page_data.get("page_id", 0)
 
-        # 6. Module placement (non-fatal)
-        await self._place_in_module(job_id, course_id, canvas_file_id, page_title, page_url)
+        # 6. Module placement (non-fatal; skip on update to avoid duplicates)
+        if not was_update:
+            await self._place_in_module(job_id, course_id, canvas_file_id, page_title, page_url)
+        else:
+            logger.info(f"Job {job_id}: Skipping module placement (page updated, not created)")
 
         # 7. Build and store result
         result = PublishResult(
@@ -249,10 +254,14 @@ class CanvasPublisherService:
         title: str,
         body: str,
         published: bool,
-    ) -> dict:
+    ) -> tuple[dict, bool]:
         """Create a new page or update an existing one.
 
         Checks for an existing page by URL slug before creating.
+
+        Returns:
+            Tuple of (page_data, was_update). was_update is True when
+            an existing page was updated instead of creating a new one.
 
         Raises:
             PublishError: If page creation/update fails.
@@ -277,6 +286,7 @@ class CanvasPublisherService:
                     published=published,
                     editing_roles="teachers",
                 )
+                return page_data, True
             else:
                 page_data = await self.canvas.create_page(
                     course_id=course_id,
@@ -285,7 +295,7 @@ class CanvasPublisherService:
                     published=published,
                     editing_roles="teachers",
                 )
-            return page_data
+                return page_data, False
         except CanvasAPIError as e:
             raise PublishError(
                 f"Failed to create/update Canvas page: {e}",

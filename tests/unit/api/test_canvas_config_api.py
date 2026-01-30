@@ -893,6 +893,42 @@ class TestPublishDocument:
         assert response.status_code == status.HTTP_400_BAD_REQUEST
         assert "API token" in response.json()["detail"]
 
+    def test_returns_400_for_failed_document(self, client, mock_config_service):
+        """Returns 400 when trying to publish a failed document."""
+        mock_config_service.get_processed_file.return_value = ProcessedFile(
+            canvas_file_id="42",
+            canvas_updated_at="2024-06-15T10:30:00Z",
+            job_id="job-1",
+            status="failed",
+            processed_at="2024-06-15T11:00:00Z",
+            original_filename="lecture.pdf",
+        )
+
+        response = client.post("/api/v1/canvas/courses/123/documents/42/publish")
+
+        assert response.status_code == status.HTTP_400_BAD_REQUEST
+        assert "not completed" in response.json()["detail"]
+
+    def test_returns_400_when_token_is_empty_string(self, client, mock_config_service):
+        """Returns 400 when course config exists but canvas_api_token is empty."""
+        mock_config_service.get_processed_file.return_value = ProcessedFile(
+            canvas_file_id="42",
+            canvas_updated_at="2024-06-15T10:30:00Z",
+            job_id="job-1",
+            status="completed",
+            processed_at="2024-06-15T11:00:00Z",
+            original_filename="lecture.pdf",
+        )
+        mock_config_service.get_config.return_value = CourseConfig(
+            enabled=True,
+            canvas_api_token="",
+        )
+
+        response = client.post("/api/v1/canvas/courses/123/documents/42/publish")
+
+        assert response.status_code == status.HTTP_400_BAD_REQUEST
+        assert "API token" in response.json()["detail"]
+
     def test_publishes_completed_document(self, client, mock_config_service, mock_job_svc):
         """Successfully publishes a completed document."""
         mock_config_service.get_processed_file.return_value = ProcessedFile(
@@ -929,6 +965,161 @@ class TestPublishDocument:
         assert data["status"] == "published"
         assert data["canvas_page_url"] == "https://canvas.example.com/pages/lecture-reflow"
         assert data["canvas_page_id"] == 999
+
+    def test_publish_passes_published_true(self, client, mock_config_service):
+        """Verifies that published=True is passed to the publisher service."""
+        mock_config_service.get_processed_file.return_value = ProcessedFile(
+            canvas_file_id="42",
+            canvas_updated_at="2024-06-15T10:30:00Z",
+            job_id="job-1",
+            status="completed",
+            processed_at="2024-06-15T11:00:00Z",
+            original_filename="lecture.pdf",
+        )
+        mock_config_service.get_config.return_value = CourseConfig(
+            enabled=True,
+            canvas_api_token="test-token",
+        )
+
+        mock_publish_result = MagicMock()
+        mock_publish_result.canvas_page_url = "https://canvas.example.com/pages/lecture-reflow"
+        mock_publish_result.canvas_page_id = 999
+
+        with (
+            patch("src.api.canvas_config.CanvasAPIClient") as mock_client_cls,
+            patch("src.canvas.publisher.CanvasPublisherService.publish", new_callable=AsyncMock) as mock_publish,
+        ):
+            mock_client_instance = AsyncMock()
+            mock_client_cls.return_value = mock_client_instance
+            mock_publish.return_value = mock_publish_result
+
+            client.post("/api/v1/canvas/courses/123/documents/42/publish")
+
+        mock_publish.assert_awaited_once()
+        call_kwargs = mock_publish.call_args
+        assert call_kwargs.kwargs.get("published") is True or (
+            len(call_kwargs.args) > 5 and call_kwargs.args[5] is True
+        )
+
+    def test_returns_500_when_publisher_raises(self, client, mock_config_service):
+        """Returns 500 when the publisher service raises an exception."""
+        mock_config_service.get_processed_file.return_value = ProcessedFile(
+            canvas_file_id="42",
+            canvas_updated_at="2024-06-15T10:30:00Z",
+            job_id="job-1",
+            status="completed",
+            processed_at="2024-06-15T11:00:00Z",
+            original_filename="lecture.pdf",
+        )
+        mock_config_service.get_config.return_value = CourseConfig(
+            enabled=True,
+            canvas_api_token="test-token",
+        )
+
+        with (
+            patch("src.api.canvas_config.CanvasAPIClient") as mock_client_cls,
+            patch("src.canvas.publisher.CanvasPublisherService.publish", new_callable=AsyncMock) as mock_publish,
+        ):
+            mock_client_instance = AsyncMock()
+            mock_client_cls.return_value = mock_client_instance
+            mock_publish.side_effect = RuntimeError("S3 download failed")
+
+            response = client.post("/api/v1/canvas/courses/123/documents/42/publish")
+
+        assert response.status_code == status.HTTP_500_INTERNAL_SERVER_ERROR
+        assert "Failed to publish document" in response.json()["detail"]
+
+    def test_closes_canvas_client_on_publish_success(self, client, mock_config_service):
+        """Canvas client is closed after successful publish."""
+        mock_config_service.get_processed_file.return_value = ProcessedFile(
+            canvas_file_id="42",
+            canvas_updated_at="2024-06-15T10:30:00Z",
+            job_id="job-1",
+            status="completed",
+            processed_at="2024-06-15T11:00:00Z",
+            original_filename="lecture.pdf",
+        )
+        mock_config_service.get_config.return_value = CourseConfig(
+            enabled=True,
+            canvas_api_token="test-token",
+        )
+
+        mock_publish_result = MagicMock()
+        mock_publish_result.canvas_page_url = "https://canvas.example.com/pages/lecture-reflow"
+        mock_publish_result.canvas_page_id = 999
+
+        with (
+            patch("src.api.canvas_config.CanvasAPIClient") as mock_client_cls,
+            patch("src.canvas.publisher.CanvasPublisherService.publish", new_callable=AsyncMock) as mock_publish,
+        ):
+            mock_client_instance = AsyncMock()
+            mock_client_cls.return_value = mock_client_instance
+            mock_publish.return_value = mock_publish_result
+
+            client.post("/api/v1/canvas/courses/123/documents/42/publish")
+
+        mock_client_instance.close.assert_awaited_once()
+
+    def test_closes_canvas_client_on_publish_error(self, client, mock_config_service):
+        """Canvas client is closed even when publish raises an error."""
+        mock_config_service.get_processed_file.return_value = ProcessedFile(
+            canvas_file_id="42",
+            canvas_updated_at="2024-06-15T10:30:00Z",
+            job_id="job-1",
+            status="completed",
+            processed_at="2024-06-15T11:00:00Z",
+            original_filename="lecture.pdf",
+        )
+        mock_config_service.get_config.return_value = CourseConfig(
+            enabled=True,
+            canvas_api_token="test-token",
+        )
+
+        with (
+            patch("src.api.canvas_config.CanvasAPIClient") as mock_client_cls,
+            patch("src.canvas.publisher.CanvasPublisherService.publish", new_callable=AsyncMock) as mock_publish,
+        ):
+            mock_client_instance = AsyncMock()
+            mock_client_cls.return_value = mock_client_instance
+            mock_publish.side_effect = RuntimeError("connection timeout")
+
+            client.post("/api/v1/canvas/courses/123/documents/42/publish")
+
+        mock_client_instance.close.assert_awaited_once()
+
+    def test_response_includes_message_field(self, client, mock_config_service):
+        """Successful publish response includes a descriptive message."""
+        mock_config_service.get_processed_file.return_value = ProcessedFile(
+            canvas_file_id="42",
+            canvas_updated_at="2024-06-15T10:30:00Z",
+            job_id="job-1",
+            status="completed",
+            processed_at="2024-06-15T11:00:00Z",
+            original_filename="lecture.pdf",
+        )
+        mock_config_service.get_config.return_value = CourseConfig(
+            enabled=True,
+            canvas_api_token="test-token",
+        )
+
+        mock_publish_result = MagicMock()
+        mock_publish_result.canvas_page_url = "https://canvas.example.com/pages/lecture-reflow"
+        mock_publish_result.canvas_page_id = 999
+
+        with (
+            patch("src.api.canvas_config.CanvasAPIClient") as mock_client_cls,
+            patch("src.canvas.publisher.CanvasPublisherService.publish", new_callable=AsyncMock) as mock_publish,
+        ):
+            mock_client_instance = AsyncMock()
+            mock_client_cls.return_value = mock_client_instance
+            mock_publish.return_value = mock_publish_result
+
+            response = client.post("/api/v1/canvas/courses/123/documents/42/publish")
+
+        assert response.status_code == status.HTTP_200_OK
+        data = response.json()
+        assert "message" in data
+        assert "42" in data["message"]
 
 
 # ===========================================================================

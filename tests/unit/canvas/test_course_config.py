@@ -122,6 +122,28 @@ class TestGetConfig:
         assert result is None
         mock_redis.hgetall.assert_called_once_with("eq-pdf:course-config:course-999")
 
+    async def test_returns_none_for_different_unconfigured_courses(self, service, mock_redis):
+        mock_redis.hgetall.return_value = {}
+        assert await service.get_config("course-100") is None
+        assert await service.get_config("course-200") is None
+        assert await service.get_config("course-300") is None
+
+    async def test_none_result_does_not_affect_configured_course(self, service, mock_redis):
+        """An unconfigured course returns None without affecting other courses."""
+        mock_redis.hgetall.return_value = {}
+        assert await service.get_config("unconfigured-course") is None
+
+        mock_redis.hgetall.return_value = {
+            "enabled": "true",
+            "auto_publish_threshold": "0.9",
+            "canvas_api_token": "tok-xyz",
+            "created_at": "2024-02-01T00:00:00Z",
+            "updated_at": "2024-02-01T00:00:00Z",
+        }
+        result = await service.get_config("configured-course")
+        assert result is not None
+        assert result.enabled is True
+
     async def test_returns_config_from_redis_hash(self, service, mock_redis):
         mock_redis.hgetall.return_value = {
             "enabled": "true",
@@ -292,37 +314,23 @@ class TestListProcessedFiles:
 class TestIsFileNewOrUpdated:
     async def test_returns_true_for_new_file(self, service, mock_redis):
         mock_redis.hget.return_value = None
-        result = await service.is_file_new_or_updated(
-            "course-101", "file-new", "2024-01-15T10:30:00Z"
-        )
+        result = await service.is_file_new_or_updated("course-101", "file-new", "2024-01-15T10:30:00Z")
         assert result is True
 
-    async def test_returns_true_when_canvas_updated_at_is_newer(
-        self, service, mock_redis, sample_processed_file
-    ):
+    async def test_returns_true_when_canvas_updated_at_is_newer(self, service, mock_redis, sample_processed_file):
         mock_redis.hget.return_value = sample_processed_file.model_dump_json()
         # sample has canvas_updated_at = "2024-01-15T10:30:00Z"
-        result = await service.is_file_new_or_updated(
-            "course-101", "12345", "2024-01-16T10:30:00Z"
-        )
+        result = await service.is_file_new_or_updated("course-101", "12345", "2024-01-16T10:30:00Z")
         assert result is True
 
-    async def test_returns_false_when_canvas_updated_at_matches(
-        self, service, mock_redis, sample_processed_file
-    ):
+    async def test_returns_false_when_canvas_updated_at_matches(self, service, mock_redis, sample_processed_file):
         mock_redis.hget.return_value = sample_processed_file.model_dump_json()
-        result = await service.is_file_new_or_updated(
-            "course-101", "12345", "2024-01-15T10:30:00Z"
-        )
+        result = await service.is_file_new_or_updated("course-101", "12345", "2024-01-15T10:30:00Z")
         assert result is False
 
-    async def test_returns_false_when_canvas_updated_at_is_older(
-        self, service, mock_redis, sample_processed_file
-    ):
+    async def test_returns_false_when_canvas_updated_at_is_older(self, service, mock_redis, sample_processed_file):
         mock_redis.hget.return_value = sample_processed_file.model_dump_json()
-        result = await service.is_file_new_or_updated(
-            "course-101", "12345", "2024-01-14T10:30:00Z"
-        )
+        result = await service.is_file_new_or_updated("course-101", "12345", "2024-01-14T10:30:00Z")
         assert result is False
 
 

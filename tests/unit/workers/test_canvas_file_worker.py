@@ -468,9 +468,7 @@ class TestPollCourse:
         assert result == 0
 
     @pytest.mark.asyncio
-    async def test_creates_client_with_course_api_token(
-        self, worker, mock_config_service, sample_course_config
-    ):
+    async def test_creates_client_with_course_api_token(self, worker, mock_config_service, sample_course_config):
         """CanvasAPIClient is created using the course's stored API token."""
         mock_config_service.get_config.return_value = sample_course_config
 
@@ -514,9 +512,7 @@ class TestPollCourse:
         assert tokens_used == ["token-course-a", "token-course-b"]
 
     @pytest.mark.asyncio
-    async def test_filters_for_pdf_content_type(
-        self, worker, mock_config_service, sample_course_config
-    ):
+    async def test_filters_for_pdf_content_type(self, worker, mock_config_service, sample_course_config):
         """poll_course() passes content_types=['application/pdf'] to list_course_files."""
         mock_config_service.get_config.return_value = sample_course_config
 
@@ -626,6 +622,32 @@ class TestPollCourse:
                 await worker.poll_course("101")
 
             mock_client_instance.close.assert_awaited_once()
+
+    @pytest.mark.asyncio
+    async def test_calls_is_file_new_or_updated_for_each_pdf(self, worker, mock_config_service, sample_course_config):
+        """poll_course() calls is_file_new_or_updated() for every PDF file returned."""
+        mock_config_service.get_config.return_value = sample_course_config
+        mock_config_service.is_file_new_or_updated.return_value = False
+
+        files = [
+            {"id": 10, "display_name": "a.pdf", "updated_at": "2024-06-15T10:00:00Z"},
+            {"id": 20, "display_name": "b.pdf", "updated_at": "2024-06-15T11:00:00Z"},
+            {"id": 30, "display_name": "c.pdf", "updated_at": "2024-06-15T12:00:00Z"},
+        ]
+
+        with patch("src.workers.canvas_file_worker.CanvasAPIClient") as mock_client_cls:
+            mock_client_instance = AsyncMock()
+            mock_client_cls.return_value = mock_client_instance
+            mock_client_instance.list_course_files = AsyncMock(return_value=files)
+            mock_client_instance.close = AsyncMock()
+
+            result = await worker.poll_course("101")
+
+        assert result == 0
+        assert mock_config_service.is_file_new_or_updated.await_count == 3
+        mock_config_service.is_file_new_or_updated.assert_any_await("101", "10", "2024-06-15T10:00:00Z")
+        mock_config_service.is_file_new_or_updated.assert_any_await("101", "20", "2024-06-15T11:00:00Z")
+        mock_config_service.is_file_new_or_updated.assert_any_await("101", "30", "2024-06-15T12:00:00Z")
 
     @pytest.mark.asyncio
     async def test_skips_files_without_id(self, worker, mock_config_service, sample_course_config):

@@ -441,6 +441,94 @@ class TestListCourseDocuments:
         assert doc["canvas_page_id"] == 999
         assert doc["confidence_score"] == 0.92
 
+    def test_calls_list_processed_files_with_course_id(self, client, mock_config_service):
+        """Verifies list_processed_files is called with the path parameter course_id."""
+        mock_config_service.list_processed_files.return_value = {}
+
+        client.get("/api/v1/canvas/courses/789/documents")
+
+        mock_config_service.list_processed_files.assert_awaited_once_with("789")
+
+    def test_returns_document_fields(self, client, mock_config_service, mock_job_svc):
+        """Each document in the list includes all expected response fields."""
+        mock_config_service.list_processed_files.return_value = {
+            "42": ProcessedFile(
+                canvas_file_id="42",
+                canvas_updated_at="2024-06-15T10:30:00Z",
+                job_id="job-1",
+                status="completed",
+                processed_at="2024-06-15T11:00:00Z",
+                original_filename="lecture.pdf",
+            ),
+        }
+        mock_config_service.get_publish_result.return_value = None
+        mock_job_svc.get_job.return_value = {
+            "job_id": "job-1",
+            "status": "completed",
+            "confidence_score": "0.88",
+        }
+
+        response = client.get("/api/v1/canvas/courses/123/documents")
+
+        assert response.status_code == status.HTTP_200_OK
+        doc = response.json()[0]
+        assert doc["canvas_file_id"] == "42"
+        assert doc["original_filename"] == "lecture.pdf"
+        assert doc["status"] == "completed"
+        assert doc["job_id"] == "job-1"
+        assert doc["confidence_score"] == 0.88
+        assert doc["processed_at"] == "2024-06-15T11:00:00Z"
+
+    def test_returns_failed_document_with_error(self, client, mock_config_service, mock_job_svc):
+        """Failed documents include error_message from the job record."""
+        mock_config_service.list_processed_files.return_value = {
+            "42": ProcessedFile(
+                canvas_file_id="42",
+                canvas_updated_at="2024-06-15T10:30:00Z",
+                job_id="job-1",
+                status="failed",
+                processed_at="2024-06-15T11:00:00Z",
+                original_filename="broken.pdf",
+            ),
+        }
+        mock_config_service.get_publish_result.return_value = None
+        mock_job_svc.get_job.return_value = {
+            "job_id": "job-1",
+            "status": "failed",
+            "error": "Extraction timeout",
+        }
+
+        response = client.get("/api/v1/canvas/courses/123/documents")
+
+        assert response.status_code == status.HTTP_200_OK
+        doc = response.json()[0]
+        assert doc["status"] == "failed"
+        assert doc["error_message"] == "Extraction timeout"
+
+    def test_handles_missing_job_gracefully(self, client, mock_config_service, mock_job_svc):
+        """Documents whose job record is missing still return valid status."""
+        mock_config_service.list_processed_files.return_value = {
+            "42": ProcessedFile(
+                canvas_file_id="42",
+                canvas_updated_at="2024-06-15T10:30:00Z",
+                job_id="job-gone",
+                status="processing",
+                processed_at="2024-06-15T11:00:00Z",
+                original_filename="orphan.pdf",
+            ),
+        }
+        mock_config_service.get_publish_result.return_value = None
+        mock_job_svc.get_job.return_value = None
+
+        response = client.get("/api/v1/canvas/courses/123/documents")
+
+        assert response.status_code == status.HTTP_200_OK
+        doc = response.json()[0]
+        assert doc["canvas_file_id"] == "42"
+        assert doc["status"] == "processing"
+        assert doc["confidence_score"] is None
+        assert doc["error_message"] is None
+
 
 # ===========================================================================
 # GET /documents/{file_id} - Document detail endpoint
@@ -727,9 +815,7 @@ class TestTriggerProcessing:
         assert response.status_code == status.HTTP_404_NOT_FOUND
         assert "not found in Canvas" in response.json()["detail"]
 
-    def test_successfully_triggers_processing(
-        self, client, mock_config_service, mock_job_svc, mock_queue_svc
-    ):
+    def test_successfully_triggers_processing(self, client, mock_config_service, mock_job_svc, mock_queue_svc):
         """Successfully downloads and queues a Canvas file for processing."""
         mock_config_service.get_config.return_value = CourseConfig(
             enabled=True,
@@ -788,16 +874,19 @@ class TestRouterRegistration:
 
             # Verify the router module exports correctly
             from src.api.canvas_config import router
+
             assert router.prefix == "/api/v1/canvas/courses"
 
     def test_router_has_correct_prefix(self):
         """Router has the correct prefix."""
         from src.api.canvas_config import router
+
         assert router.prefix == "/api/v1/canvas/courses"
 
     def test_router_has_correct_tags(self):
         """Router has correct API tags."""
         from src.api.canvas_config import router
+
         assert "canvas-config" in router.tags
 
 

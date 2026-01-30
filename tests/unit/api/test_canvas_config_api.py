@@ -566,12 +566,26 @@ class TestGetDocumentStatus:
         assert data["confidence_score"] == 0.95
 
     def test_returns_404_for_unknown_file(self, client, mock_config_service):
-        """Returns 404 when document is not found."""
+        """Returns 404 with descriptive detail when document is not found."""
         mock_config_service.get_processed_file.return_value = None
 
         response = client.get("/api/v1/canvas/courses/123/documents/999")
 
         assert response.status_code == status.HTTP_404_NOT_FOUND
+        detail = response.json()["detail"]
+        assert "999" in detail
+        assert "123" in detail
+
+    def test_returns_404_detail_includes_file_and_course(self, client, mock_config_service):
+        """404 detail message includes both the file_id and course_id for debugging."""
+        mock_config_service.get_processed_file.return_value = None
+
+        response = client.get("/api/v1/canvas/courses/C-500/documents/F-77")
+
+        assert response.status_code == status.HTTP_404_NOT_FOUND
+        detail = response.json()["detail"]
+        assert "F-77" in detail
+        assert "C-500" in detail
 
     def test_returns_failed_status_with_error(self, client, mock_config_service, mock_job_svc):
         """Returns error_message for failed documents."""

@@ -709,6 +709,54 @@ class TestGetPublishResult:
         await service.get_publish_result("course-abc", "file-xyz")
         mock_redis.hgetall.assert_called_with("eq-pdf:published:course-abc:file-xyz")
 
+    async def test_returns_all_fields(self, service, mock_redis):
+        """All stored fields are returned in the result dict."""
+        mock_redis.hgetall.return_value = {
+            "page_id": "42",
+            "page_url": "lecture-notes-reflow",
+            "published_at": "2024-01-15T10:40:00Z",
+            "published": "True",
+            "figure_count": "3",
+        }
+        result = await service.get_publish_result("course-101", "file-1")
+        assert result is not None
+        assert result["page_id"] == "42"
+        assert result["page_url"] == "lecture-notes-reflow"
+        assert result["published_at"] == "2024-01-15T10:40:00Z"
+        assert result["published"] == "True"
+        assert result["figure_count"] == "3"
+
+    async def test_different_courses_use_different_keys(self, service, mock_redis):
+        """Results in different courses are retrieved from different Redis keys."""
+        mock_redis.hgetall.return_value = {}
+        await service.get_publish_result("course-100", "file-1")
+        await service.get_publish_result("course-200", "file-1")
+        calls = mock_redis.hgetall.call_args_list
+        assert calls[-2].args[0] == "eq-pdf:published:course-100:file-1"
+        assert calls[-1].args[0] == "eq-pdf:published:course-200:file-1"
+
+    async def test_different_files_use_different_keys(self, service, mock_redis):
+        """Results for different files in the same course use different Redis keys."""
+        mock_redis.hgetall.return_value = {}
+        await service.get_publish_result("course-101", "file-a")
+        await service.get_publish_result("course-101", "file-b")
+        calls = mock_redis.hgetall.call_args_list
+        assert calls[-2].args[0] == "eq-pdf:published:course-101:file-a"
+        assert calls[-1].args[0] == "eq-pdf:published:course-101:file-b"
+
+    async def test_none_result_does_not_affect_existing(self, service, mock_redis):
+        """Missing result returns None without affecting lookups for existing files."""
+        mock_redis.hgetall.return_value = {}
+        assert await service.get_publish_result("course-101", "nonexistent") is None
+
+        mock_redis.hgetall.return_value = {
+            "page_id": "42",
+            "published_at": "2024-01-15T10:40:00Z",
+        }
+        result = await service.get_publish_result("course-101", "file-1")
+        assert result is not None
+        assert result["page_id"] == "42"
+
 
 # --- set_publish_result ---
 

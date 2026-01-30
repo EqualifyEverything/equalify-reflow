@@ -1399,9 +1399,11 @@ class TestDashboardCSS:
         for cls in required_classes:
             assert cls in content, f"Missing CSS class: {cls}"
 
-    def test_no_tailwind_config_at_root(self):
-        """Root tailwind.config.js should not exist (no Tailwind build needed)."""
+    def test_tailwind_config_exists_at_root(self):
+        """Root tailwind.config.js exists and points to canvas templates."""
         from pathlib import Path
 
         config_path = Path(__file__).resolve().parents[3] / "tailwind.config.js"
-        assert not config_path.exists(), "tailwind.config.js should be removed"
+        assert config_path.exists(), "tailwind.config.js should exist at project root"
+        content = config_path.read_text()
+        assert "src/canvas/templates/**/*.html" in content

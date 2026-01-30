@@ -597,6 +597,93 @@ class TestGetDocumentStatus:
         assert data["status"] == "failed"
         assert data["error_message"] == "Docling extraction failed"
 
+    def test_returns_published_status_with_page_info(self, client, mock_config_service, mock_job_svc):
+        """Returns published status with Canvas page URL and ID when publish result exists."""
+        mock_config_service.get_processed_file.return_value = ProcessedFile(
+            canvas_file_id="42",
+            canvas_updated_at="2024-06-15T10:30:00Z",
+            job_id="job-1",
+            status="completed",
+            processed_at="2024-06-15T11:00:00Z",
+            original_filename="lecture.pdf",
+        )
+        mock_config_service.get_publish_result.return_value = {
+            "canvas_page_url": "https://canvas.example.com/pages/lecture-reflow",
+            "canvas_page_id": "999",
+            "download_url": "https://s3.example.com/bundle.zip",
+            "published_at": "2024-06-15T12:00:00Z",
+        }
+        mock_job_svc.get_job.return_value = {
+            "job_id": "job-1",
+            "status": "completed",
+            "confidence_score": "0.92",
+        }
+
+        response = client.get("/api/v1/canvas/courses/123/documents/42")
+
+        assert response.status_code == status.HTTP_200_OK
+        data = response.json()
+        assert data["status"] == "published"
+        assert data["canvas_page_url"] == "https://canvas.example.com/pages/lecture-reflow"
+        assert data["canvas_page_id"] == 999
+        assert data["download_url"] == "https://s3.example.com/bundle.zip"
+        assert data["published_at"] == "2024-06-15T12:00:00Z"
+        assert data["confidence_score"] == 0.92
+
+    def test_handles_missing_job_gracefully(self, client, mock_config_service, mock_job_svc):
+        """Returns valid status even when job record is missing."""
+        mock_config_service.get_processed_file.return_value = ProcessedFile(
+            canvas_file_id="42",
+            canvas_updated_at="2024-06-15T10:30:00Z",
+            job_id="job-gone",
+            status="processing",
+            processed_at="2024-06-15T11:00:00Z",
+            original_filename="orphan.pdf",
+        )
+        mock_config_service.get_publish_result.return_value = None
+        mock_job_svc.get_job.return_value = None
+
+        response = client.get("/api/v1/canvas/courses/123/documents/42")
+
+        assert response.status_code == status.HTTP_200_OK
+        data = response.json()
+        assert data["canvas_file_id"] == "42"
+        assert data["original_filename"] == "orphan.pdf"
+        assert data["status"] == "processing"
+        assert data["confidence_score"] is None
+        assert data["error_message"] is None
+
+    def test_calls_get_processed_file_with_correct_args(self, client, mock_config_service):
+        """Verifies get_processed_file is called with the path parameter course_id and file_id."""
+        mock_config_service.get_processed_file.return_value = None
+
+        client.get("/api/v1/canvas/courses/789/documents/55")
+
+        mock_config_service.get_processed_file.assert_awaited_once_with("789", "55")
+
+    def test_response_has_all_expected_fields(self, client, mock_config_service, mock_job_svc):
+        """Response contains all expected DocumentStatusResponse fields."""
+        mock_config_service.get_processed_file.return_value = ProcessedFile(
+            canvas_file_id="42",
+            canvas_updated_at="2024-06-15T10:30:00Z",
+            job_id="job-1",
+            status="completed",
+            processed_at="2024-06-15T11:00:00Z",
+            original_filename="lecture.pdf",
+        )
+        mock_config_service.get_publish_result.return_value = None
+        mock_job_svc.get_job.return_value = None
+
+        response = client.get("/api/v1/canvas/courses/123/documents/42")
+
+        data = response.json()
+        expected_keys = {
+            "canvas_file_id", "original_filename", "status", "job_id",
+            "confidence_score", "canvas_page_url", "canvas_page_id",
+            "download_url", "processed_at", "published_at", "error_message",
+        }
+        assert set(data.keys()) == expected_keys
+
 
 # ===========================================================================
 # POST /documents/{file_id}/retry - Retry endpoint

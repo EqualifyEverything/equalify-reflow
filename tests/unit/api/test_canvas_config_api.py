@@ -260,8 +260,38 @@ class TestUpdateCourseConfig:
         )
 
         assert response.status_code == status.HTTP_200_OK
-        saved_config = mock_config_service.set_config.call_args[0][1]
-        assert saved_config.enabled is True
+        assert response.json()["enabled"] is True
+        call_args = mock_config_service.set_config.call_args[0]
+        assert call_args[0] == "123"
+        assert call_args[1].enabled is True
+
+    def test_enables_previously_disabled_course(self, client, mock_config_service):
+        """PUT with enabled=True on a disabled course enables it and adds to enabled set."""
+        mock_config_service.get_config.return_value = CourseConfig(
+            enabled=False,
+            auto_publish_threshold=0.9,
+            canvas_api_token="token",
+            created_at="2024-01-01T00:00:00Z",
+            updated_at="2024-01-01T00:00:00Z",
+        )
+
+        response = client.put(
+            "/api/v1/canvas/courses/456/config",
+            json={"enabled": True},
+        )
+
+        assert response.status_code == status.HTTP_200_OK
+        data = response.json()
+        assert data["enabled"] is True
+        assert data["course_id"] == "456"
+        # Threshold should be preserved
+        assert data["auto_publish_threshold"] == 0.9
+        # created_at preserved from existing config
+        assert data["created_at"] == "2024-01-01T00:00:00Z"
+        # set_config called with correct course_id and enabled=True
+        call_args = mock_config_service.set_config.call_args[0]
+        assert call_args[0] == "456"
+        assert call_args[1].enabled is True
 
     def test_disables_course(self, client, mock_config_service):
         """PUT with enabled=False disables the course."""

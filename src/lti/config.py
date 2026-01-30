@@ -147,7 +147,17 @@ def get_canvas_config_json(base_url: str) -> dict[str, Any]:
                                 "file_download_url": "$com.instructure.File.url",
                                 "course_id": "$Canvas.course.id",
                             },
-                        }
+                        },
+                        {
+                            "placement": "course_navigation",
+                            "text": "Equalify Dashboard",
+                            "enabled": True,
+                            "message_type": "LtiResourceLinkRequest",
+                            "target_link_uri": f"{base_url}/lti/dashboard",
+                            "custom_fields": {
+                                "course_id": "$Canvas.course.id",
+                            },
+                        },
                     ],
                 },
             }

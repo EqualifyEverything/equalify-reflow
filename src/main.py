@@ -164,6 +164,18 @@ if settings.lti_enabled:
     app.include_router(lti_router)
     logger.info("✅ LTI 1.3 endpoints enabled at /lti/*")
 
+    # Mount instructor dashboard (requires LTI)
+    from .canvas.dashboard import router as dashboard_router
+
+    app.include_router(dashboard_router)
+    logger.info("✅ Instructor dashboard enabled at /lti/dashboard/*")
+
+    # Mount dashboard static files (compiled Tailwind CSS)
+    _dashboard_static = Path(__file__).parent / "canvas" / "static" / "dist"
+    if _dashboard_static.exists():
+        app.mount("/static/canvas", StaticFiles(directory=_dashboard_static), name="canvas-static")
+        logger.info("✅ Dashboard static files mounted at /static/canvas")
+
 
 def custom_openapi() -> dict[str, object]:
     """Generate custom OpenAPI schema with API key security."""

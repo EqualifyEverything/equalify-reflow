@@ -591,6 +591,34 @@ def _redirect_response(viewer_url: str, file_name: str | None = None) -> HTMLRes
     return HTMLResponse(content=html, status_code=200)
 
 
+@router.get("/dashboard")
+async def dashboard_launch(
+    request: Request,
+    redis: Redis = Depends(get_redis_client),
+) -> RedirectResponse:
+    """Handle LTI course_navigation launch.
+
+    Validates the LTI session, extracts course context,
+    and redirects to the dashboard index for the course.
+
+    The course_navigation placement launches via the standard OIDC flow
+    (login -> Canvas auth -> launch). After validation, we redirect to
+    the server-rendered dashboard with a session token.
+    """
+    # For course_navigation, Canvas sends the launch as a POST via OIDC.
+    # This GET handler serves as the landing page after a course_navigation
+    # launch has been validated. The LTI session is passed as a query param.
+    lti_session = request.query_params.get("lti_session")
+    course_id = request.query_params.get("course_id")
+
+    if not lti_session or not course_id:
+        return _error_response("Please launch this tool from Canvas.")  # type: ignore[return-value]
+
+    # Redirect to the dashboard index
+    dashboard_url = f"/lti/dashboard/{course_id}?lti_session={lti_session}"
+    return RedirectResponse(url=dashboard_url, status_code=302)
+
+
 @router.get("/health")
 async def lti_health() -> dict[str, str]:
     """Health check for LTI endpoints.

@@ -13,9 +13,11 @@ from pathlib import Path
 from fastapi import APIRouter, Depends, HTTPException, Request, status
 from fastapi.responses import HTMLResponse
 from fastapi.templating import Jinja2Templates
+from redis.asyncio import Redis
 
 from ..canvas.course_config import CourseConfig, CourseConfigService
-from ..dependencies import get_course_config_service, get_job_service
+from ..dependencies import get_course_config_service, get_job_service, get_redis_client
+from ..lti.adapters import RedisLaunchDataStorage
 from ..services.job_service import JobService
 
 logger = logging.getLogger(__name__)
@@ -27,22 +29,29 @@ _templates_dir = Path(__file__).parent / "templates"
 templates = Jinja2Templates(directory=str(_templates_dir))
 
 
-async def _get_lti_session(request: Request) -> dict | None:
-    """Extract LTI session from request query parameter.
+async def _get_lti_session(request: Request, redis: Redis) -> dict | None:
+    """Validate LTI session token against Redis.
 
     LTI course_navigation launches pass a session token as a query
-    parameter. This is checked against Redis to validate the session.
+    parameter. This validates the token against Redis to ensure
+    the session is authentic and not expired.
+
+    Args:
+        request: FastAPI request object
+        redis: Redis client for session lookup
 
     Returns:
-        LTI session dict or None if no valid session.
+        LTI session data dict or None if no valid session.
     """
     session_id = request.query_params.get("lti_session")
     if not session_id:
         return None
-    # Session validation is handled at the launch endpoint.
-    # For dashboard routes, the presence of lti_session param
-    # is sufficient since the launch handler set it.
-    return {"session_id": session_id}
+    storage = RedisLaunchDataStorage(redis)
+    session_data = await storage.validate_session_async(session_id)
+    if session_data is None:
+        return None
+    session_data["session_id"] = session_id
+    return session_data
 
 
 def _no_session_response(request: Request) -> HTMLResponse:
@@ -65,11 +74,12 @@ def _no_session_response(request: Request) -> HTMLResponse:
 async def dashboard_index(
     course_id: str,
     request: Request,
+    redis: Redis = Depends(get_redis_client),
     config_service: CourseConfigService = Depends(get_course_config_service),
     job_service: JobService = Depends(get_job_service),
 ) -> HTMLResponse:
     """Render the document list view."""
-    session = await _get_lti_session(request)
+    session = await _get_lti_session(request, redis)
     if not session:
         return _no_session_response(request)
 
@@ -125,10 +135,11 @@ async def dashboard_index(
 async def dashboard_settings(
     course_id: str,
     request: Request,
+    redis: Redis = Depends(get_redis_client),
     config_service: CourseConfigService = Depends(get_course_config_service),
 ) -> HTMLResponse:
     """Render the settings view."""
-    session = await _get_lti_session(request)
+    session = await _get_lti_session(request, redis)
     if not session:
         return _no_session_response(request)
 
@@ -153,11 +164,12 @@ async def dashboard_document_detail(
     course_id: str,
     file_id: str,
     request: Request,
+    redis: Redis = Depends(get_redis_client),
     config_service: CourseConfigService = Depends(get_course_config_service),
     job_service: JobService = Depends(get_job_service),
 ) -> HTMLResponse:
     """Render the document detail view."""
-    session = await _get_lti_session(request)
+    session = await _get_lti_session(request, redis)
     if not session:
         return _no_session_response(request)
 

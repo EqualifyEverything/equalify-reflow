@@ -13,7 +13,7 @@ import logging
 from typing import Any
 from urllib.parse import parse_qs
 
-from fastapi import Request, Response
+from fastapi import Request
 from pylti1p3.cookie import CookieService
 from pylti1p3.launch_data_storage.base import LaunchDataStorage
 from pylti1p3.message_launch import MessageLaunch
@@ -151,6 +151,7 @@ class RedisLaunchDataStorage(LaunchDataStorage):
     STATE_PREFIX = "eq-pdf:lti:state:"
     NONCE_PREFIX = "eq-pdf:lti:nonce:"
     LAUNCH_PREFIX = "eq-pdf:lti:launch:"
+    SESSION_PREFIX = "eq-pdf:lti:session:"
 
     # In-memory cache for sync operations (shared across all instances)
     _memory_cache: dict[str, Any] = {}
@@ -389,6 +390,54 @@ class RedisLaunchDataStorage(LaunchDataStorage):
     def clear_memory_cache(self) -> None:
         """Clear the in-memory cache after flushing to Redis."""
         self._memory_cache.clear()
+
+    async def create_session_async(
+        self,
+        session_data: dict[str, Any],
+    ) -> str:
+        """Create an LTI session and return its token.
+
+        Generates a unique session token, stores the session data in Redis
+        with a TTL, and returns the token for use in subsequent requests.
+
+        Args:
+            session_data: Session data to store (e.g., course_id, user info)
+
+        Returns:
+            Session token string
+        """
+        import secrets
+
+        token = secrets.token_urlsafe(32)
+        redis_key = self._get_key(self.SESSION_PREFIX, token)
+        await self._redis.set(
+            redis_key,
+            json.dumps(session_data),
+            ex=self._state_ttl,
+        )
+        logger.debug(f"Created LTI session: {token[:8]}... (TTL: {self._state_ttl}s)")
+        return token
+
+    async def validate_session_async(self, token: str) -> dict[str, Any] | None:
+        """Validate an LTI session token and return its data.
+
+        Args:
+            token: Session token to validate
+
+        Returns:
+            Session data dict if valid, None if invalid or expired
+        """
+        redis_key = self._get_key(self.SESSION_PREFIX, token)
+        value = await self._redis.get(redis_key)
+
+        if value is None:
+            return None
+
+        try:
+            return json.loads(value)
+        except json.JSONDecodeError:
+            logger.warning(f"Invalid JSON in LTI session: {token[:8]}...")
+            return None
 
 
 class FastAPISessionService(SessionService):

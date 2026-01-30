@@ -10,14 +10,11 @@ Implements the LTI 1.3 launch flow:
 Canvas also fetches GET /lti/jwks to get our public keys for JWT verification.
 """
 
-import asyncio
 import logging
-import secrets
 from typing import Any
-from urllib.parse import urlencode
 
 from fastapi import APIRouter, BackgroundTasks, Depends, HTTPException, Request
-from fastapi.responses import HTMLResponse, JSONResponse, RedirectResponse
+from fastapi.responses import HTMLResponse, RedirectResponse
 from redis.asyncio import Redis
 
 from ..config import settings
@@ -25,10 +22,17 @@ from ..dependencies import get_document_processing_service, get_job_service, get
 from ..services.document_processing_service import DocumentProcessingService
 from ..services.job_service import JobService
 from ..services.storage_service import StorageService
-from .adapters import FastAPICookieService, FastAPIMessageLaunch, FastAPIOIDCLogin, FastAPIRequest, FastAPISessionService, RedisLaunchDataStorage, parse_form_data
+from .adapters import (
+    FastAPICookieService,
+    FastAPIMessageLaunch,
+    FastAPIOIDCLogin,
+    FastAPIRequest,
+    FastAPISessionService,
+    RedisLaunchDataStorage,
+    parse_form_data,
+)
 from .config import get_canvas_config_json, get_tool_config
 from .keys import get_jwks
-from .models import LTIConfigResponse, LTIErrorResponse
 from .service import LTIService, LTIServiceError, parse_launch_claims
 
 logger = logging.getLogger(__name__)
@@ -319,6 +323,32 @@ async def lti_launch(
         # Parse launch claims into our model
         parsed_launch = parse_launch_claims(launch_data)
 
+        # Check if this is a course_navigation launch (dashboard)
+        # Course navigation launches have context but no file menu data
+        target_link_uri = parsed_launch.target_link_uri or ""
+        is_dashboard_launch = (
+            "dashboard" in target_link_uri
+            or (parsed_launch.context and not parsed_launch.file_menu)
+            or (parsed_launch.context and parsed_launch.file_menu and not parsed_launch.file_menu.file_id)
+        )
+
+        if is_dashboard_launch and parsed_launch.context:
+            course_id = parsed_launch.context.id
+            logger.info(f"Course navigation launch detected for course {course_id}")
+
+            # Create LTI session in Redis
+            session_data = {
+                "course_id": course_id,
+                "user_sub": parsed_launch.user.sub,
+                "user_name": parsed_launch.user.name,
+                "deployment_id": parsed_launch.deployment_id,
+            }
+            lti_session = await storage.create_session_async(session_data)
+
+            # Redirect to dashboard
+            dashboard_url = f"/lti/dashboard?lti_session={lti_session}&course_id={course_id}"
+            return _redirect_response(dashboard_url, f"Course {course_id} Dashboard")
+
         # Try to extract file_id from various sources (fallback for local Canvas)
         file_id_from_url = None
 
@@ -591,30 +621,55 @@ def _redirect_response(viewer_url: str, file_name: str | None = None) -> HTMLRes
     return HTMLResponse(content=html, status_code=200)
 
 
-@router.get("/dashboard")
+@router.get("/dashboard", response_model=None)
 async def dashboard_launch(
     request: Request,
     redis: Redis = Depends(get_redis_client),
-) -> RedirectResponse:
-    """Handle LTI course_navigation launch.
+):
+    """Handle LTI course_navigation launch for the instructor dashboard.
 
-    Validates the LTI session, extracts course context,
-    and redirects to the dashboard index for the course.
+    Validates the LTI session token against Redis, extracts course context,
+    and renders the dashboard index view directly.
 
     The course_navigation placement launches via the standard OIDC flow
-    (login -> Canvas auth -> launch). After validation, we redirect to
-    the server-rendered dashboard with a session token.
+    (login -> Canvas auth -> launch). After OIDC validation at /lti/launch,
+    the user is redirected here with a session token that maps to their
+    validated LTI session data in Redis.
+
+    Query params:
+        lti_session: Session token from the LTI launch
+        course_id: Canvas course ID
+
+    Returns:
+        Dashboard index HTML if session is valid, error page otherwise.
     """
-    # For course_navigation, Canvas sends the launch as a POST via OIDC.
-    # This GET handler serves as the landing page after a course_navigation
-    # launch has been validated. The LTI session is passed as a query param.
     lti_session = request.query_params.get("lti_session")
     course_id = request.query_params.get("course_id")
 
     if not lti_session or not course_id:
         return _error_response("Please launch this tool from Canvas.")  # type: ignore[return-value]
 
-    # Redirect to the dashboard index
+    # Validate the LTI session token against Redis
+    storage = RedisLaunchDataStorage(redis)
+    session_data = await storage.validate_session_async(lti_session)
+
+    if session_data is None:
+        logger.warning(f"Invalid or expired LTI session for dashboard launch: {lti_session[:8]}...")
+        return _error_response(
+            "Your session has expired or is invalid. Please relaunch from Canvas."
+        )  # type: ignore[return-value]
+
+    # Validate course_id matches the session (prevent course_id tampering)
+    session_course_id = session_data.get("course_id")
+    if session_course_id and session_course_id != course_id:
+        logger.warning(
+            f"Course ID mismatch: session={session_course_id}, requested={course_id}"
+        )
+        return _error_response(
+            "Course ID does not match your LTI session. Please relaunch from Canvas."
+        )  # type: ignore[return-value]
+
+    # Redirect to the dashboard index view
     dashboard_url = f"/lti/dashboard/{course_id}?lti_session={lti_session}"
     return RedirectResponse(url=dashboard_url, status_code=302)
 

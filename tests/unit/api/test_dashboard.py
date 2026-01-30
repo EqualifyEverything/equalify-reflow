@@ -12,6 +12,7 @@ Tests cover:
 - course_navigation placement in LTI config
 """
 
+import json
 from unittest.mock import AsyncMock, MagicMock
 
 import pytest
@@ -19,7 +20,7 @@ from fastapi import FastAPI
 from fastapi.testclient import TestClient
 from src.canvas.course_config import CourseConfig, CourseConfigService, ProcessedFile
 from src.canvas.dashboard import router as dashboard_router
-from src.dependencies import get_course_config_service, get_job_service
+from src.dependencies import get_course_config_service, get_job_service, get_redis_client
 
 pytestmark = pytest.mark.unit
 
@@ -51,13 +52,34 @@ def mock_job_svc():
 
 
 @pytest.fixture
-def dashboard_app(mock_config_service, mock_job_svc):
+def mock_redis():
+    """Mock Redis client that returns valid LTI session data."""
+    mock = MagicMock()
+    session_data = json.dumps({"course_id": "123", "user_sub": "user1"})
+
+    async def mock_get(key):
+        if "eq-pdf:lti:session:" in key:
+            return session_data
+        return None
+
+    mock.get = AsyncMock(side_effect=mock_get)
+    mock.set = AsyncMock(return_value=True)
+    mock.exists = AsyncMock(return_value=True)
+    mock.delete = AsyncMock(return_value=1)
+    mock.setnx = AsyncMock(return_value=True)
+    mock.expire = AsyncMock(return_value=True)
+    return mock
+
+
+@pytest.fixture
+def dashboard_app(mock_config_service, mock_job_svc, mock_redis):
     """Create test app with dashboard routes."""
     app = FastAPI()
     app.include_router(dashboard_router)
 
     app.dependency_overrides[get_course_config_service] = lambda: mock_config_service
     app.dependency_overrides[get_job_service] = lambda: mock_job_svc
+    app.dependency_overrides[get_redis_client] = lambda: mock_redis
 
     yield app
 
@@ -1106,18 +1128,19 @@ class TestDashboardConfigUpdate:
 
 
 class TestDashboardLaunch:
-    """Tests for the LTI dashboard launch endpoint."""
+    """Tests for the LTI dashboard launch endpoint at /lti/dashboard."""
 
-    def test_dashboard_launch_redirects(self):
-        """GET /lti/dashboard with session and course_id redirects."""
+    @pytest.fixture
+    def _lti_env(self):
+        """Set up LTI environment for tests that need the LTI router."""
         import os
+        import shutil
         import sys
         import tempfile
         from pathlib import Path
 
         from jwcrypto import jwk
 
-        # Generate temp keys
         temp_dir = tempfile.mkdtemp()
         private_key_path = Path(temp_dir) / "lti_private.pem"
         public_key_path = Path(temp_dir) / "lti_public.pem"
@@ -1126,7 +1149,6 @@ class TestDashboardLaunch:
         private_key_path.write_bytes(key.export_to_pem(private_key=True, password=None))
         public_key_path.write_bytes(key.export_to_pem(private_key=False, password=None))
 
-        # Set env vars
         orig_env = {}
         env_vars = {
             "LTI_ENABLED": "true",
@@ -1144,123 +1166,139 @@ class TestDashboardLaunch:
             orig_env[k] = os.environ.get(k)
             os.environ[k] = v
 
-        try:
-            # Clear modules
-            for mod in list(sys.modules.keys()):
-                if mod.startswith("src.lti") or mod == "src.config":
-                    del sys.modules[mod]
+        for mod in list(sys.modules.keys()):
+            if mod.startswith("src.lti") or mod == "src.config":
+                del sys.modules[mod]
 
-            from src.lti.config import get_tool_config
-            from src.lti.keys import load_private_key, load_public_key
+        from src.lti.config import get_tool_config
+        from src.lti.keys import load_private_key, load_public_key
 
-            get_tool_config.cache_clear()
-            load_private_key.cache_clear()
-            load_public_key.cache_clear()
+        get_tool_config.cache_clear()
+        load_private_key.cache_clear()
+        load_public_key.cache_clear()
 
-            from src.dependencies import get_redis_client
-            from src.lti.router import router as lti_router
+        yield
 
-            app = FastAPI()
-            app.include_router(lti_router)
-            mock_redis = MagicMock()
-            mock_redis.get = AsyncMock(return_value=None)
-            app.dependency_overrides[get_redis_client] = lambda: mock_redis
+        for k, v in orig_env.items():
+            if v is None:
+                os.environ.pop(k, None)
+            else:
+                os.environ[k] = v
+        shutil.rmtree(temp_dir, ignore_errors=True)
 
-            test_client = TestClient(app, follow_redirects=False)
+    def test_dashboard_launch_redirects_with_valid_session(self, _lti_env):
+        """GET /lti/dashboard with valid session and course_id redirects to index."""
+        from src.dependencies import get_course_config_service, get_job_service, get_redis_client
+        from src.lti.router import router as lti_router
 
-            response = test_client.get("/lti/dashboard?lti_session=abc123&course_id=456")
+        app = FastAPI()
+        app.include_router(lti_router)
 
-            assert response.status_code == 302
-            assert "/lti/dashboard/456" in response.headers["location"]
-            assert "lti_session=abc123" in response.headers["location"]
+        session_data = json.dumps({"course_id": "456", "user_sub": "user1"})
+        mock_redis = MagicMock()
+        mock_redis.get = AsyncMock(return_value=session_data)
+        mock_redis.set = AsyncMock(return_value=True)
+        mock_redis.exists = AsyncMock(return_value=True)
 
-            app.dependency_overrides.clear()
+        mock_config_svc = AsyncMock(spec=CourseConfigService)
+        mock_job = MagicMock()
+        mock_job.get_job = AsyncMock(return_value=None)
 
-        finally:
-            for k, v in orig_env.items():
-                if v is None:
-                    os.environ.pop(k, None)
-                else:
-                    os.environ[k] = v
+        app.dependency_overrides[get_redis_client] = lambda: mock_redis
+        app.dependency_overrides[get_course_config_service] = lambda: mock_config_svc
+        app.dependency_overrides[get_job_service] = lambda: mock_job
 
-            import shutil
+        test_client = TestClient(app, follow_redirects=False)
+        response = test_client.get("/lti/dashboard?lti_session=abc123&course_id=456")
 
-            shutil.rmtree(temp_dir, ignore_errors=True)
+        assert response.status_code == 302
+        assert "/lti/dashboard/456" in response.headers["location"]
+        assert "lti_session=abc123" in response.headers["location"]
 
-    def test_dashboard_launch_error_without_params(self):
+        app.dependency_overrides.clear()
+
+    def test_dashboard_launch_rejects_invalid_session(self, _lti_env):
+        """GET /lti/dashboard with invalid/expired session shows error."""
+        from src.dependencies import get_course_config_service, get_job_service, get_redis_client
+        from src.lti.router import router as lti_router
+
+        app = FastAPI()
+        app.include_router(lti_router)
+
+        mock_redis = MagicMock()
+        mock_redis.get = AsyncMock(return_value=None)
+
+        mock_config_svc = AsyncMock(spec=CourseConfigService)
+        mock_job = MagicMock()
+        mock_job.get_job = AsyncMock(return_value=None)
+
+        app.dependency_overrides[get_redis_client] = lambda: mock_redis
+        app.dependency_overrides[get_course_config_service] = lambda: mock_config_svc
+        app.dependency_overrides[get_job_service] = lambda: mock_job
+
+        test_client = TestClient(app)
+        response = test_client.get("/lti/dashboard?lti_session=expired-token&course_id=456")
+
+        assert response.status_code == 200
+        assert "expired" in response.text.lower() or "invalid" in response.text.lower()
+
+        app.dependency_overrides.clear()
+
+    def test_dashboard_launch_rejects_course_id_mismatch(self, _lti_env):
+        """GET /lti/dashboard rejects when course_id doesn't match session."""
+        from src.dependencies import get_course_config_service, get_job_service, get_redis_client
+        from src.lti.router import router as lti_router
+
+        app = FastAPI()
+        app.include_router(lti_router)
+
+        # Session has course_id=789 but request has course_id=456
+        session_data = json.dumps({"course_id": "789", "user_sub": "user1"})
+        mock_redis = MagicMock()
+        mock_redis.get = AsyncMock(return_value=session_data)
+
+        mock_config_svc = AsyncMock(spec=CourseConfigService)
+        mock_job = MagicMock()
+        mock_job.get_job = AsyncMock(return_value=None)
+
+        app.dependency_overrides[get_redis_client] = lambda: mock_redis
+        app.dependency_overrides[get_course_config_service] = lambda: mock_config_svc
+        app.dependency_overrides[get_job_service] = lambda: mock_job
+
+        test_client = TestClient(app)
+        response = test_client.get("/lti/dashboard?lti_session=abc123&course_id=456")
+
+        assert response.status_code == 200
+        assert "does not match" in response.text
+
+        app.dependency_overrides.clear()
+
+    def test_dashboard_launch_error_without_params(self, _lti_env):
         """GET /lti/dashboard without params shows error."""
-        import os
-        import sys
-        import tempfile
-        from pathlib import Path
+        from src.dependencies import get_course_config_service, get_job_service, get_redis_client
+        from src.lti.router import router as lti_router
 
-        from jwcrypto import jwk
+        app = FastAPI()
+        app.include_router(lti_router)
 
-        temp_dir = tempfile.mkdtemp()
-        private_key_path = Path(temp_dir) / "lti_private.pem"
-        public_key_path = Path(temp_dir) / "lti_public.pem"
+        mock_redis = MagicMock()
+        mock_redis.get = AsyncMock(return_value=None)
 
-        key = jwk.JWK.generate(kty="RSA", size=2048)
-        private_key_path.write_bytes(key.export_to_pem(private_key=True, password=None))
-        public_key_path.write_bytes(key.export_to_pem(private_key=False, password=None))
+        mock_config_svc = AsyncMock(spec=CourseConfigService)
+        mock_job = MagicMock()
+        mock_job.get_job = AsyncMock(return_value=None)
 
-        orig_env = {}
-        env_vars = {
-            "LTI_ENABLED": "true",
-            "LTI_ISSUER": "https://canvas.test.instructure.com",
-            "LTI_CLIENT_ID": "10000000000001",
-            "LTI_DEPLOYMENT_ID": "10000000000001",
-            "LTI_AUTH_LOGIN_URL": "https://canvas.test.instructure.com/api/lti/authorize_redirect",
-            "LTI_AUTH_TOKEN_URL": "https://canvas.test.instructure.com/login/oauth2/token",
-            "LTI_JWKS_URL": "https://canvas.test.instructure.com/api/lti/security/jwks",
-            "LTI_PRIVATE_KEY_PATH": str(private_key_path),
-            "LTI_PUBLIC_KEY_PATH": str(public_key_path),
-        }
+        app.dependency_overrides[get_redis_client] = lambda: mock_redis
+        app.dependency_overrides[get_course_config_service] = lambda: mock_config_svc
+        app.dependency_overrides[get_job_service] = lambda: mock_job
 
-        for k, v in env_vars.items():
-            orig_env[k] = os.environ.get(k)
-            os.environ[k] = v
+        test_client = TestClient(app)
+        response = test_client.get("/lti/dashboard")
 
-        try:
-            for mod in list(sys.modules.keys()):
-                if mod.startswith("src.lti") or mod == "src.config":
-                    del sys.modules[mod]
+        assert response.status_code == 200
+        assert "Launch Error" in response.text or "Please launch this tool from Canvas" in response.text
 
-            from src.lti.config import get_tool_config
-            from src.lti.keys import load_private_key, load_public_key
-
-            get_tool_config.cache_clear()
-            load_private_key.cache_clear()
-            load_public_key.cache_clear()
-
-            from src.dependencies import get_redis_client
-            from src.lti.router import router as lti_router
-
-            app = FastAPI()
-            app.include_router(lti_router)
-            mock_redis = MagicMock()
-            mock_redis.get = AsyncMock(return_value=None)
-            app.dependency_overrides[get_redis_client] = lambda: mock_redis
-
-            test_client = TestClient(app)
-
-            response = test_client.get("/lti/dashboard")
-
-            assert response.status_code == 200
-            assert "Launch Error" in response.text or "Please launch this tool from Canvas" in response.text
-
-            app.dependency_overrides.clear()
-
-        finally:
-            for k, v in orig_env.items():
-                if v is None:
-                    os.environ.pop(k, None)
-                else:
-                    os.environ[k] = v
-
-            import shutil
-
-            shutil.rmtree(temp_dir, ignore_errors=True)
+        app.dependency_overrides.clear()
 
 
 # ===========================================================================
@@ -1407,3 +1445,142 @@ class TestDashboardCSS:
         assert config_path.exists(), "tailwind.config.js should exist at project root"
         content = config_path.read_text()
         assert "src/canvas/templates/**/*.html" in content
+
+
+# ===========================================================================
+# LTI Session Storage (create/validate)
+# ===========================================================================
+
+
+class TestLTISessionStorage:
+    """Tests for LTI session creation and validation in RedisLaunchDataStorage."""
+
+    @pytest.mark.asyncio
+    async def test_create_session_returns_token(self):
+        """create_session_async returns a non-empty token string."""
+        from src.lti.adapters import RedisLaunchDataStorage
+
+        mock_redis = MagicMock()
+        mock_redis.set = AsyncMock(return_value=True)
+        storage = RedisLaunchDataStorage(mock_redis)
+
+        token = await storage.create_session_async({"course_id": "123"})
+
+        assert isinstance(token, str)
+        assert len(token) > 0
+        mock_redis.set.assert_awaited_once()
+
+    @pytest.mark.asyncio
+    async def test_create_session_stores_data_in_redis(self):
+        """create_session_async stores JSON data with session prefix and TTL."""
+        from src.lti.adapters import RedisLaunchDataStorage
+
+        mock_redis = MagicMock()
+        mock_redis.set = AsyncMock(return_value=True)
+        storage = RedisLaunchDataStorage(mock_redis)
+
+        session_data = {"course_id": "456", "user_sub": "user1"}
+        token = await storage.create_session_async(session_data)
+
+        call_args = mock_redis.set.call_args
+        key = call_args[0][0]
+        value = call_args[0][1]
+        assert key.startswith("eq-pdf:lti:session:")
+        assert token in key
+        stored = json.loads(value)
+        assert stored["course_id"] == "456"
+        assert stored["user_sub"] == "user1"
+        assert call_args[1]["ex"] > 0  # TTL is set
+
+    @pytest.mark.asyncio
+    async def test_validate_session_returns_data_for_valid_token(self):
+        """validate_session_async returns session data for a valid token."""
+        from src.lti.adapters import RedisLaunchDataStorage
+
+        session_data = {"course_id": "123", "user_sub": "user1"}
+        mock_redis = MagicMock()
+        mock_redis.get = AsyncMock(return_value=json.dumps(session_data))
+        storage = RedisLaunchDataStorage(mock_redis)
+
+        result = await storage.validate_session_async("valid-token")
+
+        assert result == session_data
+        mock_redis.get.assert_awaited_once()
+        call_key = mock_redis.get.call_args[0][0]
+        assert "eq-pdf:lti:session:valid-token" == call_key
+
+    @pytest.mark.asyncio
+    async def test_validate_session_returns_none_for_expired_token(self):
+        """validate_session_async returns None for expired/invalid token."""
+        from src.lti.adapters import RedisLaunchDataStorage
+
+        mock_redis = MagicMock()
+        mock_redis.get = AsyncMock(return_value=None)
+        storage = RedisLaunchDataStorage(mock_redis)
+
+        result = await storage.validate_session_async("expired-token")
+
+        assert result is None
+
+    @pytest.mark.asyncio
+    async def test_validate_session_returns_none_for_invalid_json(self):
+        """validate_session_async returns None for corrupted session data."""
+        from src.lti.adapters import RedisLaunchDataStorage
+
+        mock_redis = MagicMock()
+        mock_redis.get = AsyncMock(return_value="not-valid-json{{{")
+        storage = RedisLaunchDataStorage(mock_redis)
+
+        result = await storage.validate_session_async("bad-data-token")
+
+        assert result is None
+
+
+# ===========================================================================
+# Dashboard Session Validation (Redis-backed)
+# ===========================================================================
+
+
+class TestDashboardSessionValidation:
+    """Tests for Redis-backed LTI session validation in dashboard views."""
+
+    def test_index_returns_403_with_invalid_redis_session(self, mock_config_service, mock_job_svc):
+        """Dashboard returns 403 when lti_session token is not found in Redis."""
+        app = FastAPI()
+        app.include_router(dashboard_router)
+
+        # Redis returns None for all session lookups
+        mock_redis = MagicMock()
+        mock_redis.get = AsyncMock(return_value=None)
+
+        app.dependency_overrides[get_course_config_service] = lambda: mock_config_service
+        app.dependency_overrides[get_job_service] = lambda: mock_job_svc
+        app.dependency_overrides[get_redis_client] = lambda: mock_redis
+
+        test_client = TestClient(app)
+        response = test_client.get("/lti/dashboard/123?lti_session=invalid-token")
+
+        assert response.status_code == 403
+        assert "Please launch this tool from Canvas" in response.text
+
+        app.dependency_overrides.clear()
+
+    def test_index_accessible_with_valid_redis_session(self, mock_config_service, mock_job_svc):
+        """Dashboard returns 200 when lti_session token is valid in Redis."""
+        app = FastAPI()
+        app.include_router(dashboard_router)
+
+        session_data = json.dumps({"course_id": "123", "user_sub": "user1"})
+        mock_redis = MagicMock()
+        mock_redis.get = AsyncMock(return_value=session_data)
+
+        app.dependency_overrides[get_course_config_service] = lambda: mock_config_service
+        app.dependency_overrides[get_job_service] = lambda: mock_job_svc
+        app.dependency_overrides[get_redis_client] = lambda: mock_redis
+
+        test_client = TestClient(app)
+        response = test_client.get("/lti/dashboard/123?lti_session=valid-token")
+
+        assert response.status_code == 200
+
+        app.dependency_overrides.clear()

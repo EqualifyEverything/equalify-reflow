@@ -991,6 +991,100 @@ class TestDashboardPublish:
         assert response.status_code == 400
         assert "API token" in response.text
 
+    def test_successful_publish_returns_published_row(self, client, mock_config_service):
+        """Successful publish calls publisher and returns updated row with Published status."""
+        from unittest.mock import patch
+
+        mock_config_service.get_processed_file.return_value = ProcessedFile(
+            canvas_file_id="42",
+            canvas_updated_at="2024-06-15T10:30:00Z",
+            job_id="job-1",
+            status="completed",
+            processed_at="2024-06-15T11:00:00Z",
+            original_filename="lecture.pdf",
+        )
+        mock_config_service.get_config.return_value = CourseConfig(
+            enabled=True,
+            auto_publish_threshold=0.8,
+            canvas_api_token="test-token-abc",
+        )
+
+        mock_publisher_instance = AsyncMock()
+        mock_canvas_client = AsyncMock()
+        mock_storage = AsyncMock()
+        mock_redis_for_publish = AsyncMock()
+
+        # get_redis_client is an async generator; the handler calls anext() on it
+        async def fake_get_redis_client():
+            yield mock_redis_for_publish
+
+        mock_settings = MagicMock()
+        mock_settings.canvas_api_url = "https://canvas.example.com"
+        mock_settings.canvas_rate_limit_buffer = 10
+
+        with (
+            patch("src.canvas.publisher.CanvasPublisherService", return_value=mock_publisher_instance),
+            patch("src.canvas.client.CanvasAPIClient", return_value=mock_canvas_client),
+            patch("src.canvas.renderer.CanvasHTMLRenderer"),
+            patch("src.canvas.bundle.DownloadBundleService"),
+            patch("src.dependencies.get_storage_service", new_callable=AsyncMock, return_value=mock_storage),
+            patch("src.dependencies.get_redis_client", side_effect=fake_get_redis_client),
+            patch("src.config.settings", mock_settings),
+        ):
+            response = client.post("/lti/dashboard/123/documents/42/publish?lti_session=test-session")
+
+        assert response.status_code == 200
+        assert "Published" in response.text
+        assert 'id="doc-42"' in response.text
+        assert "lecture.pdf" in response.text
+        mock_publisher_instance.publish.assert_awaited_once()
+
+    def test_publish_returns_500_on_publisher_error(self, client, mock_config_service):
+        """Returns 500 with error message when publisher raises an exception."""
+        from unittest.mock import patch
+
+        mock_config_service.get_processed_file.return_value = ProcessedFile(
+            canvas_file_id="42",
+            canvas_updated_at="2024-06-15T10:30:00Z",
+            job_id="job-1",
+            status="completed",
+            processed_at="2024-06-15T11:00:00Z",
+            original_filename="lecture.pdf",
+        )
+        mock_config_service.get_config.return_value = CourseConfig(
+            enabled=True,
+            auto_publish_threshold=0.8,
+            canvas_api_token="test-token-abc",
+        )
+
+        mock_publisher_instance = AsyncMock()
+        mock_publisher_instance.publish.side_effect = RuntimeError("Canvas API timeout")
+        mock_canvas_client = AsyncMock()
+        mock_storage = AsyncMock()
+        mock_redis_for_publish = AsyncMock()
+
+        async def fake_get_redis_client():
+            yield mock_redis_for_publish
+
+        mock_settings = MagicMock()
+        mock_settings.canvas_api_url = "https://canvas.example.com"
+        mock_settings.canvas_rate_limit_buffer = 10
+
+        with (
+            patch("src.canvas.publisher.CanvasPublisherService", return_value=mock_publisher_instance),
+            patch("src.canvas.client.CanvasAPIClient", return_value=mock_canvas_client),
+            patch("src.canvas.renderer.CanvasHTMLRenderer"),
+            patch("src.canvas.bundle.DownloadBundleService"),
+            patch("src.dependencies.get_storage_service", new_callable=AsyncMock, return_value=mock_storage),
+            patch("src.dependencies.get_redis_client", side_effect=fake_get_redis_client),
+            patch("src.config.settings", mock_settings),
+        ):
+            response = client.post("/lti/dashboard/123/documents/42/publish?lti_session=test-session")
+
+        assert response.status_code == 500
+        assert "Publish failed" in response.text
+        assert "Canvas API timeout" in response.text
+
 
 # ===========================================================================
 # PUT /lti/dashboard/{course_id}/config - htmx Settings Save

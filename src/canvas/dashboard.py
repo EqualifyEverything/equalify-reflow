@@ -231,6 +231,63 @@ async def dashboard_document_detail(
 # --- htmx Action Routes ---
 
 
+@router.get("/{course_id}/documents/{file_id}/row", response_class=HTMLResponse)
+async def dashboard_document_row(
+    course_id: str,
+    file_id: str,
+    request: Request,
+    config_service: CourseConfigService = Depends(get_course_config_service),
+    job_service: JobService = Depends(get_job_service),
+) -> HTMLResponse:
+    """Return a single table row fragment for htmx polling.
+
+    Used by processing rows to poll for status updates every 5s.
+    Returns the updated <tr> element for in-place swap.
+    """
+    processed_file = await config_service.get_processed_file(course_id, file_id)
+    if processed_file is None:
+        not_found_html = (
+            f'<tr id="doc-{file_id}">'
+            '<td colspan="5" class="px-4 py-3 text-sm text-red-600">'
+            "Document not found</td></tr>"
+        )
+        return HTMLResponse(content=not_found_html, status_code=404)
+
+    publish_result = await config_service.get_publish_result(course_id, file_id)
+
+    effective_status = processed_file.status
+    canvas_page_url: str | None = None
+    confidence_score: float | None = None
+
+    if publish_result:
+        effective_status = "published"
+        canvas_page_url = publish_result.get("canvas_page_url")
+
+    if processed_file.job_id:
+        job = await job_service.get_job(processed_file.job_id)
+        if job:
+            score = job.get("confidence_score")
+            if score is not None:
+                try:
+                    confidence_score = float(score)
+                except (ValueError, TypeError):
+                    pass
+
+    lti_session = request.query_params.get("lti_session", "")
+    row_html = _render_document_row_fragment(
+        course_id,
+        file_id,
+        processed_file.original_filename,
+        effective_status,
+        confidence_score,
+        processed_file.processed_at,
+        lti_session,
+        canvas_page_url=canvas_page_url,
+    )
+
+    return HTMLResponse(content=row_html)
+
+
 @router.post("/{course_id}/documents/{file_id}/publish", response_class=HTMLResponse)
 async def dashboard_publish(
     course_id: str,
@@ -441,16 +498,28 @@ def _render_document_row_fragment(
     confidence: float | None,
     processed_at: str | None,
     lti_session: str,
+    canvas_page_url: str | None = None,
 ) -> str:
     """Render an HTML table row fragment for htmx swap."""
     status_badge = _status_badge_html(doc_status)
     confidence_display = f"{confidence:.0%}" if confidence is not None else "-"
     processed_display = processed_at or "-"
-    actions = _actions_html(course_id, file_id, doc_status, lti_session)
+    actions = _actions_html(course_id, file_id, doc_status, lti_session, canvas_page_url)
     detail_url = f"/lti/dashboard/{course_id}/documents/{file_id}?lti_session={lti_session}"
 
+    # Add htmx polling for processing rows so they continue to auto-update
+    polling_attrs = ""
+    if doc_status == "processing":
+        row_url = f"/lti/dashboard/{course_id}/documents/{file_id}/row?lti_session={lti_session}"
+        polling_attrs = (
+            f' hx-get="{row_url}"'
+            ' hx-trigger="every 5s"'
+            f' hx-target="#doc-{file_id}"'
+            ' hx-swap="outerHTML"'
+        )
+
     return (
-        f'<tr id="doc-{file_id}">'
+        f'<tr id="doc-{file_id}"{polling_attrs}>'
         f'<td class="px-4 py-3 text-sm">'
         f'<a href="{detail_url}" class="text-blue-600 hover:underline">{filename}</a></td>'
         f'<td class="px-4 py-3 text-sm">{status_badge}</td>'
@@ -478,7 +547,13 @@ def _status_badge_html(doc_status: str) -> str:
     return f'<span class="inline-block px-2 py-0.5 rounded text-xs font-medium {css}">{label}{extra}</span>'
 
 
-def _actions_html(course_id: str, file_id: str, doc_status: str, lti_session: str) -> str:
+def _actions_html(
+    course_id: str,
+    file_id: str,
+    doc_status: str,
+    lti_session: str,
+    canvas_page_url: str | None = None,
+) -> str:
     """Generate action buttons HTML for a document row."""
     parts = []
     if doc_status == "completed":
@@ -494,6 +569,12 @@ def _actions_html(course_id: str, file_id: str, doc_status: str, lti_session: st
             f'class="text-xs px-2 py-1 bg-blue-600 text-white rounded hover:bg-blue-700">Retry</button>'
         )
     elif doc_status == "published":
-        parts.append('<span class="text-xs text-green-600">Live</span>')
+        if canvas_page_url:
+            parts.append(
+                f'<a href="{canvas_page_url}" target="_blank" rel="noopener" '
+                f'class="text-xs text-green-600 hover:underline">View Page</a>'
+            )
+        else:
+            parts.append('<span class="text-xs text-green-600">Live</span>')
 
     return " ".join(parts) if parts else "-"

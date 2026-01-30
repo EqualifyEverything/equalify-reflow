@@ -494,6 +494,115 @@ class TestDashboardRetry:
 
 
 # ===========================================================================
+# GET /lti/dashboard/{course_id}/documents/{file_id}/row - htmx Row Polling
+# ===========================================================================
+
+
+class TestDashboardDocumentRow:
+    """Tests for the htmx row polling endpoint."""
+
+    def test_returns_row_for_processing_document(self, client, mock_config_service, mock_job_svc):
+        """Returns HTML row fragment with polling attrs for processing document."""
+        mock_config_service.get_processed_file.return_value = ProcessedFile(
+            canvas_file_id="42",
+            canvas_updated_at="2024-06-15T10:30:00Z",
+            job_id="job-1",
+            status="processing",
+            processed_at="2024-06-15T11:00:00Z",
+            original_filename="inprogress.pdf",
+        )
+        mock_config_service.get_publish_result.return_value = None
+        mock_job_svc.get_job.return_value = None
+
+        response = client.get("/lti/dashboard/123/documents/42/row?lti_session=test-session")
+
+        assert response.status_code == 200
+        assert 'id="doc-42"' in response.text
+        assert "inprogress.pdf" in response.text
+        assert "Processing" in response.text
+        # Should include polling attrs so it keeps polling
+        assert "hx-get" in response.text
+        assert "every 5s" in response.text
+
+    def test_returns_row_for_completed_document(self, client, mock_config_service, mock_job_svc):
+        """Returns HTML row fragment with publish button for completed document."""
+        mock_config_service.get_processed_file.return_value = ProcessedFile(
+            canvas_file_id="42",
+            canvas_updated_at="2024-06-15T10:30:00Z",
+            job_id="job-1",
+            status="completed",
+            processed_at="2024-06-15T11:00:00Z",
+            original_filename="lecture.pdf",
+        )
+        mock_config_service.get_publish_result.return_value = None
+        mock_job_svc.get_job.return_value = {
+            "job_id": "job-1",
+            "status": "completed",
+            "confidence_score": "0.88",
+        }
+
+        response = client.get("/lti/dashboard/123/documents/42/row?lti_session=test-session")
+
+        assert response.status_code == 200
+        assert "lecture.pdf" in response.text
+        assert "Completed" in response.text
+        assert "Publish" in response.text
+        assert "88%" in response.text
+        # Completed rows should NOT have polling attrs
+        assert "every 5s" not in response.text
+
+    def test_returns_row_for_published_document(self, client, mock_config_service, mock_job_svc):
+        """Returns HTML row with View Page link for published document."""
+        mock_config_service.get_processed_file.return_value = ProcessedFile(
+            canvas_file_id="42",
+            canvas_updated_at="2024-06-15T10:30:00Z",
+            job_id="job-1",
+            status="completed",
+            processed_at="2024-06-15T11:00:00Z",
+            original_filename="lecture.pdf",
+        )
+        mock_config_service.get_publish_result.return_value = {
+            "canvas_page_url": "https://canvas.example.com/pages/lecture",
+        }
+        mock_job_svc.get_job.return_value = None
+
+        response = client.get("/lti/dashboard/123/documents/42/row?lti_session=test-session")
+
+        assert response.status_code == 200
+        assert "Published" in response.text
+        assert "View Page" in response.text
+        assert "https://canvas.example.com/pages/lecture" in response.text
+
+    def test_returns_row_for_failed_document(self, client, mock_config_service, mock_job_svc):
+        """Returns HTML row with retry button for failed document."""
+        mock_config_service.get_processed_file.return_value = ProcessedFile(
+            canvas_file_id="42",
+            canvas_updated_at="2024-06-15T10:30:00Z",
+            job_id="job-1",
+            status="failed",
+            processed_at="2024-06-15T11:00:00Z",
+            original_filename="broken.pdf",
+        )
+        mock_config_service.get_publish_result.return_value = None
+        mock_job_svc.get_job.return_value = None
+
+        response = client.get("/lti/dashboard/123/documents/42/row?lti_session=test-session")
+
+        assert response.status_code == 200
+        assert "Failed" in response.text
+        assert "Retry" in response.text
+
+    def test_returns_404_for_missing_document(self, client, mock_config_service):
+        """Returns 404 with error row when document not found."""
+        mock_config_service.get_processed_file.return_value = None
+
+        response = client.get("/lti/dashboard/123/documents/999/row?lti_session=test-session")
+
+        assert response.status_code == 404
+        assert "Document not found" in response.text
+
+
+# ===========================================================================
 # POST /lti/dashboard/{course_id}/documents/{file_id}/publish - htmx Publish
 # ===========================================================================
 

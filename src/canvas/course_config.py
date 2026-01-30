@@ -163,13 +163,19 @@ class CourseConfigService:
 
         Returns True if:
         - File has never been processed, OR
-        - File's canvas_updated_at is newer than the stored value
+        - File's canvas_updated_at is newer than the stored value, OR
+        - File's canvas_updated_at matches but status is not 'completed'
         """
         existing = await self.get_processed_file(course_id, file_id)
         if existing is None:
             return True
         # ISO 8601 string comparison works for chronological ordering
-        return canvas_updated_at > existing.canvas_updated_at
+        if canvas_updated_at > existing.canvas_updated_at:
+            return True
+        # Retry files that match timestamp but haven't completed successfully
+        if canvas_updated_at == existing.canvas_updated_at and existing.status != "completed":
+            return True
+        return False
 
     # --- Published Pages ---
 
@@ -184,9 +190,7 @@ class CourseConfigService:
         if not data:
             return None
         return {
-            (k if isinstance(k, str) else k.decode("utf-8")): (
-                v if isinstance(v, str) else v.decode("utf-8")
-            )
+            (k if isinstance(k, str) else k.decode("utf-8")): (v if isinstance(v, str) else v.decode("utf-8"))
             for k, v in data.items()
         }
 

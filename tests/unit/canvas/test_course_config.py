@@ -616,6 +616,62 @@ class TestIsFileNewOrUpdated:
         # Very recent timestamp
         assert await service.is_file_new_or_updated("c1", "f2", "2025-12-31T23:59:59Z") is True
 
+    async def test_returns_true_when_timestamp_matches_and_status_processing(self, service, mock_redis):
+        """Files with matching timestamp but 'processing' status need reprocessing."""
+        record = ProcessedFile(
+            canvas_file_id="f1",
+            canvas_updated_at="2024-06-15T08:00:00Z",
+            job_id="j1",
+            status="processing",
+            processed_at="2024-06-15T08:05:00Z",
+            original_filename="stuck.pdf",
+        )
+        mock_redis.hget.return_value = record.model_dump_json()
+        result = await service.is_file_new_or_updated("c1", "f1", "2024-06-15T08:00:00Z")
+        assert result is True
+
+    async def test_returns_true_when_timestamp_matches_and_status_failed(self, service, mock_redis):
+        """Files with matching timestamp but 'failed' status need reprocessing."""
+        record = ProcessedFile(
+            canvas_file_id="f1",
+            canvas_updated_at="2024-06-15T08:00:00Z",
+            job_id="j1",
+            status="failed",
+            processed_at="2024-06-15T08:05:00Z",
+            original_filename="broken.pdf",
+        )
+        mock_redis.hget.return_value = record.model_dump_json()
+        result = await service.is_file_new_or_updated("c1", "f1", "2024-06-15T08:00:00Z")
+        assert result is True
+
+    async def test_returns_false_when_timestamp_matches_and_status_completed(self, service, mock_redis):
+        """Completed files with matching timestamp do not need reprocessing."""
+        record = ProcessedFile(
+            canvas_file_id="f1",
+            canvas_updated_at="2024-06-15T08:00:00Z",
+            job_id="j1",
+            status="completed",
+            processed_at="2024-06-15T08:05:00Z",
+            original_filename="done.pdf",
+        )
+        mock_redis.hget.return_value = record.model_dump_json()
+        result = await service.is_file_new_or_updated("c1", "f1", "2024-06-15T08:00:00Z")
+        assert result is False
+
+    async def test_returns_true_when_timestamp_newer_regardless_of_status(self, service, mock_redis):
+        """Files with newer timestamp always need reprocessing, even if previously completed."""
+        record = ProcessedFile(
+            canvas_file_id="f1",
+            canvas_updated_at="2024-06-15T08:00:00Z",
+            job_id="j1",
+            status="completed",
+            processed_at="2024-06-15T08:05:00Z",
+            original_filename="updated.pdf",
+        )
+        mock_redis.hget.return_value = record.model_dump_json()
+        result = await service.is_file_new_or_updated("c1", "f1", "2024-06-16T08:00:00Z")
+        assert result is True
+
 
 # --- get_publish_result ---
 

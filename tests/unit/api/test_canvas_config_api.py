@@ -692,9 +692,17 @@ class TestGetDocumentStatus:
 
         data = response.json()
         expected_keys = {
-            "canvas_file_id", "original_filename", "status", "job_id",
-            "confidence_score", "canvas_page_url", "canvas_page_id",
-            "download_url", "processed_at", "published_at", "error_message",
+            "canvas_file_id",
+            "original_filename",
+            "status",
+            "job_id",
+            "confidence_score",
+            "canvas_page_url",
+            "canvas_page_id",
+            "download_url",
+            "processed_at",
+            "published_at",
+            "error_message",
         }
         assert set(data.keys()) == expected_keys
 
@@ -916,6 +924,85 @@ class TestTriggerProcessing:
         assert response.status_code == status.HTTP_404_NOT_FOUND
         assert "not found in Canvas" in response.json()["detail"]
 
+    def test_returns_400_when_config_exists_but_token_empty(self, client, mock_config_service):
+        """Returns 400 when course config exists but canvas_api_token is empty."""
+        mock_config_service.get_config.return_value = CourseConfig(
+            enabled=True,
+            canvas_api_token="",
+        )
+
+        response = client.post("/api/v1/canvas/courses/123/documents/42/process")
+
+        assert response.status_code == status.HTTP_400_BAD_REQUEST
+        assert "API token" in response.json()["detail"]
+
+    def test_returns_400_when_file_has_no_download_url(self, client, mock_config_service):
+        """Returns 400 when Canvas file has no download URL."""
+        mock_config_service.get_config.return_value = CourseConfig(
+            enabled=True,
+            canvas_api_token="test-token",
+        )
+
+        canvas_file = {
+            "id": 42,
+            "display_name": "lecture.pdf",
+            "url": "",
+            "updated_at": "2024-06-15T10:30:00Z",
+        }
+
+        with patch("src.api.canvas_config.CanvasAPIClient") as mock_client_cls:
+            mock_client_instance = AsyncMock()
+            mock_client_cls.return_value = mock_client_instance
+            mock_client_instance.list_course_files = AsyncMock(return_value=[canvas_file])
+            mock_client_instance.close = AsyncMock()
+
+            response = client.post("/api/v1/canvas/courses/123/documents/42/process")
+
+        assert response.status_code == status.HTTP_400_BAD_REQUEST
+        assert "no download URL" in response.json()["detail"]
+
+    def test_returns_502_on_canvas_api_error(self, client, mock_config_service):
+        """Returns 502 when Canvas API raises CanvasAPIError."""
+        from src.canvas.client import CanvasAPIError
+
+        mock_config_service.get_config.return_value = CourseConfig(
+            enabled=True,
+            canvas_api_token="test-token",
+        )
+
+        with patch("src.api.canvas_config.CanvasAPIClient") as mock_client_cls:
+            mock_client_instance = AsyncMock()
+            mock_client_cls.return_value = mock_client_instance
+            mock_client_instance.list_course_files = AsyncMock(
+                side_effect=CanvasAPIError("rate limited"),
+            )
+            mock_client_instance.close = AsyncMock()
+
+            response = client.post("/api/v1/canvas/courses/123/documents/42/process")
+
+        assert response.status_code == status.HTTP_502_BAD_GATEWAY
+        assert "Canvas API error" in response.json()["detail"]
+
+    def test_returns_500_on_unexpected_error(self, client, mock_config_service):
+        """Returns 500 on unexpected errors during processing."""
+        mock_config_service.get_config.return_value = CourseConfig(
+            enabled=True,
+            canvas_api_token="test-token",
+        )
+
+        with patch("src.api.canvas_config.CanvasAPIClient") as mock_client_cls:
+            mock_client_instance = AsyncMock()
+            mock_client_cls.return_value = mock_client_instance
+            mock_client_instance.list_course_files = AsyncMock(
+                side_effect=RuntimeError("connection reset"),
+            )
+            mock_client_instance.close = AsyncMock()
+
+            response = client.post("/api/v1/canvas/courses/123/documents/42/process")
+
+        assert response.status_code == status.HTTP_500_INTERNAL_SERVER_ERROR
+        assert "Failed to trigger processing" in response.json()["detail"]
+
     def test_successfully_triggers_processing(self, client, mock_config_service, mock_job_svc, mock_queue_svc):
         """Successfully downloads and queues a Canvas file for processing."""
         mock_config_service.get_config.return_value = CourseConfig(
@@ -956,6 +1043,157 @@ class TestTriggerProcessing:
         assert "job_id" in data
         mock_job_svc.create_job.assert_awaited_once()
         mock_queue_svc.queue_pii_job.assert_awaited_once()
+
+    def test_stores_canvas_metadata_on_job(self, client, mock_config_service, mock_job_svc, mock_queue_svc):
+        """Stores canvas source metadata (source, course_id, canvas_file_id) on the job."""
+        mock_config_service.get_config.return_value = CourseConfig(
+            enabled=True,
+            canvas_api_token="test-token",
+        )
+
+        canvas_file = {
+            "id": 42,
+            "display_name": "lecture.pdf",
+            "url": "https://canvas.example.com/files/42/download",
+            "updated_at": "2024-06-15T10:30:00Z",
+        }
+
+        fake_pdf = b"%PDF-1.4 " + b"x" * 200
+
+        with patch("src.api.canvas_config.CanvasAPIClient") as mock_client_cls:
+            mock_client_instance = AsyncMock()
+            mock_client_cls.return_value = mock_client_instance
+            mock_client_instance.list_course_files = AsyncMock(return_value=[canvas_file])
+            mock_client_instance.close = AsyncMock()
+            mock_client_instance.api_token = "test-token"
+            mock_client_instance._is_docker_url = False
+            mock_client_instance._docker_host_header = "localhost"
+
+            mock_http_client = AsyncMock()
+            mock_response = MagicMock()
+            mock_response.content = fake_pdf
+            mock_response.raise_for_status = MagicMock()
+            mock_http_client.get = AsyncMock(return_value=mock_response)
+            mock_client_instance._get_client = MagicMock(return_value=mock_http_client)
+
+            response = client.post("/api/v1/canvas/courses/123/documents/42/process")
+
+        assert response.status_code == status.HTTP_200_OK
+        # Verify canvas metadata was stored on the job
+        mock_job_svc.redis.hset.assert_awaited_once()
+        call_kwargs = mock_job_svc.redis.hset.call_args
+        mapping = call_kwargs.kwargs.get("mapping") or call_kwargs[1].get("mapping")
+        assert mapping["source"] == "canvas_manual"
+        assert mapping["course_id"] == "123"
+        assert mapping["canvas_file_id"] == "42"
+
+    def test_stores_processed_file_record(
+        self,
+        client,
+        mock_config_service,
+        mock_job_svc,
+        mock_queue_svc,
+    ):
+        """Stores a processed file record in the config service."""
+        mock_config_service.get_config.return_value = CourseConfig(
+            enabled=True,
+            canvas_api_token="test-token",
+        )
+
+        canvas_file = {
+            "id": 42,
+            "display_name": "lecture.pdf",
+            "url": "https://canvas.example.com/files/42/download",
+            "updated_at": "2024-06-15T10:30:00Z",
+        }
+
+        fake_pdf = b"%PDF-1.4 " + b"x" * 200
+
+        with patch("src.api.canvas_config.CanvasAPIClient") as mock_client_cls:
+            mock_client_instance = AsyncMock()
+            mock_client_cls.return_value = mock_client_instance
+            mock_client_instance.list_course_files = AsyncMock(return_value=[canvas_file])
+            mock_client_instance.close = AsyncMock()
+            mock_client_instance.api_token = "test-token"
+            mock_client_instance._is_docker_url = False
+            mock_client_instance._docker_host_header = "localhost"
+
+            mock_http_client = AsyncMock()
+            mock_response = MagicMock()
+            mock_response.content = fake_pdf
+            mock_response.raise_for_status = MagicMock()
+            mock_http_client.get = AsyncMock(return_value=mock_response)
+            mock_client_instance._get_client = MagicMock(return_value=mock_http_client)
+
+            response = client.post("/api/v1/canvas/courses/123/documents/42/process")
+
+        assert response.status_code == status.HTTP_200_OK
+        mock_config_service.set_processed_file.assert_awaited_once()
+        call_args = mock_config_service.set_processed_file.call_args
+        assert call_args[0][0] == "123"  # course_id
+        assert call_args[0][1] == "42"  # file_id
+        record = call_args[0][2]
+        assert isinstance(record, ProcessedFile)
+        assert record.canvas_file_id == "42"
+        assert record.status == "processing"
+        assert record.original_filename == "lecture.pdf"
+
+    def test_closes_canvas_client_on_success(self, client, mock_config_service, mock_job_svc, mock_queue_svc):
+        """Canvas client is closed after successful processing."""
+        mock_config_service.get_config.return_value = CourseConfig(
+            enabled=True,
+            canvas_api_token="test-token",
+        )
+
+        canvas_file = {
+            "id": 42,
+            "display_name": "lecture.pdf",
+            "url": "https://canvas.example.com/files/42/download",
+            "updated_at": "2024-06-15T10:30:00Z",
+        }
+
+        fake_pdf = b"%PDF-1.4 " + b"x" * 200
+
+        with patch("src.api.canvas_config.CanvasAPIClient") as mock_client_cls:
+            mock_client_instance = AsyncMock()
+            mock_client_cls.return_value = mock_client_instance
+            mock_client_instance.list_course_files = AsyncMock(return_value=[canvas_file])
+            mock_client_instance.close = AsyncMock()
+            mock_client_instance.api_token = "test-token"
+            mock_client_instance._is_docker_url = False
+            mock_client_instance._docker_host_header = "localhost"
+
+            mock_http_client = AsyncMock()
+            mock_response = MagicMock()
+            mock_response.content = fake_pdf
+            mock_response.raise_for_status = MagicMock()
+            mock_http_client.get = AsyncMock(return_value=mock_response)
+            mock_client_instance._get_client = MagicMock(return_value=mock_http_client)
+
+            client.post("/api/v1/canvas/courses/123/documents/42/process")
+
+        mock_client_instance.close.assert_awaited_once()
+
+    def test_closes_canvas_client_on_error(self, client, mock_config_service):
+        """Canvas client is closed even when an error occurs."""
+        from src.canvas.client import CanvasAPIError
+
+        mock_config_service.get_config.return_value = CourseConfig(
+            enabled=True,
+            canvas_api_token="test-token",
+        )
+
+        with patch("src.api.canvas_config.CanvasAPIClient") as mock_client_cls:
+            mock_client_instance = AsyncMock()
+            mock_client_cls.return_value = mock_client_instance
+            mock_client_instance.list_course_files = AsyncMock(
+                side_effect=CanvasAPIError("rate limited"),
+            )
+            mock_client_instance.close = AsyncMock()
+
+            client.post("/api/v1/canvas/courses/123/documents/42/process")
+
+        mock_client_instance.close.assert_awaited_once()
 
 
 # ===========================================================================

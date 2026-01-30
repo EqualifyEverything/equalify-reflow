@@ -249,7 +249,7 @@ class CanvasFileWorker:
             f"{self.job_service.status_prefix}{job_id}",
             mapping={
                 "source": "canvas_auto",
-                "canvas_course_id": course_id,
+                "course_id": course_id,
                 "canvas_file_id": file_id,
             },
         )

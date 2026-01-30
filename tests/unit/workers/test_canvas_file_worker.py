@@ -680,15 +680,11 @@ class TestPollCourse:
             result = await worker.poll_course("101")
 
         assert result == 0
-        mock_config_service.is_file_new_or_updated.assert_awaited_once_with(
-            "101", "42", "2024-06-15T10:30:00Z"
-        )
+        mock_config_service.is_file_new_or_updated.assert_awaited_once_with("101", "42", "2024-06-15T10:30:00Z")
         worker._queue_file_for_processing.assert_not_awaited()
 
     @pytest.mark.asyncio
-    async def test_queues_file_with_newer_updated_at(
-        self, worker, mock_config_service, sample_course_config
-    ):
+    async def test_queues_file_with_newer_updated_at(self, worker, mock_config_service, sample_course_config):
         """poll_course() queues a file whose updated_at is newer than the stored record.
 
         When is_file_new_or_updated() returns True (Canvas updated_at > stored value),
@@ -715,15 +711,11 @@ class TestPollCourse:
             result = await worker.poll_course("101")
 
         assert result == 1
-        mock_config_service.is_file_new_or_updated.assert_awaited_once_with(
-            "101", "42", "2024-06-16T10:30:00Z"
-        )
+        mock_config_service.is_file_new_or_updated.assert_awaited_once_with("101", "42", "2024-06-16T10:30:00Z")
         worker._queue_file_for_processing.assert_awaited_once()
 
     @pytest.mark.asyncio
-    async def test_mixed_new_and_already_processed_files(
-        self, worker, mock_config_service, sample_course_config
-    ):
+    async def test_mixed_new_and_already_processed_files(self, worker, mock_config_service, sample_course_config):
         """poll_course() processes new files and skips already-processed ones in the same batch.
 
         Given a mix of files where some have already been processed (same updated_at,
@@ -758,9 +750,7 @@ class TestPollCourse:
         with patch("src.workers.canvas_file_worker.CanvasAPIClient") as mock_client_cls:
             mock_client_instance = AsyncMock()
             mock_client_cls.return_value = mock_client_instance
-            mock_client_instance.list_course_files = AsyncMock(
-                return_value=[already_done, brand_new, also_done]
-            )
+            mock_client_instance.list_course_files = AsyncMock(return_value=[already_done, brand_new, also_done])
             mock_client_instance.close = AsyncMock()
 
             result = await worker.poll_course("101")
@@ -884,7 +874,7 @@ class TestQueueFileForProcessing:
         hset_kwargs = mock_job_service.redis.hset.call_args
         mapping = hset_kwargs.kwargs["mapping"]
         assert mapping["source"] == "canvas_auto"
-        assert mapping["canvas_course_id"] == "101"
+        assert mapping["course_id"] == "101"
         assert mapping["canvas_file_id"] == "42"
 
     @pytest.mark.asyncio
@@ -981,6 +971,94 @@ class TestQueueFileForProcessing:
 
         with pytest.raises(CanvasAPIError, match="too small"):
             await worker._queue_file_for_processing("101", sample_canvas_file, mock_client)
+
+    @pytest.mark.asyncio
+    async def test_job_metadata_contains_all_required_fields(
+        self,
+        worker,
+        mock_job_service,
+        mock_canvas_client,
+        sample_canvas_file,
+    ):
+        """Job metadata includes source, course_id, canvas_file_id, and original_filename.
+
+        Validates the complete metadata contract per PRD-06 R4: the job hash
+        must contain all four fields so downstream consumers can trace the file
+        back to its Canvas origin.
+        """
+        await worker._queue_file_for_processing("505", sample_canvas_file, mock_canvas_client)
+
+        # original_filename is set via create_job()
+        create_kwargs = mock_job_service.create_job.call_args.kwargs
+        assert create_kwargs["original_filename"] == "lecture-notes.pdf"
+
+        # source, course_id, canvas_file_id are set via hset()
+        hset_mapping = mock_job_service.redis.hset.call_args.kwargs["mapping"]
+        assert hset_mapping == {
+            "source": "canvas_auto",
+            "course_id": "505",
+            "canvas_file_id": "42",
+        }
+
+    @pytest.mark.asyncio
+    async def test_uses_display_name_over_filename(
+        self,
+        worker,
+        mock_job_service,
+        mock_canvas_client,
+    ):
+        """Prefers display_name for original_filename, falls back to filename."""
+        canvas_file = {
+            "id": 99,
+            "display_name": "Syllabus (Final).pdf",
+            "filename": "upload_12345.pdf",
+            "url": "https://canvas.example.com/files/99/download",
+            "updated_at": "2024-06-15T10:30:00Z",
+        }
+
+        await worker._queue_file_for_processing("101", canvas_file, mock_canvas_client)
+
+        create_kwargs = mock_job_service.create_job.call_args.kwargs
+        assert create_kwargs["original_filename"] == "Syllabus (Final).pdf"
+
+    @pytest.mark.asyncio
+    async def test_falls_back_to_filename_when_no_display_name(
+        self,
+        worker,
+        mock_job_service,
+        mock_canvas_client,
+    ):
+        """Falls back to filename field when display_name is absent."""
+        canvas_file = {
+            "id": 99,
+            "filename": "upload_12345.pdf",
+            "url": "https://canvas.example.com/files/99/download",
+            "updated_at": "2024-06-15T10:30:00Z",
+        }
+
+        await worker._queue_file_for_processing("101", canvas_file, mock_canvas_client)
+
+        create_kwargs = mock_job_service.create_job.call_args.kwargs
+        assert create_kwargs["original_filename"] == "upload_12345.pdf"
+
+    @pytest.mark.asyncio
+    async def test_defaults_to_document_pdf_when_no_name_fields(
+        self,
+        worker,
+        mock_job_service,
+        mock_canvas_client,
+    ):
+        """Defaults to 'document.pdf' when both display_name and filename are missing."""
+        canvas_file = {
+            "id": 99,
+            "url": "https://canvas.example.com/files/99/download",
+            "updated_at": "2024-06-15T10:30:00Z",
+        }
+
+        await worker._queue_file_for_processing("101", canvas_file, mock_canvas_client)
+
+        create_kwargs = mock_job_service.create_job.call_args.kwargs
+        assert create_kwargs["original_filename"] == "document.pdf"
 
 
 # ===========================================================================

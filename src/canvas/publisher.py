@@ -207,7 +207,11 @@ class CanvasPublisherService:
             try:
                 # Download from S3
                 figure_data = await self.storage.download_file(s3_key)
+            except Exception as e:
+                logger.warning(f"Job {job_id}: Failed to download figure {original_filename} from S3, skipping: {e}")
+                continue
 
+            try:
                 # Upload to Canvas
                 canvas_filename = f"{job_id}-figure-{idx + 1}.png"
                 canvas_file = await self.canvas.upload_file(
@@ -229,7 +233,7 @@ class CanvasPublisherService:
                 logger.debug(f"Job {job_id}: Uploaded figure {original_filename} to Canvas (id={file_id})")
 
             except Exception as e:
-                logger.warning(f"Job {job_id}: Failed to upload figure {original_filename} to Canvas: {e}")
+                logger.warning(f"Job {job_id}: Failed to upload figure {original_filename} to Canvas, skipping: {e}")
 
         logger.info(f"Job {job_id}: Uploaded {len(canvas_file_ids)}/{len(objects)} figures to Canvas")
         return image_url_map, canvas_file_ids

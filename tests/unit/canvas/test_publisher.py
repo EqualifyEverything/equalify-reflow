@@ -557,6 +557,118 @@ class TestFigureUpload:
         assert result.figure_count == 0
         assert result.canvas_file_ids == []
 
+    @pytest.mark.asyncio
+    async def test_all_figure_uploads_fail_publish_succeeds(
+        self, service, mock_canvas_client, storage_with_figures, mock_redis
+    ):
+        """When every figure upload fails, publish still succeeds with zero figures."""
+        service.storage = storage_with_figures
+        mock_canvas_client.upload_file.side_effect = CanvasAPIError("Canvas unavailable")
+        result = await service.publish(
+            job_id="job-1",
+            course_id="101",
+            original_filename="notes.pdf",
+            canvas_file_id="500",
+            redis_client=mock_redis,
+        )
+        assert isinstance(result, PublishResult)
+        assert result.figure_count == 0
+        assert result.canvas_file_ids == []
+
+    @pytest.mark.asyncio
+    async def test_s3_figure_download_failure_skips_figure(self, service, mock_canvas_client, mock_storage, mock_redis):
+        """When S3 download fails for one figure, that figure is skipped and the other succeeds."""
+        mock_storage.s3_client.list_objects_v2.return_value = {
+            "Contents": [
+                {"Key": "results/job-1/figures/figure_1.png"},
+                {"Key": "results/job-1/figures/figure_2.png"},
+            ]
+        }
+
+        call_count = 0
+
+        async def download_side_effect(key):
+            nonlocal call_count
+            if key == "results/job-1/result.md":
+                return b"# Hello"
+            call_count += 1
+            if call_count == 1:
+                raise Exception("S3 timeout")
+            return b"\x89PNG\r\n\x1a\n"
+
+        mock_storage.download_file = AsyncMock(side_effect=download_side_effect)
+        mock_canvas_client.upload_file.return_value = {"id": 200, "url": "https://canvas.example.com/files/200"}
+
+        result = await service.publish(
+            job_id="job-1",
+            course_id="101",
+            original_filename="notes.pdf",
+            canvas_file_id="500",
+            redis_client=mock_redis,
+        )
+        assert result.figure_count == 1
+        assert result.canvas_file_ids == [200]
+        # Only the successful figure should have been uploaded to Canvas
+        assert mock_canvas_client.upload_file.await_count == 1
+
+    @pytest.mark.asyncio
+    async def test_figure_failure_logs_warning(
+        self, service, mock_canvas_client, storage_with_figures, mock_redis, caplog
+    ):
+        """Failed figure uploads produce warning log messages."""
+        service.storage = storage_with_figures
+        mock_canvas_client.upload_file.side_effect = [
+            CanvasAPIError("Upload timeout"),
+            {"id": 200, "url": "https://canvas.example.com/files/200"},
+        ]
+        import logging
+
+        with caplog.at_level(logging.WARNING, logger="src.canvas.publisher"):
+            await service.publish(
+                job_id="job-1",
+                course_id="101",
+                original_filename="notes.pdf",
+                canvas_file_id="500",
+                redis_client=mock_redis,
+            )
+        warning_messages = [r.message for r in caplog.records if r.levelno == logging.WARNING]
+        assert any("figure_1.png" in msg for msg in warning_messages)
+        assert any("skipping" in msg.lower() for msg in warning_messages)
+
+    @pytest.mark.asyncio
+    async def test_s3_download_failure_logs_warning(
+        self, service, mock_canvas_client, mock_storage, mock_redis, caplog
+    ):
+        """S3 download failure for a figure logs a warning with the filename."""
+        mock_storage.s3_client.list_objects_v2.return_value = {
+            "Contents": [
+                {"Key": "results/job-1/figures/figure_1.png"},
+            ]
+        }
+
+        async def download_side_effect(key):
+            if key == "results/job-1/result.md":
+                return b"# Hello"
+            raise Exception("S3 timeout")
+
+        mock_storage.download_file = AsyncMock(side_effect=download_side_effect)
+
+        import logging
+
+        with caplog.at_level(logging.WARNING, logger="src.canvas.publisher"):
+            result = await service.publish(
+                job_id="job-1",
+                course_id="101",
+                original_filename="notes.pdf",
+                canvas_file_id="500",
+                redis_client=mock_redis,
+            )
+        assert result.figure_count == 0
+        warning_messages = [r.message for r in caplog.records if r.levelno == logging.WARNING]
+        assert any("figure_1.png" in msg and "S3" in msg for msg in warning_messages)
+        # Canvas upload should never be called since download failed
+        mock_canvas_client.upload_file.assert_not_awaited()
+
 
 # --- R6: Module placement ---
 

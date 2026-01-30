@@ -213,6 +213,64 @@ class TestSetConfig:
         mock_redis.srem.assert_called_once_with(ENABLED_COURSES_KEY, "course-101")
         mock_redis.sadd.assert_not_called()
 
+    async def test_writes_default_config_values(self, service, mock_redis):
+        """Default CourseConfig serializes correctly to Redis hash."""
+        config = CourseConfig()
+        await service.set_config("course-200", config)
+        mock_redis.hset.assert_called_once_with(
+            "eq-pdf:course-config:course-200",
+            mapping={
+                "enabled": "false",
+                "auto_publish_threshold": "1.0",
+                "canvas_api_token": "",
+                "created_at": "",
+                "updated_at": "",
+            },
+        )
+
+    async def test_writes_threshold_zero(self, service, mock_redis):
+        """Boundary: threshold=0.0 (auto-publish everything) serializes correctly."""
+        config = CourseConfig(enabled=True, auto_publish_threshold=0.0)
+        await service.set_config("course-300", config)
+        call_kwargs = mock_redis.hset.call_args
+        assert call_kwargs[1]["mapping"]["auto_publish_threshold"] == "0.0"
+
+    async def test_overwrites_existing_config(self, service, mock_redis):
+        """Calling set_config twice overwrites the previous value."""
+        config_v1 = CourseConfig(
+            enabled=True,
+            auto_publish_threshold=0.9,
+            canvas_api_token="token-v1",
+            created_at="2024-01-01T00:00:00Z",
+            updated_at="2024-01-01T00:00:00Z",
+        )
+        config_v2 = CourseConfig(
+            enabled=True,
+            auto_publish_threshold=0.5,
+            canvas_api_token="token-v2",
+            created_at="2024-01-01T00:00:00Z",
+            updated_at="2024-02-01T00:00:00Z",
+        )
+        await service.set_config("course-101", config_v1)
+        await service.set_config("course-101", config_v2)
+
+        # Second call should write the updated values
+        last_call = mock_redis.hset.call_args_list[-1]
+        assert last_call[1]["mapping"]["auto_publish_threshold"] == "0.5"
+        assert last_call[1]["mapping"]["canvas_api_token"] == "token-v2"
+        assert last_call[1]["mapping"]["updated_at"] == "2024-02-01T00:00:00Z"
+
+    async def test_disable_after_enable_updates_set(self, service, mock_redis):
+        """Toggling enabled from True to False updates the enabled-courses set."""
+        enabled_config = CourseConfig(enabled=True)
+        disabled_config = CourseConfig(enabled=False)
+
+        await service.set_config("course-101", enabled_config)
+        mock_redis.sadd.assert_called_with(ENABLED_COURSES_KEY, "course-101")
+
+        await service.set_config("course-101", disabled_config)
+        mock_redis.srem.assert_called_with(ENABLED_COURSES_KEY, "course-101")
+
 
 # --- list_enabled_courses ---
 

@@ -317,6 +317,75 @@ class TestGetProcessedFile:
         assert result is not None
         assert result.canvas_file_id == "12345"
 
+    async def test_returns_all_fields(self, service, mock_redis, sample_processed_file):
+        """All ProcessedFile fields are correctly deserialized from Redis."""
+        mock_redis.hget.return_value = sample_processed_file.model_dump_json()
+        result = await service.get_processed_file("course-101", "12345")
+        assert result is not None
+        assert result.canvas_file_id == "12345"
+        assert result.canvas_updated_at == "2024-01-15T10:30:00Z"
+        assert result.job_id == "job-abc-123"
+        assert result.status == "completed"
+        assert result.processed_at == "2024-01-15T10:35:00Z"
+        assert result.original_filename == "lecture_notes.pdf"
+
+    async def test_returns_processing_status_file(self, service, mock_redis):
+        """Files with 'processing' status are correctly returned."""
+        record = ProcessedFile(
+            canvas_file_id="99999",
+            canvas_updated_at="2024-02-01T08:00:00Z",
+            job_id="job-in-progress",
+            status="processing",
+            processed_at="2024-02-01T08:01:00Z",
+            original_filename="syllabus.pdf",
+        )
+        mock_redis.hget.return_value = record.model_dump_json()
+        result = await service.get_processed_file("course-200", "99999")
+        assert result is not None
+        assert result.status == "processing"
+        assert result.original_filename == "syllabus.pdf"
+
+    async def test_returns_failed_status_file(self, service, mock_redis):
+        """Files with 'failed' status are correctly returned."""
+        record = ProcessedFile(
+            canvas_file_id="88888",
+            canvas_updated_at="2024-03-01T12:00:00Z",
+            job_id="job-failed-xyz",
+            status="failed",
+            processed_at="2024-03-01T12:05:00Z",
+            original_filename="broken.pdf",
+        )
+        mock_redis.hget.return_value = record.model_dump_json()
+        result = await service.get_processed_file("course-300", "88888")
+        assert result is not None
+        assert result.status == "failed"
+        assert result.job_id == "job-failed-xyz"
+
+    async def test_uses_correct_redis_key(self, service, mock_redis):
+        """Verify Redis key includes both course_id and file_id correctly."""
+        mock_redis.hget.return_value = None
+        await service.get_processed_file("course-abc", "file-xyz")
+        mock_redis.hget.assert_called_once_with("eq-pdf:processed:course-abc", "file-xyz")
+
+    async def test_none_for_missing_file_does_not_affect_existing(self, service, mock_redis, sample_processed_file):
+        """Missing file returns None without affecting lookups for existing files."""
+        mock_redis.hget.return_value = None
+        assert await service.get_processed_file("course-101", "nonexistent") is None
+
+        mock_redis.hget.return_value = sample_processed_file.model_dump_json()
+        result = await service.get_processed_file("course-101", "12345")
+        assert result is not None
+        assert result.canvas_file_id == "12345"
+
+    async def test_different_courses_use_different_keys(self, service, mock_redis):
+        """Files in different courses are stored under different Redis keys."""
+        mock_redis.hget.return_value = None
+        await service.get_processed_file("course-100", "file-1")
+        await service.get_processed_file("course-200", "file-1")
+        calls = mock_redis.hget.call_args_list
+        assert calls[0].args == ("eq-pdf:processed:course-100", "file-1")
+        assert calls[1].args == ("eq-pdf:processed:course-200", "file-1")
+
 
 # --- set_processed_file ---
 
@@ -329,6 +398,48 @@ class TestSetProcessedFile:
             "12345",
             sample_processed_file.model_dump_json(),
         )
+
+    async def test_json_contains_all_fields(self, service, mock_redis, sample_processed_file):
+        """Stored JSON contains all ProcessedFile fields."""
+        await service.set_processed_file("course-101", "12345", sample_processed_file)
+        stored_json = mock_redis.hset.call_args.args[2]
+        restored = ProcessedFile.model_validate_json(stored_json)
+        assert restored == sample_processed_file
+
+    async def test_uses_correct_redis_key(self, service, mock_redis, sample_processed_file):
+        """Redis key pattern is eq-pdf:processed:{course_id}."""
+        await service.set_processed_file("course-xyz", "file-abc", sample_processed_file)
+        mock_redis.hset.assert_called_once()
+        call_args = mock_redis.hset.call_args.args
+        assert call_args[0] == "eq-pdf:processed:course-xyz"
+        assert call_args[1] == "file-abc"
+
+    async def test_overwrites_existing_record(self, service, mock_redis):
+        """Calling set_processed_file twice overwrites the previous value."""
+        record_v1 = ProcessedFile(
+            canvas_file_id="12345",
+            canvas_updated_at="2024-01-15T10:30:00Z",
+            job_id="job-v1",
+            status="processing",
+            processed_at="2024-01-15T10:35:00Z",
+            original_filename="lecture.pdf",
+        )
+        record_v2 = ProcessedFile(
+            canvas_file_id="12345",
+            canvas_updated_at="2024-01-15T10:30:00Z",
+            job_id="job-v2",
+            status="completed",
+            processed_at="2024-01-15T10:40:00Z",
+            original_filename="lecture.pdf",
+        )
+        await service.set_processed_file("course-101", "12345", record_v1)
+        await service.set_processed_file("course-101", "12345", record_v2)
+
+        last_call = mock_redis.hset.call_args_list[-1]
+        stored_json = last_call.args[2]
+        restored = ProcessedFile.model_validate_json(stored_json)
+        assert restored.job_id == "job-v2"
+        assert restored.status == "completed"
 
 
 # --- list_processed_files ---
@@ -365,6 +476,56 @@ class TestListProcessedFiles:
         assert "12345" in result
         assert result["12345"].canvas_file_id == "12345"
 
+    async def test_uses_correct_redis_key(self, service, mock_redis):
+        """Redis key pattern is eq-pdf:processed:{course_id}."""
+        mock_redis.hgetall.return_value = {}
+        await service.list_processed_files("course-xyz")
+        mock_redis.hgetall.assert_called_with("eq-pdf:processed:course-xyz")
+
+    async def test_single_file_returns_dict_with_one_entry(self, service, mock_redis, sample_processed_file):
+        """A course with exactly one processed file returns a single-entry dict."""
+        mock_redis.hgetall.return_value = {
+            "12345": sample_processed_file.model_dump_json(),
+        }
+        result = await service.list_processed_files("course-101")
+        assert len(result) == 1
+        assert "12345" in result
+        assert result["12345"].original_filename == "lecture_notes.pdf"
+
+    async def test_mixed_statuses(self, service, mock_redis):
+        """Files with different statuses are all returned correctly."""
+        mock_redis.hgetall.return_value = {
+            "f1": ProcessedFile(
+                canvas_file_id="f1",
+                canvas_updated_at="2024-01-01T00:00:00Z",
+                job_id="j1",
+                status="completed",
+                processed_at="2024-01-01T00:05:00Z",
+                original_filename="a.pdf",
+            ).model_dump_json(),
+            "f2": ProcessedFile(
+                canvas_file_id="f2",
+                canvas_updated_at="2024-01-02T00:00:00Z",
+                job_id="j2",
+                status="processing",
+                processed_at="2024-01-02T00:05:00Z",
+                original_filename="b.pdf",
+            ).model_dump_json(),
+            "f3": ProcessedFile(
+                canvas_file_id="f3",
+                canvas_updated_at="2024-01-03T00:00:00Z",
+                job_id="j3",
+                status="failed",
+                processed_at="2024-01-03T00:05:00Z",
+                original_filename="c.pdf",
+            ).model_dump_json(),
+        }
+        result = await service.list_processed_files("course-101")
+        assert len(result) == 3
+        assert result["f1"].status == "completed"
+        assert result["f2"].status == "processing"
+        assert result["f3"].status == "failed"
+
 
 # --- is_file_new_or_updated ---
 
@@ -390,6 +551,28 @@ class TestIsFileNewOrUpdated:
         mock_redis.hget.return_value = sample_processed_file.model_dump_json()
         result = await service.is_file_new_or_updated("course-101", "12345", "2024-01-14T10:30:00Z")
         assert result is False
+
+    async def test_iso8601_string_comparison_same_day_different_time(self, service, mock_redis):
+        """ISO 8601 string comparison correctly differentiates same-day timestamps."""
+        record = ProcessedFile(
+            canvas_file_id="f1",
+            canvas_updated_at="2024-06-15T08:00:00Z",
+            job_id="j1",
+            status="completed",
+            processed_at="2024-06-15T08:05:00Z",
+            original_filename="test.pdf",
+        )
+        mock_redis.hget.return_value = record.model_dump_json()
+        # Same day, later time -> should be updated
+        assert await service.is_file_new_or_updated("c1", "f1", "2024-06-15T09:00:00Z") is True
+        # Same day, earlier time -> not updated
+        assert await service.is_file_new_or_updated("c1", "f1", "2024-06-15T07:00:00Z") is False
+
+    async def test_delegates_to_get_processed_file(self, service, mock_redis):
+        """is_file_new_or_updated reads from the correct Redis key."""
+        mock_redis.hget.return_value = None
+        await service.is_file_new_or_updated("course-500", "file-abc", "2024-01-01T00:00:00Z")
+        mock_redis.hget.assert_called_with("eq-pdf:processed:course-500", "file-abc")
 
 
 # --- get_publish_result ---
@@ -422,6 +605,12 @@ class TestGetPublishResult:
         assert result is not None
         assert result["page_id"] == "42"
 
+    async def test_uses_correct_redis_key(self, service, mock_redis):
+        """Redis key includes both course_id and file_id."""
+        mock_redis.hgetall.return_value = {}
+        await service.get_publish_result("course-abc", "file-xyz")
+        mock_redis.hgetall.assert_called_with("eq-pdf:published:course-abc:file-xyz")
+
 
 # --- set_publish_result ---
 
@@ -450,3 +639,27 @@ class TestSetPublishResult:
 
     async def test_ttl_is_30_days(self):
         assert PUBLISH_RESULT_TTL == 30 * 24 * 3600
+
+    async def test_uses_correct_redis_key(self, service, mock_redis):
+        """Redis key includes both course_id and file_id."""
+        await service.set_publish_result("course-abc", "file-xyz", {"page_id": "1"})
+        mock_redis.hset.assert_called_once()
+        call_args = mock_redis.hset.call_args
+        assert call_args.args[0] == "eq-pdf:published:course-abc:file-xyz"
+        mock_redis.expire.assert_called_once_with(
+            "eq-pdf:published:course-abc:file-xyz",
+            PUBLISH_RESULT_TTL,
+        )
+
+    async def test_converts_all_values_to_strings(self, service, mock_redis):
+        """Non-string values (int, bool) are converted to strings for Redis."""
+        result = {
+            "page_id": 42,
+            "figure_count": 5,
+            "published": True,
+        }
+        await service.set_publish_result("course-101", "file-1", result)
+        call_mapping = mock_redis.hset.call_args.kwargs["mapping"]
+        assert call_mapping["page_id"] == "42"
+        assert call_mapping["figure_count"] == "5"
+        assert call_mapping["published"] == "True"

@@ -909,6 +909,39 @@ class TestPublishDocument:
         assert response.status_code == status.HTTP_400_BAD_REQUEST
         assert "not completed" in response.json()["detail"]
 
+    @pytest.mark.parametrize(
+        "doc_status",
+        [
+            "processing",
+            "failed",
+            "denied",
+            "pii_scanning",
+            "awaiting_approval",
+            "processing_queued",
+            "needs_review",
+            "awaiting_correction_approval",
+        ],
+    )
+    def test_returns_400_for_every_non_completed_status(
+        self, client, mock_config_service, doc_status
+    ):
+        """Returns 400 with current status in detail for all non-completed statuses."""
+        mock_config_service.get_processed_file.return_value = ProcessedFile(
+            canvas_file_id="42",
+            canvas_updated_at="2024-06-15T10:30:00Z",
+            job_id="job-1",
+            status=doc_status,
+            processed_at="2024-06-15T11:00:00Z",
+            original_filename="lecture.pdf",
+        )
+
+        response = client.post("/api/v1/canvas/courses/123/documents/42/publish")
+
+        assert response.status_code == status.HTTP_400_BAD_REQUEST
+        detail = response.json()["detail"]
+        assert "not completed" in detail
+        assert doc_status in detail
+
     def test_returns_400_when_token_is_empty_string(self, client, mock_config_service):
         """Returns 400 when course config exists but canvas_api_token is empty."""
         mock_config_service.get_processed_file.return_value = ProcessedFile(

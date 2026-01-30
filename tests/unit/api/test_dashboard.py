@@ -308,6 +308,70 @@ class TestDashboardSettings:
         assert "hx-put" in response.text
         assert "/config" in response.text
 
+    def test_renders_enable_toggle_unchecked_when_disabled(self, client, mock_config_service):
+        """Enable toggle is unchecked when course auto-processing is disabled."""
+        mock_config_service.get_config.return_value = CourseConfig(
+            enabled=False,
+            auto_publish_threshold=0.9,
+        )
+
+        response = client.get("/lti/dashboard/123/settings?lti_session=test-session")
+
+        assert response.status_code == 200
+        # The checkbox input should exist but NOT be checked
+        assert 'name="enabled"' in response.text
+        assert 'type="checkbox"' in response.text
+        # "checked" should not appear as an attribute on the checkbox
+        # (the word may appear elsewhere, so check the form section specifically)
+        text = response.text
+        checkbox_area = text[text.index('name="enabled"') - 100 : text.index('name="enabled"') + 50]
+        assert "checked" not in checkbox_area
+
+    def test_renders_threshold_slider_attributes(self, client, mock_config_service):
+        """Threshold input renders with correct min/max/step attributes."""
+        mock_config_service.get_config.return_value = CourseConfig(
+            enabled=False,
+            auto_publish_threshold=0.65,
+        )
+
+        response = client.get("/lti/dashboard/123/settings?lti_session=test-session")
+
+        assert response.status_code == 200
+        assert 'name="auto_publish_threshold"' in response.text
+        assert 'min="0"' in response.text
+        assert 'max="1"' in response.text
+        assert 'step="0.05"' in response.text
+        assert 'value="0.65"' in response.text
+        assert "0.65" in response.text  # displayed value
+
+    def test_renders_save_button(self, client, mock_config_service):
+        """Settings form has a save button."""
+        mock_config_service.get_config.return_value = None
+
+        response = client.get("/lti/dashboard/123/settings?lti_session=test-session")
+
+        assert response.status_code == 200
+        assert "Save Settings" in response.text
+
+    def test_renders_toggle_description(self, client, mock_config_service):
+        """Settings form shows description text for the toggle."""
+        mock_config_service.get_config.return_value = None
+
+        response = client.get("/lti/dashboard/123/settings?lti_session=test-session")
+
+        assert response.status_code == 200
+        assert "Enable auto-processing for this course" in response.text
+
+    def test_renders_threshold_description(self, client, mock_config_service):
+        """Settings form shows description text for the threshold."""
+        mock_config_service.get_config.return_value = None
+
+        response = client.get("/lti/dashboard/123/settings?lti_session=test-session")
+
+        assert response.status_code == 200
+        assert "Auto-publish confidence threshold" in response.text
+        assert "1.00" in response.text  # mentions draft behavior at 1.00
+
 
 # ===========================================================================
 # GET /lti/dashboard/{course_id}/documents/{file_id} - Document Detail
@@ -720,6 +784,67 @@ class TestDashboardConfigUpdate:
         saved_config = call_args[1]
         assert saved_config.auto_publish_threshold == 1.0  # default fallback
 
+    def test_clamps_negative_threshold_to_zero(self, client, mock_config_service):
+        """Clamps negative threshold to 0.0."""
+        mock_config_service.get_config.return_value = None
+
+        response = client.put(
+            "/lti/dashboard/123/config?lti_session=test-session",
+            data={"auto_publish_threshold": "-0.5"},
+        )
+
+        assert response.status_code == 200
+        call_args = mock_config_service.set_config.call_args[0]
+        saved_config = call_args[1]
+        assert saved_config.auto_publish_threshold == 0.0
+
+    def test_saves_enabled_state_with_threshold(self, client, mock_config_service):
+        """Saves both enabled state and threshold together."""
+        mock_config_service.get_config.return_value = None
+
+        response = client.put(
+            "/lti/dashboard/123/config?lti_session=test-session",
+            data={"enabled": "on", "auto_publish_threshold": "0.75"},
+        )
+
+        assert response.status_code == 200
+        call_args = mock_config_service.set_config.call_args[0]
+        saved_config = call_args[1]
+        assert saved_config.enabled is True
+        assert saved_config.auto_publish_threshold == 0.75
+
+    def test_preserves_existing_created_at(self, client, mock_config_service):
+        """Preserves created_at timestamp from existing config."""
+        mock_config_service.get_config.return_value = CourseConfig(
+            enabled=True,
+            auto_publish_threshold=0.9,
+            created_at="2024-01-15T10:00:00Z",
+        )
+
+        response = client.put(
+            "/lti/dashboard/123/config?lti_session=test-session",
+            data={"enabled": "on", "auto_publish_threshold": "0.85"},
+        )
+
+        assert response.status_code == 200
+        call_args = mock_config_service.set_config.call_args[0]
+        saved_config = call_args[1]
+        assert saved_config.created_at == "2024-01-15T10:00:00Z"
+
+    def test_sets_updated_at_timestamp(self, client, mock_config_service):
+        """Sets updated_at timestamp on save."""
+        mock_config_service.get_config.return_value = None
+
+        response = client.put(
+            "/lti/dashboard/123/config?lti_session=test-session",
+            data={"enabled": "on", "auto_publish_threshold": "0.5"},
+        )
+
+        assert response.status_code == 200
+        call_args = mock_config_service.set_config.call_args[0]
+        saved_config = call_args[1]
+        assert saved_config.updated_at != ""
+
 
 # ===========================================================================
 # LTI Dashboard Launch
@@ -789,9 +914,7 @@ class TestDashboardLaunch:
 
             test_client = TestClient(app, follow_redirects=False)
 
-            response = test_client.get(
-                "/lti/dashboard?lti_session=abc123&course_id=456"
-            )
+            response = test_client.get("/lti/dashboard?lti_session=abc123&course_id=456")
 
             assert response.status_code == 302
             assert "/lti/dashboard/456" in response.headers["location"]

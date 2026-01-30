@@ -31,6 +31,7 @@ class CanvasAPIClient:
         base_url: str,
         api_token: str,
         rate_limit_buffer: int = 50,
+        host_header: str = "",
     ):
         """Initialize the Canvas API client.
 
@@ -38,6 +39,9 @@ class CanvasAPIClient:
             base_url: Canvas instance base URL (e.g., "https://canvas.uic.edu")
             api_token: Bearer token for Canvas API authentication
             rate_limit_buffer: Pause API calls when remaining < this value
+            host_header: Explicit Host header override for Docker container networking.
+                When connecting to Canvas via container name (e.g., canvas-lms-web-1),
+                Canvas still validates the Host header. Set to "localhost:3000" to match.
         """
         # Strip trailing slash and /api/v1 suffix for consistent URL construction
         self.base_url = base_url.rstrip("/")
@@ -45,26 +49,50 @@ class CanvasAPIClient:
             self.base_url = self.base_url[: -len("/api/v1")]
         self.api_token = api_token
         self.rate_limit_buffer = rate_limit_buffer
+        self._explicit_host_header = host_header
         self._client: httpx.AsyncClient | None = None
 
     @property
     def _is_docker_url(self) -> bool:
-        """Check if base_url uses host.docker.internal."""
-        return "host.docker.internal" in self.base_url
+        """Check if requests need a Host header override.
+
+        True when using host.docker.internal OR when an explicit
+        host_header was provided (e.g., connecting via container name).
+        """
+        return "host.docker.internal" in self.base_url or bool(self._explicit_host_header)
 
     @property
     def _docker_host_header(self) -> str:
         """Derive the Host header value for Docker-rewritten URLs.
 
-        When base_url uses host.docker.internal, Canvas still expects the
-        Host header to say "localhost" with the correct port. This parses
-        the port from the base_url rather than hardcoding "localhost:3000".
+        When an explicit host_header is set, uses that directly.
+        Otherwise, when base_url uses host.docker.internal, Canvas still
+        expects the Host header to say "localhost" with the correct port.
+        This parses the port from the base_url rather than hardcoding
+        "localhost:3000".
         """
+        if self._explicit_host_header:
+            return self._explicit_host_header
         parsed = urlparse(self.base_url)
         port = parsed.port
         if port:
             return f"localhost:{port}"
         return "localhost"
+
+    def rewrite_canvas_url(self, url: str) -> str:
+        """Rewrite Canvas-generated URLs for Docker container networking.
+
+        Canvas returns URLs with localhost origins (e.g., http://localhost:3000/files/5/download).
+        When running in Docker, these need to be rewritten to use the actual Canvas hostname
+        (e.g., http://canvas-lms-web-1/files/5/download).
+        """
+        if not self._is_docker_url:
+            return url
+        host_header = self._docker_host_header
+        localhost_origin = f"http://{host_header}"
+        if localhost_origin in url:
+            return url.replace(localhost_origin, self.base_url)
+        return url
 
     def _get_client(self) -> httpx.AsyncClient:
         """Get or create the httpx AsyncClient."""
@@ -355,8 +383,9 @@ class CanvasAPIClient:
             form_data: dict[str, str] = dict(upload_params)
 
             # Canvas upload URLs may be external (e.g., S3), so no auth header
+            upload_url = self.rewrite_canvas_url(upload_url)
             step2_headers: dict[str, str] = {}
-            if self._is_docker_url and "host.docker.internal" in upload_url:
+            if self._is_docker_url and self.base_url in upload_url:
                 step2_headers["Host"] = self._docker_host_header
 
             step2_response = await client.post(
@@ -377,11 +406,7 @@ class CanvasAPIClient:
         # Canvas may return a 3xx redirect or a 2xx with location header
         if step2_response.is_redirect:
             location = step2_response.headers.get("location", "")
-            if self._is_docker_url:
-                parsed = urlparse(self.base_url)
-                port = parsed.port
-                localhost_origin = f"http://localhost:{port}" if port else "http://localhost"
-                location = location.replace(localhost_origin, self.base_url)
+            location = self.rewrite_canvas_url(location)
 
             confirm_headers: dict[str, str] = {"Authorization": f"Bearer {self.api_token}"}
             if self._is_docker_url:

@@ -96,6 +96,72 @@ class TestInit:
         )
         assert c._docker_host_header == "localhost"
 
+    def test_explicit_host_header_enables_docker_mode(self):
+        c = CanvasAPIClient(
+            base_url="http://canvas-lms-web-1",
+            api_token="t",
+            host_header="localhost:3000",
+        )
+        assert c._is_docker_url is True
+
+    def test_explicit_host_header_used_over_derived(self):
+        c = CanvasAPIClient(
+            base_url="http://canvas-lms-web-1",
+            api_token="t",
+            host_header="localhost:3000",
+        )
+        assert c._docker_host_header == "localhost:3000"
+
+    def test_explicit_host_header_overrides_port_derivation(self):
+        c = CanvasAPIClient(
+            base_url="http://host.docker.internal:8080",
+            api_token="t",
+            host_header="mycanvas.edu",
+        )
+        assert c._docker_host_header == "mycanvas.edu"
+
+    def test_no_explicit_host_header_falls_back_to_derivation(self):
+        c = CanvasAPIClient(
+            base_url="http://host.docker.internal:3000",
+            api_token="t",
+            host_header="",
+        )
+        assert c._docker_host_header == "localhost:3000"
+
+    def test_rewrite_canvas_url_with_docker_internal(self):
+        c = CanvasAPIClient(
+            base_url="http://host.docker.internal:3000",
+            api_token="t",
+        )
+        url = c.rewrite_canvas_url("http://localhost:3000/files/5/download")
+        assert url == "http://host.docker.internal:3000/files/5/download"
+
+    def test_rewrite_canvas_url_with_explicit_host_header(self):
+        c = CanvasAPIClient(
+            base_url="http://canvas-lms-web-1",
+            api_token="t",
+            host_header="localhost:3000",
+        )
+        url = c.rewrite_canvas_url("http://localhost:3000/files/5/download")
+        assert url == "http://canvas-lms-web-1/files/5/download"
+
+    def test_rewrite_canvas_url_noop_for_non_docker(self):
+        c = CanvasAPIClient(
+            base_url="https://canvas.uic.edu",
+            api_token="t",
+        )
+        url = c.rewrite_canvas_url("https://canvas.uic.edu/files/5/download")
+        assert url == "https://canvas.uic.edu/files/5/download"
+
+    def test_rewrite_canvas_url_noop_for_external_url(self):
+        c = CanvasAPIClient(
+            base_url="http://canvas-lms-web-1",
+            api_token="t",
+            host_header="localhost:3000",
+        )
+        url = c.rewrite_canvas_url("https://s3.amazonaws.com/some-bucket/file.pdf")
+        assert url == "https://s3.amazonaws.com/some-bucket/file.pdf"
+
 
 class TestRequest:
     """Tests for the internal _request method."""
@@ -163,6 +229,27 @@ class TestRequest:
             call_kwargs = mock_http.request.call_args
             headers = call_kwargs.kwargs.get("headers") or call_kwargs[1].get("headers", {})
             assert "Host" not in headers
+
+    @pytest.mark.asyncio
+    async def test_explicit_host_header_in_request(self):
+        """Client with explicit host_header sets Host on requests."""
+        container_client = CanvasAPIClient(
+            base_url="http://canvas-lms-web-1",
+            api_token="test-token-123",
+            host_header="localhost:3000",
+        )
+        response = _make_response(json_data={"ok": True})
+
+        with patch.object(container_client, "_get_client") as mock_get:
+            mock_http = AsyncMock()
+            mock_http.request = AsyncMock(return_value=response)
+            mock_get.return_value = mock_http
+
+            await container_client._request("GET", "/api/v1/test")
+
+            call_kwargs = mock_http.request.call_args
+            headers = call_kwargs.kwargs.get("headers") or call_kwargs[1].get("headers", {})
+            assert headers["Host"] == "localhost:3000"
 
     @pytest.mark.asyncio
     async def test_raises_on_http_error(self, client):

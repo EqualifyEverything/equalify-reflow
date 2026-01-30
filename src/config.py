@@ -247,6 +247,11 @@ class Settings(BaseSettings):
     # Canvas API Configuration (for file downloads)
     canvas_api_url: str = Field(default="", description="Canvas API base URL (e.g., https://canvas.instructure.com/api/v1)")
     canvas_api_token: str = Field(default="", description="Canvas API access token for file downloads")
+    canvas_host_header: str = Field(
+        default="",
+        description="Explicit Host header for Canvas API requests (e.g., localhost:3000). "
+        "Used when connecting to Canvas via Docker container name instead of host.docker.internal.",
+    )
 
     # Canvas Auto-Publishing Configuration
     canvas_autopublish_enabled: bool = Field(

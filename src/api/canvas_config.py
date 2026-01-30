@@ -270,6 +270,7 @@ async def trigger_processing(
         base_url=settings.canvas_api_url,
         api_token=config.canvas_api_token,
         rate_limit_buffer=settings.canvas_rate_limit_buffer,
+        host_header=settings.canvas_host_header,
     )
 
     try:
@@ -291,6 +292,9 @@ async def trigger_processing(
                 status_code=status.HTTP_400_BAD_REQUEST,
                 detail=f"File {file_id} has no download URL",
             )
+
+        # Rewrite localhost URLs for Docker container networking
+        file_url = client.rewrite_canvas_url(file_url)
 
         http_client = client._get_client()
         headers: dict[str, str] = {"Authorization": f"Bearer {client.api_token}"}
@@ -468,6 +472,7 @@ async def publish_document(
         base_url=settings.canvas_api_url,
         api_token=config.canvas_api_token,
         rate_limit_buffer=settings.canvas_rate_limit_buffer,
+        host_header=settings.canvas_host_header,
     )
 
     try:

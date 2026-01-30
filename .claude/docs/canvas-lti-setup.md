@@ -108,9 +108,11 @@ curl -s http://localhost:3000/api/v1/users/self \
 These are already configured in `.env` for local Canvas:
 
 ```bash
-# Canvas API (for file downloads)
-CANVAS_API_URL=http://host.docker.internal:3000/api/v1
+# Canvas API (direct container networking, bypasses host port conflicts)
+# Requires canvas-network in docker-compose.dev.yml
+CANVAS_API_URL=http://canvas-lms-web-1/api/v1
 CANVAS_API_TOKEN=<your-canvas-api-token>
+CANVAS_HOST_HEADER=localhost:3000
 
 # LTI 1.3 Core
 LTI_ENABLED=true
@@ -119,7 +121,7 @@ LTI_CLIENT_ID=10000000000001
 LTI_DEPLOYMENT_ID=2:4dde05e8ca1973bcca9bffc13e1548820eee93a3
 
 # Canvas OIDC/OAuth Endpoints (local Canvas via Docker host)
-LTI_AUTH_LOGIN_URL=http://host.docker.internal:3000/api/lti/authorize_redirect
+LTI_AUTH_LOGIN_URL=http://localhost:3000/api/lti/authorize_redirect
 LTI_AUTH_TOKEN_URL=http://host.docker.internal:3000/login/oauth2/token
 LTI_JWKS_URL=http://host.docker.internal:3000/api/lti/security/jwks
 
@@ -130,9 +132,9 @@ LTI_PUBLIC_KEY_PATH=keys/lti_public.pem
 
 **Important notes:**
 - `LTI_ISSUER` is `https://canvas.instructure.com` even for local Canvas. This is the issuer value Canvas puts in its JWTs (configured in Canvas's `config/security.yml`).
-- **Browser vs Container URLs:** `LTI_AUTH_LOGIN_URL` uses `localhost:3000` because the *browser* follows this redirect. All other URLs (`LTI_AUTH_TOKEN_URL`, `LTI_JWKS_URL`, `CANVAS_API_URL`) use `host.docker.internal:3000` because the *container* makes these requests. Inside Docker, `localhost` refers to the container itself; `host.docker.internal` resolves to the Docker host where Canvas listens.
-- `CANVAS_API_URL` is the REST API for downloading files after launch.
-- The file download code spoofs `Host: localhost:3000` when making requests to `host.docker.internal:3000` so Canvas's `sf_verifier` file auth mechanism works correctly.
+- **Browser vs Container URLs:** `LTI_AUTH_LOGIN_URL` uses `localhost:3000` because the *browser* follows this redirect. All other URLs (`LTI_AUTH_TOKEN_URL`, `LTI_JWKS_URL`) use `host.docker.internal:3000` because the *container* makes these requests.
+- **Canvas API networking:** `CANVAS_API_URL` uses the Canvas container hostname (`canvas-lms-web-1`) directly via Docker network. This avoids port conflicts on the host (e.g., if another service uses port 3000). `CANVAS_HOST_HEADER` tells the client to send `Host: localhost:3000` on all requests, which Canvas requires for authentication. The client also rewrites Canvas-generated `localhost:3000` URLs (e.g., file download links) to the container hostname.
+- The `docker-compose.dev.yml` connects the api-gateway to the `canvas-lms_default` network and uses `REDIS_URL=redis://equalify-pdf-redis:6379` to avoid DNS collision with Canvas's own Redis service on the shared network.
 
 ## LTI 1.3 Launch Flow (Detailed)
 
@@ -246,20 +248,19 @@ Ensure `CANVAS_API_URL` and `CANVAS_API_TOKEN` are set in `.env`. The token need
 ### Canvas file download redirect loop (sf_verifier)
 
 Canvas local Docker serves files through a redirect chain using `sf_verifier` JWT tokens. The PDF Converter handles this by:
-1. Rewriting `localhost:3000` URLs to `host.docker.internal:3000` (container networking)
-2. Setting `Host: localhost:3000` header so Canvas recognizes the request as local
+1. Using `CanvasAPIClient.rewrite_canvas_url()` to rewrite `localhost:3000` URLs to the Canvas container hostname
+2. Setting `Host: localhost:3000` header (via `CANVAS_HOST_HEADER`) so Canvas recognizes the request as local
 3. Stripping the `Authorization` header on redirect hops (letting `sf_verifier` handle auth)
 
-If you see infinite 302 redirects or `414 Request-URI Too Large` errors in the logs, the `Host` header spoofing may not be working. Check `src/lti/service.py` `_fetch_canvas_file()`.
+If you see infinite 302 redirects or `414 Request-URI Too Large` errors in the logs, check that `CANVAS_HOST_HEADER` is set correctly in `.env`.
 
-### Canvas blocks `host.docker.internal`
+### Canvas API returns 403 Forbidden
 
-Canvas may reject requests from `host.docker.internal`. Add this to the Canvas `docker-compose.override.yml` under the `web` service:
-```yaml
-environment:
-  ADDITIONAL_ALLOWED_HOSTS: host.docker.internal
-```
-Then restart Canvas: `docker compose up -d` in the Canvas directory.
+Canvas validates the `Host` header on API requests. Ensure `CANVAS_HOST_HEADER=localhost:3000` is set in `.env` so the client sends the correct Host header when connecting via container name.
+
+### Redis DNS collision with Canvas
+
+When the api-gateway is on both the equalify and Canvas Docker networks, the hostname `redis` becomes ambiguous (both projects have a Redis service). The `docker-compose.dev.yml` overrides `REDIS_URL` to use the explicit container name `equalify-pdf-redis` to avoid this. If you see unexpected empty data from Redis, verify the container is connecting to the correct Redis instance.
 
 ### LTI endpoints return 404
 

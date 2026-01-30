@@ -142,6 +142,7 @@ class CanvasFileWorker:
             base_url=settings.canvas_api_url,
             api_token=config.canvas_api_token,
             rate_limit_buffer=settings.canvas_rate_limit_buffer,
+            host_header=settings.canvas_host_header,
         )
 
         queued = 0
@@ -208,6 +209,9 @@ class CanvasFileWorker:
         logger.info(f"Downloading file {file_id} ({filename}) from Canvas")
         if not file_url:
             raise CanvasAPIError(f"File {file_id} has no download URL")
+
+        # Rewrite localhost URLs for Docker container networking
+        file_url = client.rewrite_canvas_url(file_url)
 
         try:
             http_client = client._get_client()

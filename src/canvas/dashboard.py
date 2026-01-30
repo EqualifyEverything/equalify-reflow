@@ -426,6 +426,7 @@ async def dashboard_publish(
             base_url=settings.canvas_api_url,
             api_token=config.canvas_api_token,
             rate_limit_buffer=settings.canvas_rate_limit_buffer,
+            host_header=settings.canvas_host_header,
         )
 
         try:

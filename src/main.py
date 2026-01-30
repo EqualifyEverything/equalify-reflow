@@ -26,14 +26,12 @@ from .middleware import (
 from .middleware.metrics import setup_metrics
 from .services.rate_limit_service import RateLimitService
 from .telemetry import init_telemetry, shutdown_telemetry
+from .workers.canvas_file_worker import start_canvas_file_worker
 from .workers.pii_worker import start_pii_worker
 from .workers.timeout_worker import start_timeout_worker
 
 # Configure logging
-logging.basicConfig(
-    level=settings.log_level,
-    format="%(asctime)s - %(name)s - %(levelname)s - %(message)s"
-)
+logging.basicConfig(level=settings.log_level, format="%(asctime)s - %(name)s - %(levelname)s - %(message)s")
 
 logger = logging.getLogger(__name__)
 
@@ -81,6 +79,10 @@ async def lifespan(app: FastAPI) -> AsyncIterator[None]:
         ]
         logger.info("PII and Timeout worker tasks created")
 
+        if settings.canvas_autopublish_enabled:
+            worker_tasks.append(asyncio.create_task(start_canvas_file_worker(shutdown_event)))
+            logger.info("Canvas file discovery worker started")
+
     yield
 
     # Shutdown: Graceful shutdown with timeout (only if workers were started)
@@ -90,10 +92,7 @@ async def lifespan(app: FastAPI) -> AsyncIterator[None]:
 
         # Wait for workers to finish current job (max 30 seconds)
         try:
-            await asyncio.wait_for(
-                asyncio.gather(*worker_tasks, return_exceptions=True),
-                timeout=30.0
-            )
+            await asyncio.wait_for(asyncio.gather(*worker_tasks, return_exceptions=True), timeout=30.0)
             logger.info("All background workers stopped gracefully")
         except TimeoutError:
             logger.warning("Graceful shutdown timeout, forcing cancellation")
@@ -118,7 +117,7 @@ app = FastAPI(
     version="0.1.0",
     docs_url="/docs",
     redoc_url="/redoc",
-    lifespan=lifespan
+    lifespan=lifespan,
 )
 
 # Set up metrics collection (must be called before adding middleware)
@@ -135,9 +134,9 @@ if settings.enable_docs_auth:
     logger.info("✅ Documentation authentication enabled")
 
 app.add_middleware(ErrorHandlerMiddleware)  # Catch all errors
-app.add_middleware(RateLimitMiddleware)     # Rate limit before processing
-app.add_middleware(LoggingMiddleware)       # Log all requests
-add_cors_middleware(app)                     # CORS headers
+app.add_middleware(RateLimitMiddleware)  # Rate limit before processing
+app.add_middleware(LoggingMiddleware)  # Log all requests
+add_cors_middleware(app)  # CORS headers
 
 # Include routers
 app.include_router(health.router)
@@ -150,12 +149,14 @@ app.include_router(review_checklist.router)
 # Conditionally import dev-only endpoints (only in development)
 if settings.environment == "dev":
     from .api import dev_monitoring
+
     app.include_router(dev_monitoring.router)
     logger.info("✅ Dev monitoring endpoints enabled at /api/dev/monitoring/queues")
 
 # Conditionally enable LTI 1.3 integration
 if settings.lti_enabled:
     from .lti import router as lti_router
+
     app.include_router(lti_router)
     logger.info("✅ LTI 1.3 endpoints enabled at /lti/*")
 
@@ -197,11 +198,7 @@ app.openapi = custom_openapi  # type: ignore[method-assign]
 @app.get("/")
 async def root() -> dict[str, str]:
     """Root endpoint."""
-    return {
-        "service": "Equalify PDF Converter API Gateway",
-        "version": "0.1.0",
-        "docs": "/docs"
-    }
+    return {"service": "Equalify PDF Converter API Gateway", "version": "0.1.0", "docs": "/docs"}
 
 
 # Mount Pipeline Viewer (standalone viewer app)

@@ -270,6 +270,97 @@ class TestDashboardIndex:
         assert "hx-trigger" in response.text
         assert "every 5s" in response.text
 
+    def test_processing_row_polling_url_includes_session(self, client, mock_config_service, mock_job_svc):
+        """Processing row polling URL points to the row endpoint with lti_session param."""
+        mock_config_service.list_processed_files.return_value = {
+            "42": ProcessedFile(
+                canvas_file_id="42",
+                canvas_updated_at="2024-06-15T10:30:00Z",
+                job_id="job-1",
+                status="processing",
+                processed_at="2024-06-15T11:00:00Z",
+                original_filename="inprogress.pdf",
+            ),
+        }
+        mock_config_service.get_publish_result.return_value = None
+        mock_job_svc.get_job.return_value = None
+
+        response = client.get("/lti/dashboard/123?lti_session=test-session")
+
+        assert response.status_code == 200
+        assert "/lti/dashboard/123/documents/42/row?lti_session=test-session" in response.text
+        assert 'hx-swap="outerHTML"' in response.text
+
+    def test_non_processing_rows_do_not_poll(self, client, mock_config_service, mock_job_svc):
+        """Pending, completed, failed, and published rows do not have polling attributes."""
+        mock_config_service.list_processed_files.return_value = {
+            "10": ProcessedFile(
+                canvas_file_id="10",
+                canvas_updated_at="2024-06-15T10:30:00Z",
+                job_id="job-10",
+                status="pending",
+                processed_at="2024-06-15T11:00:00Z",
+                original_filename="pending.pdf",
+            ),
+            "20": ProcessedFile(
+                canvas_file_id="20",
+                canvas_updated_at="2024-06-15T10:30:00Z",
+                job_id="job-20",
+                status="completed",
+                processed_at="2024-06-15T11:00:00Z",
+                original_filename="completed.pdf",
+            ),
+            "30": ProcessedFile(
+                canvas_file_id="30",
+                canvas_updated_at="2024-06-15T10:30:00Z",
+                job_id="job-30",
+                status="failed",
+                processed_at="2024-06-15T11:00:00Z",
+                original_filename="failed.pdf",
+            ),
+        }
+        mock_config_service.get_publish_result.return_value = None
+        mock_job_svc.get_job.return_value = None
+
+        response = client.get("/lti/dashboard/123?lti_session=test-session")
+
+        assert response.status_code == 200
+        # None of these statuses should trigger polling
+        assert "every 5s" not in response.text
+        assert "hx-trigger" not in response.text
+
+    def test_mixed_status_rows_only_processing_polls(self, client, mock_config_service, mock_job_svc):
+        """In a list with mixed statuses, only processing rows have polling attributes."""
+        mock_config_service.list_processed_files.return_value = {
+            "10": ProcessedFile(
+                canvas_file_id="10",
+                canvas_updated_at="2024-06-15T10:30:00Z",
+                job_id="job-10",
+                status="completed",
+                processed_at="2024-06-15T11:00:00Z",
+                original_filename="done.pdf",
+            ),
+            "20": ProcessedFile(
+                canvas_file_id="20",
+                canvas_updated_at="2024-06-15T10:30:00Z",
+                job_id="job-20",
+                status="processing",
+                processed_at="2024-06-15T11:00:00Z",
+                original_filename="active.pdf",
+            ),
+        }
+        mock_config_service.get_publish_result.return_value = None
+        mock_job_svc.get_job.return_value = None
+
+        response = client.get("/lti/dashboard/123?lti_session=test-session")
+
+        assert response.status_code == 200
+        # Only the processing document row should poll
+        assert "/documents/20/row?" in response.text
+        assert "every 5s" in response.text
+        # The completed document row should NOT have a polling URL
+        assert "/documents/10/row?" not in response.text
+
     def test_shows_settings_link(self, client):
         """Dashboard has a link to settings page."""
         response = client.get("/lti/dashboard/123?lti_session=test-session")
@@ -737,6 +828,26 @@ class TestDashboardDetailFragment:
         assert 'hx-target="#document-detail"' in response.text
         assert 'hx-swap="outerHTML"' in response.text
 
+    def test_processing_fragment_polling_url_preserves_session(self, client, mock_config_service, mock_job_svc):
+        """Detail fragment for processing document includes lti_session in polling URL."""
+        mock_config_service.get_processed_file.return_value = ProcessedFile(
+            canvas_file_id="42",
+            canvas_updated_at="2024-06-15T10:30:00Z",
+            job_id="job-1",
+            status="processing",
+            processed_at="2024-06-15T11:00:00Z",
+            original_filename="inprogress.pdf",
+        )
+        mock_config_service.get_publish_result.return_value = None
+        mock_job_svc.get_job.return_value = None
+
+        response = client.get("/lti/dashboard/123/documents/42/detail_fragment?lti_session=my-session-token")
+
+        assert response.status_code == 200
+        assert "lti_session=my-session-token" in response.text
+        assert 'hx-swap="outerHTML"' in response.text
+        assert 'hx-target="#document-detail"' in response.text
+
     def test_returns_404_for_missing_document(self, client, mock_config_service):
         """Returns 404 with error fragment when document not found."""
         mock_config_service.get_processed_file.return_value = None
@@ -1109,6 +1220,25 @@ class TestDashboardDocumentRow:
         assert response.status_code == 200
         assert "Failed" in response.text
         assert "Retry" in response.text
+
+    def test_processing_row_polling_url_preserves_session(self, client, mock_config_service, mock_job_svc):
+        """Row fragment for processing document includes lti_session in polling URL."""
+        mock_config_service.get_processed_file.return_value = ProcessedFile(
+            canvas_file_id="42",
+            canvas_updated_at="2024-06-15T10:30:00Z",
+            job_id="job-1",
+            status="processing",
+            processed_at="2024-06-15T11:00:00Z",
+            original_filename="inprogress.pdf",
+        )
+        mock_config_service.get_publish_result.return_value = None
+        mock_job_svc.get_job.return_value = None
+
+        response = client.get("/lti/dashboard/123/documents/42/row?lti_session=my-session-token")
+
+        assert response.status_code == 200
+        assert "lti_session=my-session-token" in response.text
+        assert 'hx-swap="outerHTML"' in response.text
 
     def test_returns_404_for_missing_document(self, client, mock_config_service):
         """Returns 404 with error row when document not found."""

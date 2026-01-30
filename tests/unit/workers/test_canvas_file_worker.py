@@ -153,13 +153,135 @@ class TestRunLifecycle:
             return 0
 
         worker.poll_courses = failing_then_shutdown
+        worker.polling_interval_seconds = 0
 
         with patch("src.workers.canvas_file_worker.settings") as mock_settings:
             mock_settings.worker_error_sleep_seconds = 0
-            mock_settings.canvas_polling_interval_seconds = 0
             await worker.run(shutdown_event)
 
         assert call_count >= 2
+
+    @pytest.mark.asyncio
+    async def test_run_uses_custom_polling_interval(
+        self, mock_config_service, mock_job_service, mock_storage_service, mock_queue_service
+    ):
+        """Worker uses the polling_interval_seconds passed at construction."""
+        custom_interval = 45
+        worker = CanvasFileWorker(
+            config_service=mock_config_service,
+            job_service=mock_job_service,
+            storage_service=mock_storage_service,
+            queue_service=mock_queue_service,
+            polling_interval_seconds=custom_interval,
+        )
+
+        assert worker.polling_interval_seconds == custom_interval
+
+        shutdown_event = asyncio.Event()
+        sleep_calls: list[float] = []
+
+        original_sleep = asyncio.sleep
+
+        async def tracking_sleep(duration):
+            sleep_calls.append(duration)
+            if len(sleep_calls) >= custom_interval:
+                shutdown_event.set()
+            await original_sleep(0)
+
+        mock_config_service.list_enabled_courses.return_value = []
+
+        with patch("src.workers.canvas_file_worker.asyncio.sleep", side_effect=tracking_sleep):
+            await worker.run(shutdown_event)
+
+        # The worker sleeps 1s per iteration for `polling_interval_seconds` iterations
+        assert len(sleep_calls) == custom_interval
+
+
+# ===========================================================================
+# Polling interval configuration tests
+# ===========================================================================
+
+
+class TestPollingIntervalConfig:
+    """Tests for configurable polling_interval_seconds."""
+
+    def test_defaults_to_settings_value(
+        self, mock_config_service, mock_job_service, mock_storage_service, mock_queue_service
+    ):
+        """Without explicit interval, uses settings.canvas_polling_interval_seconds."""
+        with patch("src.workers.canvas_file_worker.settings") as mock_settings:
+            mock_settings.canvas_polling_interval_seconds = 200
+            worker = CanvasFileWorker(
+                config_service=mock_config_service,
+                job_service=mock_job_service,
+                storage_service=mock_storage_service,
+                queue_service=mock_queue_service,
+            )
+        assert worker.polling_interval_seconds == 200
+
+    def test_explicit_interval_overrides_settings(
+        self, mock_config_service, mock_job_service, mock_storage_service, mock_queue_service
+    ):
+        """Explicit polling_interval_seconds overrides the settings default."""
+        worker = CanvasFileWorker(
+            config_service=mock_config_service,
+            job_service=mock_job_service,
+            storage_service=mock_storage_service,
+            queue_service=mock_queue_service,
+            polling_interval_seconds=60,
+        )
+        assert worker.polling_interval_seconds == 60
+
+    def test_none_interval_falls_back_to_settings(
+        self, mock_config_service, mock_job_service, mock_storage_service, mock_queue_service
+    ):
+        """Passing None explicitly falls back to settings."""
+        with patch("src.workers.canvas_file_worker.settings") as mock_settings:
+            mock_settings.canvas_polling_interval_seconds = 300
+            worker = CanvasFileWorker(
+                config_service=mock_config_service,
+                job_service=mock_job_service,
+                storage_service=mock_storage_service,
+                queue_service=mock_queue_service,
+                polling_interval_seconds=None,
+            )
+        assert worker.polling_interval_seconds == 300
+
+    @pytest.mark.asyncio
+    async def test_start_canvas_file_worker_passes_interval(self):
+        """start_canvas_file_worker passes settings interval to the worker."""
+        from src.workers.canvas_file_worker import start_canvas_file_worker
+
+        shutdown_event = asyncio.Event()
+        shutdown_event.set()
+
+        mock_redis = AsyncMock()
+        mock_s3 = MagicMock()
+
+        async def mock_redis_gen():
+            yield mock_redis
+
+        async def mock_s3_gen():
+            yield mock_s3
+
+        with (
+            patch("src.dependencies.get_redis_client", mock_redis_gen),
+            patch("src.dependencies.get_s3_client", mock_s3_gen),
+            patch("src.workers.canvas_file_worker.settings") as mock_settings,
+            patch.object(CanvasFileWorker, "run", new_callable=AsyncMock),
+            patch.object(CanvasFileWorker, "__init__", return_value=None) as mock_init,
+        ):
+            mock_settings.canvas_polling_interval_seconds = 90
+            mock_settings.canvas_api_url = "https://canvas.example.com"
+            mock_settings.canvas_rate_limit_buffer = 50
+            mock_settings.s3_temp_bucket = "temp"
+            mock_settings.s3_results_bucket = "results"
+            await start_canvas_file_worker(shutdown_event)
+
+            # Verify polling_interval_seconds was passed to the constructor
+            mock_init.assert_called_once()
+            call_kwargs = mock_init.call_args.kwargs
+            assert call_kwargs["polling_interval_seconds"] == 90
 
 
 # ===========================================================================

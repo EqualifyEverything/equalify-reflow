@@ -42,11 +42,17 @@ class CanvasFileWorker:
         job_service: JobService,
         storage_service: StorageService,
         queue_service: QueueService,
+        polling_interval_seconds: int | None = None,
     ):
         self.config_service = config_service
         self.job_service = job_service
         self.storage_service = storage_service
         self.queue_service = queue_service
+        self.polling_interval_seconds = (
+            polling_interval_seconds
+            if polling_interval_seconds is not None
+            else settings.canvas_polling_interval_seconds
+        )
         self.running = False
 
     async def run(self, shutdown_event: asyncio.Event) -> None:
@@ -55,7 +61,7 @@ class CanvasFileWorker:
         Polls at the interval configured by canvas_polling_interval_seconds.
         """
         self.running = True
-        logger.info("Canvas file discovery worker started")
+        logger.info(f"Canvas file discovery worker started (polling every {self.polling_interval_seconds}s)")
 
         worker_active_gauge.labels(worker_name="canvas_file").set(1)
 
@@ -74,7 +80,7 @@ class CanvasFileWorker:
                     continue
 
                 # Sleep for the polling interval, checking shutdown periodically
-                for _ in range(settings.canvas_polling_interval_seconds):
+                for _ in range(self.polling_interval_seconds):
                     if shutdown_event.is_set():
                         break
                     await asyncio.sleep(1)
@@ -296,6 +302,7 @@ async def start_canvas_file_worker(shutdown_event: asyncio.Event) -> None:
         job_service=job_service,
         storage_service=storage_service,
         queue_service=queue_service,
+        polling_interval_seconds=settings.canvas_polling_interval_seconds,
     )
 
     logger.info("Canvas file discovery worker services initialized, starting worker loop...")

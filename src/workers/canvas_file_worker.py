@@ -92,6 +92,9 @@ class CanvasFileWorker:
         except asyncio.CancelledError:
             logger.info("Canvas file worker received cancellation signal")
             raise
+        except Exception as e:
+            logger.error(f"Canvas file worker unexpected error: {e}", exc_info=True)
+            worker_errors_total.labels(worker_name="canvas_file", error_type=type(e).__name__).inc()
 
         finally:
             self.running = False

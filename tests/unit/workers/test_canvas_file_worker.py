@@ -215,6 +215,44 @@ class TestRunLifecycle:
             mock_labels.set.assert_any_call(0)
 
     @pytest.mark.asyncio
+    async def test_run_does_not_crash_on_unexpected_exception(self, worker, mock_config_service):
+        """Worker exits gracefully on unexpected exceptions outside the inner handler."""
+        shutdown_event = asyncio.Event()
+        mock_config_service.list_enabled_courses.return_value = []
+
+        # Force an exception during the polling-interval sleep loop (outside inner try/except)
+        with patch("src.workers.canvas_file_worker.asyncio.sleep", side_effect=RuntimeError("unexpected")):
+            with patch("src.workers.canvas_file_worker.worker_errors_total") as mock_errors:
+                mock_labels = MagicMock()
+                mock_errors.labels.return_value = mock_labels
+
+                # run() should NOT raise — it catches the unexpected error and exits gracefully
+                await worker.run(shutdown_event)
+
+                mock_errors.labels.assert_called_with(worker_name="canvas_file", error_type="RuntimeError")
+                mock_labels.inc.assert_called_once()
+
+        assert not worker.running
+
+    @pytest.mark.asyncio
+    async def test_run_resets_gauge_on_unexpected_exception(self, worker, mock_config_service):
+        """Active gauge is reset to 0 even when an unexpected exception occurs."""
+        shutdown_event = asyncio.Event()
+        mock_config_service.list_enabled_courses.return_value = []
+
+        with patch("src.workers.canvas_file_worker.asyncio.sleep", side_effect=RuntimeError("boom")):
+            with patch("src.workers.canvas_file_worker.worker_active_gauge") as mock_gauge:
+                mock_labels = MagicMock()
+                mock_gauge.labels.return_value = mock_labels
+
+                await worker.run(shutdown_event)
+
+                # Gauge set to 1 on start, then 0 on exit via finally
+                assert mock_labels.set.call_count == 2
+                mock_labels.set.assert_any_call(1)
+                mock_labels.set.assert_any_call(0)
+
+    @pytest.mark.asyncio
     async def test_run_uses_custom_polling_interval(
         self, mock_config_service, mock_job_service, mock_storage_service, mock_queue_service
     ):

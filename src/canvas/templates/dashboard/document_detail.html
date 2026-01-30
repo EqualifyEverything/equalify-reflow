@@ -10,7 +10,15 @@
     <h2 class="text-xl font-semibold text-gray-900">{{ document.filename }}</h2>
 </div>
 
-<div class="bg-white rounded-lg shadow p-6 max-w-2xl">
+<div class="bg-white rounded-lg shadow p-6 max-w-2xl"
+     id="document-detail"
+     {% if document.status == "processing" %}
+     hx-get="/lti/dashboard/{{ course_id }}/documents/{{ document.file_id }}/detail_fragment?lti_session={{ lti_session }}"
+     hx-trigger="every 5s"
+     hx-target="#document-detail"
+     hx-swap="outerHTML"
+     {% endif %}
+>
     <dl class="divide-y divide-gray-100">
         <div class="py-3 grid grid-cols-3 gap-4">
             <dt class="text-sm font-medium text-gray-500">Status</dt>
@@ -89,6 +97,14 @@
                 hx-target="#detail-actions" hx-swap="innerHTML"
                 class="px-4 py-2 bg-blue-600 text-white text-sm rounded hover:bg-blue-700">
             Retry Processing
+        </button>
+        {% endif %}
+
+        {% if document.status == "published" %}
+        <button hx-post="/lti/dashboard/{{ course_id }}/documents/{{ document.file_id }}/reprocess?lti_session={{ lti_session }}"
+                hx-target="#detail-actions" hx-swap="innerHTML"
+                class="px-4 py-2 bg-blue-600 text-white text-sm rounded hover:bg-blue-700">
+            Re-process
         </button>
         {% endif %}
     </div>

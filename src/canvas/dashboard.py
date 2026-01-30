@@ -228,6 +228,75 @@ async def dashboard_document_detail(
     )
 
 
+# --- htmx Fragment Routes ---
+
+
+@router.get("/{course_id}/documents/{file_id}/detail_fragment", response_class=HTMLResponse)
+async def dashboard_document_detail_fragment(
+    course_id: str,
+    file_id: str,
+    request: Request,
+    config_service: CourseConfigService = Depends(get_course_config_service),
+    job_service: JobService = Depends(get_job_service),
+) -> HTMLResponse:
+    """Return the document detail card as an HTML fragment for htmx polling.
+
+    Used by the detail view to poll for status updates every 5s when
+    a document is in the 'processing' state. Returns the updated card
+    element for in-place swap.
+    """
+    processed_file = await config_service.get_processed_file(course_id, file_id)
+    if processed_file is None:
+        return HTMLResponse(
+            content='<div id="document-detail" class="bg-white rounded-lg shadow p-6 max-w-2xl">'
+            '<p class="text-red-600">Document not found</p></div>',
+            status_code=404,
+        )
+
+    publish_result = await config_service.get_publish_result(course_id, file_id)
+
+    effective_status = processed_file.status
+    canvas_page_url: str | None = None
+    download_url: str | None = None
+    published_at: str | None = None
+    confidence_score: float | None = None
+    error_message: str | None = None
+
+    if publish_result:
+        effective_status = "published"
+        canvas_page_url = publish_result.get("canvas_page_url")
+        download_url = publish_result.get("download_url")
+        published_at = publish_result.get("published_at")
+
+    if processed_file.job_id:
+        job = await job_service.get_job(processed_file.job_id)
+        if job:
+            score = job.get("confidence_score")
+            if score is not None:
+                try:
+                    confidence_score = float(score)
+                except (ValueError, TypeError):
+                    pass
+            if job.get("status") == "failed":
+                error_message = job.get("error")
+
+    document = {
+        "file_id": file_id,
+        "filename": processed_file.original_filename,
+        "status": effective_status,
+        "confidence": confidence_score,
+        "canvas_page_url": canvas_page_url,
+        "download_url": download_url,
+        "processed_at": processed_file.processed_at,
+        "published_at": published_at,
+        "error_message": error_message,
+    }
+
+    lti_session = request.query_params.get("lti_session", "")
+    fragment_html = _render_detail_fragment(course_id, document, lti_session)
+    return HTMLResponse(content=fragment_html)
+
+
 # --- htmx Action Routes ---
 
 
@@ -444,6 +513,75 @@ async def dashboard_retry(
         )
 
 
+@router.post("/{course_id}/documents/{file_id}/reprocess", response_class=HTMLResponse)
+async def dashboard_reprocess(
+    course_id: str,
+    file_id: str,
+    request: Request,
+    config_service: CourseConfigService = Depends(get_course_config_service),
+    job_service: JobService = Depends(get_job_service),
+) -> HTMLResponse:
+    """Re-process a published document and return updated HTML fragment (htmx)."""
+    from ..dependencies import get_redis_client
+
+    processed_file = await config_service.get_processed_file(course_id, file_id)
+    if processed_file is None:
+        return HTMLResponse(
+            content='<span class="text-red-600">Document not found</span>',
+            status_code=404,
+        )
+
+    publish_result = await config_service.get_publish_result(course_id, file_id)
+    if not publish_result:
+        return HTMLResponse(
+            content='<span class="text-red-600">Cannot re-process: document is not published</span>',
+            status_code=400,
+        )
+
+    job = await job_service.get_job(processed_file.job_id)
+    if job is None:
+        return HTMLResponse(
+            content='<span class="text-red-600">Job record not found</span>',
+            status_code=404,
+        )
+
+    s3_key = job.get("s3_key", "")
+    if not s3_key:
+        return HTMLResponse(
+            content='<span class="text-red-600">Original file not found</span>',
+            status_code=400,
+        )
+
+    try:
+        redis_gen = get_redis_client()
+        redis_client = await anext(redis_gen)
+        from ..services.queue_service import QueueService
+
+        queue_service = QueueService(redis_client=redis_client)
+
+        await job_service.update_job_status(processed_file.job_id, "pii_scanning")
+        await queue_service.queue_pii_job(processed_file.job_id, s3_key)
+
+        from datetime import UTC, datetime
+
+        now = datetime.now(UTC).isoformat()
+        processed_file.status = "processing"
+        processed_file.processed_at = now
+        await config_service.set_processed_file(course_id, file_id, processed_file)
+
+        return HTMLResponse(
+            content='<span class="text-sm text-blue-600">'
+            "Re-processing started. The page will update automatically.</span>",
+        )
+
+    except Exception as e:
+        logger.error(f"Dashboard reprocess failed for {file_id}: {e}", exc_info=True)
+        return HTMLResponse(
+            content=f'<span class="text-red-600">Re-process failed: {e}</span>',
+            status_code=500,
+        )
+
+
 @router.put("/{course_id}/config", response_class=HTMLResponse)
 async def dashboard_update_config(
     course_id: str,
@@ -578,3 +716,137 @@ def _actions_html(
             parts.append('<span class="text-xs text-green-600">Live</span>')
 
     return " ".join(parts) if parts else "-"
+
+
+def _render_detail_fragment(
+    course_id: str,
+    document: dict,
+    lti_session: str,
+) -> str:
+    """Render the document detail card as an HTML fragment for htmx swap."""
+    doc_status = document["status"]
+    status_badge = _status_badge_html(doc_status)
+
+    # Build description list rows
+    rows = []
+
+    # Status row
+    rows.append(
+        f'<div class="py-3 grid grid-cols-3 gap-4">'
+        f'<dt class="text-sm font-medium text-gray-500">Status</dt>'
+        f'<dd class="text-sm text-gray-900 col-span-2">{status_badge}</dd>'
+        f"</div>"
+    )
+
+    # Processed row
+    processed_at = document.get("processed_at") or "Not yet processed"
+    rows.append(
+        f'<div class="py-3 grid grid-cols-3 gap-4">'
+        f'<dt class="text-sm font-medium text-gray-500">Processed</dt>'
+        f'<dd class="text-sm text-gray-900 col-span-2">{processed_at}</dd>'
+        f"</div>"
+    )
+
+    # Confidence row
+    confidence = document.get("confidence")
+    if confidence is not None:
+        rows.append(
+            f'<div class="py-3 grid grid-cols-3 gap-4">'
+            f'<dt class="text-sm font-medium text-gray-500">Confidence</dt>'
+            f'<dd class="text-sm text-gray-900 col-span-2">{confidence:.0%}</dd>'
+            f"</div>"
+        )
+
+    # Canvas page row
+    canvas_page_url = document.get("canvas_page_url")
+    if canvas_page_url:
+        rows.append(
+            f'<div class="py-3 grid grid-cols-3 gap-4">'
+            f'<dt class="text-sm font-medium text-gray-500">Canvas Page</dt>'
+            f'<dd class="text-sm col-span-2">'
+            f'<a href="{canvas_page_url}" target="_blank" rel="noopener" '
+            f'class="text-blue-600 hover:underline">View in Canvas</a>'
+            f"</dd></div>"
+        )
+
+    # Download row
+    download_url = document.get("download_url")
+    if download_url:
+        rows.append(
+            f'<div class="py-3 grid grid-cols-3 gap-4">'
+            f'<dt class="text-sm font-medium text-gray-500">Download</dt>'
+            f'<dd class="text-sm col-span-2">'
+            f'<a href="{download_url}" class="text-blue-600 hover:underline">Download Bundle</a>'
+            f"</dd></div>"
+        )
+
+    # Published row
+    published_at = document.get("published_at")
+    if published_at:
+        rows.append(
+            f'<div class="py-3 grid grid-cols-3 gap-4">'
+            f'<dt class="text-sm font-medium text-gray-500">Published</dt>'
+            f'<dd class="text-sm text-gray-900 col-span-2">{published_at}</dd>'
+            f"</div>"
+        )
+
+    # Error row
+    error_message = document.get("error_message")
+    if error_message:
+        rows.append(
+            f'<div class="py-3 grid grid-cols-3 gap-4">'
+            f'<dt class="text-sm font-medium text-gray-500">Error</dt>'
+            f'<dd class="text-sm text-red-600 col-span-2">{error_message}</dd>'
+            f"</div>"
+        )
+
+    # Action buttons
+    file_id = document["file_id"]
+    action_buttons = []
+    if doc_status == "completed":
+        action_buttons.append(
+            f'<button hx-post="/lti/dashboard/{course_id}/documents/{file_id}/publish?lti_session={lti_session}" '
+            f'hx-target="#detail-actions" hx-swap="innerHTML" '
+            f'class="px-4 py-2 bg-green-600 text-white text-sm rounded hover:bg-green-700">'
+            f"Publish to Canvas</button>"
+        )
+    if doc_status == "failed":
+        action_buttons.append(
+            f'<button hx-post="/lti/dashboard/{course_id}/documents/{file_id}/retry?lti_session={lti_session}" '
+            f'hx-target="#detail-actions" hx-swap="innerHTML" '
+            f'class="px-4 py-2 bg-blue-600 text-white text-sm rounded hover:bg-blue-700">'
+            f"Retry Processing</button>"
+        )
+    if doc_status == "published":
+        action_buttons.append(
+            f'<button hx-post="/lti/dashboard/{course_id}/documents/{file_id}/reprocess?lti_session={lti_session}" '
+            f'hx-target="#detail-actions" hx-swap="innerHTML" '
+            f'class="px-4 py-2 bg-blue-600 text-white text-sm rounded hover:bg-blue-700">'
+            f"Re-process</button>"
+        )
+
+    actions_html = "\n        ".join(action_buttons)
+
+    # Polling attrs for processing status
+    polling_attrs = ""
+    if doc_status == "processing":
+        fragment_url = f"/lti/dashboard/{course_id}/documents/{file_id}/detail_fragment?lti_session={lti_session}"
+        polling_attrs = (
+            f' hx-get="{fragment_url}"'
+            ' hx-trigger="every 5s"'
+            ' hx-target="#document-detail"'
+            ' hx-swap="outerHTML"'
+        )
+
+    dl_content = "\n        ".join(rows)
+
+    return (
+        f'<div class="bg-white rounded-lg shadow p-6 max-w-2xl" id="document-detail"{polling_attrs}>'
+        f'<dl class="divide-y divide-gray-100">'
+        f"{dl_content}"
+        f"</dl>"
+        f'<div class="mt-6 flex space-x-3" id="detail-actions">'
+        f"{actions_html}"
+        f"</div>"
+        f"</div>"
+    )

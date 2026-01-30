@@ -486,6 +486,260 @@ class TestDashboardDocumentDetail:
         assert response.status_code == 200
         assert "Back to Documents" in response.text
 
+    def test_shows_reprocess_button_for_published_document(self, client, mock_config_service, mock_job_svc):
+        """Shows Re-process button for published documents."""
+        mock_config_service.get_processed_file.return_value = ProcessedFile(
+            canvas_file_id="42",
+            canvas_updated_at="2024-06-15T10:30:00Z",
+            job_id="job-1",
+            status="completed",
+            processed_at="2024-06-15T11:00:00Z",
+            original_filename="lecture.pdf",
+        )
+        mock_config_service.get_publish_result.return_value = {
+            "canvas_page_url": "https://canvas.example.com/pages/lecture",
+            "canvas_page_id": "999",
+            "published_at": "2024-06-15T12:00:00Z",
+        }
+        mock_job_svc.get_job.return_value = {
+            "job_id": "job-1",
+            "status": "completed",
+            "confidence_score": "0.95",
+        }
+
+        response = client.get("/lti/dashboard/123/documents/42?lti_session=test-session")
+
+        assert response.status_code == 200
+        assert "Re-process" in response.text
+        assert "/reprocess" in response.text
+
+    def test_shows_polling_for_processing_document(self, client, mock_config_service, mock_job_svc):
+        """Shows htmx polling attributes for processing documents."""
+        mock_config_service.get_processed_file.return_value = ProcessedFile(
+            canvas_file_id="42",
+            canvas_updated_at="2024-06-15T10:30:00Z",
+            job_id="job-1",
+            status="processing",
+            processed_at="2024-06-15T11:00:00Z",
+            original_filename="inprogress.pdf",
+        )
+        mock_config_service.get_publish_result.return_value = None
+        mock_job_svc.get_job.return_value = None
+
+        response = client.get("/lti/dashboard/123/documents/42?lti_session=test-session")
+
+        assert response.status_code == 200
+        assert "Processing" in response.text
+        assert "hx-get" in response.text
+        assert "detail_fragment" in response.text
+        assert "every 5s" in response.text
+
+    def test_no_polling_for_completed_document(self, client, mock_config_service, mock_job_svc):
+        """No htmx polling for completed documents."""
+        mock_config_service.get_processed_file.return_value = ProcessedFile(
+            canvas_file_id="42",
+            canvas_updated_at="2024-06-15T10:30:00Z",
+            job_id="job-1",
+            status="completed",
+            processed_at="2024-06-15T11:00:00Z",
+            original_filename="lecture.pdf",
+        )
+        mock_config_service.get_publish_result.return_value = None
+        mock_job_svc.get_job.return_value = None
+
+        response = client.get("/lti/dashboard/123/documents/42?lti_session=test-session")
+
+        assert response.status_code == 200
+        assert "every 5s" not in response.text
+
+
+# ===========================================================================
+# GET /lti/dashboard/{course_id}/documents/{file_id}/detail_fragment
+# ===========================================================================
+
+
+class TestDashboardDetailFragment:
+    """Tests for the htmx detail fragment polling endpoint."""
+
+    def test_returns_fragment_for_processing_document(self, client, mock_config_service, mock_job_svc):
+        """Returns HTML detail fragment with polling attrs for processing document."""
+        mock_config_service.get_processed_file.return_value = ProcessedFile(
+            canvas_file_id="42",
+            canvas_updated_at="2024-06-15T10:30:00Z",
+            job_id="job-1",
+            status="processing",
+            processed_at="2024-06-15T11:00:00Z",
+            original_filename="inprogress.pdf",
+        )
+        mock_config_service.get_publish_result.return_value = None
+        mock_job_svc.get_job.return_value = None
+
+        response = client.get("/lti/dashboard/123/documents/42/detail_fragment?lti_session=test-session")
+
+        assert response.status_code == 200
+        assert 'id="document-detail"' in response.text
+        assert "Processing" in response.text
+        assert "hx-get" in response.text
+        assert "every 5s" in response.text
+
+    def test_returns_fragment_for_completed_document(self, client, mock_config_service, mock_job_svc):
+        """Returns HTML detail fragment with publish button for completed document."""
+        mock_config_service.get_processed_file.return_value = ProcessedFile(
+            canvas_file_id="42",
+            canvas_updated_at="2024-06-15T10:30:00Z",
+            job_id="job-1",
+            status="completed",
+            processed_at="2024-06-15T11:00:00Z",
+            original_filename="lecture.pdf",
+        )
+        mock_config_service.get_publish_result.return_value = None
+        mock_job_svc.get_job.return_value = {
+            "job_id": "job-1",
+            "status": "completed",
+            "confidence_score": "0.88",
+        }
+
+        response = client.get("/lti/dashboard/123/documents/42/detail_fragment?lti_session=test-session")
+
+        assert response.status_code == 200
+        assert "Publish to Canvas" in response.text
+        assert "88%" in response.text
+        # Completed should NOT have polling
+        assert "every 5s" not in response.text
+
+    def test_returns_fragment_for_published_document(self, client, mock_config_service, mock_job_svc):
+        """Returns HTML detail fragment with reprocess button for published document."""
+        mock_config_service.get_processed_file.return_value = ProcessedFile(
+            canvas_file_id="42",
+            canvas_updated_at="2024-06-15T10:30:00Z",
+            job_id="job-1",
+            status="completed",
+            processed_at="2024-06-15T11:00:00Z",
+            original_filename="lecture.pdf",
+        )
+        mock_config_service.get_publish_result.return_value = {
+            "canvas_page_url": "https://canvas.example.com/pages/lecture",
+            "published_at": "2024-06-15T12:00:00Z",
+        }
+        mock_job_svc.get_job.return_value = None
+
+        response = client.get("/lti/dashboard/123/documents/42/detail_fragment?lti_session=test-session")
+
+        assert response.status_code == 200
+        assert "Published" in response.text
+        assert "Re-process" in response.text
+        assert "View in Canvas" in response.text
+
+    def test_returns_fragment_for_failed_document(self, client, mock_config_service, mock_job_svc):
+        """Returns HTML detail fragment with retry button and error for failed document."""
+        mock_config_service.get_processed_file.return_value = ProcessedFile(
+            canvas_file_id="42",
+            canvas_updated_at="2024-06-15T10:30:00Z",
+            job_id="job-1",
+            status="failed",
+            processed_at="2024-06-15T11:00:00Z",
+            original_filename="broken.pdf",
+        )
+        mock_config_service.get_publish_result.return_value = None
+        mock_job_svc.get_job.return_value = {
+            "job_id": "job-1",
+            "status": "failed",
+            "error": "Timeout error",
+        }
+
+        response = client.get("/lti/dashboard/123/documents/42/detail_fragment?lti_session=test-session")
+
+        assert response.status_code == 200
+        assert "Failed" in response.text
+        assert "Retry Processing" in response.text
+        assert "Timeout error" in response.text
+
+    def test_returns_404_for_missing_document(self, client, mock_config_service):
+        """Returns 404 with error fragment when document not found."""
+        mock_config_service.get_processed_file.return_value = None
+
+        response = client.get("/lti/dashboard/123/documents/999/detail_fragment?lti_session=test-session")
+
+        assert response.status_code == 404
+        assert "Document not found" in response.text
+
+
+# ===========================================================================
+# POST /lti/dashboard/{course_id}/documents/{file_id}/reprocess - htmx Re-process
+# ===========================================================================
+
+
+class TestDashboardReprocess:
+    """Tests for the htmx reprocess endpoint."""
+
+    def test_returns_404_for_missing_document(self, client, mock_config_service):
+        """Returns 404 when document not found."""
+        mock_config_service.get_processed_file.return_value = None
+
+        response = client.post("/lti/dashboard/123/documents/999/reprocess?lti_session=test-session")
+
+        assert response.status_code == 404
+
+    def test_returns_400_for_non_published_document(self, client, mock_config_service):
+        """Returns 400 when trying to reprocess a non-published document."""
+        mock_config_service.get_processed_file.return_value = ProcessedFile(
+            canvas_file_id="42",
+            canvas_updated_at="2024-06-15T10:30:00Z",
+            job_id="job-1",
+            status="completed",
+            processed_at="2024-06-15T11:00:00Z",
+            original_filename="lecture.pdf",
+        )
+        mock_config_service.get_publish_result.return_value = None
+
+        response = client.post("/lti/dashboard/123/documents/42/reprocess?lti_session=test-session")
+
+        assert response.status_code == 400
+        assert "not published" in response.text
+
+    def test_returns_404_when_job_missing(self, client, mock_config_service, mock_job_svc):
+        """Returns 404 when job record is missing."""
+        mock_config_service.get_processed_file.return_value = ProcessedFile(
+            canvas_file_id="42",
+            canvas_updated_at="2024-06-15T10:30:00Z",
+            job_id="job-1",
+            status="completed",
+            processed_at="2024-06-15T11:00:00Z",
+            original_filename="lecture.pdf",
+        )
+        mock_config_service.get_publish_result.return_value = {
+            "canvas_page_url": "https://canvas.example.com/pages/lecture",
+        }
+        mock_job_svc.get_job.return_value = None
+
+        response = client.post("/lti/dashboard/123/documents/42/reprocess?lti_session=test-session")
+
+        assert response.status_code == 404
+
+    def test_returns_400_when_s3_key_missing(self, client, mock_config_service, mock_job_svc):
+        """Returns 400 when job has no S3 key."""
+        mock_config_service.get_processed_file.return_value = ProcessedFile(
+            canvas_file_id="42",
+            canvas_updated_at="2024-06-15T10:30:00Z",
+            job_id="job-1",
+            status="completed",
+            processed_at="2024-06-15T11:00:00Z",
+            original_filename="lecture.pdf",
+        )
+        mock_config_service.get_publish_result.return_value = {
+            "canvas_page_url": "https://canvas.example.com/pages/lecture",
+        }
+        mock_job_svc.get_job.return_value = {
+            "job_id": "job-1",
+            "status": "completed",
+            "s3_key": "",
+        }
+
+        response = client.post("/lti/dashboard/123/documents/42/reprocess?lti_session=test-session")
+
+        assert response.status_code == 400
+        assert "Original file not found" in response.text
+
 
 # ===========================================================================
 # POST /lti/dashboard/{course_id}/documents/{file_id}/retry - htmx Retry

@@ -655,6 +655,108 @@ class TestModulePlacement:
         )
         assert isinstance(result, PublishResult)
 
+    @pytest.mark.asyncio
+    async def test_pdf_in_multiple_modules_places_only_in_first(self, service, mock_canvas_client, mock_redis):
+        """When the PDF appears in multiple modules, the page is added to the first match only."""
+        mock_canvas_client.list_modules.return_value = [
+            {
+                "id": 10,
+                "name": "Week 1",
+                "items": [
+                    {"content_id": 500, "type": "File", "position": 2},
+                ],
+            },
+            {
+                "id": 20,
+                "name": "Week 2",
+                "items": [
+                    {"content_id": 500, "type": "File", "position": 1},
+                ],
+            },
+        ]
+        await service.publish(
+            job_id="job-1",
+            course_id="101",
+            original_filename="notes.pdf",
+            canvas_file_id="500",
+            redis_client=mock_redis,
+        )
+        mock_canvas_client.create_module_item.assert_awaited_once()
+        call_kwargs = mock_canvas_client.create_module_item.call_args.kwargs
+        assert call_kwargs["module_id"] == "10"
+        assert call_kwargs["position"] == 3
+
+    @pytest.mark.asyncio
+    async def test_pdf_among_multiple_items_in_module(self, service, mock_canvas_client, mock_redis):
+        """When the module has many items, the page is placed right after the PDF."""
+        mock_canvas_client.list_modules.return_value = [
+            {
+                "id": 10,
+                "name": "Week 1",
+                "items": [
+                    {"content_id": 100, "type": "File", "position": 1},
+                    {"content_id": 200, "type": "Page", "position": 2},
+                    {"content_id": 500, "type": "File", "position": 3},
+                    {"content_id": 300, "type": "Assignment", "position": 4},
+                ],
+            }
+        ]
+        await service.publish(
+            job_id="job-1",
+            course_id="101",
+            original_filename="notes.pdf",
+            canvas_file_id="500",
+            redis_client=mock_redis,
+        )
+        call_kwargs = mock_canvas_client.create_module_item.call_args.kwargs
+        assert call_kwargs["position"] == 4  # PDF at position 3 → page at 4
+
+    @pytest.mark.asyncio
+    async def test_passes_correct_page_url_and_title(self, service, mock_canvas_client, mock_redis):
+        """Module item creation receives the correct page_url and title."""
+        mock_canvas_client.list_modules.return_value = [
+            {
+                "id": 10,
+                "name": "Week 1",
+                "items": [
+                    {"content_id": 500, "type": "File", "position": 1},
+                ],
+            }
+        ]
+        await service.publish(
+            job_id="job-1",
+            course_id="101",
+            original_filename="lecture_notes.pdf",
+            canvas_file_id="500",
+            redis_client=mock_redis,
+        )
+        call_kwargs = mock_canvas_client.create_module_item.call_args.kwargs
+        assert call_kwargs["title"] == "lecture_notes - Reflow"
+        assert call_kwargs["page_url"] == "lecture-notes-reflow"
+        assert call_kwargs["item_type"] == "Page"
+        assert call_kwargs["course_id"] == "101"
+
+    @pytest.mark.asyncio
+    async def test_canvas_file_id_int_vs_string_coercion(self, service, mock_canvas_client, mock_redis):
+        """content_id as int in module item matches canvas_file_id as string."""
+        mock_canvas_client.list_modules.return_value = [
+            {
+                "id": 10,
+                "name": "Week 1",
+                "items": [
+                    {"content_id": 500, "type": "File", "position": 1},
+                ],
+            }
+        ]
+        await service.publish(
+            job_id="job-1",
+            course_id="101",
+            original_filename="notes.pdf",
+            canvas_file_id="500",  # string
+            redis_client=mock_redis,
+        )
+        mock_canvas_client.create_module_item.assert_awaited_once()
+
 
 # --- R8: Error handling ---
 

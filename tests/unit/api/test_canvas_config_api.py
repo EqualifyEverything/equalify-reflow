@@ -756,6 +756,48 @@ class TestRetryProcessing:
         assert response.status_code == status.HTTP_400_BAD_REQUEST
         assert "not in failed state" in response.json()["detail"]
 
+    def test_returns_400_for_processing_document(self, client, mock_config_service):
+        """Returns 400 when trying to retry a document that is still processing."""
+        mock_config_service.get_processed_file.return_value = ProcessedFile(
+            canvas_file_id="42",
+            canvas_updated_at="2024-06-15T10:30:00Z",
+            job_id="job-1",
+            status="processing",
+            processed_at="2024-06-15T11:00:00Z",
+            original_filename="lecture.pdf",
+        )
+
+        response = client.post("/api/v1/canvas/courses/123/documents/42/retry")
+
+        assert response.status_code == status.HTTP_400_BAD_REQUEST
+        detail = response.json()["detail"]
+        assert "not in failed state" in detail
+        assert "processing" in detail
+
+    def test_400_for_non_failed_skips_job_and_queue(
+        self,
+        client,
+        mock_config_service,
+        mock_job_svc,
+        mock_queue_svc,
+    ):
+        """No job lookup or queue operations when document is not in failed state."""
+        mock_config_service.get_processed_file.return_value = ProcessedFile(
+            canvas_file_id="42",
+            canvas_updated_at="2024-06-15T10:30:00Z",
+            job_id="job-1",
+            status="completed",
+            processed_at="2024-06-15T11:00:00Z",
+            original_filename="lecture.pdf",
+        )
+
+        response = client.post("/api/v1/canvas/courses/123/documents/42/retry")
+
+        assert response.status_code == status.HTTP_400_BAD_REQUEST
+        mock_job_svc.get_job.assert_not_awaited()
+        mock_job_svc.update_job_status.assert_not_awaited()
+        mock_queue_svc.queue_pii_job.assert_not_awaited()
+
     def test_returns_404_for_unknown_document(self, client, mock_config_service):
         """Returns 404 when document is not found."""
         mock_config_service.get_processed_file.return_value = None

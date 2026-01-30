@@ -88,7 +88,9 @@
     <svg class="mx-auto h-12 w-12 text-gray-300 mb-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
         <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M7 21h10a2 2 0 002-2V9.414a1 1 0 00-.293-.707l-5.414-5.414A1 1 0 0012.586 3H7a2 2 0 00-2 2v14a2 2 0 002 2z" />
     </svg>
-    <p class="text-gray-500">No PDFs tracked yet. Upload PDFs to Canvas and enable auto-processing in Settings.</p>
+    <p class="text-gray-500">No PDFs tracked yet. Upload PDFs to Canvas and enable auto-processing in
+        <a href="/lti/dashboard/{{ course_id }}/settings?lti_session={{ lti_session }}"
+           class="text-blue-600 hover:text-blue-800 hover:underline">Settings</a>.</p>
 </div>
 {% endif %}
 {% endblock %}

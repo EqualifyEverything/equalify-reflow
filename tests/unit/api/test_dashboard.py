@@ -177,6 +177,35 @@ class TestDashboardIndex:
         assert response.status_code == 200
         assert "No PDFs tracked yet" in response.text
 
+    def test_empty_state_has_document_icon(self, client, mock_config_service):
+        """Empty state includes an SVG document icon."""
+        mock_config_service.list_processed_files.return_value = {}
+
+        response = client.get("/lti/dashboard/123?lti_session=test-session")
+
+        assert response.status_code == 200
+        assert "<svg" in response.text
+        # SVG is the document/file icon
+        assert "stroke-linecap" in response.text
+
+    def test_empty_state_links_to_settings(self, client, mock_config_service):
+        """Empty state 'Settings' text links to the course settings page."""
+        mock_config_service.list_processed_files.return_value = {}
+
+        response = client.get("/lti/dashboard/123?lti_session=test-session")
+
+        assert response.status_code == 200
+        assert "/lti/dashboard/123/settings?lti_session=test-session" in response.text
+
+    def test_empty_state_hides_table(self, client, mock_config_service):
+        """Empty state does not render the document table."""
+        mock_config_service.list_processed_files.return_value = {}
+
+        response = client.get("/lti/dashboard/123?lti_session=test-session")
+
+        assert response.status_code == 200
+        assert "<table" not in response.text
+
     def test_renders_document_table(self, client, mock_config_service, mock_job_svc):
         """Shows document table when documents exist."""
         mock_config_service.list_processed_files.return_value = {

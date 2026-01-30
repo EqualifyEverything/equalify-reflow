@@ -312,6 +312,31 @@ class TestUpdateCourseConfig:
         saved_config = mock_config_service.set_config.call_args[0][1]
         assert saved_config.enabled is False
 
+    def test_disables_course_removes_from_enabled_set(self, client, mock_config_service):
+        """PUT with enabled=False calls set_config which removes from enabled set."""
+        mock_config_service.get_config.return_value = CourseConfig(
+            enabled=True,
+            auto_publish_threshold=0.7,
+            canvas_api_token="token",
+            created_at="2024-01-01T00:00:00Z",
+            updated_at="2024-01-01T00:00:00Z",
+        )
+
+        response = client.put(
+            "/api/v1/canvas/courses/789/config",
+            json={"enabled": False},
+        )
+
+        assert response.status_code == status.HTTP_200_OK
+        assert response.json()["enabled"] is False
+        call_args = mock_config_service.set_config.call_args[0]
+        assert call_args[0] == "789"
+        assert call_args[1].enabled is False
+        # Threshold should be preserved from existing config
+        assert call_args[1].auto_publish_threshold == 0.7
+        # created_at preserved from existing config
+        assert response.json()["created_at"] == "2024-01-01T00:00:00Z"
+
     def test_rejects_invalid_threshold(self, client):
         """Rejects auto_publish_threshold outside 0.0-1.0 range."""
         response = client.put(

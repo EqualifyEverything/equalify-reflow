@@ -761,3 +761,50 @@ class TestSetPublishResult:
         assert call_mapping["page_id"] == "42"
         assert call_mapping["figure_count"] == "5"
         assert call_mapping["published"] == "True"
+
+    async def test_empty_result_dict(self, service, mock_redis):
+        """An empty result dict stores an empty mapping and still sets TTL."""
+        await service.set_publish_result("course-101", "file-1", {})
+        mock_redis.hset.assert_called_once_with(
+            "eq-pdf:published:course-101:file-1",
+            mapping={},
+        )
+        mock_redis.expire.assert_called_once_with(
+            "eq-pdf:published:course-101:file-1",
+            PUBLISH_RESULT_TTL,
+        )
+
+    async def test_overwrites_previous_result(self, service, mock_redis):
+        """Calling set_publish_result twice overwrites the previous value."""
+        await service.set_publish_result("course-101", "file-1", {"page_id": "1"})
+        await service.set_publish_result("course-101", "file-1", {"page_id": "2"})
+
+        last_call = mock_redis.hset.call_args_list[-1]
+        assert last_call.kwargs["mapping"]["page_id"] == "2"
+
+    async def test_different_courses_use_different_keys(self, service, mock_redis):
+        """Results in different courses are stored under different Redis keys."""
+        await service.set_publish_result("course-100", "file-1", {"page_id": "1"})
+        await service.set_publish_result("course-200", "file-1", {"page_id": "2"})
+
+        calls = mock_redis.hset.call_args_list
+        assert calls[0].args[0] == "eq-pdf:published:course-100:file-1"
+        assert calls[1].args[0] == "eq-pdf:published:course-200:file-1"
+
+    async def test_different_files_use_different_keys(self, service, mock_redis):
+        """Results for different files in the same course use different Redis keys."""
+        await service.set_publish_result("course-101", "file-a", {"page_id": "1"})
+        await service.set_publish_result("course-101", "file-b", {"page_id": "2"})
+
+        calls = mock_redis.hset.call_args_list
+        assert calls[0].args[0] == "eq-pdf:published:course-101:file-a"
+        assert calls[1].args[0] == "eq-pdf:published:course-101:file-b"
+
+    async def test_expire_called_after_hset(self, service, mock_redis):
+        """TTL is set after the hash is written (correct operation order)."""
+        call_order: list[str] = []
+        mock_redis.hset.side_effect = lambda *a, **kw: call_order.append("hset")
+        mock_redis.expire.side_effect = lambda *a, **kw: call_order.append("expire")
+
+        await service.set_publish_result("course-101", "file-1", {"page_id": "1"})
+        assert call_order == ["hset", "expire"]

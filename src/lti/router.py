@@ -643,11 +643,21 @@ async def dashboard_launch(
     Returns:
         Dashboard index HTML if session is valid, error page otherwise.
     """
+    from ..canvas.dashboard import templates as dashboard_templates
+
     lti_session = request.query_params.get("lti_session")
     course_id = request.query_params.get("course_id")
 
     if not lti_session or not course_id:
-        return _error_response("Please launch this tool from Canvas.")  # type: ignore[return-value]
+        return dashboard_templates.TemplateResponse(
+            request,
+            "base.html",
+            {
+                "title": "Session Error",
+                "error_message": "Please launch this tool from Canvas.",
+            },
+            status_code=403,
+        )
 
     # Validate the LTI session token against Redis
     storage = RedisLaunchDataStorage(redis)
@@ -655,9 +665,15 @@ async def dashboard_launch(
 
     if session_data is None:
         logger.warning(f"Invalid or expired LTI session for dashboard launch: {lti_session[:8]}...")
-        return _error_response(
-            "Your session has expired or is invalid. Please relaunch from Canvas."
-        )  # type: ignore[return-value]
+        return dashboard_templates.TemplateResponse(
+            request,
+            "base.html",
+            {
+                "title": "Session Error",
+                "error_message": "Your session has expired. Please relaunch from Canvas.",
+            },
+            status_code=403,
+        )
 
     # Validate course_id matches the session (prevent course_id tampering)
     session_course_id = session_data.get("course_id")
@@ -665,9 +681,15 @@ async def dashboard_launch(
         logger.warning(
             f"Course ID mismatch: session={session_course_id}, requested={course_id}"
         )
-        return _error_response(
-            "Course ID does not match your LTI session. Please relaunch from Canvas."
-        )  # type: ignore[return-value]
+        return dashboard_templates.TemplateResponse(
+            request,
+            "base.html",
+            {
+                "title": "Session Error",
+                "error_message": "Course ID does not match your LTI session. Please relaunch from Canvas.",
+            },
+            status_code=403,
+        )
 
     # Redirect to the dashboard index view
     dashboard_url = f"/lti/dashboard/{course_id}?lti_session={lti_session}"

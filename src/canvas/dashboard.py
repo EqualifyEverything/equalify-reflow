@@ -55,13 +55,22 @@ async def _get_lti_session(request: Request, redis: Redis) -> dict | None:
 
 
 def _no_session_response(request: Request) -> HTMLResponse:
-    """Return error page when no LTI session is found."""
+    """Return error page when no valid LTI session is found.
+
+    Distinguishes between missing session token (never launched from
+    Canvas) and expired/invalid token (session timed out).
+    """
+    has_token = bool(request.query_params.get("lti_session"))
+    if has_token:
+        message = "Your session has expired. Please relaunch from Canvas."
+    else:
+        message = "Please launch this tool from Canvas."
     return templates.TemplateResponse(
         request,
         "base.html",
         {
             "title": "Session Error",
-            "error_message": "Please launch this tool from Canvas.",
+            "error_message": message,
         },
         status_code=403,
     )

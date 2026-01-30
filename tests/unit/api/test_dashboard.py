@@ -130,6 +130,35 @@ class TestLTISessionValidation:
         response = client.get("/lti/dashboard/123?lti_session=test-session")
         assert response.status_code == 200
 
+    def test_expired_session_shows_expired_message(self, mock_config_service, mock_job_svc):
+        """Dashboard shows expired message when lti_session token exists but is invalid."""
+        app = FastAPI()
+        app.include_router(dashboard_router)
+
+        # Redis returns None for all session lookups (expired)
+        mock_redis = MagicMock()
+        mock_redis.get = AsyncMock(return_value=None)
+
+        app.dependency_overrides[get_course_config_service] = lambda: mock_config_service
+        app.dependency_overrides[get_job_service] = lambda: mock_job_svc
+        app.dependency_overrides[get_redis_client] = lambda: mock_redis
+
+        test_client = TestClient(app)
+        response = test_client.get("/lti/dashboard/123?lti_session=expired-token")
+
+        assert response.status_code == 403
+        assert "session has expired" in response.text.lower()
+
+        app.dependency_overrides.clear()
+
+    def test_missing_session_shows_launch_message(self, client):
+        """Dashboard shows 'launch from Canvas' message when no lti_session param."""
+        response = client.get("/lti/dashboard/123")
+        assert response.status_code == 403
+        assert "Please launch this tool from Canvas" in response.text
+        # Should NOT mention expired
+        assert "expired" not in response.text.lower()
+
 
 # ===========================================================================
 # GET /lti/dashboard/{course_id} - Document List View
@@ -1513,7 +1542,7 @@ class TestDashboardLaunch:
         app.dependency_overrides.clear()
 
     def test_dashboard_launch_rejects_invalid_session(self, _lti_env):
-        """GET /lti/dashboard with invalid/expired session shows error."""
+        """GET /lti/dashboard with invalid/expired session shows error using dashboard template."""
         from src.dependencies import get_course_config_service, get_job_service, get_redis_client
         from src.lti.router import router as lti_router
 
@@ -1534,8 +1563,9 @@ class TestDashboardLaunch:
         test_client = TestClient(app)
         response = test_client.get("/lti/dashboard?lti_session=expired-token&course_id=456")
 
-        assert response.status_code == 200
-        assert "expired" in response.text.lower() or "invalid" in response.text.lower()
+        assert response.status_code == 403
+        assert "session has expired" in response.text.lower()
+        assert "Session Error" in response.text
 
         app.dependency_overrides.clear()
 
@@ -1563,13 +1593,13 @@ class TestDashboardLaunch:
         test_client = TestClient(app)
         response = test_client.get("/lti/dashboard?lti_session=abc123&course_id=456")
 
-        assert response.status_code == 200
+        assert response.status_code == 403
         assert "does not match" in response.text
 
         app.dependency_overrides.clear()
 
     def test_dashboard_launch_error_without_params(self, _lti_env):
-        """GET /lti/dashboard without params shows error."""
+        """GET /lti/dashboard without params shows dashboard-styled error."""
         from src.dependencies import get_course_config_service, get_job_service, get_redis_client
         from src.lti.router import router as lti_router
 
@@ -1590,8 +1620,37 @@ class TestDashboardLaunch:
         test_client = TestClient(app)
         response = test_client.get("/lti/dashboard")
 
-        assert response.status_code == 200
-        assert "Launch Error" in response.text or "Please launch this tool from Canvas" in response.text
+        assert response.status_code == 403
+        assert "Session Error" in response.text
+        assert "Please launch this tool from Canvas" in response.text
+
+        app.dependency_overrides.clear()
+
+    def test_dashboard_launch_uses_dashboard_template(self, _lti_env):
+        """GET /lti/dashboard error pages use the dashboard Jinja2 template, not inline HTML."""
+        from src.dependencies import get_course_config_service, get_job_service, get_redis_client
+        from src.lti.router import router as lti_router
+
+        app = FastAPI()
+        app.include_router(lti_router)
+
+        mock_redis = MagicMock()
+        mock_redis.get = AsyncMock(return_value=None)
+
+        mock_config_svc = AsyncMock(spec=CourseConfigService)
+        mock_job = MagicMock()
+        mock_job.get_job = AsyncMock(return_value=None)
+
+        app.dependency_overrides[get_redis_client] = lambda: mock_redis
+        app.dependency_overrides[get_course_config_service] = lambda: mock_config_svc
+        app.dependency_overrides[get_job_service] = lambda: mock_job
+
+        test_client = TestClient(app)
+        response = test_client.get("/lti/dashboard")
+
+        # Should use the dashboard template (base.html), not inline HTML
+        assert "dashboard.css" in response.text
+        assert "htmx.org" in response.text
 
         app.dependency_overrides.clear()
 
@@ -1866,7 +1925,7 @@ class TestDashboardSessionValidation:
     """Tests for Redis-backed LTI session validation in dashboard views."""
 
     def test_index_returns_403_with_invalid_redis_session(self, mock_config_service, mock_job_svc):
-        """Dashboard returns 403 when lti_session token is not found in Redis."""
+        """Dashboard returns 403 with expired message when lti_session token is not found in Redis."""
         app = FastAPI()
         app.include_router(dashboard_router)
 
@@ -1880,6 +1939,26 @@ class TestDashboardSessionValidation:
 
         test_client = TestClient(app)
         response = test_client.get("/lti/dashboard/123?lti_session=invalid-token")
+
+        assert response.status_code == 403
+        assert "session has expired" in response.text.lower()
+
+        app.dependency_overrides.clear()
+
+    def test_index_returns_403_without_lti_session_param(self, mock_config_service, mock_job_svc):
+        """Dashboard returns 403 with launch message when no lti_session param is present."""
+        app = FastAPI()
+        app.include_router(dashboard_router)
+
+        mock_redis = MagicMock()
+        mock_redis.get = AsyncMock(return_value=None)
+
+        app.dependency_overrides[get_course_config_service] = lambda: mock_config_service
+        app.dependency_overrides[get_job_service] = lambda: mock_job_svc
+        app.dependency_overrides[get_redis_client] = lambda: mock_redis
+
+        test_client = TestClient(app)
+        response = test_client.get("/lti/dashboard/123")
 
         assert response.status_code == 403
         assert "Please launch this tool from Canvas" in response.text

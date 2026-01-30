@@ -675,6 +675,9 @@ class TestDashboardDetailFragment:
         assert "Failed" in response.text
         assert "Retry Processing" in response.text
         assert "Timeout error" in response.text
+        # Retry button targets whole detail card for outerHTML swap (enables polling)
+        assert 'hx-target="#document-detail"' in response.text
+        assert 'hx-swap="outerHTML"' in response.text
 
     def test_returns_404_for_missing_document(self, client, mock_config_service):
         """Returns 404 with error fragment when document not found."""
@@ -831,6 +834,123 @@ class TestDashboardRetry:
 
         assert response.status_code == 400
         assert "Original file not found" in response.text
+
+    def test_successful_retry_returns_processing_row(self, client, mock_config_service, mock_job_svc):
+        """Successful retry queues PII job and returns updated row with processing status."""
+        from unittest.mock import patch
+
+        mock_config_service.get_processed_file.return_value = ProcessedFile(
+            canvas_file_id="42",
+            canvas_updated_at="2024-06-15T10:30:00Z",
+            job_id="job-1",
+            status="failed",
+            processed_at="2024-06-15T11:00:00Z",
+            original_filename="broken.pdf",
+        )
+        mock_job_svc.get_job.return_value = {
+            "job_id": "job-1",
+            "status": "failed",
+            "s3_key": "uploads/broken.pdf",
+        }
+
+        mock_queue_service = AsyncMock()
+        mock_redis_for_retry = AsyncMock()
+
+        async def fake_get_redis_client():
+            yield mock_redis_for_retry
+
+        with (
+            patch("src.services.queue_service.QueueService", return_value=mock_queue_service),
+            patch("src.dependencies.get_redis_client", side_effect=fake_get_redis_client),
+        ):
+            response = client.post("/lti/dashboard/123/documents/42/retry?lti_session=test-session")
+
+        assert response.status_code == 200
+        assert "Processing" in response.text
+        assert 'id="doc-42"' in response.text
+        assert "broken.pdf" in response.text
+        # Processing row should have polling attrs
+        assert "hx-get" in response.text
+        assert "every 5s" in response.text
+        mock_job_svc.update_job_status.assert_awaited_once_with("job-1", "pii_scanning")
+        mock_queue_service.queue_pii_job.assert_awaited_once_with("job-1", "uploads/broken.pdf")
+        mock_config_service.set_processed_file.assert_awaited_once()
+
+    def test_successful_retry_from_detail_returns_detail_fragment(self, client, mock_config_service, mock_job_svc):
+        """Retry from detail view returns detail fragment with polling when HX-Target is document-detail."""
+        from unittest.mock import patch
+
+        mock_config_service.get_processed_file.return_value = ProcessedFile(
+            canvas_file_id="42",
+            canvas_updated_at="2024-06-15T10:30:00Z",
+            job_id="job-1",
+            status="failed",
+            processed_at="2024-06-15T11:00:00Z",
+            original_filename="broken.pdf",
+        )
+        mock_job_svc.get_job.return_value = {
+            "job_id": "job-1",
+            "status": "failed",
+            "s3_key": "uploads/broken.pdf",
+        }
+
+        mock_queue_service = AsyncMock()
+        mock_redis_for_retry = AsyncMock()
+
+        async def fake_get_redis_client():
+            yield mock_redis_for_retry
+
+        with (
+            patch("src.services.queue_service.QueueService", return_value=mock_queue_service),
+            patch("src.dependencies.get_redis_client", side_effect=fake_get_redis_client),
+        ):
+            response = client.post(
+                "/lti/dashboard/123/documents/42/retry?lti_session=test-session",
+                headers={"HX-Target": "document-detail"},
+            )
+
+        assert response.status_code == 200
+        assert 'id="document-detail"' in response.text
+        assert "Processing" in response.text
+        # Detail fragment should have polling attrs for continued updates
+        assert "hx-get" in response.text
+        assert "every 5s" in response.text
+        assert "detail_fragment" in response.text
+
+    def test_retry_returns_500_on_queue_error(self, client, mock_config_service, mock_job_svc):
+        """Returns 500 with error message when queueing fails."""
+        from unittest.mock import patch
+
+        mock_config_service.get_processed_file.return_value = ProcessedFile(
+            canvas_file_id="42",
+            canvas_updated_at="2024-06-15T10:30:00Z",
+            job_id="job-1",
+            status="failed",
+            processed_at="2024-06-15T11:00:00Z",
+            original_filename="broken.pdf",
+        )
+        mock_job_svc.get_job.return_value = {
+            "job_id": "job-1",
+            "status": "failed",
+            "s3_key": "uploads/broken.pdf",
+        }
+
+        mock_queue_service = AsyncMock()
+        mock_queue_service.queue_pii_job.side_effect = RuntimeError("Redis connection lost")
+        mock_redis_for_retry = AsyncMock()
+
+        async def fake_get_redis_client():
+            yield mock_redis_for_retry
+
+        with (
+            patch("src.services.queue_service.QueueService", return_value=mock_queue_service),
+            patch("src.dependencies.get_redis_client", side_effect=fake_get_redis_client),
+        ):
+            response = client.post("/lti/dashboard/123/documents/42/retry?lti_session=test-session")
+
+        assert response.status_code == 500
+        assert "Retry failed" in response.text
+        assert "Redis connection lost" in response.text
 
 
 # ===========================================================================

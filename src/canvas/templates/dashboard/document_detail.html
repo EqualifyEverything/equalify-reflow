@@ -94,7 +94,7 @@
 
         {% if document.status == "failed" %}
         <button hx-post="/lti/dashboard/{{ course_id }}/documents/{{ document.file_id }}/retry?lti_session={{ lti_session }}"
-                hx-target="#detail-actions" hx-swap="innerHTML"
+                hx-target="#document-detail" hx-swap="outerHTML"
                 class="px-4 py-2 bg-blue-600 text-white text-sm rounded hover:bg-blue-700">
             Retry Processing
         </button>

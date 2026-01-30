@@ -108,15 +108,17 @@ async def dashboard_index(
                     except (ValueError, TypeError):
                         pass
 
-        documents.append({
-            "file_id": file_id,
-            "filename": pf.original_filename,
-            "status": effective_status,
-            "confidence": confidence_score,
-            "canvas_page_url": canvas_page_url,
-            "processed_at": pf.processed_at,
-            "job_id": pf.job_id,
-        })
+        documents.append(
+            {
+                "file_id": file_id,
+                "filename": pf.original_filename,
+                "status": effective_status,
+                "confidence": confidence_score,
+                "canvas_page_url": canvas_page_url,
+                "processed_at": pf.processed_at,
+                "job_id": pf.job_id,
+            }
+        )
 
     return templates.TemplateResponse(
         request,
@@ -438,8 +440,12 @@ async def dashboard_publish(
 
             return HTMLResponse(
                 content=_render_document_row_fragment(
-                    course_id, file_id, processed_file.original_filename,
-                    "published", None, processed_file.processed_at,
+                    course_id,
+                    file_id,
+                    processed_file.original_filename,
+                    "published",
+                    None,
+                    processed_file.processed_at,
                     request.query_params.get("lti_session", ""),
                 ),
             )
@@ -509,10 +515,35 @@ async def dashboard_retry(
         processed_file.processed_at = now
         await config_service.set_processed_file(course_id, file_id, processed_file)
 
+        # Return appropriate response based on htmx target context:
+        # - detail view targets #document-detail → return detail fragment with polling
+        # - index view targets #doc-{file_id} → return updated row fragment
+        hx_target = request.headers.get("HX-Target", "")
+        if hx_target == "document-detail":
+            lti_session = request.query_params.get("lti_session", "")
+            document = {
+                "file_id": file_id,
+                "filename": processed_file.original_filename,
+                "status": "processing",
+                "confidence": None,
+                "canvas_page_url": None,
+                "download_url": None,
+                "processed_at": now,
+                "published_at": None,
+                "error_message": None,
+            }
+            return HTMLResponse(
+                content=_render_detail_fragment(course_id, document, lti_session),
+            )
+
         return HTMLResponse(
             content=_render_document_row_fragment(
-                course_id, file_id, processed_file.original_filename,
-                "processing", None, now,
+                course_id,
+                file_id,
+                processed_file.original_filename,
+                "processing",
+                None,
+                now,
                 request.query_params.get("lti_session", ""),
             ),
         )
@@ -661,12 +692,7 @@ def _render_document_row_fragment(
     polling_attrs = ""
     if doc_status == "processing":
         row_url = f"/lti/dashboard/{course_id}/documents/{file_id}/row?lti_session={lti_session}"
-        polling_attrs = (
-            f' hx-get="{row_url}"'
-            ' hx-trigger="every 5s"'
-            f' hx-target="#doc-{file_id}"'
-            ' hx-swap="outerHTML"'
-        )
+        polling_attrs = f' hx-get="{row_url}" hx-trigger="every 5s" hx-target="#doc-{file_id}" hx-swap="outerHTML"'
 
     return (
         f'<tr id="doc-{file_id}"{polling_attrs}>'
@@ -825,7 +851,7 @@ def _render_detail_fragment(
     if doc_status == "failed":
         action_buttons.append(
             f'<button hx-post="/lti/dashboard/{course_id}/documents/{file_id}/retry?lti_session={lti_session}" '
-            f'hx-target="#detail-actions" hx-swap="innerHTML" '
+            f'hx-target="#document-detail" hx-swap="outerHTML" '
             f'class="px-4 py-2 bg-blue-600 text-white text-sm rounded hover:bg-blue-700">'
             f"Retry Processing</button>"
         )
@@ -844,10 +870,7 @@ def _render_detail_fragment(
     if doc_status == "processing":
         fragment_url = f"/lti/dashboard/{course_id}/documents/{file_id}/detail_fragment?lti_session={lti_session}"
         polling_attrs = (
-            f' hx-get="{fragment_url}"'
-            ' hx-trigger="every 5s"'
-            ' hx-target="#document-detail"'
-            ' hx-swap="outerHTML"'
+            f' hx-get="{fragment_url}" hx-trigger="every 5s" hx-target="#document-detail" hx-swap="outerHTML"'
         )
 
     dl_content = "\n        ".join(rows)

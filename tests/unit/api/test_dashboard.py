@@ -1307,8 +1307,8 @@ class TestCourseNavigationPlacement:
 class TestTemplateRendering:
     """Basic template rendering tests."""
 
-    def test_base_template_includes_tailwind(self, client):
-        """Base template links Tailwind CSS."""
+    def test_base_template_includes_dashboard_css(self, client):
+        """Base template links dashboard CSS stylesheet."""
         response = client.get("/lti/dashboard/123?lti_session=test-session")
         assert "dashboard.css" in response.text
 
@@ -1336,3 +1336,72 @@ class TestTemplateRendering:
         response = client.get("/lti/dashboard/123?lti_session=test-session")
         xfo = response.headers.get("x-frame-options", "")
         assert xfo.upper() != "DENY"
+
+
+# ===========================================================================
+# Dashboard CSS - Plain CSS (no Tailwind directives)
+# ===========================================================================
+
+
+class TestDashboardCSS:
+    """Tests that dashboard CSS uses plain CSS without Tailwind build dependencies."""
+
+    def test_source_css_has_no_tailwind_directives(self):
+        """Source CSS must not contain @tailwind directives."""
+        from pathlib import Path
+
+        css_path = Path(__file__).resolve().parents[3] / "src" / "canvas" / "static" / "src" / "dashboard.css"
+        content = css_path.read_text()
+        assert "@tailwind" not in content
+
+    def test_source_css_contains_plain_rules(self):
+        """Source CSS contains plain CSS rules (not just directives)."""
+        from pathlib import Path
+
+        css_path = Path(__file__).resolve().parents[3] / "src" / "canvas" / "static" / "src" / "dashboard.css"
+        content = css_path.read_text()
+        # Should contain actual CSS property declarations
+        assert "box-sizing:" in content
+        assert "font-family:" in content
+        assert "display: flex" in content
+
+    def test_dist_css_has_no_tailwind_directives(self):
+        """Compiled dist CSS must not contain @tailwind directives."""
+        from pathlib import Path
+
+        css_path = Path(__file__).resolve().parents[3] / "src" / "canvas" / "static" / "dist" / "dashboard.css"
+        content = css_path.read_text()
+        assert "@tailwind" not in content
+
+    def test_dist_css_contains_utility_classes_used_in_templates(self):
+        """Dist CSS defines all utility classes referenced by dashboard templates."""
+        from pathlib import Path
+
+        css_path = Path(__file__).resolve().parents[3] / "src" / "canvas" / "static" / "dist" / "dashboard.css"
+        content = css_path.read_text()
+
+        # Key classes used across templates
+        required_classes = [
+            ".bg-gray-50",
+            ".bg-white",
+            ".min-h-screen",
+            ".max-w-6xl",
+            ".flex",
+            ".text-sm",
+            ".rounded-lg",
+            ".shadow",
+            ".hover\\:bg-blue-700:hover",
+            ".animate-pulse",
+            ".inline-block",
+            ".grid-cols-3",
+            ".divide-y",
+        ]
+        for cls in required_classes:
+            assert cls in content, f"Missing CSS class: {cls}"
+
+    def test_no_tailwind_config_at_root(self):
+        """Root tailwind.config.js should not exist (no Tailwind build needed)."""
+        from pathlib import Path
+
+        config_path = Path(__file__).resolve().parents[3] / "tailwind.config.js"
+        assert not config_path.exists(), "tailwind.config.js should be removed"

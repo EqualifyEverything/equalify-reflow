@@ -77,7 +77,7 @@ class CanvasPublisherService:
         original_filename: str,
         canvas_file_id: str,
         redis_client: Redis,
-        publish_page: bool = False,
+        published: bool = False,
     ) -> PublishResult:
         """Publish a processed document as a Canvas Page.
 
@@ -96,7 +96,7 @@ class CanvasPublisherService:
             original_filename: Original PDF filename (e.g., "lecture_notes.pdf")
             canvas_file_id: Canvas file ID of the original PDF
             redis_client: Redis async client for storing publish result
-            publish_page: If True, publish the page immediately. If False, create as draft.
+            published: If True, publish the page immediately. If False (default), create as draft.
 
         Returns:
             PublishResult with page URL, status, and metadata
@@ -124,9 +124,7 @@ class CanvasPublisherService:
 
         # 5. Create or update Canvas Page
         page_title = self._build_page_title(original_filename)
-        page_data, was_update = await self._create_or_update_page(
-            job_id, course_id, page_title, html_body, publish_page
-        )
+        page_data, was_update = await self._create_or_update_page(job_id, course_id, page_title, html_body, published)
 
         page_url = page_data.get("url", "")
         page_id = page_data.get("page_id", 0)
@@ -146,7 +144,7 @@ class CanvasPublisherService:
             canvas_file_ids=canvas_file_ids,
             download_url=download_url,
             page_title=page_title,
-            published=publish_page,
+            published=published,
             figure_count=len(canvas_file_ids),
         )
 

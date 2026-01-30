@@ -207,9 +207,35 @@ class TestPublish:
             original_filename="notes.pdf",
             canvas_file_id="500",
             redis_client=mock_redis,
-            publish_page=True,
+            published=True,
         )
         assert result.published is True
+
+    @pytest.mark.asyncio
+    async def test_passes_published_true_to_canvas_api(self, service, mock_canvas_client, mock_redis):
+        await service.publish(
+            job_id="job-1",
+            course_id="101",
+            original_filename="notes.pdf",
+            canvas_file_id="500",
+            redis_client=mock_redis,
+            published=True,
+        )
+        call_kwargs = mock_canvas_client.create_page.call_args.kwargs
+        assert call_kwargs["published"] is True
+
+    @pytest.mark.asyncio
+    async def test_defaults_to_draft(self, service, mock_canvas_client, mock_redis):
+        result = await service.publish(
+            job_id="job-1",
+            course_id="101",
+            original_filename="notes.pdf",
+            canvas_file_id="500",
+            redis_client=mock_redis,
+        )
+        call_kwargs = mock_canvas_client.create_page.call_args.kwargs
+        assert call_kwargs["published"] is False
+        assert result.published is False
 
     @pytest.mark.asyncio
     async def test_downloads_result_markdown(self, service, mock_storage, mock_redis):
@@ -517,9 +543,7 @@ class TestFigureUpload:
         assert result.canvas_file_ids == []
 
     @pytest.mark.asyncio
-    async def test_canvas_upload_returns_no_id(
-        self, service, mock_canvas_client, storage_with_figures, mock_redis
-    ):
+    async def test_canvas_upload_returns_no_id(self, service, mock_canvas_client, storage_with_figures, mock_redis):
         """If Canvas upload returns a file without an id, skip that figure."""
         service.storage = storage_with_figures
         mock_canvas_client.upload_file = AsyncMock(return_value={"url": "https://canvas.example.com/files/unknown"})

@@ -153,6 +153,34 @@ class TestGetCourseConfig:
         assert data["created_at"] == "2024-01-01T00:00:00Z"
         assert data["updated_at"] == "2024-06-15T10:00:00Z"
 
+    def test_defaults_calls_get_config_with_course_id(self, client, mock_config_service):
+        """Verifies get_config is called with the path parameter course_id."""
+        mock_config_service.get_config.return_value = None
+
+        client.get("/api/v1/canvas/courses/42/config")
+
+        mock_config_service.get_config.assert_awaited_once_with("42")
+
+    def test_defaults_response_has_exact_keys(self, client, mock_config_service):
+        """Default response contains exactly the expected keys, no extras."""
+        mock_config_service.get_config.return_value = None
+
+        response = client.get("/api/v1/canvas/courses/123/config")
+
+        data = response.json()
+        expected_keys = {"course_id", "enabled", "auto_publish_threshold", "created_at", "updated_at"}
+        assert set(data.keys()) == expected_keys
+
+    def test_defaults_for_different_course_ids(self, client, mock_config_service):
+        """Each unconfigured course gets its own course_id in the defaults."""
+        mock_config_service.get_config.return_value = None
+
+        for cid in ["100", "200", "99999"]:
+            response = client.get(f"/api/v1/canvas/courses/{cid}/config")
+            assert response.status_code == status.HTTP_200_OK
+            assert response.json()["course_id"] == cid
+            assert response.json()["enabled"] is False
+
     def test_does_not_expose_api_token(self, client, mock_config_service):
         """Config response does not include the Canvas API token."""
         mock_config_service.get_config.return_value = CourseConfig(

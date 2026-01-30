@@ -76,12 +76,9 @@ async def lifespan(app: FastAPI) -> AsyncIterator[None]:
         worker_tasks = [
             asyncio.create_task(start_pii_worker(shutdown_event)),
             asyncio.create_task(start_timeout_worker(shutdown_event)),
+            asyncio.create_task(start_canvas_file_worker(shutdown_event)),
         ]
-        logger.info("PII and Timeout worker tasks created")
-
-        if settings.canvas_autopublish_enabled:
-            worker_tasks.append(asyncio.create_task(start_canvas_file_worker(shutdown_event)))
-            logger.info("Canvas file discovery worker started")
+        logger.info("PII, Timeout, and Canvas file discovery worker tasks created")
 
     yield
 

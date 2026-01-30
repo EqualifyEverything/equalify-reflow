@@ -1,8 +1,7 @@
 """Unit tests for main.py lifespan canvas worker startup.
 
 Tests cover:
-- Canvas file worker is started when canvas_autopublish_enabled=True
-- Canvas file worker is NOT started when canvas_autopublish_enabled=False
+- Canvas file worker is always started when workers are enabled
 - Canvas file worker is NOT started when workers are disabled
 """
 
@@ -64,8 +63,8 @@ class TestLifespanCanvasWorkerStartup:
         mock_lifespan_dependencies["canvas_worker"].assert_called_once()
 
     @pytest.mark.asyncio
-    async def test_canvas_worker_not_started_when_autopublish_disabled(self, mock_lifespan_dependencies):
-        """Canvas file worker task is NOT created when canvas_autopublish_enabled=False."""
+    async def test_canvas_worker_started_when_autopublish_disabled(self, mock_lifespan_dependencies):
+        """Canvas file worker task is created even when canvas_autopublish_enabled=False."""
         from src.main import app
 
         with patch("src.main.settings") as mock_settings:
@@ -77,7 +76,7 @@ class TestLifespanCanvasWorkerStartup:
             async with app.router.lifespan_context(app):
                 pass
 
-        mock_lifespan_dependencies["canvas_worker"].assert_not_called()
+        mock_lifespan_dependencies["canvas_worker"].assert_called_once()
 
     @pytest.mark.asyncio
     async def test_canvas_worker_not_started_when_workers_disabled(self, mock_lifespan_dependencies):
@@ -98,8 +97,8 @@ class TestLifespanCanvasWorkerStartup:
         mock_lifespan_dependencies["timeout_worker"].assert_not_called()
 
     @pytest.mark.asyncio
-    async def test_pii_and_timeout_workers_always_started(self, mock_lifespan_dependencies):
-        """PII and timeout workers are always started when workers are not disabled."""
+    async def test_all_workers_always_started(self, mock_lifespan_dependencies):
+        """All workers are always started when workers are not disabled."""
         from src.main import app
 
         with patch("src.main.settings") as mock_settings:
@@ -113,3 +112,4 @@ class TestLifespanCanvasWorkerStartup:
 
         mock_lifespan_dependencies["pii_worker"].assert_called_once()
         mock_lifespan_dependencies["timeout_worker"].assert_called_once()
+        mock_lifespan_dependencies["canvas_worker"].assert_called_once()

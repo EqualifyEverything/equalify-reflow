@@ -9,6 +9,7 @@ import redis.asyncio as redis
 from botocore.config import Config
 from fastapi import Depends
 
+from .canvas.course_config import CourseConfigService
 from .config import settings
 from .services.application_service import ApplicationService
 from .services.correction_approval_service import CorrectionApprovalService
@@ -387,3 +388,21 @@ async def get_document_processing_service(
         storage_service=storage,
         s3_url_service=s3_url,
     )
+
+
+async def get_course_config_service(
+    redis_client: Any = Depends(get_redis_client),
+) -> CourseConfigService:
+    """Get course config service instance.
+
+    Args:
+        redis_client: Redis client (auto-injected by FastAPI Depends)
+
+    Returns:
+        Configured CourseConfigService instance
+
+    Note:
+        In FastAPI routes, use:
+            config_service: CourseConfigService = Depends(get_course_config_service)
+    """
+    return CourseConfigService(redis_client=redis_client)

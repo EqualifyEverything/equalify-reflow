@@ -150,6 +150,13 @@ if settings.environment == "dev":
     app.include_router(dev_monitoring.router)
     logger.info("✅ Dev monitoring endpoints enabled at /api/dev/monitoring/queues")
 
+# Conditionally enable Canvas config endpoints
+if settings.canvas_autopublish_enabled:
+    from .api.canvas_config import router as canvas_config_router
+
+    app.include_router(canvas_config_router)
+    logger.info("Canvas config endpoints enabled at /api/v1/canvas/courses/*")
+
 # Conditionally enable LTI 1.3 integration
 if settings.lti_enabled:
     from .lti import router as lti_router

@@ -1,12 +1,13 @@
 """Unit tests for SecurityHeadersMiddleware.
 
 Tests cover:
-- Dashboard routes get CSP frame-ancestors allowing Canvas origin
-- Dashboard routes do not get X-Frame-Options: DENY
-- Non-dashboard routes get X-Frame-Options: DENY
-- Non-dashboard routes get CSP frame-ancestors 'none'
+- LTI routes get CSP frame-ancestors allowing Canvas origin
+- LTI routes do not get X-Frame-Options: DENY
+- Non-LTI routes get X-Frame-Options: DENY
+- Non-LTI routes get CSP frame-ancestors 'none'
 - Canvas origin normalization from issuer URL
-- Static canvas assets are treated as dashboard routes
+- Static canvas assets are treated as LTI routes
+- LTI login/launch endpoints allow iframe embedding
 - Empty canvas_origin falls back to 'self' only
 """
 
@@ -35,6 +36,14 @@ def _make_app(canvas_origin: str = "") -> FastAPI:
     @app.get("/static/canvas/dashboard.css")
     async def dashboard_css() -> PlainTextResponse:
         return PlainTextResponse("css", media_type="text/css")
+
+    @app.post("/lti/login")
+    async def lti_login() -> PlainTextResponse:
+        return PlainTextResponse("login")
+
+    @app.post("/lti/launch")
+    async def lti_launch() -> PlainTextResponse:
+        return PlainTextResponse("launch")
 
     @app.get("/api/v1/health")
     async def health() -> PlainTextResponse:
@@ -96,9 +105,25 @@ class TestDashboardFrameHeaders:
         csp = response.headers.get("content-security-policy", "")
         assert csp == "frame-ancestors 'self'"
 
+    def test_lti_login_has_frame_ancestors(self):
+        """LTI login endpoint allows Canvas iframe (OIDC initiation)."""
+        client = TestClient(_make_app(canvas_origin="https://canvas.instructure.com"))
+        response = client.post("/lti/login")
+        csp = response.headers.get("content-security-policy", "")
+        assert "frame-ancestors 'self' https://canvas.instructure.com" == csp
+        assert "x-frame-options" not in response.headers
+
+    def test_lti_launch_has_frame_ancestors(self):
+        """LTI launch endpoint allows Canvas iframe (JWT post)."""
+        client = TestClient(_make_app(canvas_origin="https://canvas.instructure.com"))
+        response = client.post("/lti/launch")
+        csp = response.headers.get("content-security-policy", "")
+        assert "frame-ancestors 'self' https://canvas.instructure.com" == csp
+        assert "x-frame-options" not in response.headers
+
 
 # ===========================================================================
-# Non-dashboard routes: strict framing denied
+# Non-LTI routes: strict framing denied
 # ===========================================================================
 
 

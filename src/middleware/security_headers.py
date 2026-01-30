@@ -14,8 +14,11 @@ from starlette.responses import Response
 
 logger = logging.getLogger(__name__)
 
-# Dashboard routes that Canvas embeds in an iframe
-_LTI_DASHBOARD_PREFIX = "/lti/dashboard"
+# Routes that Canvas embeds in an iframe:
+# - /lti/login and /lti/launch: OIDC initiation and JWT launch (iframe POST)
+# - /lti/dashboard/*: instructor dashboard pages
+# - /static/canvas/*: static assets for dashboard templates
+_LTI_PREFIX = "/lti/"
 _LTI_STATIC_PREFIX = "/static/canvas"
 
 
@@ -46,15 +49,15 @@ class SecurityHeadersMiddleware(BaseHTTPMiddleware):
             return f"{parsed.scheme}://{parsed.netloc}"
         return issuer_url.rstrip("/")
 
-    def _is_dashboard_route(self, path: str) -> bool:
-        """Check if the request path is a dashboard or dashboard-static route."""
-        return path.startswith(_LTI_DASHBOARD_PREFIX) or path.startswith(_LTI_STATIC_PREFIX)
+    def _is_lti_route(self, path: str) -> bool:
+        """Check if the request path is an LTI or LTI-static route."""
+        return path.startswith(_LTI_PREFIX) or path.startswith(_LTI_STATIC_PREFIX)
 
     async def dispatch(self, request: Request, call_next: RequestResponseEndpoint) -> Response:
         response = await call_next(request)
 
-        if self._is_dashboard_route(request.url.path):
-            # Allow Canvas to embed dashboard pages in an iframe
+        if self._is_lti_route(request.url.path):
+            # Allow Canvas to embed LTI pages in an iframe
             ancestors = "'self'"
             if self.canvas_origin:
                 ancestors = f"'self' {self.canvas_origin}"

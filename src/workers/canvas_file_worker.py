@@ -76,7 +76,11 @@ class CanvasFileWorker:
                 except Exception as e:
                     logger.error(f"Canvas file worker error: {e}", exc_info=True)
                     worker_errors_total.labels(worker_name="canvas_file", error_type=type(e).__name__).inc()
-                    await asyncio.sleep(settings.worker_error_sleep_seconds)
+                    # Error sleep also checks shutdown to exit promptly
+                    for _ in range(settings.worker_error_sleep_seconds):
+                        if shutdown_event.is_set():
+                            break
+                        await asyncio.sleep(1)
                     continue
 
                 # Sleep for the polling interval, checking shutdown periodically
@@ -92,7 +96,7 @@ class CanvasFileWorker:
         finally:
             self.running = False
             worker_active_gauge.labels(worker_name="canvas_file").set(0)
-            logger.info("Canvas file discovery worker shutting down gracefully")
+            logger.info("Canvas file discovery worker stopped")
 
     async def poll_courses(self) -> int:
         """Poll all enabled courses for new PDFs.

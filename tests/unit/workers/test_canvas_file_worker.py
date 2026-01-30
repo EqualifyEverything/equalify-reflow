@@ -162,6 +162,59 @@ class TestRunLifecycle:
         assert call_count >= 2
 
     @pytest.mark.asyncio
+    async def test_run_exits_during_error_sleep_on_shutdown(self, worker):
+        """Worker exits promptly from error sleep when shutdown_event is set."""
+        shutdown_event = asyncio.Event()
+        call_count = 0
+
+        async def fail_then_never_called():
+            nonlocal call_count
+            call_count += 1
+            if call_count == 1:
+                raise RuntimeError("Simulated error")
+            # Should never reach here — shutdown during error sleep
+            return 0  # pragma: no cover
+
+        worker.poll_courses = fail_then_never_called
+
+        sleep_calls: list[float] = []
+        original_sleep = asyncio.sleep
+
+        async def tracking_sleep(duration):
+            sleep_calls.append(duration)
+            # Set shutdown after the first error-sleep tick
+            shutdown_event.set()
+            await original_sleep(0)
+
+        with patch("src.workers.canvas_file_worker.settings") as mock_settings:
+            mock_settings.worker_error_sleep_seconds = 60  # Long sleep
+            with patch("src.workers.canvas_file_worker.asyncio.sleep", side_effect=tracking_sleep):
+                await worker.run(shutdown_event)
+
+        # Only one poll attempt before error, then exit during error sleep
+        assert call_count == 1
+        assert not worker.running
+        # Should have slept only once (1s tick), not the full 60s
+        assert len(sleep_calls) == 1
+
+    @pytest.mark.asyncio
+    async def test_run_resets_active_gauge_on_exit(self, worker):
+        """Worker resets the active gauge to 0 when exiting."""
+        shutdown_event = asyncio.Event()
+        shutdown_event.set()
+
+        with patch("src.workers.canvas_file_worker.worker_active_gauge") as mock_gauge:
+            mock_labels = MagicMock()
+            mock_gauge.labels.return_value = mock_labels
+
+            await worker.run(shutdown_event)
+
+            # Gauge set to 1 on start, then 0 on exit
+            assert mock_labels.set.call_count == 2
+            mock_labels.set.assert_any_call(1)
+            mock_labels.set.assert_any_call(0)
+
+    @pytest.mark.asyncio
     async def test_run_uses_custom_polling_interval(
         self, mock_config_service, mock_job_service, mock_storage_service, mock_queue_service
     ):

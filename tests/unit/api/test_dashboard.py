@@ -394,6 +394,35 @@ class TestDashboardSettings:
         assert "Auto-publish confidence threshold" in response.text
         assert "1.00" in response.text  # mentions draft behavior at 1.00
 
+    def test_save_result_container_has_indicator_class(self, client, mock_config_service):
+        """Settings form has save-result container with save-indicator class for fade animation."""
+        mock_config_service.get_config.return_value = None
+
+        response = client.get("/lti/dashboard/123/settings?lti_session=test-session")
+
+        assert response.status_code == 200
+        assert 'id="save-result"' in response.text
+        assert "save-indicator" in response.text
+
+    def test_save_button_has_id_for_htmx_state(self, client, mock_config_service):
+        """Save button has id for CSS-based htmx request state styling."""
+        mock_config_service.get_config.return_value = None
+
+        response = client.get("/lti/dashboard/123/settings?lti_session=test-session")
+
+        assert response.status_code == 200
+        assert 'id="save-btn"' in response.text
+
+    def test_form_targets_save_result(self, client, mock_config_service):
+        """Settings form htmx PUT targets #save-result with innerHTML swap."""
+        mock_config_service.get_config.return_value = None
+
+        response = client.get("/lti/dashboard/123/settings?lti_session=test-session")
+
+        assert response.status_code == 200
+        assert 'hx-target="#save-result"' in response.text
+        assert 'hx-swap="innerHTML"' in response.text
+
 
 # ===========================================================================
 # GET /lti/dashboard/{course_id}/documents/{file_id} - Document Detail
@@ -1335,6 +1364,58 @@ class TestDashboardConfigUpdate:
         saved_config = call_args[1]
         assert saved_config.updated_at != ""
 
+    def test_success_response_has_status_role(self, client, mock_config_service):
+        """Success response includes role=status for accessibility."""
+        mock_config_service.get_config.return_value = None
+
+        response = client.put(
+            "/lti/dashboard/123/config?lti_session=test-session",
+            data={"enabled": "on", "auto_publish_threshold": "0.85"},
+        )
+
+        assert response.status_code == 200
+        assert 'role="status"' in response.text
+
+    def test_success_response_has_green_styling(self, client, mock_config_service):
+        """Success response has green styling classes for visual feedback."""
+        mock_config_service.get_config.return_value = None
+
+        response = client.put(
+            "/lti/dashboard/123/config?lti_session=test-session",
+            data={"enabled": "on", "auto_publish_threshold": "0.85"},
+        )
+
+        assert response.status_code == 200
+        assert "text-green-700" in response.text
+        assert "bg-green-50" in response.text
+        assert "border-green-200" in response.text
+
+    def test_error_response_has_alert_role(self, client, mock_config_service):
+        """Error response includes role=alert for accessibility."""
+        mock_config_service.get_config.side_effect = RuntimeError("Redis down")
+
+        response = client.put(
+            "/lti/dashboard/123/config?lti_session=test-session",
+            data={"enabled": "on", "auto_publish_threshold": "0.85"},
+        )
+
+        assert response.status_code == 500
+        assert 'role="alert"' in response.text
+
+    def test_error_response_has_red_styling(self, client, mock_config_service):
+        """Error response has red styling classes for visual feedback."""
+        mock_config_service.get_config.side_effect = RuntimeError("Redis down")
+
+        response = client.put(
+            "/lti/dashboard/123/config?lti_session=test-session",
+            data={"enabled": "on", "auto_publish_threshold": "0.85"},
+        )
+
+        assert response.status_code == 500
+        assert "text-red-700" in response.text
+        assert "bg-red-50" in response.text
+        assert "Failed to save" in response.text
+
 
 # ===========================================================================
 # LTI Dashboard Launch
@@ -1650,6 +1731,32 @@ class TestDashboardCSS:
         ]
         for cls in required_classes:
             assert cls in content, f"Missing CSS class: {cls}"
+
+    def test_source_css_contains_save_indicator_animation(self):
+        """Source CSS contains save-indicator fade-out animation."""
+        from pathlib import Path
+
+        css_path = Path(__file__).resolve().parents[3] / "src" / "canvas" / "static" / "src" / "dashboard.css"
+        content = css_path.read_text()
+        assert ".save-indicator" in content
+        assert "fade-out" in content
+
+    def test_source_css_contains_htmx_request_state(self):
+        """Source CSS contains htmx-request state for save button."""
+        from pathlib import Path
+
+        css_path = Path(__file__).resolve().parents[3] / "src" / "canvas" / "static" / "src" / "dashboard.css"
+        content = css_path.read_text()
+        assert ".htmx-request #save-btn" in content
+
+    def test_dist_css_contains_save_indicator_animation(self):
+        """Dist CSS contains save-indicator fade-out animation."""
+        from pathlib import Path
+
+        css_path = Path(__file__).resolve().parents[3] / "src" / "canvas" / "static" / "dist" / "dashboard.css"
+        content = css_path.read_text()
+        assert ".save-indicator" in content
+        assert "fade-out" in content
 
     def test_tailwind_config_exists_at_root(self):
         """Root tailwind.config.js exists and points to canvas templates."""

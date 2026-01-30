@@ -658,14 +658,14 @@ async def dashboard_update_config(
         await config_service.set_config(course_id, existing)
 
         return HTMLResponse(
-            content='<div class="text-green-700 bg-green-50 border border-green-200 '
+            content='<div role="status" class="text-green-700 bg-green-50 border border-green-200 '
             'rounded px-4 py-2 text-sm">Settings saved successfully.</div>',
         )
 
     except Exception as e:
         logger.error(f"Dashboard config update failed for {course_id}: {e}", exc_info=True)
         return HTMLResponse(
-            content=f'<div class="text-red-700 bg-red-50 border border-red-200 '
+            content=f'<div role="alert" class="text-red-700 bg-red-50 border border-red-200 '
             f'rounded px-4 py-2 text-sm">Failed to save: {e}</div>',
             status_code=500,
         )

@@ -147,3 +147,16 @@ table { border-collapse: collapse; }
 /* === Form Elements === */
 input[type="checkbox"] { height: 1rem; width: 1rem; border-radius: 0.25rem; border: 1px solid #d1d5db; }
 input[type="range"] { width: 100%; }
+
+/* === Save Indicator === */
+.save-indicator > div {
+  animation: fade-out 3s ease-in forwards;
+}
+@keyframes fade-out {
+  0%, 60% { opacity: 1; }
+  100% { opacity: 0; }
+}
+
+/* === htmx States === */
+.htmx-request #save-btn { opacity: 0.5; pointer-events: none; }
+.htmx-request #save-btn::after { content: "..."; }

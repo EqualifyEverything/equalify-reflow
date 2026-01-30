@@ -129,7 +129,7 @@ class CanvasPublisherService:
         page_url = page_data.get("url", "")
         page_id = page_data.get("page_id", 0)
 
-        # 6. Module placement (non-fatal; skip on update to avoid duplicates)
+        # 6. Module placement (skip on update to avoid duplicates)
         if not was_update:
             await self._place_in_module(job_id, course_id, canvas_file_id, page_title, page_url)
         else:
@@ -315,13 +315,17 @@ class CanvasPublisherService:
     ) -> None:
         """Find the PDF in a module and add the page after it.
 
-        This is non-fatal: failures are logged but do not raise.
+        Raises:
+            PublishError: If listing modules or creating the module item fails.
         """
         try:
             modules = await self.canvas.list_modules(course_id, include_items=True)
         except CanvasAPIError as e:
-            logger.warning(f"Job {job_id}: Failed to list modules for course {course_id}: {e}")
-            return
+            raise PublishError(
+                f"Failed to list modules for course {course_id}: {e}",
+                job_id=job_id,
+                course_id=course_id,
+            ) from e
 
         for module in modules:
             items = module.get("items", [])
@@ -342,7 +346,11 @@ class CanvasPublisherService:
                         )
                         logger.info(f"Job {job_id}: Added page to module {module_id} at position {pdf_position + 1}")
                     except CanvasAPIError as e:
-                        logger.warning(f"Job {job_id}: Failed to add page to module {module_id}: {e}")
+                        raise PublishError(
+                            f"Failed to add page to module {module_id}: {e}",
+                            job_id=job_id,
+                            course_id=course_id,
+                        ) from e
                     return
 
         logger.info(f"Job {job_id}: PDF file {canvas_file_id} not found in any module, skipping module placement")

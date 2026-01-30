@@ -733,8 +733,8 @@ class TestModulePlacement:
         mock_canvas_client.create_module_item.assert_not_awaited()
 
     @pytest.mark.asyncio
-    async def test_module_placement_failure_is_non_fatal(self, service, mock_canvas_client, mock_redis):
-        """R8: Module placement failure does not fail the publish."""
+    async def test_module_placement_failure_raises_publish_error(self, service, mock_canvas_client, mock_redis):
+        """Module item creation failure fails the publish."""
         mock_canvas_client.list_modules.return_value = [
             {
                 "id": 10,
@@ -745,27 +745,32 @@ class TestModulePlacement:
             }
         ]
         mock_canvas_client.create_module_item.side_effect = CanvasAPIError("Module item creation failed")
-        # Should NOT raise
-        result = await service.publish(
-            job_id="job-1",
-            course_id="101",
-            original_filename="notes.pdf",
-            canvas_file_id="500",
-            redis_client=mock_redis,
-        )
-        assert isinstance(result, PublishResult)
+        with pytest.raises(PublishError) as exc_info:
+            await service.publish(
+                job_id="job-1",
+                course_id="101",
+                original_filename="notes.pdf",
+                canvas_file_id="500",
+                redis_client=mock_redis,
+            )
+        assert exc_info.value.job_id == "job-1"
+        assert exc_info.value.course_id == "101"
+        assert "module" in str(exc_info.value).lower()
 
     @pytest.mark.asyncio
-    async def test_list_modules_failure_is_non_fatal(self, service, mock_canvas_client, mock_redis):
+    async def test_list_modules_failure_raises_publish_error(self, service, mock_canvas_client, mock_redis):
+        """Listing modules failure fails the publish."""
         mock_canvas_client.list_modules.side_effect = CanvasAPIError("Modules API failed")
-        result = await service.publish(
-            job_id="job-1",
-            course_id="101",
-            original_filename="notes.pdf",
-            canvas_file_id="500",
-            redis_client=mock_redis,
-        )
-        assert isinstance(result, PublishResult)
+        with pytest.raises(PublishError) as exc_info:
+            await service.publish(
+                job_id="job-1",
+                course_id="101",
+                original_filename="notes.pdf",
+                canvas_file_id="500",
+                redis_client=mock_redis,
+            )
+        assert exc_info.value.job_id == "job-1"
+        assert exc_info.value.course_id == "101"
 
     @pytest.mark.asyncio
     async def test_pdf_in_multiple_modules_places_only_in_first(self, service, mock_canvas_client, mock_redis):

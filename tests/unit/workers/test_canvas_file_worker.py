@@ -514,6 +514,28 @@ class TestPollCourse:
         assert tokens_used == ["token-course-a", "token-course-b"]
 
     @pytest.mark.asyncio
+    async def test_filters_for_pdf_content_type(
+        self, worker, mock_config_service, sample_course_config
+    ):
+        """poll_course() passes content_types=['application/pdf'] to list_course_files."""
+        mock_config_service.get_config.return_value = sample_course_config
+
+        with patch("src.workers.canvas_file_worker.CanvasAPIClient") as mock_client_cls:
+            mock_client_instance = AsyncMock()
+            mock_client_cls.return_value = mock_client_instance
+            mock_client_instance.list_course_files = AsyncMock(return_value=[])
+            mock_client_instance.close = AsyncMock()
+
+            await worker.poll_course("101")
+
+            mock_client_instance.list_course_files.assert_awaited_once_with(
+                "101",
+                content_types=["application/pdf"],
+                sort="created_at",
+                order="desc",
+            )
+
+    @pytest.mark.asyncio
     async def test_skips_already_processed_files(
         self, worker, mock_config_service, sample_course_config, sample_canvas_file
     ):

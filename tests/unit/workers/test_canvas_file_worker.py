@@ -468,6 +468,52 @@ class TestPollCourse:
         assert result == 0
 
     @pytest.mark.asyncio
+    async def test_creates_client_with_course_api_token(
+        self, worker, mock_config_service, sample_course_config
+    ):
+        """CanvasAPIClient is created using the course's stored API token."""
+        mock_config_service.get_config.return_value = sample_course_config
+
+        with patch("src.workers.canvas_file_worker.CanvasAPIClient") as mock_client_cls:
+            mock_client_instance = AsyncMock()
+            mock_client_cls.return_value = mock_client_instance
+            mock_client_instance.list_course_files = AsyncMock(return_value=[])
+            mock_client_instance.close = AsyncMock()
+
+            with patch("src.workers.canvas_file_worker.settings") as mock_settings:
+                mock_settings.canvas_api_url = "https://canvas.example.com"
+                mock_settings.canvas_rate_limit_buffer = 75
+
+                await worker.poll_course("101")
+
+            mock_client_cls.assert_called_once_with(
+                base_url="https://canvas.example.com",
+                api_token="test-token-123",
+                rate_limit_buffer=75,
+            )
+
+    @pytest.mark.asyncio
+    async def test_each_course_uses_its_own_token(self, worker, mock_config_service):
+        """Each course creates a CanvasAPIClient with its own stored token."""
+        course_a_config = CourseConfig(enabled=True, canvas_api_token="token-course-a")
+        course_b_config = CourseConfig(enabled=True, canvas_api_token="token-course-b")
+
+        mock_config_service.get_config.side_effect = [course_a_config, course_b_config]
+        mock_config_service.list_enabled_courses.return_value = ["A", "B"]
+
+        with patch("src.workers.canvas_file_worker.CanvasAPIClient") as mock_client_cls:
+            mock_client_instance = AsyncMock()
+            mock_client_cls.return_value = mock_client_instance
+            mock_client_instance.list_course_files = AsyncMock(return_value=[])
+            mock_client_instance.close = AsyncMock()
+
+            await worker.poll_courses()
+
+        assert mock_client_cls.call_count == 2
+        tokens_used = [call.kwargs["api_token"] for call in mock_client_cls.call_args_list]
+        assert tokens_used == ["token-course-a", "token-course-b"]
+
+    @pytest.mark.asyncio
     async def test_skips_already_processed_files(
         self, worker, mock_config_service, sample_course_config, sample_canvas_file
     ):

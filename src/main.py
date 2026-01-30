@@ -155,7 +155,7 @@ if settings.canvas_autopublish_enabled:
     from .api.canvas_config import router as canvas_config_router
 
     app.include_router(canvas_config_router)
-    logger.info("Canvas config endpoints enabled at /api/v1/canvas/courses/*")
+    logger.info("✅ Canvas config endpoints enabled at /api/v1/canvas/courses/*")
 
 # Conditionally enable LTI 1.3 integration
 if settings.lti_enabled:

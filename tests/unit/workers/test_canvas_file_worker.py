@@ -650,6 +650,129 @@ class TestPollCourse:
         mock_config_service.is_file_new_or_updated.assert_any_await("101", "30", "2024-06-15T12:00:00Z")
 
     @pytest.mark.asyncio
+    async def test_skips_file_with_same_updated_at_as_completed(
+        self, worker, mock_config_service, sample_course_config
+    ):
+        """poll_course() skips a file whose updated_at matches a completed ProcessedFile record.
+
+        Verifies the deduplication contract: when is_file_new_or_updated() returns False
+        (same updated_at + status=completed), the file is not queued and _queue_file_for_processing
+        is never called.
+        """
+        mock_config_service.get_config.return_value = sample_course_config
+        mock_config_service.is_file_new_or_updated.return_value = False
+
+        file_already_done = {
+            "id": 42,
+            "display_name": "lecture-notes.pdf",
+            "url": "https://canvas.example.com/files/42/download",
+            "updated_at": "2024-06-15T10:30:00Z",
+        }
+
+        worker._queue_file_for_processing = AsyncMock(return_value="should-not-be-called")
+
+        with patch("src.workers.canvas_file_worker.CanvasAPIClient") as mock_client_cls:
+            mock_client_instance = AsyncMock()
+            mock_client_cls.return_value = mock_client_instance
+            mock_client_instance.list_course_files = AsyncMock(return_value=[file_already_done])
+            mock_client_instance.close = AsyncMock()
+
+            result = await worker.poll_course("101")
+
+        assert result == 0
+        mock_config_service.is_file_new_or_updated.assert_awaited_once_with(
+            "101", "42", "2024-06-15T10:30:00Z"
+        )
+        worker._queue_file_for_processing.assert_not_awaited()
+
+    @pytest.mark.asyncio
+    async def test_queues_file_with_newer_updated_at(
+        self, worker, mock_config_service, sample_course_config
+    ):
+        """poll_course() queues a file whose updated_at is newer than the stored record.
+
+        When is_file_new_or_updated() returns True (Canvas updated_at > stored value),
+        the file is passed to _queue_file_for_processing.
+        """
+        mock_config_service.get_config.return_value = sample_course_config
+        mock_config_service.is_file_new_or_updated.return_value = True
+
+        updated_file = {
+            "id": 42,
+            "display_name": "lecture-notes-v2.pdf",
+            "url": "https://canvas.example.com/files/42/download",
+            "updated_at": "2024-06-16T10:30:00Z",
+        }
+
+        worker._queue_file_for_processing = AsyncMock(return_value="job-123")
+
+        with patch("src.workers.canvas_file_worker.CanvasAPIClient") as mock_client_cls:
+            mock_client_instance = AsyncMock()
+            mock_client_cls.return_value = mock_client_instance
+            mock_client_instance.list_course_files = AsyncMock(return_value=[updated_file])
+            mock_client_instance.close = AsyncMock()
+
+            result = await worker.poll_course("101")
+
+        assert result == 1
+        mock_config_service.is_file_new_or_updated.assert_awaited_once_with(
+            "101", "42", "2024-06-16T10:30:00Z"
+        )
+        worker._queue_file_for_processing.assert_awaited_once()
+
+    @pytest.mark.asyncio
+    async def test_mixed_new_and_already_processed_files(
+        self, worker, mock_config_service, sample_course_config
+    ):
+        """poll_course() processes new files and skips already-processed ones in the same batch.
+
+        Given a mix of files where some have already been processed (same updated_at,
+        completed status) and some are new, only new files are queued.
+        """
+        mock_config_service.get_config.return_value = sample_course_config
+
+        already_done = {
+            "id": 10,
+            "display_name": "old.pdf",
+            "url": "https://canvas.example.com/files/10/download",
+            "updated_at": "2024-06-01T08:00:00Z",
+        }
+        brand_new = {
+            "id": 20,
+            "display_name": "new.pdf",
+            "url": "https://canvas.example.com/files/20/download",
+            "updated_at": "2024-06-15T10:00:00Z",
+        }
+        also_done = {
+            "id": 30,
+            "display_name": "also-old.pdf",
+            "url": "https://canvas.example.com/files/30/download",
+            "updated_at": "2024-05-20T12:00:00Z",
+        }
+
+        # is_file_new_or_updated returns False for already-done, True for new
+        mock_config_service.is_file_new_or_updated.side_effect = [False, True, False]
+
+        worker._queue_file_for_processing = AsyncMock(return_value="job-new")
+
+        with patch("src.workers.canvas_file_worker.CanvasAPIClient") as mock_client_cls:
+            mock_client_instance = AsyncMock()
+            mock_client_cls.return_value = mock_client_instance
+            mock_client_instance.list_course_files = AsyncMock(
+                return_value=[already_done, brand_new, also_done]
+            )
+            mock_client_instance.close = AsyncMock()
+
+            result = await worker.poll_course("101")
+
+        assert result == 1
+        assert mock_config_service.is_file_new_or_updated.await_count == 3
+        # Only the new file should have been queued
+        worker._queue_file_for_processing.assert_awaited_once()
+        queued_file = worker._queue_file_for_processing.call_args[0][1]
+        assert queued_file["id"] == 20
+
+    @pytest.mark.asyncio
     async def test_skips_files_without_id(self, worker, mock_config_service, sample_course_config):
         """Files missing id field are skipped."""
         mock_config_service.get_config.return_value = sample_course_config

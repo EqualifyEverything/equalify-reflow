@@ -4,6 +4,7 @@ Tests cover:
 - Canvas file worker is always started when workers are enabled
 - Canvas file worker is NOT started when workers are disabled
 - Canvas config router is registered when canvas_autopublish_enabled=True
+- Dashboard static files are mounted at /static/canvas when LTI is enabled
 """
 
 from unittest.mock import AsyncMock, patch
@@ -167,3 +168,69 @@ class TestCanvasConfigRouterRegistration:
         assert found_gate, (
             "src/main.py must gate canvas config router registration behind `if settings.canvas_autopublish_enabled:`"
         )
+
+
+class TestDashboardStaticFilesMount:
+    """Tests that main.py mounts the compiled Tailwind CSS static files directory."""
+
+    def test_static_canvas_mount_present_on_app(self):
+        """The /static/canvas mount is present on the app when LTI is enabled."""
+        from src.main import app
+
+        mount_paths = [getattr(r, "path", "") for r in app.routes]
+        assert "/static/canvas" in mount_paths, "Static files mount at /static/canvas should be present on the app"
+
+    def test_static_canvas_mount_named_correctly(self):
+        """The /static/canvas mount has the expected name 'canvas-static'."""
+        from src.main import app
+
+        for route in app.routes:
+            if getattr(route, "path", "") == "/static/canvas":
+                assert route.name == "canvas-static"
+                return
+        pytest.fail("No mount found at /static/canvas")
+
+    def test_static_canvas_mount_is_starlette_mount(self):
+        """The /static/canvas route is a Starlette Mount with a StaticFiles app."""
+        from src.main import app
+        from starlette.routing import Mount
+
+        for route in app.routes:
+            if getattr(route, "path", "") == "/static/canvas":
+                assert isinstance(route, Mount), "Route should be a Starlette Mount"
+                return
+        pytest.fail("No mount found at /static/canvas")
+
+    def test_dist_directory_exists(self):
+        """The canvas/static/dist directory exists with CSS files."""
+        from pathlib import Path
+
+        dist_dir = Path(__file__).resolve().parents[2] / "src" / "canvas" / "static" / "dist"
+        assert dist_dir.exists(), f"Expected dist directory at {dist_dir}"
+        css_files = list(dist_dir.glob("*.css"))
+        assert len(css_files) > 0, "dist directory should contain at least one CSS file"
+
+    def test_static_mount_gated_by_lti_enabled(self):
+        """Static files mount is inside the `if settings.lti_enabled:` block."""
+        import ast
+        from pathlib import Path
+
+        main_source = Path("src/main.py").read_text()
+        tree = ast.parse(main_source)
+
+        found_mount_in_lti_block = False
+        for node in ast.walk(tree):
+            if isinstance(node, ast.If):
+                test = node.test
+                if (
+                    isinstance(test, ast.Attribute)
+                    and isinstance(test.value, ast.Name)
+                    and test.value.id == "settings"
+                    and test.attr == "lti_enabled"
+                ):
+                    # Check for app.mount call with "/static/canvas" inside this block
+                    block_source = ast.dump(ast.Module(body=node.body, type_ignores=[]))
+                    if "static/canvas" in block_source or "StaticFiles" in block_source:
+                        found_mount_in_lti_block = True
+
+        assert found_mount_in_lti_block, "src/main.py must mount /static/canvas inside `if settings.lti_enabled:` block"

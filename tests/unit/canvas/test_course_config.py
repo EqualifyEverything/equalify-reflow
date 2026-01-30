@@ -574,6 +574,48 @@ class TestIsFileNewOrUpdated:
         await service.is_file_new_or_updated("course-500", "file-abc", "2024-01-01T00:00:00Z")
         mock_redis.hget.assert_called_with("eq-pdf:processed:course-500", "file-abc")
 
+    async def test_returns_true_for_multiple_unprocessed_files(self, service, mock_redis):
+        """Each unprocessed file independently returns True."""
+        mock_redis.hget.return_value = None
+        assert await service.is_file_new_or_updated("c1", "f1", "2024-01-01T00:00:00Z") is True
+        assert await service.is_file_new_or_updated("c1", "f2", "2024-02-01T00:00:00Z") is True
+        assert await service.is_file_new_or_updated("c1", "f3", "2024-03-01T00:00:00Z") is True
+
+    async def test_returns_true_for_unprocessed_file_in_course_with_other_processed(
+        self, service, mock_redis, sample_processed_file
+    ):
+        """An unprocessed file returns True even when the same course has other processed files."""
+        # First call: file exists in processed set
+        mock_redis.hget.return_value = sample_processed_file.model_dump_json()
+        assert await service.is_file_new_or_updated("c1", "12345", "2024-01-15T10:30:00Z") is False
+
+        # Second call: different file_id not in processed set
+        mock_redis.hget.return_value = None
+        assert await service.is_file_new_or_updated("c1", "new-file", "2024-01-15T10:30:00Z") is True
+
+    async def test_returns_true_for_file_not_in_different_course(self, service, mock_redis, sample_processed_file):
+        """A file processed in one course is not considered processed in another."""
+        # File exists in course-101
+        mock_redis.hget.return_value = sample_processed_file.model_dump_json()
+        assert await service.is_file_new_or_updated("course-101", "12345", "2024-01-15T10:30:00Z") is False
+
+        # Same file_id not processed in course-202
+        mock_redis.hget.return_value = None
+        assert await service.is_file_new_or_updated("course-202", "12345", "2024-01-15T10:30:00Z") is True
+
+        # Verify correct keys were used for each course
+        calls = mock_redis.hget.call_args_list
+        assert calls[-2].args == ("eq-pdf:processed:course-101", "12345")
+        assert calls[-1].args == ("eq-pdf:processed:course-202", "12345")
+
+    async def test_returns_true_for_new_file_regardless_of_timestamp(self, service, mock_redis):
+        """Unprocessed files return True regardless of how old the timestamp is."""
+        mock_redis.hget.return_value = None
+        # Very old timestamp
+        assert await service.is_file_new_or_updated("c1", "f1", "2020-01-01T00:00:00Z") is True
+        # Very recent timestamp
+        assert await service.is_file_new_or_updated("c1", "f2", "2025-12-31T23:59:59Z") is True
+
 
 # --- get_publish_result ---
 

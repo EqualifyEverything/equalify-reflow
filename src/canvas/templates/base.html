@@ -5,15 +5,18 @@
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
     <title>{{ title | default("Equalify Dashboard") }}</title>
     {% if inline_css %}
-    <style>{{ inline_css }}</style>
+    <style>{{ inline_css | safe }}</style>
     {% else %}
     <link rel="stylesheet" href="/static/canvas/dashboard.css">
     {% endif %}
-    {% if not inline_css %}
     <script src="https://unpkg.com/htmx.org@1.9.12" crossorigin="anonymous"></script>
-    {% endif %}
+    <script>
+    document.addEventListener('htmx:configRequest', function(evt) {
+        evt.detail.headers['ngrok-skip-browser-warning'] = 'true';
+    });
+    </script>
 </head>
-<body class="bg-gray-50 min-h-screen">
+<body class="bg-gray-50 min-h-screen" hx-boost="true">
     {% if error_message %}
     <div class="flex items-center justify-center min-h-screen">
         <div class="bg-white rounded-lg shadow-md p-8 max-w-md text-center">

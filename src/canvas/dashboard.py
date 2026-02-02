@@ -28,6 +28,10 @@ router = APIRouter(prefix="/lti/dashboard", tags=["dashboard"])
 _templates_dir = Path(__file__).parent / "templates"
 templates = Jinja2Templates(directory=str(_templates_dir))
 
+# Read CSS once at module level for inline embedding (avoids external <link> failures through ngrok)
+_css_path = Path(__file__).parent / "static" / "dist" / "dashboard.css"
+_inline_css = _css_path.read_text() if _css_path.exists() else ""
+
 
 async def _get_lti_session(request: Request, redis: Redis) -> dict | None:
     """Validate LTI session token against Redis.
@@ -71,6 +75,7 @@ def _no_session_response(request: Request) -> HTMLResponse:
         {
             "title": "Session Error",
             "error_message": message,
+            "inline_css": _inline_css,
         },
         status_code=403,
     )
@@ -138,6 +143,7 @@ async def dashboard_index(
             "config": config,
             "documents": documents,
             "lti_session": request.query_params.get("lti_session", ""),
+            "inline_css": _inline_css,
         },
     )
 
@@ -166,6 +172,7 @@ async def dashboard_settings(
             "course_id": course_id,
             "config": config,
             "lti_session": request.query_params.get("lti_session", ""),
+            "inline_css": _inline_css,
         },
     )
 
@@ -247,6 +254,7 @@ async def dashboard_document_detail(
             "course_id": course_id,
             "document": document,
             "lti_session": request.query_params.get("lti_session", ""),
+            "inline_css": _inline_css,
         },
     )
 
@@ -794,7 +802,7 @@ def _render_detail_fragment(
             f'<div class="py-3 grid grid-cols-3 gap-4">'
             f'<dt class="text-sm font-medium text-gray-500">Download</dt>'
             f'<dd class="text-sm col-span-2">'
-            f'<a href="{download_url}" class="text-blue-600 hover:underline">Download Bundle</a>'
+            f'<a href="{download_url}" target="_blank" class="text-blue-600 hover:underline">Download Bundle</a>'
             f"</dd></div>"
         )
 

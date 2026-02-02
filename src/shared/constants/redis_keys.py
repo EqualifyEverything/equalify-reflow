@@ -8,6 +8,10 @@ Ensures proper namespacing and key patterns across services.
 REDIS_PREFIX = "eq-pdf"
 
 
+# Secondary index: sorted set of job keys ordered by last-updated timestamp
+JOBS_BY_UPDATED = f"{REDIS_PREFIX}:jobs-by-updated"
+
+
 def job_key(job_id: str) -> str:
     """Generate Redis key for job status hash.
 

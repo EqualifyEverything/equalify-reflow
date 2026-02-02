@@ -118,6 +118,9 @@ class TimeoutService:
 
             logger.info(f"Processing timeout for job {job_id}")
 
+            # Emit audit log before forced timeout failure
+            await self.job_service.emit_job_audit_log(job_id, "approval_timeout")
+
             # Update job status to failed with timeout reason
             await self.job_service.update_job_status(
                 job_id,

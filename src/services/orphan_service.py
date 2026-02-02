@@ -39,6 +39,9 @@ class OrphanService:
     async def cleanup_old_completed_jobs(self) -> dict[str, Any]:
         """Clean up old completed/failed/denied jobs beyond retention period.
 
+        Uses the jobs-by-updated sorted set index for efficient lookup.
+        Falls back to SCAN if the index is empty (pre-migration safety).
+
         Returns:
             Dict with cleanup results (jobs_cleaned, errors)
         """
@@ -47,16 +50,20 @@ class OrphanService:
             cutoff_time = datetime.now(UTC) - timedelta(
                 days=settings.job_retention_days
             )
+            cutoff_ts = cutoff_time.timestamp()
 
             logger.info(
                 f"Starting old job cleanup (retention: {settings.job_retention_days} days, "
                 f"cutoff: {cutoff_time.isoformat()})"
             )
 
-            # Get all job keys from Redis
-            all_jobs = await self.job_service.list_all_jobs()
+            # Try efficient index lookup first, fall back to SCAN
+            candidate_jobs = await self.job_service.list_jobs_updated_before(cutoff_ts)
+            if not candidate_jobs:
+                # Index may be empty (pre-migration) – fall back to full scan
+                candidate_jobs = await self.job_service.list_all_jobs()
 
-            if not all_jobs:
+            if not candidate_jobs:
                 logger.debug("No jobs found in Redis")
                 return {"jobs_cleaned": 0, "errors": 0}
 
@@ -64,7 +71,7 @@ class OrphanService:
             errors = 0
 
             # Check each job for cleanup eligibility
-            for job_id in all_jobs:
+            for job_id in candidate_jobs:
                 try:
                     should_clean = await self._should_cleanup_job(job_id, cutoff_time)
 
@@ -112,6 +119,9 @@ class OrphanService:
         Jobs stuck in 'processing' or 'pii_scanning' status for longer than
         max_processing_hours are marked as failed and cleaned up.
 
+        Uses the jobs-by-updated sorted set index for efficient lookup.
+        Falls back to SCAN if the index is empty (pre-migration safety).
+
         Returns:
             Dict with cleanup results (jobs_failed, errors)
         """
@@ -120,16 +130,19 @@ class OrphanService:
             cutoff_time = datetime.now(UTC) - timedelta(
                 hours=settings.max_processing_hours
             )
+            cutoff_ts = cutoff_time.timestamp()
 
             logger.info(
                 f"Starting stuck job detection (max processing: "
                 f"{settings.max_processing_hours}h, cutoff: {cutoff_time.isoformat()})"
             )
 
-            # Get all jobs
-            all_jobs = await self.job_service.list_all_jobs()
+            # Try efficient index lookup first, fall back to SCAN
+            candidate_jobs = await self.job_service.list_jobs_updated_before(cutoff_ts)
+            if not candidate_jobs:
+                candidate_jobs = await self.job_service.list_all_jobs()
 
-            if not all_jobs:
+            if not candidate_jobs:
                 logger.debug("No jobs found in Redis")
                 return {"jobs_failed": 0, "errors": 0}
 
@@ -137,7 +150,7 @@ class OrphanService:
             errors = 0
 
             # Check each job for stuck status
-            for job_id in all_jobs:
+            for job_id in candidate_jobs:
                 try:
                     is_stuck = await self._is_job_stuck(job_id, cutoff_time)
 
@@ -243,6 +256,9 @@ class OrphanService:
         try:
             logger.info(f"Cleaning up old job {job_id}")
 
+            # Emit audit log before deletion
+            await self.job_service.emit_job_audit_log(job_id, "retention_cleanup")
+
             # Cleanup temp files from S3
             await self.s3_cleanup_service.cleanup_temp_files_for_job(job_id)
 
@@ -316,6 +332,9 @@ class OrphanService:
         """
         try:
             logger.info(f"Failing stuck job {job_id}")
+
+            # Emit audit log before forced status transition
+            await self.job_service.emit_job_audit_log(job_id, "stuck_job_failed")
 
             # Update job status to failed
             await self.job_service.update_job_status(

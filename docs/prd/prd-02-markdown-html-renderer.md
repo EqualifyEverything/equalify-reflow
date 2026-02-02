@@ -115,15 +115,15 @@ None.
 
 ## Success Criteria
 
-- [ ] `src/canvas/renderer.py` exists with `CanvasHTMLRenderer` class
-- [ ] `CanvasHTMLRenderer.render()` accepts markdown string and returns HTML string
-- [ ] Output HTML is wrapped in `<article>` tags
-- [ ] Headings render as `<h1>` through `<h6>` preserving the original level
-- [ ] Images render as `<figure><img src="..." alt="..."><figcaption>...</figcaption></figure>` when alt text is present
-- [ ] Images without alt text render as `<img src="..." alt="">` without figure wrapper
-- [ ] Tables render with `<table>`, `<thead>`, `<tbody>`, and `<th scope="col">` for header cells
-- [ ] When `image_url_map` is provided, image `src` attributes are replaced with Canvas URLs
-- [ ] When an image path is not in `image_url_map`, the original path is kept and a warning is logged
-- [ ] When `download_url` is provided, a footer with download link is appended after an `<hr>`
-- [ ] The renderer uses `mistune` and does not add new dependencies to `pyproject.toml`
-- [ ] Code blocks render as `<pre><code class="language-{lang}">` with the language class
+- [x] `src/canvas/renderer.py` exists with `CanvasHTMLRenderer` class
+- [x] `CanvasHTMLRenderer.render()` accepts markdown string and returns HTML string
+- [x] Output HTML is wrapped in `<article>` tags
+- [x] Headings render as `<h1>` through `<h6>` preserving the original level
+- [x] Images render as `<figure><img src="..." alt="..."><figcaption>...</figcaption></figure>` when alt text is present
+- [x] Images without alt text render as `<img src="..." alt="">` without figure wrapper
+- [x] Tables render with `<table>`, `<thead>`, `<tbody>`, and `<th scope="col">` for header cells
+- [x] When `image_url_map` is provided, image `src` attributes are replaced with Canvas URLs
+- [x] When an image path is not in `image_url_map`, the original path is kept and a warning is logged
+- [x] When `download_url` is provided, a footer with download link is appended after an `<hr>`
+- [x] The renderer uses `mistune` and does not add new dependencies to `pyproject.toml`
+- [x] Code blocks render as `<pre><code class="language-{lang}">` with the language class

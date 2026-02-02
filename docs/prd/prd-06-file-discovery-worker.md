@@ -188,19 +188,19 @@ async def start_canvas_file_worker(shutdown_event: asyncio.Event) -> None:
 
 ## Success Criteria
 
-- [ ] `src/workers/canvas_file_worker.py` exists with `CanvasFileWorker` class
-- [ ] `CanvasFileWorker.run()` polls on a configurable interval using `canvas_polling_interval_seconds`
-- [ ] `CanvasFileWorker.run()` exits gracefully when `shutdown_event` is set
-- [ ] `CanvasFileWorker.run()` does not crash on exceptions (logs and continues)
-- [ ] `poll_courses()` calls `config_service.list_enabled_courses()` and polls each course
-- [ ] `poll_course()` creates a `CanvasAPIClient` using the course's stored Canvas API token
-- [ ] `poll_course()` calls `list_course_files()` filtering for `application/pdf` content type
-- [ ] `poll_course()` calls `is_file_new_or_updated()` for each PDF file
-- [ ] `poll_course()` skips files that have already been processed (same `updated_at`)
-- [ ] `_queue_file_for_processing()` downloads the file from Canvas and uploads to S3 temp bucket
-- [ ] `_queue_file_for_processing()` creates a job with `source: "canvas_auto"`, `course_id`, `canvas_file_id`, `original_filename` metadata
-- [ ] `_queue_file_for_processing()` stores a `ProcessedFile` record with status `"processing"`
-- [ ] `src/config.py` has `canvas_autopublish_enabled`, `canvas_polling_interval_seconds`, `canvas_rate_limit_buffer` fields
-- [ ] `src/main.py` starts the worker when `canvas_autopublish_enabled=True`
-- [ ] `src/main.py` does not start the worker when `canvas_autopublish_enabled=False`
-- [ ] `start_canvas_file_worker()` function exists and initializes dependencies before starting the worker
+- [x] `src/workers/canvas_file_worker.py` exists with `CanvasFileWorker` class
+- [x] `CanvasFileWorker.run()` polls on a configurable interval using `canvas_polling_interval_seconds`
+- [x] `CanvasFileWorker.run()` exits gracefully when `shutdown_event` is set
+- [x] `CanvasFileWorker.run()` does not crash on exceptions (logs and continues)
+- [x] `poll_courses()` calls `config_service.list_enabled_courses()` and polls each course
+- [x] `poll_course()` creates a `CanvasAPIClient` using the course's stored Canvas API token
+- [x] `poll_course()` calls `list_course_files()` filtering for `application/pdf` content type
+- [x] `poll_course()` calls `is_file_new_or_updated()` for each PDF file
+- [x] `poll_course()` skips files that have already been processed (same `updated_at`)
+- [x] `_queue_file_for_processing()` downloads the file from Canvas and uploads to S3 temp bucket
+- [x] `_queue_file_for_processing()` creates a job with `source: "canvas_auto"`, `course_id`, `canvas_file_id`, `original_filename` metadata
+- [x] `_queue_file_for_processing()` stores a `ProcessedFile` record with status `"processing"`
+- [x] `src/config.py` has `canvas_autopublish_enabled`, `canvas_polling_interval_seconds`, `canvas_rate_limit_buffer` fields
+- [x] `src/main.py` starts the worker when `canvas_autopublish_enabled=True`
+- [x] `src/main.py` does not start the worker when `canvas_autopublish_enabled=False`
+- [x] `start_canvas_file_worker()` function exists and initializes dependencies before starting the worker

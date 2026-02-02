@@ -120,10 +120,12 @@ LTI_ISSUER=https://canvas.instructure.com
 LTI_CLIENT_ID=10000000000001
 LTI_DEPLOYMENT_ID=2:4dde05e8ca1973bcca9bffc13e1548820eee93a3
 
-# Canvas OIDC/OAuth Endpoints (local Canvas via Docker host)
+# Canvas OIDC/OAuth Endpoints
+# LTI_AUTH_LOGIN_URL uses localhost:3000 because the browser follows this redirect
+# LTI_AUTH_TOKEN_URL and LTI_JWKS_URL use canvas-lms-web-1 (container-direct networking)
 LTI_AUTH_LOGIN_URL=http://localhost:3000/api/lti/authorize_redirect
-LTI_AUTH_TOKEN_URL=http://host.docker.internal:3000/login/oauth2/token
-LTI_JWKS_URL=http://host.docker.internal:3000/api/lti/security/jwks
+LTI_AUTH_TOKEN_URL=http://canvas-lms-web-1/login/oauth2/token
+LTI_JWKS_URL=http://canvas-lms-web-1/api/lti/security/jwks
 
 # RSA Keys (mounted into container via docker-compose.dev.yml)
 LTI_PRIVATE_KEY_PATH=keys/lti_private.pem
@@ -132,7 +134,7 @@ LTI_PUBLIC_KEY_PATH=keys/lti_public.pem
 
 **Important notes:**
 - `LTI_ISSUER` is `https://canvas.instructure.com` even for local Canvas. This is the issuer value Canvas puts in its JWTs (configured in Canvas's `config/security.yml`).
-- **Browser vs Container URLs:** `LTI_AUTH_LOGIN_URL` uses `localhost:3000` because the *browser* follows this redirect. All other URLs (`LTI_AUTH_TOKEN_URL`, `LTI_JWKS_URL`) use `host.docker.internal:3000` because the *container* makes these requests.
+- **Browser vs Container URLs:** `LTI_AUTH_LOGIN_URL` uses `localhost:3000` because the *browser* follows this redirect. Server-to-server URLs (`LTI_AUTH_TOKEN_URL`, `LTI_JWKS_URL`, `CANVAS_API_URL`) use the Canvas container hostname (`canvas-lms-web-1`) via Docker network. The `CANVAS_HOST_HEADER` setting ensures all server-to-server requests send the correct `Host: localhost:3000` header that Canvas requires for authentication.
 - **Canvas API networking:** `CANVAS_API_URL` uses the Canvas container hostname (`canvas-lms-web-1`) directly via Docker network. This avoids port conflicts on the host (e.g., if another service uses port 3000). `CANVAS_HOST_HEADER` tells the client to send `Host: localhost:3000` on all requests, which Canvas requires for authentication. The client also rewrites Canvas-generated `localhost:3000` URLs (e.g., file download links) to the container hostname.
 - The `docker-compose.dev.yml` connects the api-gateway to the `canvas-lms_default` network and uses `REDIS_URL=redis://equalify-pdf-redis:6379` to avoid DNS collision with Canvas's own Redis service on the shared network.
 

@@ -134,7 +134,7 @@ if settings.enable_docs_auth:
 app.add_middleware(ErrorHandlerMiddleware)  # Catch all errors
 app.add_middleware(RateLimitMiddleware)  # Rate limit before processing
 app.add_middleware(LoggingMiddleware)  # Log all requests
-app.add_middleware(SecurityHeadersMiddleware, canvas_origin=settings.lti_issuer)  # Frame security
+app.add_middleware(SecurityHeadersMiddleware, canvas_origin=settings.lti_auth_login_url)  # Frame security
 add_cors_middleware(app)  # CORS headers
 
 # Include routers

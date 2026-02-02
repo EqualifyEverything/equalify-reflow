@@ -198,19 +198,19 @@ The dashboard renders inside a Canvas iframe. Ensure:
 
 ## Success Criteria
 
-- [ ] `src/canvas/templates/base.html` exists with Tailwind CSS link and htmx script
-- [ ] `src/canvas/templates/dashboard/index.html` renders a table of documents with status, confidence, actions
-- [ ] `src/canvas/templates/dashboard/settings.html` renders an enable/disable toggle and threshold input
-- [ ] `src/canvas/templates/dashboard/document_detail.html` renders detailed status with action buttons
-- [ ] `src/canvas/static/src/dashboard.css` contains Tailwind directives
-- [ ] `tailwind.config.js` exists and points to `src/canvas/templates/**/*.html`
-- [ ] `src/canvas/dashboard.py` (or `src/lti/router.py`) has routes for index, settings, document detail
-- [ ] Dashboard LTI launch at `/lti/dashboard` validates LTI session and renders the index view
-- [ ] Publish button on draft documents calls POST and updates the row via htmx
-- [ ] Retry button on failed documents calls POST and updates the row via htmx
-- [ ] Settings form saves via PUT and shows a success indicator via htmx
-- [ ] Dashboard renders correctly inside a Canvas iframe (no `X-Frame-Options: DENY`)
-- [ ] Dashboard shows "Please launch from Canvas" error when accessed without LTI session
-- [ ] `src/main.py` mounts the static files directory for compiled Tailwind CSS
-- [ ] Processing-status rows auto-refresh via htmx polling (`hx-trigger="every 5s"`)
-- [ ] Empty state message shows when no documents are tracked
+- [x] `src/canvas/templates/base.html` exists with Tailwind CSS link and htmx script
+- [x] `src/canvas/templates/dashboard/index.html` renders a table of documents with status, confidence, actions
+- [x] `src/canvas/templates/dashboard/settings.html` renders an enable/disable toggle and threshold input
+- [x] `src/canvas/templates/dashboard/document_detail.html` renders detailed status with action buttons
+- [x] `src/canvas/static/src/dashboard.css` contains Tailwind directives
+- [x] `tailwind.config.js` exists and points to `src/canvas/templates/**/*.html`
+- [x] `src/canvas/dashboard.py` (or `src/lti/router.py`) has routes for index, settings, document detail
+- [x] Dashboard LTI launch at `/lti/dashboard` validates LTI session and renders the index view
+- [x] Publish button on draft documents calls POST and updates the row via htmx
+- [x] Retry button on failed documents calls POST and updates the row via htmx
+- [x] Settings form saves via PUT and shows a success indicator via htmx
+- [x] Dashboard renders correctly inside a Canvas iframe (no `X-Frame-Options: DENY`)
+- [x] Dashboard shows "Please launch from Canvas" error when accessed without LTI session
+- [x] `src/main.py` mounts the static files directory for compiled Tailwind CSS
+- [x] Processing-status rows auto-refresh via htmx polling (`hx-trigger="every 5s"`)
+- [x] Empty state message shows when no documents are tracked

@@ -136,6 +136,10 @@ class APIKeyAuthMiddleware(BaseHTTPMiddleware):
         if path.startswith("/lti/"):
             return True
 
+        # Dashboard static assets (CSS, images served by StaticFiles mount)
+        if path.startswith("/static/canvas/"):
+            return True
+
         # Development monitoring endpoints (public only in dev environment)
         if settings.environment == "dev" and path.startswith("/api/dev/monitoring"):
             return True

@@ -4,8 +4,14 @@
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
     <title>{{ title | default("Equalify Dashboard") }}</title>
+    {% if inline_css %}
+    <style>{{ inline_css }}</style>
+    {% else %}
     <link rel="stylesheet" href="/static/canvas/dashboard.css">
-    <script src="https://unpkg.com/htmx.org@1.9.12" integrity="sha384-ujb1lZYygJmzgSwoxRggbCHcjc0s9Gn0QLBR+8bTjml5v7GXOFCpnKMQ/1D0C2+V" crossorigin="anonymous"></script>
+    {% endif %}
+    {% if not inline_css %}
+    <script src="https://unpkg.com/htmx.org@1.9.12" crossorigin="anonymous"></script>
+    {% endif %}
 </head>
 <body class="bg-gray-50 min-h-screen">
     {% if error_message %}

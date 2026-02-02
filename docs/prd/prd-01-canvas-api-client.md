@@ -129,17 +129,17 @@ canvas_rate_limit_buffer: int = Field(
 
 ## Success Criteria
 
-- [ ] `src/canvas/__init__.py` exists and exports `CanvasAPIClient`
-- [ ] `src/canvas/client.py` exists with `CanvasAPIClient` class
-- [ ] `CanvasAPIClient.create_page()` calls `POST /api/v1/courses/{course_id}/pages` with `wiki_page[title]`, `wiki_page[body]`, `wiki_page[published]`, `wiki_page[editing_roles]`
-- [ ] `CanvasAPIClient.update_page()` calls `PUT /api/v1/courses/{course_id}/pages/{page_url}` with provided fields
-- [ ] `CanvasAPIClient.get_page()` calls `GET /api/v1/courses/{course_id}/pages/{page_url}` and returns `None` on 404
-- [ ] `CanvasAPIClient.upload_file()` implements the 3-step Canvas file upload workflow and returns the final file object with `url` field
-- [ ] `CanvasAPIClient.list_modules()` calls `GET /api/v1/courses/{course_id}/modules` with `include[]=items` when `include_items=True`
-- [ ] `CanvasAPIClient.create_module_item()` calls `POST /api/v1/courses/{course_id}/modules/{module_id}/items`
-- [ ] `CanvasAPIClient.list_course_files()` calls `GET /api/v1/courses/{course_id}/files` with pagination params
-- [ ] `CanvasAPIClient._handle_rate_limit()` reads `X-Rate-Limit-Remaining` header and sleeps when below buffer
-- [ ] `CanvasAPIClient._request()` sets `Host: localhost:3000` header when base_url contains `host.docker.internal`
-- [ ] `src/config.py` has `canvas_autopublish_enabled`, `canvas_polling_interval_seconds`, and `canvas_rate_limit_buffer` fields
-- [ ] All methods use `Authorization: Bearer {api_token}` header
-- [ ] All methods include logging at INFO (operations) and DEBUG (request/response details) levels
+- [x] `src/canvas/__init__.py` exists and exports `CanvasAPIClient`
+- [x] `src/canvas/client.py` exists with `CanvasAPIClient` class
+- [x] `CanvasAPIClient.create_page()` calls `POST /api/v1/courses/{course_id}/pages` with `wiki_page[title]`, `wiki_page[body]`, `wiki_page[published]`, `wiki_page[editing_roles]`
+- [x] `CanvasAPIClient.update_page()` calls `PUT /api/v1/courses/{course_id}/pages/{page_url}` with provided fields
+- [x] `CanvasAPIClient.get_page()` calls `GET /api/v1/courses/{course_id}/pages/{page_url}` and returns `None` on 404
+- [x] `CanvasAPIClient.upload_file()` implements the 3-step Canvas file upload workflow and returns the final file object with `url` field
+- [x] `CanvasAPIClient.list_modules()` calls `GET /api/v1/courses/{course_id}/modules` with `include[]=items` when `include_items=True`
+- [x] `CanvasAPIClient.create_module_item()` calls `POST /api/v1/courses/{course_id}/modules/{module_id}/items`
+- [x] `CanvasAPIClient.list_course_files()` calls `GET /api/v1/courses/{course_id}/files` with pagination params
+- [x] `CanvasAPIClient._handle_rate_limit()` reads `X-Rate-Limit-Remaining` header and sleeps when below buffer
+- [x] `CanvasAPIClient._request()` sets `Host: localhost:3000` header when base_url contains `host.docker.internal`
+- [x] `src/config.py` has `canvas_autopublish_enabled`, `canvas_polling_interval_seconds`, and `canvas_rate_limit_buffer` fields
+- [x] All methods use `Authorization: Bearer {api_token}` header
+- [x] All methods include logging at INFO (operations) and DEBUG (request/response details) levels

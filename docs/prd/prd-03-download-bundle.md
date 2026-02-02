@@ -91,13 +91,13 @@ None.
 
 ## Success Criteria
 
-- [ ] `src/canvas/bundle.py` exists with `DownloadBundleService` class
-- [ ] `create_bundle()` downloads `results/{job_id}/result.md` from S3 results bucket
-- [ ] `create_bundle()` downloads all files matching `results/{job_id}/figures/*` from S3
-- [ ] `create_bundle()` creates a zip containing `{name}.md` at root and `images/` folder with figures
-- [ ] The zip is named `{original_filename_without_extension}-reflow.zip`
-- [ ] The zip is uploaded to `results/{job_id}/bundle.zip` in S3 results bucket
-- [ ] `create_bundle()` returns a presigned S3 URL valid for 7 days
-- [ ] If `result.md` doesn't exist, a `BundleError` is raised with descriptive message
-- [ ] If no figures exist, the zip contains only the markdown file (no empty images/ folder)
-- [ ] Zip is built in memory using `io.BytesIO` (no temp files on disk)
+- [x] `src/canvas/bundle.py` exists with `DownloadBundleService` class
+- [x] `create_bundle()` downloads `results/{job_id}/result.md` from S3 results bucket
+- [x] `create_bundle()` downloads all files matching `results/{job_id}/figures/*` from S3
+- [x] `create_bundle()` creates a zip containing `{name}.md` at root and `images/` folder with figures
+- [x] The zip is named `{original_filename_without_extension}-reflow.zip`
+- [x] The zip is uploaded to `results/{job_id}/bundle.zip` in S3 results bucket
+- [x] `create_bundle()` returns a presigned S3 URL valid for 7 days
+- [x] If `result.md` doesn't exist, a `BundleError` is raised with descriptive message
+- [x] If no figures exist, the zip contains only the markdown file (no empty images/ folder)
+- [x] Zip is built in memory using `io.BytesIO` (no temp files on disk)

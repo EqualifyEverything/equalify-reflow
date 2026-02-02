@@ -180,19 +180,19 @@ These endpoints should be accessible from the LTI dashboard (iframe). Authentica
 
 ## Success Criteria
 
-- [ ] `src/api/canvas_config.py` exists with `router` as an `APIRouter`
-- [ ] `GET /api/v1/canvas/courses/{course_id}/config` returns `CourseConfigResponse`
-- [ ] `GET /api/v1/canvas/courses/{course_id}/config` returns defaults when course is not configured
-- [ ] `PUT /api/v1/canvas/courses/{course_id}/config` accepts `CourseConfigUpdate` and returns `CourseConfigResponse`
-- [ ] `PUT /api/v1/canvas/courses/{course_id}/config` with `enabled=True` adds course to enabled set
-- [ ] `PUT /api/v1/canvas/courses/{course_id}/config` with `enabled=False` removes course from enabled set
-- [ ] `GET /api/v1/canvas/courses/{course_id}/documents` returns `list[DocumentStatusResponse]`
-- [ ] `GET /api/v1/canvas/courses/{course_id}/documents/{file_id}` returns `DocumentStatusResponse`
-- [ ] `GET /api/v1/canvas/courses/{course_id}/documents/{file_id}` returns 404 for unknown files
-- [ ] `POST /api/v1/canvas/courses/{course_id}/documents/{file_id}/process` downloads file from Canvas and queues for processing
-- [ ] `POST /api/v1/canvas/courses/{course_id}/documents/{file_id}/retry` re-queues a failed document
-- [ ] `POST /api/v1/canvas/courses/{course_id}/documents/{file_id}/retry` returns 400 if document is not in failed state
-- [ ] `POST /api/v1/canvas/courses/{course_id}/documents/{file_id}/publish` publishes a draft Canvas Page
-- [ ] `POST /api/v1/canvas/courses/{course_id}/documents/{file_id}/publish` returns 400 if document is not completed
-- [ ] `src/main.py` registers the router when `canvas_autopublish_enabled=True`
-- [ ] All endpoints use Pydantic models for request/response validation
+- [x] `src/api/canvas_config.py` exists with `router` as an `APIRouter`
+- [x] `GET /api/v1/canvas/courses/{course_id}/config` returns `CourseConfigResponse`
+- [x] `GET /api/v1/canvas/courses/{course_id}/config` returns defaults when course is not configured
+- [x] `PUT /api/v1/canvas/courses/{course_id}/config` accepts `CourseConfigUpdate` and returns `CourseConfigResponse`
+- [x] `PUT /api/v1/canvas/courses/{course_id}/config` with `enabled=True` adds course to enabled set
+- [x] `PUT /api/v1/canvas/courses/{course_id}/config` with `enabled=False` removes course from enabled set
+- [x] `GET /api/v1/canvas/courses/{course_id}/documents` returns `list[DocumentStatusResponse]`
+- [x] `GET /api/v1/canvas/courses/{course_id}/documents/{file_id}` returns `DocumentStatusResponse`
+- [x] `GET /api/v1/canvas/courses/{course_id}/documents/{file_id}` returns 404 for unknown files
+- [x] `POST /api/v1/canvas/courses/{course_id}/documents/{file_id}/process` downloads file from Canvas and queues for processing
+- [x] `POST /api/v1/canvas/courses/{course_id}/documents/{file_id}/retry` re-queues a failed document
+- [x] `POST /api/v1/canvas/courses/{course_id}/documents/{file_id}/retry` returns 400 if document is not in failed state
+- [x] `POST /api/v1/canvas/courses/{course_id}/documents/{file_id}/publish` publishes a draft Canvas Page
+- [x] `POST /api/v1/canvas/courses/{course_id}/documents/{file_id}/publish` returns 400 if document is not completed
+- [x] `src/main.py` registers the router when `canvas_autopublish_enabled=True`
+- [x] All endpoints use Pydantic models for request/response validation

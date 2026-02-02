@@ -170,19 +170,19 @@ None.
 
 ## Success Criteria
 
-- [ ] `src/canvas/course_config.py` exists with `CourseConfigService`, `CourseConfig`, and `ProcessedFile` classes
-- [ ] `get_config()` returns `CourseConfig` from Redis hash `eq-pdf:course-config:{course_id}`
-- [ ] `get_config()` returns `None` when the course has no configuration
-- [ ] `set_config()` writes `CourseConfig` fields to Redis hash `eq-pdf:course-config:{course_id}`
-- [ ] `set_config()` adds course ID to `eq-pdf:courses:enabled` when `enabled=True`
-- [ ] `set_config()` removes course ID from `eq-pdf:courses:enabled` when `enabled=False`
-- [ ] `list_enabled_courses()` returns course IDs from the `eq-pdf:courses:enabled` set
-- [ ] `get_processed_file()` returns `ProcessedFile` for a specific file in a course
-- [ ] `set_processed_file()` stores `ProcessedFile` as JSON in `eq-pdf:processed:{course_id}` hash
-- [ ] `list_processed_files()` returns all processed files for a course as `{file_id: ProcessedFile}`
-- [ ] `is_file_new_or_updated()` returns `True` for files not in the processed set
-- [ ] `is_file_new_or_updated()` returns `True` when `canvas_updated_at` is newer than stored value
-- [ ] `is_file_new_or_updated()` returns `False` when `canvas_updated_at` matches stored value
-- [ ] `set_publish_result()` stores data in `eq-pdf:published:{course_id}:{file_id}` with 30-day TTL
-- [ ] `get_publish_result()` retrieves publish result for a file
-- [ ] All timestamps use ISO 8601 format
+- [x] `src/canvas/course_config.py` exists with `CourseConfigService`, `CourseConfig`, and `ProcessedFile` classes
+- [x] `get_config()` returns `CourseConfig` from Redis hash `eq-pdf:course-config:{course_id}`
+- [x] `get_config()` returns `None` when the course has no configuration
+- [x] `set_config()` writes `CourseConfig` fields to Redis hash `eq-pdf:course-config:{course_id}`
+- [x] `set_config()` adds course ID to `eq-pdf:courses:enabled` when `enabled=True`
+- [x] `set_config()` removes course ID from `eq-pdf:courses:enabled` when `enabled=False`
+- [x] `list_enabled_courses()` returns course IDs from the `eq-pdf:courses:enabled` set
+- [x] `get_processed_file()` returns `ProcessedFile` for a specific file in a course
+- [x] `set_processed_file()` stores `ProcessedFile` as JSON in `eq-pdf:processed:{course_id}` hash
+- [x] `list_processed_files()` returns all processed files for a course as `{file_id: ProcessedFile}`
+- [x] `is_file_new_or_updated()` returns `True` for files not in the processed set
+- [x] `is_file_new_or_updated()` returns `True` when `canvas_updated_at` is newer than stored value
+- [x] `is_file_new_or_updated()` returns `False` when `canvas_updated_at` matches stored value
+- [x] `set_publish_result()` stores data in `eq-pdf:published:{course_id}:{file_id}` with 30-day TTL
+- [x] `get_publish_result()` retrieves publish result for a file
+- [x] All timestamps use ISO 8601 format

@@ -163,19 +163,19 @@ None.
 
 ## Success Criteria
 
-- [ ] `src/canvas/publisher.py` exists with `CanvasPublisherService` class
-- [ ] `CanvasPublisherService.__init__()` accepts `CanvasAPIClient`, `CanvasHTMLRenderer`, `DownloadBundleService`, and `StorageService`
-- [ ] `publish()` downloads result markdown from S3 at `results/{job_id}/result.md`
-- [ ] `publish()` downloads figure files from S3 at `results/{job_id}/figures/*`
-- [ ] `publish()` uploads each figure to Canvas Files API in the `equalify-reflow` folder
-- [ ] `publish()` creates a download bundle via `DownloadBundleService.create_bundle()`
-- [ ] `publish()` renders markdown to HTML via `CanvasHTMLRenderer.render()` with `image_url_map` and `download_url`
-- [ ] `publish()` creates a Canvas Page with title `{filename} - Reflow` and the rendered HTML as body
-- [ ] `publish()` updates an existing page instead of creating a duplicate when re-processing
-- [ ] `publish()` sets `published=False` by default (draft), configurable via parameter
-- [ ] `publish()` searches course modules for the original PDF and adds the page after it
-- [ ] `publish()` stores `PublishResult` in Redis at `eq-pdf:published:{course_id}:{canvas_file_id}`
-- [ ] `publish()` returns a `PublishResult` Pydantic model with page URL, page ID, file IDs, and download URL
-- [ ] Individual image upload failures are logged but do not fail the publish
-- [ ] Module placement failure is logged but does not fail the publish
-- [ ] `PublishError` is raised with `job_id` and `course_id` when critical steps fail (markdown download, page creation)
+- [x] `src/canvas/publisher.py` exists with `CanvasPublisherService` class
+- [x] `CanvasPublisherService.__init__()` accepts `CanvasAPIClient`, `CanvasHTMLRenderer`, `DownloadBundleService`, and `StorageService`
+- [x] `publish()` downloads result markdown from S3 at `results/{job_id}/result.md`
+- [x] `publish()` downloads figure files from S3 at `results/{job_id}/figures/*`
+- [x] `publish()` uploads each figure to Canvas Files API in the `equalify-reflow` folder
+- [x] `publish()` creates a download bundle via `DownloadBundleService.create_bundle()`
+- [x] `publish()` renders markdown to HTML via `CanvasHTMLRenderer.render()` with `image_url_map` and `download_url`
+- [x] `publish()` creates a Canvas Page with title `{filename} - Reflow` and the rendered HTML as body
+- [x] `publish()` updates an existing page instead of creating a duplicate when re-processing
+- [x] `publish()` sets `published=False` by default (draft), configurable via parameter
+- [x] `publish()` searches course modules for the original PDF and adds the page after it
+- [x] `publish()` stores `PublishResult` in Redis at `eq-pdf:published:{course_id}:{canvas_file_id}`
+- [x] `publish()` returns a `PublishResult` Pydantic model with page URL, page ID, file IDs, and download URL
+- [x] Individual image upload failures are logged but do not fail the publish
+- [x] Module placement failure is logged but does not fail the publish
+- [x] `PublishError` is raised with `job_id` and `course_id` when critical steps fail (markdown download, page creation)

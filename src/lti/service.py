@@ -58,19 +58,21 @@ class LTIService:
 
     @staticmethod
     def _rewrite_canvas_url(url: str) -> str:
-        """Rewrite localhost Canvas URLs to host.docker.internal for container networking.
+        """Rewrite localhost Canvas URLs to the container hostname for Docker networking.
 
         Canvas redirects often point to localhost:3000, which doesn't resolve
-        inside Docker containers. This rewrites them to host.docker.internal.
+        inside Docker containers. This rewrites them to the Canvas container hostname.
         """
-        if "host.docker.internal" in url:
+        canvas_api_url = getattr(settings, 'canvas_api_url', '')
+        host_header = getattr(settings, 'canvas_host_header', '')
+        if not host_header or not canvas_api_url:
             return url
-        return url.replace("http://localhost:3000", "http://host.docker.internal:3000")
-
-    @staticmethod
-    def _is_docker_rewritten_url(url: str) -> bool:
-        """Check if a URL has been rewritten for Docker container networking."""
-        return "host.docker.internal" in url
+        # Extract base URL without /api/v1
+        container_base = canvas_api_url.replace('/api/v1', '')
+        localhost_origin = f"http://{host_header}"
+        if localhost_origin in url:
+            return url.replace(localhost_origin, container_base)
+        return url
 
     async def process_file_menu_launch(
         self,
@@ -213,16 +215,15 @@ class LTIService:
             logger.debug("Using Canvas API token for file download")
 
         try:
-            # Rewrite localhost URLs to host.docker.internal for container networking.
+            # Rewrite localhost Canvas URLs to the container hostname for Docker networking.
             # Canvas redirects file downloads to localhost:3000, which doesn't resolve
-            # inside Docker. We also set Host: localhost:3000 so Canvas recognizes
-            # the request as local (Canvas validates the Host header for sf_verifier).
+            # inside Docker containers.
             download_url = self._rewrite_canvas_url(download_url)
 
-            # If URL was rewritten for Docker, spoof the Host header so Canvas
-            # treats the request as coming from localhost (required for sf_verifier auth)
-            if self._is_docker_rewritten_url(download_url):
-                headers["Host"] = "localhost:3000"
+            # Canvas validates the Host header — set it when using container networking
+            canvas_host_header = getattr(settings, 'canvas_host_header', '')
+            if canvas_host_header:
+                headers["Host"] = canvas_host_header
 
             async with httpx.AsyncClient(
                 timeout=httpx.Timeout(30.0, connect=10.0),
@@ -237,7 +238,7 @@ class LTIService:
                 # sf_verifier JWT in the URL for auth after the first hop) but
                 # keep the Host header for Docker networking.
                 max_redirects = 5
-                redirect_headers = {"Host": "localhost:3000"} if self._is_docker_rewritten_url(download_url) else {}
+                redirect_headers = {"Host": canvas_host_header} if canvas_host_header else {}
                 while response.is_redirect and max_redirects > 0:
                     redirect_url = str(response.headers.get("location", ""))
                     redirect_url = self._rewrite_canvas_url(redirect_url)
@@ -326,8 +327,9 @@ class LTIService:
             canvas_api_token = getattr(settings, 'canvas_api_token', None)
             if canvas_api_token and canvas_api_token != "your-canvas-test-token-here":
                 api_headers["Authorization"] = f"Bearer {canvas_api_token}"
-            if self._is_docker_rewritten_url(self.canvas_base_url):
-                api_headers["Host"] = "localhost:3000"
+            canvas_host_header = getattr(settings, 'canvas_host_header', '')
+            if canvas_host_header:
+                api_headers["Host"] = canvas_host_header
 
             async with httpx.AsyncClient(
                 timeout=httpx.Timeout(30.0, connect=10.0),
@@ -405,10 +407,15 @@ class LTIService:
         # Get Canvas API token from settings if available
         canvas_api_token = getattr(settings, 'canvas_api_token', None)
         if canvas_api_token and canvas_api_token != "your-canvas-test-token-here":
-            headers = {"Authorization": f"Bearer {canvas_api_token}"}
+            headers: dict[str, str] = {"Authorization": f"Bearer {canvas_api_token}"}
         else:
             headers = {}
             logger.warning("No Canvas API token configured - API calls may fail")
+
+        # Canvas validates Host header when accessed via container hostname
+        canvas_host_header = getattr(settings, 'canvas_host_header', '')
+        if canvas_host_header:
+            headers["Host"] = canvas_host_header
 
         try:
             async with httpx.AsyncClient(

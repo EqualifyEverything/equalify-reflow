@@ -13,8 +13,9 @@ Canvas also fetches GET /lti/jwks to get our public keys for JWT verification.
 import logging
 from typing import Any
 
+import requests as req_lib
 from fastapi import APIRouter, BackgroundTasks, Depends, HTTPException, Request
-from fastapi.responses import HTMLResponse, RedirectResponse
+from fastapi.responses import HTMLResponse, RedirectResponse, Response
 from redis.asyncio import Redis
 
 from ..config import settings
@@ -146,14 +147,15 @@ async def oidc_login(
             launch_data_storage=storage,
         )
 
-        # Get the redirect URL - pylti1p3 handles state/nonce generation
-        target_link_uri = form_data.get("target_link_uri")
-        if not target_link_uri:
-            target_link_uri = str(request.base_url).rstrip("/") + "/lti/launch"
+        # The redirect_uri in the OIDC request must match a URI registered in the
+        # Canvas Developer Key. We always redirect back to /lti/launch (our single
+        # launch endpoint). Canvas preserves the original target_link_uri in the JWT
+        # so the launch handler can route to the correct page (viewer vs dashboard).
+        launch_url = str(request.base_url).rstrip("/") + "/lti/launch"
+        target_link_uri = form_data.get("target_link_uri") or launch_url
 
         # Get redirect URL - disable cookie checks since we use Redis for state
-        # Note: enable_check_cookies() enables cookie check, we need disable_check_cookies()
-        redirect_url = oidc_login.disable_check_cookies().redirect(target_link_uri)
+        redirect_url = oidc_login.disable_check_cookies().redirect(launch_url)
 
         # Extract state and nonce from the generated redirect URL and store them
         # pylti1p3 generates these but stores them with session prefixes we can't easily retrieve
@@ -193,7 +195,7 @@ async def lti_launch(
     storage_service: StorageService = Depends(get_storage_service),
     job_service: JobService = Depends(get_job_service),
     processing_service: DocumentProcessingService = Depends(get_document_processing_service),
-) -> HTMLResponse:
+) -> Response:
     """Handle LTI launch after OIDC authentication.
 
     This is step 3 of the LTI 1.3 launch flow. Canvas POSTs:
@@ -207,10 +209,10 @@ async def lti_launch(
     4. Extract file menu claims
     5. Download the file from Canvas
     6. Create a conversion job
-    7. Redirect to the viewer
+    7. Redirect to the viewer or dashboard
 
     Returns:
-        HTML page that redirects to the viewer (iframe-safe)
+        RedirectResponse for dashboard launches, HTMLResponse for file viewer launches
     """
     # Parse form data
     form_data = await parse_form_data(request)
@@ -280,12 +282,22 @@ async def lti_launch(
         # Note: Cookie checks are bypassed by:
         # 1. RedisLaunchDataStorage.get_session_cookie_name() returns None
         # 2. FastAPICookieService.get_cookie(state) returns state (for state validation fallback)
+        #
+        # When using Docker container networking to reach Canvas (e.g.,
+        # http://canvas-lms-web-1/api/lti/security/jwks), Canvas validates
+        # the Host header. Pass a custom requests session so pylti1p3 sends
+        # the correct Host header when fetching the JWKS key set.
+        lti_session = req_lib.Session()
+        if settings.canvas_host_header:
+            lti_session.headers["Host"] = settings.canvas_host_header
+
         message_launch: Any = FastAPIMessageLaunch(
             lti_request,
             tool_config,
             session_service=session_service,
             cookie_service=cookie_service,
             launch_data_storage=storage,
+            requests_session=lti_session,
         )
 
         # Get validated claims
@@ -333,7 +345,14 @@ async def lti_launch(
         )
 
         if is_dashboard_launch and parsed_launch.context:
-            course_id = parsed_launch.context.id
+            # Use numeric Canvas course ID (from custom claims or Canvas-specific
+            # claim) rather than the LTI context hash. The file worker and config
+            # service store data keyed by numeric course ID.
+            course_id = (
+                parsed_launch.canvas_course_id
+                or (parsed_launch.file_menu and parsed_launch.file_menu.course_id)
+                or parsed_launch.context.id
+            )
             logger.info(f"Course navigation launch detected for course {course_id}")
 
             # Create LTI session in Redis
@@ -343,11 +362,16 @@ async def lti_launch(
                 "user_name": parsed_launch.user.name,
                 "deployment_id": parsed_launch.deployment_id,
             }
-            lti_session = await storage.create_session_async(session_data)
+            lti_session_token = await storage.create_session_async(session_data)
 
-            # Redirect to dashboard
-            dashboard_url = f"/lti/dashboard?lti_session={lti_session}&course_id={course_id}"
-            return _redirect_response(dashboard_url, f"Course {course_id} Dashboard")
+            # Render the dashboard directly instead of redirecting.
+            # GET redirects trigger ngrok's browser warning page inside iframes
+            # (Chrome blocks third-party cookies so the ngrok cookie doesn't
+            # persist in the Canvas iframe context). Rendering inline avoids
+            # the redirect chain entirely.
+            return await _render_dashboard_inline(
+                request, redis, job_service, course_id, lti_session_token,
+            )
 
         # Try to extract file_id from various sources (fallback for local Canvas)
         file_id_from_url = None
@@ -477,6 +501,91 @@ async def _process_document_async(
         logger.info(f"Background processing completed for LTI job {job_id}")
     except Exception as e:
         logger.error(f"Background processing failed for LTI job {job_id}: {e}")
+
+
+async def _render_dashboard_inline(
+    request: Request,
+    redis: Redis,
+    job_service: JobService,
+    course_id: str,
+    lti_session_token: str,
+) -> HTMLResponse:
+    """Render the dashboard index directly without redirecting.
+
+    Avoids GET redirects that trigger ngrok's browser warning page
+    inside Canvas iframes (third-party cookie blocking prevents the
+    ngrok cookie from persisting in the iframe context).
+
+    Args:
+        request: FastAPI request object (used by Jinja2 template context)
+        redis: Redis client for config service
+        job_service: Job service for confidence scores
+        course_id: Numeric Canvas course ID
+        lti_session_token: LTI session token for Redis
+
+    Returns:
+        HTMLResponse with rendered dashboard
+    """
+    from pathlib import Path
+
+    from ..canvas.course_config import CourseConfigService
+    from ..canvas.dashboard import templates as dashboard_templates
+
+    # Read CSS file content so we can inline it in the HTML.
+    # External <link> tags fail inside Canvas iframes when served through
+    # ngrok (the browser warning page returns text/html instead of CSS).
+    css_path = Path(__file__).parent.parent / "canvas" / "static" / "dist" / "dashboard.css"
+    inline_css = css_path.read_text() if css_path.exists() else ""
+
+    config_service = CourseConfigService(redis)
+    config = await config_service.get_config(course_id)
+    processed_files = await config_service.list_processed_files(course_id)
+
+    documents = []
+    for file_id, pf in processed_files.items():
+        publish_result = await config_service.get_publish_result(course_id, file_id)
+        effective_status = pf.status
+        canvas_page_url: str | None = None
+        confidence_score: float | None = None
+
+        if publish_result:
+            effective_status = "published"
+            canvas_page_url = publish_result.get("canvas_page_url")
+
+        if pf.job_id:
+            job = await job_service.get_job(pf.job_id)
+            if job:
+                score = job.get("confidence_score")
+                if score is not None:
+                    try:
+                        confidence_score = float(score)
+                    except (ValueError, TypeError):
+                        pass
+
+        documents.append(
+            {
+                "file_id": file_id,
+                "filename": pf.original_filename,
+                "status": effective_status,
+                "confidence": confidence_score,
+                "canvas_page_url": canvas_page_url,
+                "processed_at": pf.processed_at,
+                "job_id": pf.job_id,
+            }
+        )
+
+    return dashboard_templates.TemplateResponse(
+        request,
+        "dashboard/index.html",
+        {
+            "title": "Document Dashboard",
+            "course_id": course_id,
+            "config": config,
+            "documents": documents,
+            "lti_session": lti_session_token,
+            "inline_css": inline_css,
+        },
+    )
 
 
 def _error_response(message: str) -> HTMLResponse:

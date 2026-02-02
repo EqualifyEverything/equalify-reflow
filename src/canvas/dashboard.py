@@ -15,7 +15,7 @@ from fastapi.responses import HTMLResponse
 from fastapi.templating import Jinja2Templates
 from redis.asyncio import Redis
 
-from ..canvas.course_config import CourseConfig, CourseConfigService
+from ..canvas.course_config import CourseConfig, CourseConfigService, ProcessedFile
 from ..dependencies import get_converter_client, get_course_config_service, get_redis_client
 from ..lti.adapters import RedisLaunchDataStorage
 from ..services.converter_client import ConverterClient
@@ -81,6 +81,35 @@ def _no_session_response(request: Request) -> HTMLResponse:
     )
 
 
+async def _sync_status_if_terminal(
+    config_service: CourseConfigService,
+    course_id: str,
+    file_id: str,
+    processed_file: ProcessedFile,
+    job: dict | None,
+) -> str:
+    """Sync ProcessedFile.status with converter job if job reached terminal state.
+
+    Returns the effective status to use for display.
+    """
+    if (
+        processed_file.status == "processing"
+        and job is not None
+        and job.get("status") in ("completed", "failed")
+    ):
+        processed_file.status = job["status"]
+        try:
+            await config_service.set_processed_file(course_id, file_id, processed_file)
+        except Exception:
+            logger.warning(
+                "Failed to sync status for file %s in course %s, will retry on next poll",
+                file_id,
+                course_id,
+                exc_info=True,
+            )
+    return processed_file.status
+
+
 # --- View Routes ---
 
 
@@ -104,14 +133,11 @@ async def dashboard_index(
     for file_id, pf in processed_files.items():
         publish_result = await config_service.get_publish_result(course_id, file_id)
 
-        effective_status = pf.status
         canvas_page_url: str | None = None
         confidence_score: float | None = None
 
-        if publish_result:
-            effective_status = "published"
-            canvas_page_url = publish_result.get("canvas_page_url")
-
+        # Fetch job status first so we can sync stale ProcessedFile records
+        job: dict | None = None
         if pf.job_id:
             job = await converter.get_job_status(pf.job_id)
             if job:
@@ -121,6 +147,14 @@ async def dashboard_index(
                         confidence_score = float(score)
                     except (ValueError, TypeError):
                         pass
+
+        effective_status = await _sync_status_if_terminal(
+            config_service, course_id, file_id, pf, job
+        )
+
+        if publish_result:
+            effective_status = "published"
+            canvas_page_url = publish_result.get("canvas_page_url")
 
         documents.append(
             {
@@ -200,13 +234,30 @@ async def dashboard_document_detail(
 
     publish_result = await config_service.get_publish_result(course_id, file_id)
 
-    effective_status = processed_file.status
     canvas_page_url: str | None = None
     canvas_page_id: int | None = None
     download_url: str | None = None
     published_at: str | None = None
     confidence_score: float | None = None
     error_message: str | None = None
+
+    # Fetch job status first so we can sync stale ProcessedFile records
+    job: dict | None = None
+    if processed_file.job_id:
+        job = await converter.get_job_status(processed_file.job_id)
+        if job:
+            score = job.get("confidence_score")
+            if score is not None:
+                try:
+                    confidence_score = float(score)
+                except (ValueError, TypeError):
+                    pass
+            if job.get("status") == "failed":
+                error_message = job.get("error")
+
+    effective_status = await _sync_status_if_terminal(
+        config_service, course_id, file_id, processed_file, job
+    )
 
     if publish_result:
         effective_status = "published"
@@ -219,18 +270,6 @@ async def dashboard_document_detail(
                 pass
         download_url = publish_result.get("download_url")
         published_at = publish_result.get("published_at")
-
-    if processed_file.job_id:
-        job = await converter.get_job_status(processed_file.job_id)
-        if job:
-            score = job.get("confidence_score")
-            if score is not None:
-                try:
-                    confidence_score = float(score)
-                except (ValueError, TypeError):
-                    pass
-            if job.get("status") == "failed":
-                error_message = job.get("error")
 
     document = {
         "file_id": file_id,
@@ -286,19 +325,14 @@ async def dashboard_document_detail_fragment(
 
     publish_result = await config_service.get_publish_result(course_id, file_id)
 
-    effective_status = processed_file.status
     canvas_page_url: str | None = None
     download_url: str | None = None
     published_at: str | None = None
     confidence_score: float | None = None
     error_message: str | None = None
 
-    if publish_result:
-        effective_status = "published"
-        canvas_page_url = publish_result.get("canvas_page_url")
-        download_url = publish_result.get("download_url")
-        published_at = publish_result.get("published_at")
-
+    # Fetch job status first so we can sync stale ProcessedFile records
+    job: dict | None = None
     if processed_file.job_id:
         job = await converter.get_job_status(processed_file.job_id)
         if job:
@@ -310,6 +344,16 @@ async def dashboard_document_detail_fragment(
                     pass
             if job.get("status") == "failed":
                 error_message = job.get("error")
+
+    effective_status = await _sync_status_if_terminal(
+        config_service, course_id, file_id, processed_file, job
+    )
+
+    if publish_result:
+        effective_status = "published"
+        canvas_page_url = publish_result.get("canvas_page_url")
+        download_url = publish_result.get("download_url")
+        published_at = publish_result.get("published_at")
 
     document = {
         "file_id": file_id,
@@ -355,14 +399,11 @@ async def dashboard_document_row(
 
     publish_result = await config_service.get_publish_result(course_id, file_id)
 
-    effective_status = processed_file.status
     canvas_page_url: str | None = None
     confidence_score: float | None = None
 
-    if publish_result:
-        effective_status = "published"
-        canvas_page_url = publish_result.get("canvas_page_url")
-
+    # Fetch job status first so we can sync stale ProcessedFile records
+    job: dict | None = None
     if processed_file.job_id:
         job = await converter.get_job_status(processed_file.job_id)
         if job:
@@ -372,6 +413,14 @@ async def dashboard_document_row(
                     confidence_score = float(score)
                 except (ValueError, TypeError):
                     pass
+
+    effective_status = await _sync_status_if_terminal(
+        config_service, course_id, file_id, processed_file, job
+    )
+
+    if publish_result:
+        effective_status = "published"
+        canvas_page_url = publish_result.get("canvas_page_url")
 
     lti_session = request.query_params.get("lti_session", "")
     row_html = _render_document_row_fragment(
@@ -554,6 +603,24 @@ async def dashboard_retry(
             content=f'<span class="text-red-600">Retry failed: {e}</span>',
             status_code=500,
         )
+
+
+@router.delete("/{course_id}/documents/{file_id}", response_class=HTMLResponse)
+async def dashboard_delete_document(
+    course_id: str,
+    file_id: str,
+    request: Request,
+    config_service: CourseConfigService = Depends(get_course_config_service),
+) -> HTMLResponse:
+    """Dismiss a file: delete its record and block re-queuing.
+
+    Deletes the ProcessedFile record and adds the file_id to a lightweight
+    dismissed set so the worker won't re-queue it. Always succeeds — if the
+    record was already gone we still add to the dismissed set.
+    """
+    await config_service.dismiss_file(course_id, file_id)
+    # Return empty string so htmx outerHTML swap removes the row
+    return HTMLResponse(content="", status_code=200)
 
 
 @router.post("/{course_id}/documents/{file_id}/reprocess", response_class=HTMLResponse)
@@ -741,6 +808,15 @@ def _actions_html(
         else:
             parts.append('<span class="text-xs text-green-600">Live</span>')
 
+    # Delete button for non-published statuses
+    if doc_status not in ("published",):
+        parts.append(
+            f'<button hx-delete="/lti/dashboard/{course_id}/documents/{file_id}?lti_session={lti_session}" '
+            f'hx-target="#doc-{file_id}" hx-swap="outerHTML" '
+            f'hx-confirm="Remove this document from the dashboard?" '
+            f'class="text-xs px-2 py-1 text-gray-500 hover:text-red-600">Remove</button>'
+        )
+
     return " ".join(parts) if parts else "-"
 
 
@@ -849,6 +925,16 @@ def _render_detail_fragment(
             f'hx-target="#detail-actions" hx-swap="innerHTML" '
             f'class="px-4 py-2 bg-blue-600 text-white text-sm rounded hover:bg-blue-700">'
             f"Re-process</button>"
+        )
+    if doc_status not in ("published",):
+        back_url = f"/lti/dashboard/{course_id}?lti_session={lti_session}"
+        action_buttons.append(
+            f'<button hx-delete="/lti/dashboard/{course_id}/documents/{file_id}?lti_session={lti_session}" '
+            f'hx-confirm="Remove this document from the dashboard?" '
+            f'hx-on::after-request="if(event.detail.successful) window.location.href=\'{back_url}\'" '
+            f'class="px-4 py-2 text-gray-500 hover:text-red-600 '
+            f'text-sm rounded border border-gray-300 hover:border-red-300">'
+            f"Remove</button>"
         )
 
     actions_html = "\n        ".join(action_buttons)

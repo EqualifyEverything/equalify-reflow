@@ -36,6 +36,7 @@ def mock_config_service():
     mock.get_processed_file = AsyncMock(return_value=None)
     mock.get_publish_result = AsyncMock(return_value=None)
     mock.set_processed_file = AsyncMock()
+    mock.dismiss_file = AsyncMock(return_value=True)
     return mock
 
 
@@ -1621,7 +1622,7 @@ class TestDashboardLaunch:
 
     def test_dashboard_launch_redirects_with_valid_session(self, _lti_env):
         """GET /lti/dashboard with valid session and course_id redirects to index."""
-        from src.dependencies import get_course_config_service, get_converter_client, get_redis_client
+        from src.dependencies import get_converter_client, get_course_config_service, get_redis_client
         from src.lti.router import router as lti_router
 
         app = FastAPI()
@@ -1652,7 +1653,7 @@ class TestDashboardLaunch:
 
     def test_dashboard_launch_rejects_invalid_session(self, _lti_env):
         """GET /lti/dashboard with invalid/expired session shows error using dashboard template."""
-        from src.dependencies import get_course_config_service, get_converter_client, get_redis_client
+        from src.dependencies import get_converter_client, get_course_config_service, get_redis_client
         from src.lti.router import router as lti_router
 
         app = FastAPI()
@@ -1680,7 +1681,7 @@ class TestDashboardLaunch:
 
     def test_dashboard_launch_rejects_course_id_mismatch(self, _lti_env):
         """GET /lti/dashboard rejects when course_id doesn't match session."""
-        from src.dependencies import get_course_config_service, get_converter_client, get_redis_client
+        from src.dependencies import get_converter_client, get_course_config_service, get_redis_client
         from src.lti.router import router as lti_router
 
         app = FastAPI()
@@ -1709,7 +1710,7 @@ class TestDashboardLaunch:
 
     def test_dashboard_launch_error_without_params(self, _lti_env):
         """GET /lti/dashboard without params shows dashboard-styled error."""
-        from src.dependencies import get_course_config_service, get_converter_client, get_redis_client
+        from src.dependencies import get_converter_client, get_course_config_service, get_redis_client
         from src.lti.router import router as lti_router
 
         app = FastAPI()
@@ -1737,7 +1738,7 @@ class TestDashboardLaunch:
 
     def test_dashboard_launch_uses_dashboard_template(self, _lti_env):
         """GET /lti/dashboard error pages use the dashboard Jinja2 template, not inline HTML."""
-        from src.dependencies import get_course_config_service, get_converter_client, get_redis_client
+        from src.dependencies import get_converter_client, get_course_config_service, get_redis_client
         from src.lti.router import router as lti_router
 
         app = FastAPI()
@@ -2093,3 +2094,256 @@ class TestDashboardSessionValidation:
         assert response.status_code == 200
 
         app.dependency_overrides.clear()
+
+
+# ===========================================================================
+# Status Sync (lazy write-back from converter job to ProcessedFile)
+# ===========================================================================
+
+
+class TestStatusSync:
+    """Tests for lazy write-back of converter job status to ProcessedFile."""
+
+    def test_row_syncs_completed_status(self, client, mock_config_service, mock_converter):
+        """Row route syncs ProcessedFile from 'processing' to 'completed' when job is done."""
+        mock_config_service.get_processed_file.return_value = ProcessedFile(
+            canvas_file_id="42",
+            canvas_updated_at="2024-06-15T10:30:00Z",
+            job_id="job-1",
+            status="processing",
+            processed_at="2024-06-15T11:00:00Z",
+            original_filename="lecture.pdf",
+        )
+        mock_config_service.get_publish_result.return_value = None
+        mock_converter.get_job_status.return_value = {
+            "job_id": "job-1",
+            "status": "completed",
+            "confidence_score": "0.92",
+        }
+
+        response = client.get("/lti/dashboard/123/documents/42/row?lti_session=test-session")
+
+        assert response.status_code == 200
+        # Should show "Completed" badge (not "Processing")
+        assert "Completed" in response.text
+        assert "Publish" in response.text
+        # Should NOT have polling attrs since status is now terminal
+        assert "every 5s" not in response.text
+        # Should have written the updated status back
+        mock_config_service.set_processed_file.assert_awaited_once()
+        saved_pf = mock_config_service.set_processed_file.call_args[0][2]
+        assert saved_pf.status == "completed"
+
+    def test_row_syncs_failed_status(self, client, mock_config_service, mock_converter):
+        """Row route syncs ProcessedFile from 'processing' to 'failed' when job failed."""
+        mock_config_service.get_processed_file.return_value = ProcessedFile(
+            canvas_file_id="42",
+            canvas_updated_at="2024-06-15T10:30:00Z",
+            job_id="job-1",
+            status="processing",
+            processed_at="2024-06-15T11:00:00Z",
+            original_filename="broken.pdf",
+        )
+        mock_config_service.get_publish_result.return_value = None
+        mock_converter.get_job_status.return_value = {
+            "job_id": "job-1",
+            "status": "failed",
+            "error": "OCR timeout",
+        }
+
+        response = client.get("/lti/dashboard/123/documents/42/row?lti_session=test-session")
+
+        assert response.status_code == 200
+        assert "Failed" in response.text
+        assert "Retry" in response.text
+        assert "every 5s" not in response.text
+        mock_config_service.set_processed_file.assert_awaited_once()
+        saved_pf = mock_config_service.set_processed_file.call_args[0][2]
+        assert saved_pf.status == "failed"
+
+    def test_row_sync_failure_still_returns_response(self, client, mock_config_service, mock_converter):
+        """Row route still returns 200 even if set_processed_file raises."""
+        mock_config_service.get_processed_file.return_value = ProcessedFile(
+            canvas_file_id="42",
+            canvas_updated_at="2024-06-15T10:30:00Z",
+            job_id="job-1",
+            status="processing",
+            processed_at="2024-06-15T11:00:00Z",
+            original_filename="lecture.pdf",
+        )
+        mock_config_service.get_publish_result.return_value = None
+        mock_converter.get_job_status.return_value = {
+            "job_id": "job-1",
+            "status": "completed",
+            "confidence_score": "0.85",
+        }
+        mock_config_service.set_processed_file.side_effect = RuntimeError("Redis down")
+
+        response = client.get("/lti/dashboard/123/documents/42/row?lti_session=test-session")
+
+        # Should still return 200 with correct status despite write failure
+        assert response.status_code == 200
+        assert "Completed" in response.text
+
+    def test_detail_fragment_syncs_completed_status(self, client, mock_config_service, mock_converter):
+        """Detail fragment route syncs ProcessedFile from 'processing' to 'completed'."""
+        mock_config_service.get_processed_file.return_value = ProcessedFile(
+            canvas_file_id="42",
+            canvas_updated_at="2024-06-15T10:30:00Z",
+            job_id="job-1",
+            status="processing",
+            processed_at="2024-06-15T11:00:00Z",
+            original_filename="lecture.pdf",
+        )
+        mock_config_service.get_publish_result.return_value = None
+        mock_converter.get_job_status.return_value = {
+            "job_id": "job-1",
+            "status": "completed",
+            "confidence_score": "0.90",
+        }
+
+        response = client.get("/lti/dashboard/123/documents/42/detail_fragment?lti_session=test-session")
+
+        assert response.status_code == 200
+        assert "Completed" in response.text
+        assert "Publish to Canvas" in response.text
+        assert "every 5s" not in response.text
+        mock_config_service.set_processed_file.assert_awaited_once()
+        saved_pf = mock_config_service.set_processed_file.call_args[0][2]
+        assert saved_pf.status == "completed"
+
+    def test_index_syncs_stale_processing_files(self, client, mock_config_service, mock_converter):
+        """Index route syncs stale ProcessedFile when converter job is terminal."""
+        mock_config_service.list_processed_files.return_value = {
+            "42": ProcessedFile(
+                canvas_file_id="42",
+                canvas_updated_at="2024-06-15T10:30:00Z",
+                job_id="job-1",
+                status="processing",
+                processed_at="2024-06-15T11:00:00Z",
+                original_filename="lecture.pdf",
+            ),
+        }
+        mock_config_service.get_publish_result.return_value = None
+        mock_converter.get_job_status.return_value = {
+            "job_id": "job-1",
+            "status": "completed",
+            "confidence_score": "0.88",
+        }
+
+        response = client.get("/lti/dashboard/123?lti_session=test-session")
+
+        assert response.status_code == 200
+        mock_config_service.set_processed_file.assert_awaited_once()
+        saved_pf = mock_config_service.set_processed_file.call_args[0][2]
+        assert saved_pf.status == "completed"
+
+    def test_no_sync_when_already_terminal(self, client, mock_config_service, mock_converter):
+        """Does NOT call set_processed_file when ProcessedFile is already in terminal state."""
+        mock_config_service.get_processed_file.return_value = ProcessedFile(
+            canvas_file_id="42",
+            canvas_updated_at="2024-06-15T10:30:00Z",
+            job_id="job-1",
+            status="completed",
+            processed_at="2024-06-15T11:00:00Z",
+            original_filename="lecture.pdf",
+        )
+        mock_config_service.get_publish_result.return_value = None
+        mock_converter.get_job_status.return_value = {
+            "job_id": "job-1",
+            "status": "completed",
+            "confidence_score": "0.88",
+        }
+
+        response = client.get("/lti/dashboard/123/documents/42/row?lti_session=test-session")
+
+        assert response.status_code == 200
+        mock_config_service.set_processed_file.assert_not_awaited()
+
+
+# ===========================================================================
+# DELETE /lti/dashboard/{course_id}/documents/{file_id} - Remove Document
+# ===========================================================================
+
+
+class TestDashboardDeleteDocument:
+    """Tests for the delete document endpoint."""
+
+    def test_dismiss_returns_empty_body(self, client, mock_config_service):
+        """Successful dismiss returns 200 with empty body for htmx outerHTML swap."""
+        mock_config_service.dismiss_file.return_value = True
+
+        response = client.delete("/lti/dashboard/123/documents/42?lti_session=test-session")
+
+        assert response.status_code == 200
+        assert response.text == ""
+        mock_config_service.dismiss_file.assert_awaited_once_with("123", "42")
+
+    def test_dismiss_succeeds_even_if_record_missing(self, client, mock_config_service):
+        """Dismiss returns 200 even if record was already gone (still adds to dismissed set)."""
+        mock_config_service.dismiss_file.return_value = False
+
+        response = client.delete("/lti/dashboard/123/documents/999?lti_session=test-session")
+
+        assert response.status_code == 200
+        assert response.text == ""
+        mock_config_service.dismiss_file.assert_awaited_once_with("123", "999")
+
+    def test_processing_row_has_remove_button(self, client, mock_config_service, mock_converter):
+        """Processing rows show a Remove button."""
+        mock_config_service.get_processed_file.return_value = ProcessedFile(
+            canvas_file_id="42",
+            canvas_updated_at="2024-06-15T10:30:00Z",
+            job_id="job-1",
+            status="processing",
+            processed_at="2024-06-15T11:00:00Z",
+            original_filename="stuck.pdf",
+        )
+        mock_config_service.get_publish_result.return_value = None
+        mock_converter.get_job_status.return_value = None
+
+        response = client.get("/lti/dashboard/123/documents/42/row?lti_session=test-session")
+
+        assert response.status_code == 200
+        assert "Remove" in response.text
+        assert "hx-delete" in response.text
+
+    def test_failed_row_has_remove_button(self, client, mock_config_service, mock_converter):
+        """Failed rows show both Retry and Remove buttons."""
+        mock_config_service.get_processed_file.return_value = ProcessedFile(
+            canvas_file_id="42",
+            canvas_updated_at="2024-06-15T10:30:00Z",
+            job_id="job-1",
+            status="failed",
+            processed_at="2024-06-15T11:00:00Z",
+            original_filename="broken.pdf",
+        )
+        mock_config_service.get_publish_result.return_value = None
+        mock_converter.get_job_status.return_value = None
+
+        response = client.get("/lti/dashboard/123/documents/42/row?lti_session=test-session")
+
+        assert response.status_code == 200
+        assert "Retry" in response.text
+        assert "Remove" in response.text
+
+    def test_published_row_has_no_remove_button(self, client, mock_config_service, mock_converter):
+        """Published rows do NOT show a Remove button."""
+        mock_config_service.get_processed_file.return_value = ProcessedFile(
+            canvas_file_id="42",
+            canvas_updated_at="2024-06-15T10:30:00Z",
+            job_id="job-1",
+            status="completed",
+            processed_at="2024-06-15T11:00:00Z",
+            original_filename="lecture.pdf",
+        )
+        mock_config_service.get_publish_result.return_value = {
+            "canvas_page_url": "https://canvas.example.com/pages/lecture",
+        }
+        mock_converter.get_job_status.return_value = None
+
+        response = client.get("/lti/dashboard/123/documents/42/row?lti_session=test-session")
+
+        assert response.status_code == 200
+        assert "Remove" not in response.text
+

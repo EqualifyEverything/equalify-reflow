@@ -264,6 +264,12 @@ class Settings(BaseSettings):
         ge=10, le=200, default=50, description="Pause API calls when Canvas rate limit remaining is below this"
     )
 
+    # Course Config TTL
+    course_config_ttl_days: int = Field(ge=1, le=365, default=90, description="TTL in days for course config keys")
+    course_config_cleanup_interval_hours: int = Field(
+        ge=1, le=168, default=24, description="How often to run stale course config cleanup (hours)"
+    )
+
     # LTI State Storage Configuration
     lti_state_ttl_seconds: int = Field(
         ge=60, le=3600, default=600, description="TTL for LTI OIDC state in Redis (10 minutes default)"

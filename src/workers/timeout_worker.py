@@ -11,6 +11,7 @@ import asyncio
 import logging
 from datetime import UTC, datetime
 
+from ..canvas.course_config import CourseConfigService
 from ..config import settings
 from ..services.cleanup_service import CleanupService
 from ..services.job_service import JobService
@@ -38,6 +39,7 @@ class TimeoutWorker:
         job_service: JobService,
         metrics_service: MetricsService,
         s3_cleanup_service: S3CleanupService,
+        course_config_service: CourseConfigService | None = None,
     ) -> None:
         """Initialize timeout worker with service dependencies.
 
@@ -47,6 +49,7 @@ class TimeoutWorker:
             job_service: Job status management
             metrics_service: Metrics tracking
             s3_cleanup_service: S3 cleanup operations (best-effort)
+            course_config_service: Course config management (optional)
         """
         # Core services
         self.storage_service = storage_service
@@ -54,6 +57,7 @@ class TimeoutWorker:
         self.job_service = job_service
         self.metrics_service = metrics_service
         self.s3_cleanup_service = s3_cleanup_service
+        self.course_config_service = course_config_service
 
         # Derived services
         self.cleanup_service = CleanupService(storage_service)
@@ -68,6 +72,7 @@ class TimeoutWorker:
         self.last_debug_cleanup: datetime | None = None
         self.last_orphan_cleanup: datetime | None = None
         self.last_metrics_cleanup: datetime | None = None
+        self.last_course_config_cleanup: datetime | None = None
 
         # Worker state
         self.running = False
@@ -113,6 +118,14 @@ class TimeoutWorker:
                     if self._should_run_task(self.last_metrics_cleanup, settings.metrics_cleanup_interval_hours * 3600):
                         await self._run_metrics_cleanup()
                         self.last_metrics_cleanup = current_time
+
+                    # Task 6: Course config stale entry cleanup (daily)
+                    if self.course_config_service and self._should_run_task(
+                        self.last_course_config_cleanup,
+                        settings.course_config_cleanup_interval_hours * 3600,
+                    ):
+                        await self._run_course_config_cleanup()
+                        self.last_course_config_cleanup = current_time
 
                     # Sleep before next iteration
                     await asyncio.sleep(settings.timeout_worker_check_interval_seconds)
@@ -231,6 +244,17 @@ class TimeoutWorker:
             logger.error(f"Error in metrics cleanup: {e}", exc_info=True)
             await self.metrics_service.increment_metric("worker_task_errors", 1)
 
+    async def _run_course_config_cleanup(self) -> None:
+        """Run stale course config cleanup task."""
+        assert self.course_config_service is not None
+        try:
+            logger.info("Running course config cleanup...")
+            removed = await self.course_config_service.cleanup_stale_courses()
+            logger.info(f"Course config cleanup complete: {removed} stale entries removed")
+        except Exception as e:
+            logger.error(f"Error in course config cleanup: {e}", exc_info=True)
+            await self.metrics_service.increment_metric("worker_task_errors", 1)
+
     def stop(self) -> None:
         """Signal worker to stop gracefully."""
         logger.info("Stopping timeout worker...")
@@ -283,6 +307,9 @@ async def start_timeout_worker(shutdown_event: asyncio.Event | None = None) -> N
         temp_bucket=settings.s3_temp_bucket,
     )
 
+    # Create course config service for stale entry cleanup
+    course_config_service = CourseConfigService(redis_client=redis_client)
+
     # Create worker
     _worker_instance = TimeoutWorker(
         storage_service=storage_service,
@@ -290,6 +317,7 @@ async def start_timeout_worker(shutdown_event: asyncio.Event | None = None) -> N
         job_service=job_service,
         metrics_service=metrics_service,
         s3_cleanup_service=s3_cleanup_service,
+        course_config_service=course_config_service,
     )
 
     logger.info("Timeout worker services initialized, starting worker loop...")

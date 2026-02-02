@@ -19,11 +19,15 @@ from fastapi.responses import HTMLResponse, RedirectResponse, Response
 from redis.asyncio import Redis
 
 from ..config import settings
-from ..dependencies import get_converter_client, get_document_processing_service, get_job_service, get_redis_client, get_storage_service
+from ..dependencies import (
+    get_converter_client,
+    get_document_processing_service,
+    get_job_service,
+    get_redis_client,
+)
 from ..services.converter_client import ConverterClient
 from ..services.document_processing_service import DocumentProcessingService
 from ..services.job_service import JobService
-from ..services.storage_service import StorageService
 from .adapters import (
     FastAPICookieService,
     FastAPIMessageLaunch,
@@ -433,7 +437,10 @@ async def lti_launch(
 
         # Source 4: Check launch_presentation return_url (may contain file context)
         if not file_id_from_url:
-            return_url = launch_data.get("https://purl.imsglobal.org/spec/lti/claim/launch_presentation", {}).get("return_url", "")
+            presentation = launch_data.get(
+                "https://purl.imsglobal.org/spec/lti/claim/launch_presentation", {}
+            )
+            return_url = presentation.get("return_url", "")
             if return_url and "files" in return_url:
                 from urllib.parse import parse_qs, urlparse
                 parsed_return = urlparse(return_url)
@@ -539,6 +546,7 @@ async def _render_dashboard_inline(
     inline_css = css_path.read_text() if css_path.exists() else ""
 
     config_service = CourseConfigService(redis)
+    await config_service.refresh_course_ttl(course_id)
     config = await config_service.get_config(course_id)
     processed_files = await config_service.list_processed_files(course_id)
 
@@ -723,7 +731,8 @@ def _redirect_response(viewer_url: str, file_name: str | None = None) -> HTMLRes
             <div class="spinner"></div>
             <h2>Opening Equalify Reflow</h2>
             <p>Processing: {display_name}</p>
-            <p><small>If you're not redirected automatically, <a href="{viewer_url}" target="_top">click here</a>.</small></p>
+            <p><small>If you're not redirected automatically,
+            <a href="{viewer_url}" target="_top">click here</a>.</small></p>
         </div>
     </body>
     </html>

@@ -10,16 +10,22 @@ import logging
 from pydantic import BaseModel, Field
 from redis.asyncio import Redis
 
+from ..config import settings
+
 logger = logging.getLogger(__name__)
 
 # TTL for publish results (30 days)
 PUBLISH_RESULT_TTL = 30 * 24 * 3600
+
+# TTL for course config and processed-file keys (default: 90 days)
+COURSE_CONFIG_TTL = settings.course_config_ttl_days * 24 * 3600
 
 # Redis key patterns
 CONFIG_KEY = "eq-pdf:course-config:{course_id}"
 PROCESSED_KEY = "eq-pdf:processed:{course_id}"
 PUBLISHED_KEY = "eq-pdf:published:{course_id}:{file_id}"
 ENABLED_COURSES_KEY = "eq-pdf:courses:enabled"
+DISMISSED_KEY = "eq-pdf:dismissed:{course_id}"
 
 
 class CourseConfig(BaseModel):
@@ -88,7 +94,7 @@ class CourseConfigService:
         return CourseConfig(**config_dict)
 
     async def set_config(self, course_id: str, config: CourseConfig) -> None:
-        """Create or update course configuration."""
+        """Create or update course configuration with TTL."""
         key = CONFIG_KEY.format(course_id=course_id)
 
         # Serialize to flat hash-compatible mapping
@@ -101,6 +107,7 @@ class CourseConfigService:
         }
 
         await self.redis.hset(key, mapping=mapping)
+        await self.redis.expire(key, COURSE_CONFIG_TTL)
 
         # Maintain the enabled-courses set
         if config.enabled:
@@ -112,6 +119,19 @@ class CourseConfigService:
         """Return course IDs of all enabled courses."""
         members = await self.redis.smembers(ENABLED_COURSES_KEY)
         return [m if isinstance(m, str) else m.decode("utf-8") for m in members]
+
+    async def refresh_course_ttl(self, course_id: str) -> None:
+        """Refresh TTL on config and processed keys for an active course.
+
+        Called on LTI dashboard launch to keep active course data alive.
+        Uses a pipeline so both EXPIRE calls go in a single round-trip.
+        """
+        config_key = CONFIG_KEY.format(course_id=course_id)
+        processed_key = PROCESSED_KEY.format(course_id=course_id)
+        pipe = self.redis.pipeline()
+        pipe.expire(config_key, COURSE_CONFIG_TTL)
+        pipe.expire(processed_key, COURSE_CONFIG_TTL)
+        await pipe.execute()
 
     # --- Processed Files ---
 
@@ -135,9 +155,10 @@ class CourseConfigService:
         file_id: str,
         record: ProcessedFile,
     ) -> None:
-        """Create or update a processed file record."""
+        """Create or update a processed file record with TTL."""
         key = PROCESSED_KEY.format(course_id=course_id)
         await self.redis.hset(key, file_id, record.model_dump_json())
+        await self.redis.expire(key, COURSE_CONFIG_TTL)
 
     async def list_processed_files(
         self,
@@ -153,6 +174,24 @@ class CourseConfigService:
             result[fid] = ProcessedFile.model_validate_json(value)
         return result
 
+    async def dismiss_file(self, course_id: str, file_id: str) -> bool:
+        """Dismiss a file: delete its ProcessedFile record and add to dismissed set.
+
+        The dismissed set is a lightweight Redis set of file IDs that
+        is_file_new_or_updated checks so the worker won't re-queue the file.
+        Returns True if the file existed, False if not found.
+        """
+        processed_key = PROCESSED_KEY.format(course_id=course_id)
+        removed = await self.redis.hdel(processed_key, file_id)
+        dismissed_key = DISMISSED_KEY.format(course_id=course_id)
+        await self.redis.sadd(dismissed_key, file_id)
+        return removed > 0
+
+    async def is_file_dismissed(self, course_id: str, file_id: str) -> bool:
+        """Check if a file has been dismissed by the instructor."""
+        key = DISMISSED_KEY.format(course_id=course_id)
+        return bool(await self.redis.sismember(key, file_id))
+
     async def is_file_new_or_updated(
         self,
         course_id: str,
@@ -162,10 +201,13 @@ class CourseConfigService:
         """Check if a file needs processing.
 
         Returns True if:
+        - File has not been dismissed, AND
         - File has never been processed, OR
         - File's canvas_updated_at is newer than the stored value, OR
         - File's canvas_updated_at matches but status is not 'completed'
         """
+        if await self.is_file_dismissed(course_id, file_id):
+            return False
         existing = await self.get_processed_file(course_id, file_id)
         if existing is None:
             return True
@@ -200,9 +242,35 @@ class CourseConfigService:
         file_id: str,
         result: dict,
     ) -> None:
-        """Store publish result for a file with 30-day TTL."""
+        """Store publish result for a file with 30-day TTL.
+
+        Uses a pipeline for atomic HSET + EXPIRE.
+        """
         key = PUBLISHED_KEY.format(course_id=course_id, file_id=file_id)
         # Ensure all values are strings for Redis hash
         mapping = {str(k): str(v) for k, v in result.items()}
-        await self.redis.hset(key, mapping=mapping)
-        await self.redis.expire(key, PUBLISH_RESULT_TTL)
+        pipe = self.redis.pipeline()
+        pipe.hset(key, mapping=mapping)
+        pipe.expire(key, PUBLISH_RESULT_TTL)
+        await pipe.execute()
+
+    # --- Cleanup ---
+
+    async def cleanup_stale_courses(self) -> int:
+        """Remove entries from the enabled-courses set whose config key no longer exists.
+
+        Returns:
+            Number of stale entries removed.
+        """
+        enabled = await self.list_enabled_courses()
+        removed = 0
+        for course_id in enabled:
+            config_key = CONFIG_KEY.format(course_id=course_id)
+            exists = await self.redis.exists(config_key)
+            if not exists:
+                await self.redis.srem(ENABLED_COURSES_KEY, course_id)
+                logger.info(f"Removed stale course {course_id} from enabled set")
+                removed += 1
+        if removed:
+            logger.info(f"Cleaned up {removed} stale course entries")
+        return removed

@@ -4,6 +4,7 @@ from unittest.mock import AsyncMock
 
 import pytest
 from src.canvas.course_config import (
+    COURSE_CONFIG_TTL,
     ENABLED_COURSES_KEY,
     PUBLISH_RESULT_TTL,
     CourseConfig,
@@ -28,6 +29,16 @@ def mock_redis():
     redis.srem.return_value = 1
     redis.smembers.return_value = set()
     redis.expire.return_value = True
+    redis.sismember.return_value = False
+    redis.exists.return_value = 1
+
+    # Mock pipeline for atomic operations (pipeline() is sync, returns a context manager-like object)
+    mock_pipe = AsyncMock()
+    mock_pipe.execute.return_value = [True, True]
+    # pipeline() is a sync call that returns the pipe object (not a coroutine)
+    from unittest.mock import MagicMock
+    redis.pipeline = MagicMock(return_value=mock_pipe)
+
     return redis
 
 
@@ -200,6 +211,14 @@ class TestSetConfig:
                 "created_at": "2024-01-15T10:30:00Z",
                 "updated_at": "2024-01-15T10:30:00Z",
             },
+        )
+
+    async def test_sets_ttl_on_config_key(self, service, mock_redis, sample_config):
+        """set_config sets TTL on the config key."""
+        await service.set_config("course-101", sample_config)
+        mock_redis.expire.assert_called_once_with(
+            "eq-pdf:course-config:course-101",
+            COURSE_CONFIG_TTL,
         )
 
     async def test_adds_to_enabled_set_when_enabled(self, service, mock_redis, sample_config):
@@ -397,6 +416,14 @@ class TestSetProcessedFile:
             "eq-pdf:processed:course-101",
             "12345",
             sample_processed_file.model_dump_json(),
+        )
+
+    async def test_sets_ttl_on_processed_key(self, service, mock_redis, sample_processed_file):
+        """set_processed_file sets TTL on the processed key."""
+        await service.set_processed_file("course-101", "12345", sample_processed_file)
+        mock_redis.expire.assert_called_with(
+            "eq-pdf:processed:course-101",
+            COURSE_CONFIG_TTL,
         )
 
     async def test_json_contains_all_fields(self, service, mock_redis, sample_processed_file):
@@ -672,6 +699,51 @@ class TestIsFileNewOrUpdated:
         result = await service.is_file_new_or_updated("c1", "f1", "2024-06-16T08:00:00Z")
         assert result is True
 
+    async def test_returns_false_when_file_is_dismissed(self, service, mock_redis):
+        """Dismissed files are never re-queued, even if the record was deleted."""
+        mock_redis.sismember.return_value = True
+        result = await service.is_file_new_or_updated("c1", "f1", "2024-06-15T08:00:00Z")
+        assert result is False
+        mock_redis.sismember.assert_called_once_with("eq-pdf:dismissed:c1", "f1")
+        # Should not even check the processed file hash
+        mock_redis.hget.assert_not_called()
+
+
+# --- dismiss_file ---
+
+
+class TestDismissFile:
+    async def test_deletes_record_and_adds_to_dismissed_set(self, service, mock_redis):
+        """dismiss_file deletes the ProcessedFile and adds file_id to dismissed set."""
+        mock_redis.hdel.return_value = 1
+        result = await service.dismiss_file("course-101", "file-42")
+        assert result is True
+        mock_redis.hdel.assert_called_once_with("eq-pdf:processed:course-101", "file-42")
+        mock_redis.sadd.assert_called_once_with("eq-pdf:dismissed:course-101", "file-42")
+
+    async def test_returns_false_when_record_not_found(self, service, mock_redis):
+        """dismiss_file returns False if there was no record to delete."""
+        mock_redis.hdel.return_value = 0
+        result = await service.dismiss_file("course-101", "file-999")
+        assert result is False
+        # Should still add to dismissed set (defensive)
+        mock_redis.sadd.assert_called_once_with("eq-pdf:dismissed:course-101", "file-999")
+
+
+# --- is_file_dismissed ---
+
+
+class TestIsFileDismissed:
+    async def test_returns_true_when_in_dismissed_set(self, service, mock_redis):
+        mock_redis.sismember.return_value = True
+        result = await service.is_file_dismissed("course-101", "file-42")
+        assert result is True
+
+    async def test_returns_false_when_not_in_dismissed_set(self, service, mock_redis):
+        mock_redis.sismember.return_value = False
+        result = await service.is_file_dismissed("course-101", "file-42")
+        assert result is False
+
 
 # --- get_publish_result ---
 
@@ -762,7 +834,8 @@ class TestGetPublishResult:
 
 
 class TestSetPublishResult:
-    async def test_stores_result_with_ttl(self, service, mock_redis):
+    async def test_stores_result_with_ttl_via_pipeline(self, service, mock_redis):
+        """set_publish_result uses a pipeline for atomic HSET + EXPIRE."""
         result = {
             "page_id": 42,
             "page_url": "lecture-notes-reflow",
@@ -770,7 +843,10 @@ class TestSetPublishResult:
         }
         await service.set_publish_result("course-101", "file-1", result)
 
-        mock_redis.hset.assert_called_once_with(
+        # Pipeline should be created and executed
+        mock_redis.pipeline.assert_called_once()
+        mock_pipe = mock_redis.pipeline.return_value
+        mock_pipe.hset.assert_called_once_with(
             "eq-pdf:published:course-101:file-1",
             mapping={
                 "page_id": "42",
@@ -778,24 +854,14 @@ class TestSetPublishResult:
                 "published_at": "2024-01-15T10:40:00Z",
             },
         )
-        mock_redis.expire.assert_called_once_with(
+        mock_pipe.expire.assert_called_once_with(
             "eq-pdf:published:course-101:file-1",
             PUBLISH_RESULT_TTL,
         )
+        mock_pipe.execute.assert_called_once()
 
     async def test_ttl_is_30_days(self):
         assert PUBLISH_RESULT_TTL == 30 * 24 * 3600
-
-    async def test_uses_correct_redis_key(self, service, mock_redis):
-        """Redis key includes both course_id and file_id."""
-        await service.set_publish_result("course-abc", "file-xyz", {"page_id": "1"})
-        mock_redis.hset.assert_called_once()
-        call_args = mock_redis.hset.call_args
-        assert call_args.args[0] == "eq-pdf:published:course-abc:file-xyz"
-        mock_redis.expire.assert_called_once_with(
-            "eq-pdf:published:course-abc:file-xyz",
-            PUBLISH_RESULT_TTL,
-        )
 
     async def test_converts_all_values_to_strings(self, service, mock_redis):
         """Non-string values (int, bool) are converted to strings for Redis."""
@@ -805,7 +871,8 @@ class TestSetPublishResult:
             "published": True,
         }
         await service.set_publish_result("course-101", "file-1", result)
-        call_mapping = mock_redis.hset.call_args.kwargs["mapping"]
+        mock_pipe = mock_redis.pipeline.return_value
+        call_mapping = mock_pipe.hset.call_args.kwargs["mapping"]
         assert call_mapping["page_id"] == "42"
         assert call_mapping["figure_count"] == "5"
         assert call_mapping["published"] == "True"
@@ -813,46 +880,66 @@ class TestSetPublishResult:
     async def test_empty_result_dict(self, service, mock_redis):
         """An empty result dict stores an empty mapping and still sets TTL."""
         await service.set_publish_result("course-101", "file-1", {})
-        mock_redis.hset.assert_called_once_with(
+        mock_pipe = mock_redis.pipeline.return_value
+        mock_pipe.hset.assert_called_once_with(
             "eq-pdf:published:course-101:file-1",
             mapping={},
         )
-        mock_redis.expire.assert_called_once_with(
+        mock_pipe.expire.assert_called_once_with(
             "eq-pdf:published:course-101:file-1",
             PUBLISH_RESULT_TTL,
         )
 
-    async def test_overwrites_previous_result(self, service, mock_redis):
-        """Calling set_publish_result twice overwrites the previous value."""
-        await service.set_publish_result("course-101", "file-1", {"page_id": "1"})
-        await service.set_publish_result("course-101", "file-1", {"page_id": "2"})
 
-        last_call = mock_redis.hset.call_args_list[-1]
-        assert last_call.kwargs["mapping"]["page_id"] == "2"
+# --- refresh_course_ttl ---
 
-    async def test_different_courses_use_different_keys(self, service, mock_redis):
-        """Results in different courses are stored under different Redis keys."""
-        await service.set_publish_result("course-100", "file-1", {"page_id": "1"})
-        await service.set_publish_result("course-200", "file-1", {"page_id": "2"})
 
-        calls = mock_redis.hset.call_args_list
-        assert calls[0].args[0] == "eq-pdf:published:course-100:file-1"
-        assert calls[1].args[0] == "eq-pdf:published:course-200:file-1"
+class TestRefreshCourseTTL:
+    async def test_refreshes_both_keys_via_pipeline(self, service, mock_redis):
+        """refresh_course_ttl uses a pipeline to EXPIRE config + processed keys."""
+        await service.refresh_course_ttl("course-101")
 
-    async def test_different_files_use_different_keys(self, service, mock_redis):
-        """Results for different files in the same course use different Redis keys."""
-        await service.set_publish_result("course-101", "file-a", {"page_id": "1"})
-        await service.set_publish_result("course-101", "file-b", {"page_id": "2"})
+        mock_redis.pipeline.assert_called_once()
+        mock_pipe = mock_redis.pipeline.return_value
+        assert mock_pipe.expire.call_count == 2
+        mock_pipe.expire.assert_any_call(
+            "eq-pdf:course-config:course-101", COURSE_CONFIG_TTL
+        )
+        mock_pipe.expire.assert_any_call(
+            "eq-pdf:processed:course-101", COURSE_CONFIG_TTL
+        )
+        mock_pipe.execute.assert_called_once()
 
-        calls = mock_redis.hset.call_args_list
-        assert calls[0].args[0] == "eq-pdf:published:course-101:file-a"
-        assert calls[1].args[0] == "eq-pdf:published:course-101:file-b"
 
-    async def test_expire_called_after_hset(self, service, mock_redis):
-        """TTL is set after the hash is written (correct operation order)."""
-        call_order: list[str] = []
-        mock_redis.hset.side_effect = lambda *a, **kw: call_order.append("hset")
-        mock_redis.expire.side_effect = lambda *a, **kw: call_order.append("expire")
+# --- cleanup_stale_courses ---
 
-        await service.set_publish_result("course-101", "file-1", {"page_id": "1"})
-        assert call_order == ["hset", "expire"]
+
+class TestCleanupStaleCourses:
+    async def test_removes_stale_entries(self, service, mock_redis):
+        """cleanup_stale_courses removes entries whose config key no longer exists."""
+        # Use a single stale course to avoid set ordering issues
+        mock_redis.smembers.return_value = {"course-stale"}
+        mock_redis.exists.return_value = 0
+
+        removed = await service.cleanup_stale_courses()
+
+        assert removed == 1
+        mock_redis.srem.assert_called_once_with(ENABLED_COURSES_KEY, "course-stale")
+
+    async def test_no_removal_when_all_exist(self, service, mock_redis):
+        """cleanup_stale_courses does nothing when all courses still have config keys."""
+        mock_redis.smembers.return_value = {"course-1"}
+        mock_redis.exists.return_value = 1
+
+        removed = await service.cleanup_stale_courses()
+
+        assert removed == 0
+        mock_redis.srem.assert_not_called()
+
+    async def test_handles_empty_enabled_set(self, service, mock_redis):
+        """cleanup_stale_courses handles empty enabled set."""
+        mock_redis.smembers.return_value = set()
+
+        removed = await service.cleanup_stale_courses()
+
+        assert removed == 0

@@ -463,6 +463,7 @@ class TestPollCourse:
                 base_url="https://canvas.example.com",
                 api_token="test-token-123",
                 rate_limit_buffer=75,
+                host_header=mock_settings.canvas_host_header,
             )
 
     @pytest.mark.asyncio

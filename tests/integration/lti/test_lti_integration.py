@@ -139,7 +139,7 @@ class TestOIDCLoginEndpoint:
         response = lti_client.post("/lti/login", data=form_data)
 
         assert response.status_code == 400
-        assert "Unknown issuer" in response.json()["detail"]
+        assert "not found in settings" in response.json()["detail"]
 
     def test_login_requires_login_hint(self, lti_client, temp_keys):
         """Login endpoint requires login_hint parameter."""
@@ -152,7 +152,7 @@ class TestOIDCLoginEndpoint:
         response = lti_client.post("/lti/login", data=form_data)
 
         assert response.status_code == 400
-        assert "login_hint" in response.json()["detail"]
+        assert "login hint" in response.json()["detail"]
 
 
 class TestLaunchEndpoint:
@@ -422,7 +422,7 @@ class TestLTIServiceErrors:
 
     @pytest.mark.asyncio
     async def test_missing_download_url(self, temp_keys):
-        """Service raises error when download URL is missing."""
+        """Service raises error when no download URL can be resolved."""
         from unittest.mock import MagicMock
 
         from src.lti.models import FileMenuContent, LTILaunchData, LTIUser
@@ -444,8 +444,20 @@ class TestLTIServiceErrors:
         mock_converter = MagicMock(spec=ConverterClient)
         lti_service = LTIService(mock_converter)
 
-        with pytest.raises(LTIServiceError, match="download URL"):
-            await lti_service.process_file_menu_launch(launch_data)
+        # Mock the internal fetch to return a FileMenuContent with no download URL,
+        # simulating the case where Canvas API also can't provide one
+        with patch.object(
+            lti_service,
+            "_fetch_file_info_from_canvas",
+            new_callable=AsyncMock,
+            return_value=FileMenuContent(
+                file_id="123",
+                file_name="test.pdf",
+                file_download_url=None,
+            ),
+        ):
+            with pytest.raises(LTIServiceError, match="download URL"):
+                await lti_service.process_file_menu_launch(launch_data)
 
     @pytest.mark.asyncio
     async def test_canvas_download_failure(self, temp_keys):

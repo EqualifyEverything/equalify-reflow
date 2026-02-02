@@ -1,6 +1,6 @@
 """Tests for cleanup service."""
 
-from unittest.mock import AsyncMock
+from unittest.mock import AsyncMock, patch
 
 import pytest
 from botocore.exceptions import ClientError
@@ -17,7 +17,9 @@ def mock_s3_client():
 @pytest.fixture
 def cleanup_service(mock_s3_client):
     """Cleanup service instance with mocked S3."""
-    return CleanupService(mock_s3_client)
+    with patch("src.services.cleanup_service.settings") as mock_settings:
+        mock_settings.s3_temp_bucket = "equalify-pdf-temp"
+        yield CleanupService(mock_s3_client)
 
 
 @pytest.mark.asyncio

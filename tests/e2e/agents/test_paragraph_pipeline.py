@@ -480,7 +480,7 @@ class TestCrossPageMerge:
             should_merge=True,
             merged_text="significant improvements in accuracy",
             join_method="hyphen_removal",
-            page1_remove_chars=7,  # "signif-\n"
+            page1_remove_chars=8,  # "signif-\n" (7 chars + trailing newline)
             page2_remove_chars=6,  # "icant "
             confidence=0.92,
             reasoning="Word 'significant' split across pages",

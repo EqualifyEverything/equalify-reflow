@@ -401,9 +401,12 @@ class TestConfigurationValidation:
 
     # --- Canvas Auto-Publishing Configuration Tests ---
 
-    def test_canvas_autopublish_defaults(self):
+    def test_canvas_autopublish_defaults(self, monkeypatch):
         """Test that Canvas auto-publish configuration has correct defaults."""
-        settings = Settings()
+        monkeypatch.delenv("CANVAS_AUTOPUBLISH_ENABLED", raising=False)
+        monkeypatch.delenv("CANVAS_POLLING_INTERVAL_SECONDS", raising=False)
+        monkeypatch.delenv("CANVAS_RATE_LIMIT_BUFFER", raising=False)
+        settings = Settings(_env_file=None)
 
         assert settings.canvas_autopublish_enabled is False
         assert settings.canvas_polling_interval_seconds == 120

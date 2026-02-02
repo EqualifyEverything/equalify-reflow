@@ -226,16 +226,27 @@ class TestStreamTokenMiddleware:
     @pytest.mark.asyncio
     async def test_short_token_does_not_bypass_middleware(self):
         """Test that tokens shorter than 40 chars don't bypass middleware."""
-        async with AsyncClient(
-            transport=ASGITransport(app=app),
-            base_url="http://test",
-            # No API key header
-        ) as client:
-            # Short token should not bypass API key auth requirement
-            response = await client.get("/api/v1/documents/test-job/stream?token=short")
+        from src.dependencies import get_job_service
 
-            # Should fail auth (either 401 from middleware or token validation)
-            assert response.status_code in [401, 403]
+        mock_job_service = AsyncMock()
+        mock_job_service.validate_and_consume_stream_token.return_value = None
+        mock_job_service.get_job.return_value = {"job_id": "test-job", "status": "processing"}
+
+        app.dependency_overrides[get_job_service] = lambda: mock_job_service
+
+        try:
+            async with AsyncClient(
+                transport=ASGITransport(app=app),
+                base_url="http://test",
+                # No API key header
+            ) as client:
+                # Short token should not bypass API key auth requirement
+                response = await client.get("/api/v1/documents/test-job/stream?token=short")
+
+                # Should fail auth (either 401 from middleware or token validation)
+                assert response.status_code in [401, 403]
+        finally:
+            app.dependency_overrides.clear()
 
     @pytest.mark.asyncio
     async def test_middleware_only_checks_stream_endpoints(self):

@@ -1211,7 +1211,10 @@ class TestClose:
 class TestConfigSettings:
     """Tests for Canvas configuration in Settings."""
 
-    def test_canvas_autopublish_defaults(self):
+    def test_canvas_autopublish_defaults(self, monkeypatch):
+        monkeypatch.delenv("CANVAS_AUTOPUBLISH_ENABLED", raising=False)
+        monkeypatch.delenv("CANVAS_POLLING_INTERVAL_SECONDS", raising=False)
+        monkeypatch.delenv("CANVAS_RATE_LIMIT_BUFFER", raising=False)
         from src.config import Settings
 
         s = Settings(

@@ -14,6 +14,7 @@ from unittest.mock import AsyncMock, MagicMock, patch
 import pytest
 from src.canvas.client import CanvasAPIError
 from src.canvas.course_config import CourseConfig, CourseConfigService, ProcessedFile
+from src.services.converter_client import ConverterClient, SubmitResult
 from src.workers.canvas_file_worker import CanvasFileWorker
 
 pytestmark = pytest.mark.unit
@@ -31,42 +32,23 @@ def mock_config_service():
 
 
 @pytest.fixture
-def mock_job_service():
-    """Mock JobService for canvas file worker tests."""
-    mock = MagicMock()
-    mock.create_job = AsyncMock()
-    mock.redis = AsyncMock()
-    mock.redis.hset = AsyncMock()
-    mock.status_prefix = "eq-pdf:job:"
+def mock_converter():
+    """Mock ConverterClient for canvas file worker tests."""
+    mock = MagicMock(spec=ConverterClient)
+    mock.submit_document = AsyncMock(
+        return_value=SubmitResult(job_id="test-job-id", s3_key="temp/test-job-id.pdf", status="pii_scanning")
+    )
+    mock.get_job_status = AsyncMock()
+    mock.retry_job = AsyncMock()
     return mock
 
 
 @pytest.fixture
-def mock_storage_service():
-    """Mock StorageService for canvas file worker tests."""
-    mock = MagicMock()
-    mock.s3_client = MagicMock()
-    mock.temp_bucket = "equalify-temp"
-    mock.results_bucket = "equalify-results"
-    return mock
-
-
-@pytest.fixture
-def mock_queue_service():
-    """Mock QueueService for canvas file worker tests."""
-    mock = AsyncMock()
-    mock.queue_pii_job = AsyncMock()
-    return mock
-
-
-@pytest.fixture
-def worker(mock_config_service, mock_job_service, mock_storage_service, mock_queue_service):
+def worker(mock_config_service, mock_converter):
     """Create a CanvasFileWorker with mocked dependencies."""
     return CanvasFileWorker(
         config_service=mock_config_service,
-        job_service=mock_job_service,
-        storage_service=mock_storage_service,
-        queue_service=mock_queue_service,
+        converter=mock_converter,
     )
 
 
@@ -254,15 +236,13 @@ class TestRunLifecycle:
 
     @pytest.mark.asyncio
     async def test_run_uses_custom_polling_interval(
-        self, mock_config_service, mock_job_service, mock_storage_service, mock_queue_service
+        self, mock_config_service, mock_converter
     ):
         """Worker uses the polling_interval_seconds passed at construction."""
         custom_interval = 45
         worker = CanvasFileWorker(
             config_service=mock_config_service,
-            job_service=mock_job_service,
-            storage_service=mock_storage_service,
-            queue_service=mock_queue_service,
+            converter=mock_converter,
             polling_interval_seconds=custom_interval,
         )
 
@@ -297,43 +277,37 @@ class TestPollingIntervalConfig:
     """Tests for configurable polling_interval_seconds."""
 
     def test_defaults_to_settings_value(
-        self, mock_config_service, mock_job_service, mock_storage_service, mock_queue_service
+        self, mock_config_service, mock_converter
     ):
         """Without explicit interval, uses settings.canvas_polling_interval_seconds."""
         with patch("src.workers.canvas_file_worker.settings") as mock_settings:
             mock_settings.canvas_polling_interval_seconds = 200
             worker = CanvasFileWorker(
                 config_service=mock_config_service,
-                job_service=mock_job_service,
-                storage_service=mock_storage_service,
-                queue_service=mock_queue_service,
+                converter=mock_converter,
             )
         assert worker.polling_interval_seconds == 200
 
     def test_explicit_interval_overrides_settings(
-        self, mock_config_service, mock_job_service, mock_storage_service, mock_queue_service
+        self, mock_config_service, mock_converter
     ):
         """Explicit polling_interval_seconds overrides the settings default."""
         worker = CanvasFileWorker(
             config_service=mock_config_service,
-            job_service=mock_job_service,
-            storage_service=mock_storage_service,
-            queue_service=mock_queue_service,
+            converter=mock_converter,
             polling_interval_seconds=60,
         )
         assert worker.polling_interval_seconds == 60
 
     def test_none_interval_falls_back_to_settings(
-        self, mock_config_service, mock_job_service, mock_storage_service, mock_queue_service
+        self, mock_config_service, mock_converter
     ):
         """Passing None explicitly falls back to settings."""
         with patch("src.workers.canvas_file_worker.settings") as mock_settings:
             mock_settings.canvas_polling_interval_seconds = 300
             worker = CanvasFileWorker(
                 config_service=mock_config_service,
-                job_service=mock_job_service,
-                storage_service=mock_storage_service,
-                queue_service=mock_queue_service,
+                converter=mock_converter,
                 polling_interval_seconds=None,
             )
         assert worker.polling_interval_seconds == 300
@@ -373,6 +347,7 @@ class TestPollingIntervalConfig:
             mock_init.assert_called_once()
             call_kwargs = mock_init.call_args.kwargs
             assert call_kwargs["polling_interval_seconds"] == 90
+            assert "converter" in call_kwargs
 
 
 # ===========================================================================
@@ -555,9 +530,7 @@ class TestPollCourse:
         self,
         worker,
         mock_config_service,
-        mock_job_service,
-        mock_storage_service,
-        mock_queue_service,
+        mock_converter,
         sample_course_config,
         sample_canvas_file,
     ):
@@ -588,9 +561,8 @@ class TestPollCourse:
             result = await worker.poll_course("101")
 
         assert result == 1
-        mock_job_service.create_job.assert_awaited_once()
+        mock_converter.submit_document.assert_awaited_once()
         mock_config_service.set_processed_file.assert_awaited_once()
-        mock_queue_service.queue_pii_job.assert_awaited_once()
 
     @pytest.mark.asyncio
     async def test_closes_client_on_success(self, worker, mock_config_service, sample_course_config):
@@ -853,68 +825,30 @@ class TestQueueFileForProcessing:
         return mock
 
     @pytest.mark.asyncio
-    async def test_creates_job_with_canvas_auto_source(
+    async def test_submits_document_via_converter(
         self,
         worker,
-        mock_job_service,
+        mock_converter,
         mock_canvas_client,
         sample_canvas_file,
     ):
-        """Job is created with source=canvas_auto metadata."""
+        """File is submitted via ConverterClient with correct arguments."""
         job_id = await worker._queue_file_for_processing("101", sample_canvas_file, mock_canvas_client)
 
-        assert job_id is not None
-        mock_job_service.create_job.assert_awaited_once()
-        call_kwargs = mock_job_service.create_job.call_args
-        assert call_kwargs.kwargs["original_filename"] == "lecture-notes.pdf"
-        assert call_kwargs.kwargs["status"] == "pii_scanning"
-
-        # Verify canvas_auto metadata was stored
-        mock_job_service.redis.hset.assert_awaited_once()
-        hset_kwargs = mock_job_service.redis.hset.call_args
-        mapping = hset_kwargs.kwargs["mapping"]
-        assert mapping["source"] == "canvas_auto"
-        assert mapping["course_id"] == "101"
-        assert mapping["canvas_file_id"] == "42"
-
-    @pytest.mark.asyncio
-    async def test_uploads_to_s3_temp_bucket(
-        self,
-        worker,
-        mock_storage_service,
-        mock_job_service,
-        mock_canvas_client,
-        sample_canvas_file,
-    ):
-        """Downloaded file is uploaded to S3 temp bucket."""
-        await worker._queue_file_for_processing("101", sample_canvas_file, mock_canvas_client)
-
-        mock_storage_service.s3_client.put_object.assert_called_once()
-        call_kwargs = mock_storage_service.s3_client.put_object.call_args
-        assert call_kwargs.kwargs["Bucket"] == "equalify-temp"
-        assert call_kwargs.kwargs["Key"].startswith("temp/")
-        assert call_kwargs.kwargs["Key"].endswith(".pdf")
-        assert call_kwargs.kwargs["ContentType"] == "application/pdf"
-
-    @pytest.mark.asyncio
-    async def test_queues_pii_job(
-        self,
-        worker,
-        mock_queue_service,
-        mock_canvas_client,
-        sample_canvas_file,
-    ):
-        """File is queued for PII scanning."""
-        await worker._queue_file_for_processing("101", sample_canvas_file, mock_canvas_client)
-
-        mock_queue_service.queue_pii_job.assert_awaited_once()
+        assert job_id == "test-job-id"
+        mock_converter.submit_document.assert_awaited_once()
+        call_kwargs = mock_converter.submit_document.call_args.kwargs
+        assert call_kwargs["filename"] == "lecture-notes.pdf"
+        assert call_kwargs["source"] == "canvas_auto"
+        assert call_kwargs["metadata"] == {"course_id": "101", "canvas_file_id": "42"}
+        assert len(call_kwargs["file_content"]) > 100
 
     @pytest.mark.asyncio
     async def test_stores_processed_file_record(
         self,
         worker,
         mock_config_service,
-        mock_job_service,
+        mock_converter,
         mock_canvas_client,
         sample_canvas_file,
     ):
@@ -932,6 +866,7 @@ class TestQueueFileForProcessing:
         assert record.canvas_updated_at == "2024-06-15T10:30:00Z"
         assert record.status == "processing"
         assert record.original_filename == "lecture-notes.pdf"
+        assert record.job_id == "test-job-id"
 
     @pytest.mark.asyncio
     async def test_raises_on_empty_download_url(
@@ -954,7 +889,6 @@ class TestQueueFileForProcessing:
     async def test_raises_on_too_small_download(
         self,
         worker,
-        mock_job_service,
         sample_canvas_file,
     ):
         """Raises CanvasAPIError when downloaded file is too small."""
@@ -973,14 +907,14 @@ class TestQueueFileForProcessing:
             await worker._queue_file_for_processing("101", sample_canvas_file, mock_client)
 
     @pytest.mark.asyncio
-    async def test_job_metadata_contains_all_required_fields(
+    async def test_metadata_includes_course_and_file_ids(
         self,
         worker,
-        mock_job_service,
+        mock_converter,
         mock_canvas_client,
         sample_canvas_file,
     ):
-        """Job metadata includes source, course_id, canvas_file_id, and original_filename.
+        """Submit call includes course_id and canvas_file_id in metadata.
 
         Validates the complete metadata contract per PRD-06 R4: the job hash
         must contain all four fields so downstream consumers can trace the file
@@ -988,23 +922,16 @@ class TestQueueFileForProcessing:
         """
         await worker._queue_file_for_processing("505", sample_canvas_file, mock_canvas_client)
 
-        # original_filename is set via create_job()
-        create_kwargs = mock_job_service.create_job.call_args.kwargs
-        assert create_kwargs["original_filename"] == "lecture-notes.pdf"
-
-        # source, course_id, canvas_file_id are set via hset()
-        hset_mapping = mock_job_service.redis.hset.call_args.kwargs["mapping"]
-        assert hset_mapping == {
-            "source": "canvas_auto",
-            "course_id": "505",
-            "canvas_file_id": "42",
-        }
+        call_kwargs = mock_converter.submit_document.call_args.kwargs
+        assert call_kwargs["filename"] == "lecture-notes.pdf"
+        assert call_kwargs["source"] == "canvas_auto"
+        assert call_kwargs["metadata"] == {"course_id": "505", "canvas_file_id": "42"}
 
     @pytest.mark.asyncio
     async def test_uses_display_name_over_filename(
         self,
         worker,
-        mock_job_service,
+        mock_converter,
         mock_canvas_client,
     ):
         """Prefers display_name for original_filename, falls back to filename."""
@@ -1018,14 +945,14 @@ class TestQueueFileForProcessing:
 
         await worker._queue_file_for_processing("101", canvas_file, mock_canvas_client)
 
-        create_kwargs = mock_job_service.create_job.call_args.kwargs
-        assert create_kwargs["original_filename"] == "Syllabus (Final).pdf"
+        call_kwargs = mock_converter.submit_document.call_args.kwargs
+        assert call_kwargs["filename"] == "Syllabus (Final).pdf"
 
     @pytest.mark.asyncio
     async def test_falls_back_to_filename_when_no_display_name(
         self,
         worker,
-        mock_job_service,
+        mock_converter,
         mock_canvas_client,
     ):
         """Falls back to filename field when display_name is absent."""
@@ -1038,14 +965,14 @@ class TestQueueFileForProcessing:
 
         await worker._queue_file_for_processing("101", canvas_file, mock_canvas_client)
 
-        create_kwargs = mock_job_service.create_job.call_args.kwargs
-        assert create_kwargs["original_filename"] == "upload_12345.pdf"
+        call_kwargs = mock_converter.submit_document.call_args.kwargs
+        assert call_kwargs["filename"] == "upload_12345.pdf"
 
     @pytest.mark.asyncio
     async def test_defaults_to_document_pdf_when_no_name_fields(
         self,
         worker,
-        mock_job_service,
+        mock_converter,
         mock_canvas_client,
     ):
         """Defaults to 'document.pdf' when both display_name and filename are missing."""
@@ -1057,8 +984,8 @@ class TestQueueFileForProcessing:
 
         await worker._queue_file_for_processing("101", canvas_file, mock_canvas_client)
 
-        create_kwargs = mock_job_service.create_job.call_args.kwargs
-        assert create_kwargs["original_filename"] == "document.pdf"
+        call_kwargs = mock_converter.submit_document.call_args.kwargs
+        assert call_kwargs["filename"] == "document.pdf"
 
 
 # ===========================================================================

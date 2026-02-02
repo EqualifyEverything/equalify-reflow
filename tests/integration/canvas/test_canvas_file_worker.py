@@ -35,9 +35,7 @@ def _make_canvas_file(
 @pytest.mark.asyncio
 async def test_poll_course_queues_new_file(
     course_config_service,
-    canvas_job_service,
-    canvas_storage_service,
-    canvas_queue_service,
+    canvas_converter,
     sample_course_config,
 ):
     """Mock Canvas returns 1 PDF → job created in real Redis, PDF uploaded to real S3."""
@@ -47,9 +45,7 @@ async def test_poll_course_queues_new_file(
 
     worker = CanvasFileWorker(
         config_service=course_config_service,
-        job_service=canvas_job_service,
-        storage_service=canvas_storage_service,
-        queue_service=canvas_queue_service,
+        converter=canvas_converter,
     )
 
     fake_pdf = b"%PDF-1.4 " + b"x" * 200
@@ -90,9 +86,7 @@ async def test_poll_course_queues_new_file(
 @pytest.mark.asyncio
 async def test_poll_course_skips_already_processed(
     course_config_service,
-    canvas_job_service,
-    canvas_storage_service,
-    canvas_queue_service,
+    canvas_converter,
     sample_course_config,
     sample_processed_file,
 ):
@@ -106,9 +100,7 @@ async def test_poll_course_skips_already_processed(
 
     worker = CanvasFileWorker(
         config_service=course_config_service,
-        job_service=canvas_job_service,
-        storage_service=canvas_storage_service,
-        queue_service=canvas_queue_service,
+        converter=canvas_converter,
     )
 
     mock_client = AsyncMock()
@@ -132,9 +124,7 @@ async def test_poll_course_skips_already_processed(
 @pytest.mark.asyncio
 async def test_poll_course_reprocesses_updated_file(
     course_config_service,
-    canvas_job_service,
-    canvas_storage_service,
-    canvas_queue_service,
+    canvas_converter,
     sample_course_config,
     sample_processed_file,
 ):
@@ -150,9 +140,7 @@ async def test_poll_course_reprocesses_updated_file(
 
     worker = CanvasFileWorker(
         config_service=course_config_service,
-        job_service=canvas_job_service,
-        storage_service=canvas_storage_service,
-        queue_service=canvas_queue_service,
+        converter=canvas_converter,
     )
 
     fake_pdf = b"%PDF-1.4 " + b"x" * 200
@@ -186,9 +174,7 @@ async def test_poll_course_reprocesses_updated_file(
 @pytest.mark.asyncio
 async def test_poll_course_stores_processed_file_record(
     course_config_service,
-    canvas_job_service,
-    canvas_storage_service,
-    canvas_queue_service,
+    canvas_converter,
     sample_course_config,
 ):
     """After queuing, ProcessedFile exists in Redis with correct data."""
@@ -197,9 +183,7 @@ async def test_poll_course_stores_processed_file_record(
 
     worker = CanvasFileWorker(
         config_service=course_config_service,
-        job_service=canvas_job_service,
-        storage_service=canvas_storage_service,
-        queue_service=canvas_queue_service,
+        converter=canvas_converter,
     )
 
     fake_pdf = b"%PDF-1.4 " + b"x" * 200
@@ -239,8 +223,7 @@ async def test_poll_course_stores_processed_file_record(
 async def test_poll_course_stores_canvas_metadata_on_job(
     course_config_service,
     canvas_job_service,
-    canvas_storage_service,
-    canvas_queue_service,
+    canvas_converter,
     sample_course_config,
 ):
     """Job in Redis has source=canvas_auto, course_id, canvas_file_id."""
@@ -249,9 +232,7 @@ async def test_poll_course_stores_canvas_metadata_on_job(
 
     worker = CanvasFileWorker(
         config_service=course_config_service,
-        job_service=canvas_job_service,
-        storage_service=canvas_storage_service,
-        queue_service=canvas_queue_service,
+        converter=canvas_converter,
     )
 
     fake_pdf = b"%PDF-1.4 " + b"x" * 200
@@ -292,9 +273,7 @@ async def test_poll_course_stores_canvas_metadata_on_job(
 @pytest.mark.asyncio
 async def test_poll_courses_multiple_courses(
     course_config_service,
-    canvas_job_service,
-    canvas_storage_service,
-    canvas_queue_service,
+    canvas_converter,
     sample_course_config,
 ):
     """Enable 2 courses, each gets polled and files are queued."""
@@ -304,9 +283,7 @@ async def test_poll_courses_multiple_courses(
 
     worker = CanvasFileWorker(
         config_service=course_config_service,
-        job_service=canvas_job_service,
-        storage_service=canvas_storage_service,
-        queue_service=canvas_queue_service,
+        converter=canvas_converter,
     )
 
     fake_pdf = b"%PDF-1.4 " + b"x" * 200
@@ -337,9 +314,7 @@ async def test_poll_courses_multiple_courses(
 @pytest.mark.asyncio
 async def test_poll_course_skips_missing_token(
     course_config_service,
-    canvas_job_service,
-    canvas_storage_service,
-    canvas_queue_service,
+    canvas_converter,
     sample_course_config,
 ):
     """Course with no token → returns 0."""
@@ -348,9 +323,7 @@ async def test_poll_course_skips_missing_token(
 
     worker = CanvasFileWorker(
         config_service=course_config_service,
-        job_service=canvas_job_service,
-        storage_service=canvas_storage_service,
-        queue_service=canvas_queue_service,
+        converter=canvas_converter,
     )
 
     queued = await worker.poll_course("course-no-tok")
@@ -363,9 +336,7 @@ async def test_poll_course_skips_missing_token(
 @pytest.mark.asyncio
 async def test_queue_file_creates_pii_queue_entry(
     course_config_service,
-    canvas_job_service,
-    canvas_storage_service,
-    canvas_queue_service,
+    canvas_converter,
     sample_course_config,
     real_redis_client,
 ):
@@ -375,9 +346,7 @@ async def test_queue_file_creates_pii_queue_entry(
 
     worker = CanvasFileWorker(
         config_service=course_config_service,
-        job_service=canvas_job_service,
-        storage_service=canvas_storage_service,
-        queue_service=canvas_queue_service,
+        converter=canvas_converter,
     )
 
     fake_pdf = b"%PDF-1.4 " + b"x" * 200

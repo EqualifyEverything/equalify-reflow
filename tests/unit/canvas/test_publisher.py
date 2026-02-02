@@ -9,6 +9,7 @@ from src.canvas.publisher import (
     PublishError,
     PublishResult,
 )
+from src.services.converter_client import ConverterClient, FigureInfo
 
 pytestmark = pytest.mark.unit
 
@@ -51,22 +52,14 @@ def mock_renderer():
 
 
 @pytest.fixture
-def mock_bundle_service():
-    """Mock DownloadBundleService."""
-    bundle = MagicMock()
-    bundle.create_bundle = AsyncMock(return_value="https://s3.example.com/bundle.zip?sig=abc")
-    return bundle
-
-
-@pytest.fixture
-def mock_storage():
-    """Mock StorageService."""
-    storage = MagicMock()
-    storage.results_bucket = "equalify-results"
-    storage.s3_client = MagicMock()
-    storage.download_file = AsyncMock(return_value=b"# Hello World")
-    storage.s3_client.list_objects_v2.return_value = {"Contents": []}
-    return storage
+def mock_converter():
+    """Mock ConverterClient."""
+    converter = MagicMock(spec=ConverterClient)
+    converter.get_result_markdown = AsyncMock(return_value=b"# Hello World")
+    converter.list_result_figures = AsyncMock(return_value=[])
+    converter.download_figure = AsyncMock(return_value=b"\x89PNG\r\n\x1a\n")
+    converter.create_download_bundle = AsyncMock(return_value="https://s3.example.com/bundle.zip?sig=abc")
+    return converter
 
 
 @pytest.fixture
@@ -78,13 +71,12 @@ def mock_redis():
 
 
 @pytest.fixture
-def service(mock_canvas_client, mock_renderer, mock_bundle_service, mock_storage):
+def service(mock_canvas_client, mock_renderer, mock_converter):
     """Create a CanvasPublisherService for testing."""
     return CanvasPublisherService(
         canvas_client=mock_canvas_client,
         renderer=mock_renderer,
-        bundle_service=mock_bundle_service,
-        storage_service=mock_storage,
+        converter=mock_converter,
     )
 
 
@@ -149,17 +141,15 @@ class TestPublishError:
 class TestInit:
     """R1: Constructor accepts required dependencies."""
 
-    def test_stores_dependencies(self, mock_canvas_client, mock_renderer, mock_bundle_service, mock_storage):
+    def test_stores_dependencies(self, mock_canvas_client, mock_renderer, mock_converter):
         svc = CanvasPublisherService(
             canvas_client=mock_canvas_client,
             renderer=mock_renderer,
-            bundle_service=mock_bundle_service,
-            storage_service=mock_storage,
+            converter=mock_converter,
         )
         assert svc.canvas is mock_canvas_client
         assert svc.renderer is mock_renderer
-        assert svc.bundle is mock_bundle_service
-        assert svc.storage is mock_storage
+        assert svc.converter is mock_converter
 
 
 # --- Page naming ---
@@ -238,7 +228,7 @@ class TestPublish:
         assert result.published is False
 
     @pytest.mark.asyncio
-    async def test_downloads_result_markdown(self, service, mock_storage, mock_redis):
+    async def test_downloads_result_markdown(self, service, mock_converter, mock_redis):
         await service.publish(
             job_id="job-1",
             course_id="101",
@@ -246,10 +236,10 @@ class TestPublish:
             canvas_file_id="500",
             redis_client=mock_redis,
         )
-        mock_storage.download_file.assert_any_await("results/job-1/result.md")
+        mock_converter.get_result_markdown.assert_awaited_once_with("job-1")
 
     @pytest.mark.asyncio
-    async def test_creates_download_bundle(self, service, mock_bundle_service, mock_redis):
+    async def test_creates_download_bundle(self, service, mock_converter, mock_redis):
         await service.publish(
             job_id="job-1",
             course_id="101",
@@ -257,7 +247,7 @@ class TestPublish:
             canvas_file_id="500",
             redis_client=mock_redis,
         )
-        mock_bundle_service.create_bundle.assert_awaited_once_with("job-1", "lecture_notes.pdf")
+        mock_converter.create_download_bundle.assert_awaited_once_with("job-1", "lecture_notes.pdf")
 
     @pytest.mark.asyncio
     async def test_renders_html_with_download_url(self, service, mock_renderer, mock_redis):
@@ -414,26 +404,17 @@ class TestFigureUpload:
     """R3: Image upload to Canvas Files."""
 
     @pytest.fixture
-    def storage_with_figures(self, mock_storage):
-        """Storage with 2 figures in S3."""
-        mock_storage.s3_client.list_objects_v2.return_value = {
-            "Contents": [
-                {"Key": "results/job-1/figures/figure_1.png"},
-                {"Key": "results/job-1/figures/figure_2.png"},
-            ]
-        }
-
-        async def download_file(key):
-            if "figure" in key:
-                return b"\x89PNG\r\n\x1a\n"  # PNG header bytes
-            return b"# Hello"
-
-        mock_storage.download_file = AsyncMock(side_effect=download_file)
-        return mock_storage
+    def converter_with_figures(self, mock_converter):
+        """Converter with 2 figures listed."""
+        mock_converter.list_result_figures = AsyncMock(return_value=[
+            FigureInfo(s3_key="results/job-1/figures/figure_1.png", filename="figure_1.png"),
+            FigureInfo(s3_key="results/job-1/figures/figure_2.png", filename="figure_2.png"),
+        ])
+        mock_converter.download_figure = AsyncMock(return_value=b"\x89PNG\r\n\x1a\n")
+        return mock_converter
 
     @pytest.mark.asyncio
-    async def test_uploads_figures_to_canvas(self, service, mock_canvas_client, storage_with_figures, mock_redis):
-        service.storage = storage_with_figures
+    async def test_uploads_figures_to_canvas(self, service, mock_canvas_client, converter_with_figures, mock_redis):
         result = await service.publish(
             job_id="job-1",
             course_id="101",
@@ -447,9 +428,8 @@ class TestFigureUpload:
 
     @pytest.mark.asyncio
     async def test_figure_upload_uses_correct_folder(
-        self, service, mock_canvas_client, storage_with_figures, mock_redis
+        self, service, mock_canvas_client, converter_with_figures, mock_redis
     ):
-        service.storage = storage_with_figures
         await service.publish(
             job_id="job-1",
             course_id="101",
@@ -463,9 +443,8 @@ class TestFigureUpload:
 
     @pytest.mark.asyncio
     async def test_figure_upload_uses_job_id_filenames(
-        self, service, mock_canvas_client, storage_with_figures, mock_redis
+        self, service, mock_canvas_client, converter_with_figures, mock_redis
     ):
-        service.storage = storage_with_figures
         await service.publish(
             job_id="job-1",
             course_id="101",
@@ -478,8 +457,7 @@ class TestFigureUpload:
         assert "job-1-figure-2.png" in filenames
 
     @pytest.mark.asyncio
-    async def test_builds_image_url_map(self, service, mock_renderer, storage_with_figures, mock_redis):
-        service.storage = storage_with_figures
+    async def test_builds_image_url_map(self, service, mock_renderer, converter_with_figures, mock_redis):
         await service.publish(
             job_id="job-1",
             course_id="101",
@@ -495,10 +473,9 @@ class TestFigureUpload:
 
     @pytest.mark.asyncio
     async def test_individual_figure_failure_does_not_fail_publish(
-        self, service, mock_canvas_client, storage_with_figures, mock_redis
+        self, service, mock_canvas_client, converter_with_figures, mock_redis
     ):
         """R3/R8: Individual image upload failures are non-fatal."""
-        service.storage = storage_with_figures
         mock_canvas_client.upload_file.side_effect = [
             CanvasAPIError("Upload failed"),
             {"id": 200, "url": "https://canvas.example.com/files/200"},
@@ -529,9 +506,9 @@ class TestFigureUpload:
         mock_canvas_client.upload_file.assert_not_awaited()
 
     @pytest.mark.asyncio
-    async def test_s3_listing_failure_is_non_fatal(self, service, mock_storage, mock_redis):
-        """If listing figures in S3 fails, publish continues with no figures."""
-        mock_storage.s3_client.list_objects_v2.side_effect = Exception("S3 unavailable")
+    async def test_converter_returns_no_figures(self, service, mock_converter, mock_redis):
+        """When converter returns empty figure list (e.g. S3 error), publish continues."""
+        mock_converter.list_result_figures = AsyncMock(return_value=[])
         result = await service.publish(
             job_id="job-1",
             course_id="101",
@@ -543,9 +520,8 @@ class TestFigureUpload:
         assert result.canvas_file_ids == []
 
     @pytest.mark.asyncio
-    async def test_canvas_upload_returns_no_id(self, service, mock_canvas_client, storage_with_figures, mock_redis):
+    async def test_canvas_upload_returns_no_id(self, service, mock_canvas_client, converter_with_figures, mock_redis):
         """If Canvas upload returns a file without an id, skip that figure."""
-        service.storage = storage_with_figures
         mock_canvas_client.upload_file = AsyncMock(return_value={"url": "https://canvas.example.com/files/unknown"})
         result = await service.publish(
             job_id="job-1",
@@ -559,10 +535,9 @@ class TestFigureUpload:
 
     @pytest.mark.asyncio
     async def test_all_figure_uploads_fail_publish_succeeds(
-        self, service, mock_canvas_client, storage_with_figures, mock_redis
+        self, service, mock_canvas_client, converter_with_figures, mock_redis
     ):
         """When every figure upload fails, publish still succeeds with zero figures."""
-        service.storage = storage_with_figures
         mock_canvas_client.upload_file.side_effect = CanvasAPIError("Canvas unavailable")
         result = await service.publish(
             job_id="job-1",
@@ -576,27 +551,23 @@ class TestFigureUpload:
         assert result.canvas_file_ids == []
 
     @pytest.mark.asyncio
-    async def test_s3_figure_download_failure_skips_figure(self, service, mock_canvas_client, mock_storage, mock_redis):
-        """When S3 download fails for one figure, that figure is skipped and the other succeeds."""
-        mock_storage.s3_client.list_objects_v2.return_value = {
-            "Contents": [
-                {"Key": "results/job-1/figures/figure_1.png"},
-                {"Key": "results/job-1/figures/figure_2.png"},
-            ]
-        }
+    async def test_figure_download_failure_skips_figure(self, service, mock_canvas_client, mock_converter, mock_redis):
+        """When figure download fails for one figure, that figure is skipped and the other succeeds."""
+        mock_converter.list_result_figures = AsyncMock(return_value=[
+            FigureInfo(s3_key="results/job-1/figures/figure_1.png", filename="figure_1.png"),
+            FigureInfo(s3_key="results/job-1/figures/figure_2.png", filename="figure_2.png"),
+        ])
 
         call_count = 0
 
-        async def download_side_effect(key):
+        async def download_side_effect(job_id, s3_key):
             nonlocal call_count
-            if key == "results/job-1/result.md":
-                return b"# Hello"
             call_count += 1
             if call_count == 1:
                 raise Exception("S3 timeout")
             return b"\x89PNG\r\n\x1a\n"
 
-        mock_storage.download_file = AsyncMock(side_effect=download_side_effect)
+        mock_converter.download_figure = AsyncMock(side_effect=download_side_effect)
         mock_canvas_client.upload_file.return_value = {"id": 200, "url": "https://canvas.example.com/files/200"}
 
         result = await service.publish(
@@ -613,10 +584,9 @@ class TestFigureUpload:
 
     @pytest.mark.asyncio
     async def test_figure_failure_logs_warning(
-        self, service, mock_canvas_client, storage_with_figures, mock_redis, caplog
+        self, service, mock_canvas_client, converter_with_figures, mock_redis, caplog
     ):
         """Failed figure uploads produce warning log messages."""
-        service.storage = storage_with_figures
         mock_canvas_client.upload_file.side_effect = [
             CanvasAPIError("Upload timeout"),
             {"id": 200, "url": "https://canvas.example.com/files/200"},
@@ -636,22 +606,14 @@ class TestFigureUpload:
         assert any("skipping" in msg.lower() for msg in warning_messages)
 
     @pytest.mark.asyncio
-    async def test_s3_download_failure_logs_warning(
-        self, service, mock_canvas_client, mock_storage, mock_redis, caplog
+    async def test_figure_download_failure_logs_warning(
+        self, service, mock_canvas_client, mock_converter, mock_redis, caplog
     ):
-        """S3 download failure for a figure logs a warning with the filename."""
-        mock_storage.s3_client.list_objects_v2.return_value = {
-            "Contents": [
-                {"Key": "results/job-1/figures/figure_1.png"},
-            ]
-        }
-
-        async def download_side_effect(key):
-            if key == "results/job-1/result.md":
-                return b"# Hello"
-            raise Exception("S3 timeout")
-
-        mock_storage.download_file = AsyncMock(side_effect=download_side_effect)
+        """Figure download failure logs a warning with the filename."""
+        mock_converter.list_result_figures = AsyncMock(return_value=[
+            FigureInfo(s3_key="results/job-1/figures/figure_1.png", filename="figure_1.png"),
+        ])
+        mock_converter.download_figure = AsyncMock(side_effect=Exception("S3 timeout"))
 
         import logging
 
@@ -882,8 +844,8 @@ class TestErrorHandling:
     """R8: Critical errors raise PublishError."""
 
     @pytest.mark.asyncio
-    async def test_markdown_download_failure_raises_publish_error(self, service, mock_storage, mock_redis):
-        mock_storage.download_file = AsyncMock(side_effect=Exception("S3 down"))
+    async def test_markdown_download_failure_raises_publish_error(self, service, mock_converter, mock_redis):
+        mock_converter.get_result_markdown = AsyncMock(side_effect=Exception("S3 down"))
         with pytest.raises(PublishError) as exc_info:
             await service.publish(
                 job_id="job-1",

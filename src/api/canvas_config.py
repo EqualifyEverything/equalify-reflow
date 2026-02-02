@@ -6,9 +6,7 @@ viewing document processing status, and triggering manual actions
 """
 
 import logging
-import uuid
 from datetime import UTC, datetime
-from io import BytesIO
 
 from fastapi import APIRouter, Depends, HTTPException, status
 from pydantic import BaseModel, Field
@@ -17,15 +15,13 @@ from ..canvas.client import CanvasAPIClient, CanvasAPIError
 from ..canvas.course_config import CourseConfig, CourseConfigService, ProcessedFile
 from ..config import settings
 from ..dependencies import (
+    get_converter_client,
     get_course_config_service,
     get_job_service,
-    get_queue_service,
     get_redis_client,
-    get_storage_service,
 )
+from ..services.converter_client import ConverterClient
 from ..services.job_service import JobService
-from ..services.queue_service import QueueService
-from ..services.storage_service import StorageService
 
 logger = logging.getLogger(__name__)
 
@@ -249,9 +245,7 @@ async def trigger_processing(
     course_id: str,
     file_id: str,
     config_service: CourseConfigService = Depends(get_course_config_service),
-    job_service: JobService = Depends(get_job_service),
-    queue_service: QueueService = Depends(get_queue_service),
-    storage: StorageService = Depends(get_storage_service),
+    converter: ConverterClient = Depends(get_converter_client),
 ) -> dict:
     """Manually trigger processing for a Canvas file.
 
@@ -305,38 +299,15 @@ async def trigger_processing(
         download_response.raise_for_status()
         file_content = download_response.content
 
-        # Upload to S3 temp bucket
-        job_id = str(uuid.uuid4())
-        s3_key = f"temp/{job_id}.pdf"
         filename = canvas_file.get("display_name") or canvas_file.get("filename", "document.pdf")
 
-        storage.s3_client.put_object(
-            Bucket=storage.temp_bucket,
-            Key=s3_key,
-            Body=BytesIO(file_content),
-            ContentType="application/pdf",
+        # Submit through ConverterClient facade
+        result = await converter.submit_document(
+            file_content=file_content,
+            filename=filename,
+            source="canvas_manual",
+            metadata={"course_id": course_id, "canvas_file_id": file_id},
         )
-
-        # Create job
-        await job_service.create_job(
-            job_id=job_id,
-            s3_key=s3_key,
-            status="pii_scanning",
-            original_filename=filename,
-        )
-
-        # Store canvas metadata on job
-        await job_service.redis.hset(
-            f"{job_service.status_prefix}{job_id}",
-            mapping={
-                "source": "canvas_manual",
-                "course_id": course_id,
-                "canvas_file_id": file_id,
-            },
-        )
-
-        # Queue for PII scanning
-        await queue_service.queue_pii_job(job_id, s3_key)
 
         # Store processed file record
         now = datetime.now(UTC).isoformat()
@@ -347,14 +318,14 @@ async def trigger_processing(
             ProcessedFile(
                 canvas_file_id=file_id,
                 canvas_updated_at=updated_at,
-                job_id=job_id,
+                job_id=result.job_id,
                 status="processing",
                 processed_at=now,
                 original_filename=filename,
             ),
         )
 
-        return {"job_id": job_id, "status": "processing", "message": f"File {file_id} queued for processing"}
+        return {"job_id": result.job_id, "status": "processing", "message": f"File {file_id} queued for processing"}
 
     except HTTPException:
         raise
@@ -378,8 +349,7 @@ async def retry_processing(
     course_id: str,
     file_id: str,
     config_service: CourseConfigService = Depends(get_course_config_service),
-    job_service: JobService = Depends(get_job_service),
-    queue_service: QueueService = Depends(get_queue_service),
+    converter: ConverterClient = Depends(get_converter_client),
 ) -> dict:
     """Retry processing for a failed document.
 
@@ -398,24 +368,20 @@ async def retry_processing(
             detail=f"Document {file_id} is not in failed state (current: {processed_file.status})",
         )
 
-    # Get the job to find the S3 key
-    job = await job_service.get_job(processed_file.job_id)
-    if job is None:
-        raise HTTPException(
-            status_code=status.HTTP_404_NOT_FOUND,
-            detail=f"Job {processed_file.job_id} not found",
-        )
-
-    s3_key = job.get("s3_key", "")
-    if not s3_key:
+    # Retry via ConverterClient (validates job exists, has s3_key, re-queues)
+    success = await converter.retry_job(processed_file.job_id)
+    if not success:
+        # retry_job returns False if job not found or no s3_key
+        job = await converter.get_job_status(processed_file.job_id)
+        if job is None:
+            raise HTTPException(
+                status_code=status.HTTP_404_NOT_FOUND,
+                detail=f"Job {processed_file.job_id} not found",
+            )
         raise HTTPException(
             status_code=status.HTTP_400_BAD_REQUEST,
             detail="Original file S3 key not found in job record",
         )
-
-    # Re-queue for PII scanning
-    await job_service.update_job_status(processed_file.job_id, "pii_scanning")
-    await queue_service.queue_pii_job(processed_file.job_id, s3_key)
 
     # Update processed file status
     now = datetime.now(UTC).isoformat()
@@ -435,8 +401,7 @@ async def publish_document(
     course_id: str,
     file_id: str,
     config_service: CourseConfigService = Depends(get_course_config_service),
-    job_service: JobService = Depends(get_job_service),
-    storage: StorageService = Depends(get_storage_service),
+    converter: ConverterClient = Depends(get_converter_client),
     redis_client=Depends(get_redis_client),
 ) -> dict:
     """Publish a draft Canvas Page for a completed document.
@@ -464,7 +429,6 @@ async def publish_document(
         )
 
     # Use the publisher service (lazy imports to avoid circular deps at module level)
-    from ..canvas.bundle import DownloadBundleService
     from ..canvas.publisher import CanvasPublisherService
     from ..canvas.renderer import CanvasHTMLRenderer
 
@@ -477,12 +441,10 @@ async def publish_document(
 
     try:
         renderer = CanvasHTMLRenderer()
-        bundle_service = DownloadBundleService(storage_service=storage)
         publisher = CanvasPublisherService(
             canvas_client=canvas_client,
             renderer=renderer,
-            bundle_service=bundle_service,
-            storage_service=storage,
+            converter=converter,
         )
 
         result = await publisher.publish(

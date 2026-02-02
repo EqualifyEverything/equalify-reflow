@@ -19,6 +19,7 @@ from fastapi.testclient import TestClient
 from src.api.canvas_config import router as canvas_config_router
 from src.canvas.course_config import CourseConfig, CourseConfigService, ProcessedFile
 from src.dependencies import (
+    get_converter_client,
     get_course_config_service,
     get_job_service,
     get_queue_service,
@@ -26,6 +27,7 @@ from src.dependencies import (
     get_storage_service,
 )
 from src.main import app
+from src.services.converter_client import ConverterClient, SubmitResult
 
 pytestmark = pytest.mark.unit
 
@@ -98,13 +100,30 @@ def mock_storage_svc():
 
 
 @pytest.fixture
-def client(mock_config_service, mock_job_svc, mock_queue_svc, mock_redis, mock_storage_svc):
+def mock_converter():
+    """Mock ConverterClient."""
+    mock = MagicMock(spec=ConverterClient)
+    mock.submit_document = AsyncMock(
+        return_value=SubmitResult(
+            job_id="test-job-id",
+            s3_key="temp/test-job-id.pdf",
+            status="processing",
+        )
+    )
+    mock.retry_job = AsyncMock(return_value=True)
+    mock.get_job_status = AsyncMock(return_value=None)
+    return mock
+
+
+@pytest.fixture
+def client(mock_config_service, mock_job_svc, mock_queue_svc, mock_redis, mock_storage_svc, mock_converter):
     """Create test client with mocked dependencies."""
     app.dependency_overrides[get_course_config_service] = lambda: mock_config_service
     app.dependency_overrides[get_job_service] = lambda: mock_job_svc
     app.dependency_overrides[get_queue_service] = lambda: mock_queue_svc
     app.dependency_overrides[get_redis_client] = lambda: mock_redis
     app.dependency_overrides[get_storage_service] = lambda: mock_storage_svc
+    app.dependency_overrides[get_converter_client] = lambda: mock_converter
 
     yield TestClient(app)
 
@@ -715,7 +734,7 @@ class TestGetDocumentStatus:
 class TestRetryProcessing:
     """Tests for POST /api/v1/canvas/courses/{course_id}/documents/{file_id}/retry."""
 
-    def test_retries_failed_document(self, client, mock_config_service, mock_job_svc, mock_queue_svc):
+    def test_retries_failed_document(self, client, mock_config_service, mock_converter):
         """Successfully retries a failed document."""
         mock_config_service.get_processed_file.return_value = ProcessedFile(
             canvas_file_id="42",
@@ -725,11 +744,7 @@ class TestRetryProcessing:
             processed_at="2024-06-15T11:00:00Z",
             original_filename="lecture.pdf",
         )
-        mock_job_svc.get_job.return_value = {
-            "job_id": "job-1",
-            "status": "failed",
-            "s3_key": "temp/job-1.pdf",
-        }
+        mock_converter.retry_job.return_value = True
 
         response = client.post("/api/v1/canvas/courses/123/documents/42/retry")
 
@@ -737,8 +752,7 @@ class TestRetryProcessing:
         data = response.json()
         assert data["job_id"] == "job-1"
         assert data["status"] == "processing"
-        mock_job_svc.update_job_status.assert_awaited_once_with("job-1", "pii_scanning")
-        mock_queue_svc.queue_pii_job.assert_awaited_once_with("job-1", "temp/job-1.pdf")
+        mock_converter.retry_job.assert_awaited_once_with("job-1")
 
     def test_returns_400_for_non_failed_document(self, client, mock_config_service):
         """Returns 400 when trying to retry a non-failed document."""
@@ -774,14 +788,13 @@ class TestRetryProcessing:
         assert "not in failed state" in detail
         assert "processing" in detail
 
-    def test_400_for_non_failed_skips_job_and_queue(
+    def test_400_for_non_failed_skips_converter_retry(
         self,
         client,
         mock_config_service,
-        mock_job_svc,
-        mock_queue_svc,
+        mock_converter,
     ):
-        """No job lookup or queue operations when document is not in failed state."""
+        """No converter retry when document is not in failed state."""
         mock_config_service.get_processed_file.return_value = ProcessedFile(
             canvas_file_id="42",
             canvas_updated_at="2024-06-15T10:30:00Z",
@@ -794,9 +807,7 @@ class TestRetryProcessing:
         response = client.post("/api/v1/canvas/courses/123/documents/42/retry")
 
         assert response.status_code == status.HTTP_400_BAD_REQUEST
-        mock_job_svc.get_job.assert_not_awaited()
-        mock_job_svc.update_job_status.assert_not_awaited()
-        mock_queue_svc.queue_pii_job.assert_not_awaited()
+        mock_converter.retry_job.assert_not_awaited()
 
     def test_returns_404_for_unknown_document(self, client, mock_config_service):
         """Returns 404 when document is not found."""
@@ -806,7 +817,7 @@ class TestRetryProcessing:
 
         assert response.status_code == status.HTTP_404_NOT_FOUND
 
-    def test_returns_404_when_job_not_found(self, client, mock_config_service, mock_job_svc):
+    def test_returns_404_when_job_not_found(self, client, mock_config_service, mock_converter):
         """Returns 404 when the associated job is not found."""
         mock_config_service.get_processed_file.return_value = ProcessedFile(
             canvas_file_id="42",
@@ -816,13 +827,15 @@ class TestRetryProcessing:
             processed_at="2024-06-15T11:00:00Z",
             original_filename="lecture.pdf",
         )
-        mock_job_svc.get_job.return_value = None
+        # retry_job returns False when job not found
+        mock_converter.retry_job.return_value = False
+        mock_converter.get_job_status.return_value = None
 
         response = client.post("/api/v1/canvas/courses/123/documents/42/retry")
 
         assert response.status_code == status.HTTP_404_NOT_FOUND
 
-    def test_returns_400_when_s3_key_missing(self, client, mock_config_service, mock_job_svc):
+    def test_returns_400_when_s3_key_missing(self, client, mock_config_service, mock_converter):
         """Returns 400 when the job has no S3 key."""
         mock_config_service.get_processed_file.return_value = ProcessedFile(
             canvas_file_id="42",
@@ -832,7 +845,10 @@ class TestRetryProcessing:
             processed_at="2024-06-15T11:00:00Z",
             original_filename="lecture.pdf",
         )
-        mock_job_svc.get_job.return_value = {
+        # retry_job returns False when s3_key is missing
+        mock_converter.retry_job.return_value = False
+        # But job exists (so it's a missing s3_key case)
+        mock_converter.get_job_status.return_value = {
             "job_id": "job-1",
             "status": "failed",
             "s3_key": "",
@@ -1269,7 +1285,7 @@ class TestTriggerProcessing:
         assert response.status_code == status.HTTP_500_INTERNAL_SERVER_ERROR
         assert "Failed to trigger processing" in response.json()["detail"]
 
-    def test_successfully_triggers_processing(self, client, mock_config_service, mock_job_svc, mock_queue_svc):
+    def test_successfully_triggers_processing(self, client, mock_config_service, mock_converter):
         """Successfully downloads and queues a Canvas file for processing."""
         mock_config_service.get_config.return_value = CourseConfig(
             enabled=True,
@@ -1306,12 +1322,11 @@ class TestTriggerProcessing:
         assert response.status_code == status.HTTP_200_OK
         data = response.json()
         assert data["status"] == "processing"
-        assert "job_id" in data
-        mock_job_svc.create_job.assert_awaited_once()
-        mock_queue_svc.queue_pii_job.assert_awaited_once()
+        assert data["job_id"] == "test-job-id"
+        mock_converter.submit_document.assert_awaited_once()
 
-    def test_stores_canvas_metadata_on_job(self, client, mock_config_service, mock_job_svc, mock_queue_svc):
-        """Stores canvas source metadata (source, course_id, canvas_file_id) on the job."""
+    def test_passes_canvas_metadata_to_converter(self, client, mock_config_service, mock_converter):
+        """Passes canvas source metadata to converter.submit_document."""
         mock_config_service.get_config.return_value = CourseConfig(
             enabled=True,
             canvas_api_token="test-token",
@@ -1345,20 +1360,18 @@ class TestTriggerProcessing:
             response = client.post("/api/v1/canvas/courses/123/documents/42/process")
 
         assert response.status_code == status.HTTP_200_OK
-        # Verify canvas metadata was stored on the job
-        mock_job_svc.redis.hset.assert_awaited_once()
-        call_kwargs = mock_job_svc.redis.hset.call_args
-        mapping = call_kwargs.kwargs.get("mapping") or call_kwargs[1].get("mapping")
-        assert mapping["source"] == "canvas_manual"
-        assert mapping["course_id"] == "123"
-        assert mapping["canvas_file_id"] == "42"
+        # Verify canvas metadata was passed to converter
+        mock_converter.submit_document.assert_awaited_once()
+        call_kwargs = mock_converter.submit_document.call_args.kwargs
+        assert call_kwargs["source"] == "canvas_manual"
+        assert call_kwargs["metadata"]["course_id"] == "123"
+        assert call_kwargs["metadata"]["canvas_file_id"] == "42"
 
     def test_stores_processed_file_record(
         self,
         client,
         mock_config_service,
-        mock_job_svc,
-        mock_queue_svc,
+        mock_converter,
     ):
         """Stores a processed file record in the config service."""
         mock_config_service.get_config.return_value = CourseConfig(
@@ -1403,8 +1416,9 @@ class TestTriggerProcessing:
         assert record.canvas_file_id == "42"
         assert record.status == "processing"
         assert record.original_filename == "lecture.pdf"
+        assert record.job_id == "test-job-id"
 
-    def test_closes_canvas_client_on_success(self, client, mock_config_service, mock_job_svc, mock_queue_svc):
+    def test_closes_canvas_client_on_success(self, client, mock_config_service, mock_converter):
         """Canvas client is closed after successful processing."""
         mock_config_service.get_config.return_value = CourseConfig(
             enabled=True,

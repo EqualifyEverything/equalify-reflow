@@ -19,7 +19,8 @@ from fastapi.responses import HTMLResponse, RedirectResponse, Response
 from redis.asyncio import Redis
 
 from ..config import settings
-from ..dependencies import get_document_processing_service, get_job_service, get_redis_client, get_storage_service
+from ..dependencies import get_converter_client, get_document_processing_service, get_job_service, get_redis_client, get_storage_service
+from ..services.converter_client import ConverterClient
 from ..services.document_processing_service import DocumentProcessingService
 from ..services.job_service import JobService
 from ..services.storage_service import StorageService
@@ -192,7 +193,7 @@ async def lti_launch(
     request: Request,
     background_tasks: BackgroundTasks,
     redis: Redis = Depends(get_redis_client),
-    storage_service: StorageService = Depends(get_storage_service),
+    converter: ConverterClient = Depends(get_converter_client),
     job_service: JobService = Depends(get_job_service),
     processing_service: DocumentProcessingService = Depends(get_document_processing_service),
 ) -> Response:
@@ -443,7 +444,7 @@ async def lti_launch(
                     logger.info(f"Extracted file_id from return_url: {file_id_from_url}")
 
         # Process the launch (download file, create job)
-        lti_service = LTIService(storage_service, job_service)
+        lti_service = LTIService(converter)
 
         try:
             response, s3_key = await lti_service.process_file_menu_launch(

@@ -277,12 +277,13 @@ class TestLTIEndToEnd:
 
     @pytest.mark.asyncio
     async def test_full_lti_flow_with_mocked_jwt(
-        self, real_redis_client, storage_service, job_service, temp_keys
+        self, real_redis_client, storage_service, job_service, queue_service, temp_keys
     ):
         """Test full LTI flow with mocked JWT validation and Canvas file download."""
         from src.lti.adapters import RedisLaunchDataStorage
         from src.lti.models import FileMenuContent, LTIContext, LTILaunchData, LTIResourceLink, LTIUser
         from src.lti.service import LTIService
+        from src.services.converter_client import ConverterClient
 
         # Set up state
         storage = RedisLaunchDataStorage(real_redis_client)
@@ -332,8 +333,13 @@ class TestLTIEndToEnd:
             b"<< /Size 5 /Root 1 0 R >>\nstartxref\n410\n%%EOF"
         )
 
-        # Create LTI service
-        lti_service = LTIService(storage_service, job_service)
+        # Create ConverterClient with real services, then LTI service
+        converter = ConverterClient(
+            job_service=job_service,
+            storage_service=storage_service,
+            queue_service=queue_service,
+        )
+        lti_service = LTIService(converter)
 
         # Mock the Canvas file download
         with patch("src.lti.service.httpx.AsyncClient") as mock_client_class:
@@ -392,10 +398,13 @@ class TestLTIServiceErrors:
     """Tests for LTI service error handling."""
 
     @pytest.mark.asyncio
-    async def test_missing_file_menu_data(self, storage_service, job_service, temp_keys):
+    async def test_missing_file_menu_data(self, temp_keys):
         """Service raises error when file menu data is missing."""
+        from unittest.mock import MagicMock
+
         from src.lti.models import LTILaunchData, LTIUser
         from src.lti.service import LTIService, LTIServiceError
+        from src.services.converter_client import ConverterClient
 
         launch_data = LTILaunchData(
             deployment_id="10000000000001",
@@ -405,16 +414,20 @@ class TestLTIServiceErrors:
             file_menu=None,  # Missing file menu
         )
 
-        lti_service = LTIService(storage_service, job_service)
+        mock_converter = MagicMock(spec=ConverterClient)
+        lti_service = LTIService(mock_converter)
 
         with pytest.raises(LTIServiceError, match="file menu data"):
             await lti_service.process_file_menu_launch(launch_data)
 
     @pytest.mark.asyncio
-    async def test_missing_download_url(self, storage_service, job_service, temp_keys):
+    async def test_missing_download_url(self, temp_keys):
         """Service raises error when download URL is missing."""
+        from unittest.mock import MagicMock
+
         from src.lti.models import FileMenuContent, LTILaunchData, LTIUser
         from src.lti.service import LTIService, LTIServiceError
+        from src.services.converter_client import ConverterClient
 
         launch_data = LTILaunchData(
             deployment_id="10000000000001",
@@ -428,18 +441,21 @@ class TestLTIServiceErrors:
             ),
         )
 
-        lti_service = LTIService(storage_service, job_service)
+        mock_converter = MagicMock(spec=ConverterClient)
+        lti_service = LTIService(mock_converter)
 
         with pytest.raises(LTIServiceError, match="download URL"):
             await lti_service.process_file_menu_launch(launch_data)
 
     @pytest.mark.asyncio
-    async def test_canvas_download_failure(self, storage_service, job_service, temp_keys):
+    async def test_canvas_download_failure(self, temp_keys):
         """Service handles Canvas download failures gracefully."""
         import httpx
+        from unittest.mock import MagicMock
 
         from src.lti.models import FileMenuContent, LTILaunchData, LTIUser
         from src.lti.service import LTIService, LTIServiceError
+        from src.services.converter_client import ConverterClient
 
         launch_data = LTILaunchData(
             deployment_id="10000000000001",
@@ -453,7 +469,8 @@ class TestLTIServiceErrors:
             ),
         )
 
-        lti_service = LTIService(storage_service, job_service)
+        mock_converter = MagicMock(spec=ConverterClient)
+        lti_service = LTIService(mock_converter)
 
         # Mock httpx to raise an error
         with patch("src.lti.service.httpx.AsyncClient") as mock_client_class:

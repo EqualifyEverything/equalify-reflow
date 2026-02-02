@@ -18,8 +18,7 @@ from .client import CanvasAPIError
 if TYPE_CHECKING:
     from redis.asyncio import Redis
 
-    from ..services.storage_service import StorageService
-    from .bundle import DownloadBundleService
+    from ..services.converter_client import ConverterClient
     from .client import CanvasAPIClient
     from .renderer import CanvasHTMLRenderer
 
@@ -62,13 +61,11 @@ class CanvasPublisherService:
         self,
         canvas_client: CanvasAPIClient,
         renderer: CanvasHTMLRenderer,
-        bundle_service: DownloadBundleService,
-        storage_service: StorageService,
+        converter: ConverterClient,
     ):
         self.canvas = canvas_client
         self.renderer = renderer
-        self.bundle = bundle_service
-        self.storage = storage_service
+        self.converter = converter
 
     async def publish(
         self,
@@ -113,7 +110,7 @@ class CanvasPublisherService:
         image_url_map, canvas_file_ids = await self._upload_figures_to_canvas(job_id, course_id)
 
         # 3. Create download bundle
-        download_url = await self.bundle.create_bundle(job_id, original_filename)
+        download_url = await self.converter.create_download_bundle(job_id, original_filename)
 
         # 4. Render markdown to HTML
         html_body = self.renderer.render(
@@ -161,9 +158,8 @@ class CanvasPublisherService:
         Raises:
             PublishError: If the markdown file cannot be downloaded.
         """
-        markdown_key = f"results/{job_id}/result.md"
         try:
-            data = await self.storage.download_file(markdown_key)
+            data = await self.converter.get_result_markdown(job_id)
             return data.decode("utf-8")
         except Exception as e:
             raise PublishError(
@@ -182,33 +178,16 @@ class CanvasPublisherService:
         image_url_map: dict[str, str] = {}
         canvas_file_ids: list[int] = []
 
-        # List figures in S3
-        prefix = f"results/{job_id}/figures/"
-        try:
-            response = self.storage.s3_client.list_objects_v2(
-                Bucket=self.storage.results_bucket,
-                Prefix=prefix,
-            )
-        except Exception:
-            logger.warning(f"Job {job_id}: Could not list figures in S3")
-            return image_url_map, canvas_file_ids
-
-        objects = response.get("Contents", [])
-        if not objects:
+        figures = await self.converter.list_result_figures(job_id)
+        if not figures:
             logger.info(f"Job {job_id}: No figures found in S3")
             return image_url_map, canvas_file_ids
 
-        for idx, obj in enumerate(objects):
-            s3_key = obj["Key"]
-            original_filename = s3_key[len(prefix) :]
-            if not original_filename:
-                continue
-
+        for idx, figure_info in enumerate(figures):
             try:
-                # Download from S3
-                figure_data = await self.storage.download_file(s3_key)
+                figure_data = await self.converter.download_figure(job_id, figure_info.s3_key)
             except Exception as e:
-                logger.warning(f"Job {job_id}: Failed to download figure {original_filename} from S3, skipping: {e}")
+                logger.warning(f"Job {job_id}: Failed to download figure {figure_info.filename} from S3, skipping: {e}")
                 continue
 
             try:
@@ -228,14 +207,14 @@ class CanvasPublisherService:
                 if file_id:
                     canvas_file_ids.append(file_id)
                     preview_url = f"{self.canvas.base_url}/courses/{course_id}/files/{file_id}/preview"
-                    image_url_map[f"images/{original_filename}"] = preview_url
+                    image_url_map[f"images/{figure_info.filename}"] = preview_url
 
-                logger.debug(f"Job {job_id}: Uploaded figure {original_filename} to Canvas (id={file_id})")
+                logger.debug(f"Job {job_id}: Uploaded figure {figure_info.filename} to Canvas (id={file_id})")
 
             except Exception as e:
-                logger.warning(f"Job {job_id}: Failed to upload figure {original_filename} to Canvas, skipping: {e}")
+                logger.warning(f"Job {job_id}: Failed to upload figure {figure_info.filename} to Canvas, skipping: {e}")
 
-        logger.info(f"Job {job_id}: Uploaded {len(canvas_file_ids)}/{len(objects)} figures to Canvas")
+        logger.info(f"Job {job_id}: Uploaded {len(canvas_file_ids)}/{len(figures)} figures to Canvas")
         return image_url_map, canvas_file_ids
 
     @staticmethod

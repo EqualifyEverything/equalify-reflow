@@ -16,6 +16,7 @@ from pydantic import BaseModel, Field
 
 from ..config import settings
 from ..dependencies import (
+    get_converter_client,
     get_job_service,
     get_queue_service,
     get_redis_client,
@@ -23,6 +24,7 @@ from ..dependencies import (
     get_s3_url_service,
     get_storage_service,
 )
+from ..services.converter_client import ConverterClient, FigureInfo
 from ..services import JobService, QueueService, S3URLService, StorageService
 from ..services.document_processing_service import DocumentProcessingService
 from ..services.figure_bundle_service import FigureBundleService
@@ -848,6 +850,147 @@ async def download_document_bundle(
         headers={
             "Content-Disposition": f"attachment; filename=\"{filename}\"",
             "Content-Length": str(len(zip_bytes)),
+        },
+    )
+
+
+class FigureInfoResponse(BaseModel):
+    """Metadata for a single figure in a job result."""
+
+    s3_key: str
+    filename: str
+
+
+@router.get("/{job_id}/result/markdown")
+async def get_result_markdown(
+    job_id: str,
+    job_service: JobService = Depends(get_job_service),
+    converter: ConverterClient = Depends(get_converter_client),
+) -> StreamingResponse:
+    """Download the result markdown for a completed job.
+
+    Args:
+        job_id: Job identifier
+
+    Returns:
+        Raw markdown file download
+
+    Raises:
+        HTTPException 404: Job not found
+        HTTPException 400: Job not completed
+    """
+    job = await job_service.get_job(job_id)
+    if not job:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail=f"Job {job_id} not found")
+
+    if job.get("status") != "completed":
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail=f"Job {job_id} is not completed (status: {job.get('status')})",
+        )
+
+    try:
+        markdown_bytes = await converter.get_result_markdown(job_id)
+    except Exception as e:
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND,
+            detail=f"Markdown result not found for job {job_id}: {e}",
+        )
+
+    filename = job.get("original_filename", "document")
+    base_name = os.path.splitext(filename)[0]
+    return StreamingResponse(
+        BytesIO(markdown_bytes),
+        media_type="text/markdown",
+        headers={
+            "Content-Disposition": f'attachment; filename="{base_name}.md"',
+            "Content-Length": str(len(markdown_bytes)),
+        },
+    )
+
+
+@router.get("/{job_id}/result/figures", response_model=list[FigureInfoResponse])
+async def list_result_figures(
+    job_id: str,
+    job_service: JobService = Depends(get_job_service),
+    converter: ConverterClient = Depends(get_converter_client),
+) -> list[FigureInfoResponse]:
+    """List figure metadata for a completed job.
+
+    Args:
+        job_id: Job identifier
+
+    Returns:
+        List of figure metadata objects
+
+    Raises:
+        HTTPException 404: Job not found
+        HTTPException 400: Job not completed
+    """
+    job = await job_service.get_job(job_id)
+    if not job:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail=f"Job {job_id} not found")
+
+    if job.get("status") != "completed":
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail=f"Job {job_id} is not completed (status: {job.get('status')})",
+        )
+
+    figures = await converter.list_result_figures(job_id)
+    return [FigureInfoResponse(s3_key=f.s3_key, filename=f.filename) for f in figures]
+
+
+@router.get("/{job_id}/result/figures/{filename}")
+async def download_result_figure(
+    job_id: str,
+    filename: str,
+    job_service: JobService = Depends(get_job_service),
+    converter: ConverterClient = Depends(get_converter_client),
+) -> StreamingResponse:
+    """Download a single figure from a completed job.
+
+    Args:
+        job_id: Job identifier
+        filename: Figure filename
+
+    Returns:
+        Raw image file download
+
+    Raises:
+        HTTPException 404: Job or figure not found
+        HTTPException 400: Job not completed
+    """
+    job = await job_service.get_job(job_id)
+    if not job:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail=f"Job {job_id} not found")
+
+    if job.get("status") != "completed":
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail=f"Job {job_id} is not completed (status: {job.get('status')})",
+        )
+
+    s3_key = f"results/{job_id}/figures/{filename}"
+    try:
+        image_bytes = await converter.download_figure(job_id, s3_key)
+    except Exception as e:
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND,
+            detail=f"Figure '{filename}' not found for job {job_id}: {e}",
+        )
+
+    # Guess content type from extension
+    import mimetypes
+
+    content_type = mimetypes.guess_type(filename)[0] or "application/octet-stream"
+
+    return StreamingResponse(
+        BytesIO(image_bytes),
+        media_type=content_type,
+        headers={
+            "Content-Disposition": f'attachment; filename="{filename}"',
+            "Content-Length": str(len(image_bytes)),
         },
     )
 

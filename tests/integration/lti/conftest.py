@@ -109,11 +109,23 @@ def lti_app(temp_keys):
     # Create fresh FastAPI app with LTI router
     from fastapi import FastAPI
 
-    from src.dependencies import get_redis_client
+    from src.dependencies import get_converter_client, get_redis_client
     from src.lti.router import router as lti_router
+    from src.services.converter_client import ConverterClient, SubmitResult
 
     app = FastAPI(title="Equalify PDF Converter - LTI Test")
     app.include_router(lti_router)
+
+    # Create mock ConverterClient
+    mock_converter = MagicMock(spec=ConverterClient)
+    mock_converter.submit_document = AsyncMock(
+        return_value=SubmitResult(
+            job_id="test-lti-job-id",
+            s3_key="temp/test-lti-job-id.pdf",
+            status="processing",
+        )
+    )
+    app.dependency_overrides[get_converter_client] = lambda: mock_converter
 
     # Create mock Redis that stores state in memory
     _state_storage: dict = {}

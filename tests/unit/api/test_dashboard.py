@@ -20,7 +20,8 @@ from fastapi import FastAPI
 from fastapi.testclient import TestClient
 from src.canvas.course_config import CourseConfig, CourseConfigService, ProcessedFile
 from src.canvas.dashboard import router as dashboard_router
-from src.dependencies import get_course_config_service, get_job_service, get_redis_client
+from src.dependencies import get_converter_client, get_course_config_service, get_redis_client
+from src.services.converter_client import ConverterClient
 
 pytestmark = pytest.mark.unit
 
@@ -39,15 +40,16 @@ def mock_config_service():
 
 
 @pytest.fixture
-def mock_job_svc():
-    """Mock JobService."""
-    mock = MagicMock()
-    mock.get_job = AsyncMock(return_value=None)
-    mock.create_job = AsyncMock()
-    mock.update_job_status = AsyncMock()
-    mock.redis = AsyncMock()
-    mock.redis.hset = AsyncMock()
-    mock.status_prefix = "eq-pdf:job:"
+def mock_converter():
+    """Mock ConverterClient."""
+    mock = MagicMock(spec=ConverterClient)
+    mock.get_job_status = AsyncMock(return_value=None)
+    mock.retry_job = AsyncMock(return_value=True)
+    mock.submit_document = AsyncMock()
+    mock.get_result_markdown = AsyncMock()
+    mock.list_result_figures = AsyncMock(return_value=[])
+    mock.download_figure = AsyncMock()
+    mock.create_download_bundle = AsyncMock()
     return mock
 
 
@@ -72,13 +74,13 @@ def mock_redis():
 
 
 @pytest.fixture
-def dashboard_app(mock_config_service, mock_job_svc, mock_redis):
+def dashboard_app(mock_config_service, mock_converter, mock_redis):
     """Create test app with dashboard routes."""
     app = FastAPI()
     app.include_router(dashboard_router)
 
     app.dependency_overrides[get_course_config_service] = lambda: mock_config_service
-    app.dependency_overrides[get_job_service] = lambda: mock_job_svc
+    app.dependency_overrides[get_converter_client] = lambda: mock_converter
     app.dependency_overrides[get_redis_client] = lambda: mock_redis
 
     yield app
@@ -130,7 +132,7 @@ class TestLTISessionValidation:
         response = client.get("/lti/dashboard/123?lti_session=test-session")
         assert response.status_code == 200
 
-    def test_expired_session_shows_expired_message(self, mock_config_service, mock_job_svc):
+    def test_expired_session_shows_expired_message(self, mock_config_service, mock_converter):
         """Dashboard shows expired message when lti_session token exists but is invalid."""
         app = FastAPI()
         app.include_router(dashboard_router)
@@ -140,7 +142,7 @@ class TestLTISessionValidation:
         mock_redis.get = AsyncMock(return_value=None)
 
         app.dependency_overrides[get_course_config_service] = lambda: mock_config_service
-        app.dependency_overrides[get_job_service] = lambda: mock_job_svc
+        app.dependency_overrides[get_converter_client] = lambda: mock_converter
         app.dependency_overrides[get_redis_client] = lambda: mock_redis
 
         test_client = TestClient(app)
@@ -206,7 +208,7 @@ class TestDashboardIndex:
         assert response.status_code == 200
         assert "<table" not in response.text
 
-    def test_renders_document_table(self, client, mock_config_service, mock_job_svc):
+    def test_renders_document_table(self, client, mock_config_service, mock_converter):
         """Shows document table when documents exist."""
         mock_config_service.list_processed_files.return_value = {
             "42": ProcessedFile(
@@ -219,7 +221,7 @@ class TestDashboardIndex:
             ),
         }
         mock_config_service.get_publish_result.return_value = None
-        mock_job_svc.get_job.return_value = {
+        mock_converter.get_job_status.return_value = {
             "job_id": "job-1",
             "status": "completed",
             "confidence_score": "0.95",
@@ -231,7 +233,7 @@ class TestDashboardIndex:
         assert "lecture.pdf" in response.text
         assert "Draft" in response.text
 
-    def test_shows_published_status(self, client, mock_config_service, mock_job_svc):
+    def test_shows_published_status(self, client, mock_config_service, mock_converter):
         """Shows 'Published' for documents with publish results."""
         mock_config_service.list_processed_files.return_value = {
             "42": ProcessedFile(
@@ -247,7 +249,7 @@ class TestDashboardIndex:
             "canvas_page_url": "https://canvas.example.com/pages/lecture",
             "canvas_page_id": "999",
         }
-        mock_job_svc.get_job.return_value = None
+        mock_converter.get_job_status.return_value = None
 
         response = client.get("/lti/dashboard/123?lti_session=test-session")
 
@@ -255,7 +257,7 @@ class TestDashboardIndex:
         assert "Published" in response.text
         assert "View Page" in response.text
 
-    def test_shows_failed_status_with_retry(self, client, mock_config_service, mock_job_svc):
+    def test_shows_failed_status_with_retry(self, client, mock_config_service, mock_converter):
         """Shows 'Failed' status with retry button."""
         mock_config_service.list_processed_files.return_value = {
             "42": ProcessedFile(
@@ -268,7 +270,7 @@ class TestDashboardIndex:
             ),
         }
         mock_config_service.get_publish_result.return_value = None
-        mock_job_svc.get_job.return_value = None
+        mock_converter.get_job_status.return_value = None
 
         response = client.get("/lti/dashboard/123?lti_session=test-session")
 
@@ -276,7 +278,7 @@ class TestDashboardIndex:
         assert "Failed" in response.text
         assert "Retry" in response.text
 
-    def test_shows_processing_status(self, client, mock_config_service, mock_job_svc):
+    def test_shows_processing_status(self, client, mock_config_service, mock_converter):
         """Shows 'Processing' status with polling attribute."""
         mock_config_service.list_processed_files.return_value = {
             "42": ProcessedFile(
@@ -289,7 +291,7 @@ class TestDashboardIndex:
             ),
         }
         mock_config_service.get_publish_result.return_value = None
-        mock_job_svc.get_job.return_value = None
+        mock_converter.get_job_status.return_value = None
 
         response = client.get("/lti/dashboard/123?lti_session=test-session")
 
@@ -299,7 +301,7 @@ class TestDashboardIndex:
         assert "hx-trigger" in response.text
         assert "every 5s" in response.text
 
-    def test_processing_row_polling_url_includes_session(self, client, mock_config_service, mock_job_svc):
+    def test_processing_row_polling_url_includes_session(self, client, mock_config_service, mock_converter):
         """Processing row polling URL points to the row endpoint with lti_session param."""
         mock_config_service.list_processed_files.return_value = {
             "42": ProcessedFile(
@@ -312,7 +314,7 @@ class TestDashboardIndex:
             ),
         }
         mock_config_service.get_publish_result.return_value = None
-        mock_job_svc.get_job.return_value = None
+        mock_converter.get_job_status.return_value = None
 
         response = client.get("/lti/dashboard/123?lti_session=test-session")
 
@@ -320,7 +322,7 @@ class TestDashboardIndex:
         assert "/lti/dashboard/123/documents/42/row?lti_session=test-session" in response.text
         assert 'hx-swap="outerHTML"' in response.text
 
-    def test_non_processing_rows_do_not_poll(self, client, mock_config_service, mock_job_svc):
+    def test_non_processing_rows_do_not_poll(self, client, mock_config_service, mock_converter):
         """Pending, completed, failed, and published rows do not have polling attributes."""
         mock_config_service.list_processed_files.return_value = {
             "10": ProcessedFile(
@@ -349,7 +351,7 @@ class TestDashboardIndex:
             ),
         }
         mock_config_service.get_publish_result.return_value = None
-        mock_job_svc.get_job.return_value = None
+        mock_converter.get_job_status.return_value = None
 
         response = client.get("/lti/dashboard/123?lti_session=test-session")
 
@@ -358,7 +360,7 @@ class TestDashboardIndex:
         assert "every 5s" not in response.text
         assert "hx-trigger" not in response.text
 
-    def test_mixed_status_rows_only_processing_polls(self, client, mock_config_service, mock_job_svc):
+    def test_mixed_status_rows_only_processing_polls(self, client, mock_config_service, mock_converter):
         """In a list with mixed statuses, only processing rows have polling attributes."""
         mock_config_service.list_processed_files.return_value = {
             "10": ProcessedFile(
@@ -379,7 +381,7 @@ class TestDashboardIndex:
             ),
         }
         mock_config_service.get_publish_result.return_value = None
-        mock_job_svc.get_job.return_value = None
+        mock_converter.get_job_status.return_value = None
 
         response = client.get("/lti/dashboard/123?lti_session=test-session")
 
@@ -397,7 +399,7 @@ class TestDashboardIndex:
         assert "Settings" in response.text
         assert "/lti/dashboard/123/settings" in response.text
 
-    def test_shows_confidence_score(self, client, mock_config_service, mock_job_svc):
+    def test_shows_confidence_score(self, client, mock_config_service, mock_converter):
         """Shows confidence score as percentage."""
         mock_config_service.list_processed_files.return_value = {
             "42": ProcessedFile(
@@ -410,7 +412,7 @@ class TestDashboardIndex:
             ),
         }
         mock_config_service.get_publish_result.return_value = None
-        mock_job_svc.get_job.return_value = {
+        mock_converter.get_job_status.return_value = {
             "job_id": "job-1",
             "status": "completed",
             "confidence_score": "0.95",
@@ -581,7 +583,7 @@ class TestDashboardSettings:
 class TestDashboardDocumentDetail:
     """Tests for the document detail view."""
 
-    def test_renders_document_detail(self, client, mock_config_service, mock_job_svc):
+    def test_renders_document_detail(self, client, mock_config_service, mock_converter):
         """Shows document details."""
         mock_config_service.get_processed_file.return_value = ProcessedFile(
             canvas_file_id="42",
@@ -592,7 +594,7 @@ class TestDashboardDocumentDetail:
             original_filename="lecture.pdf",
         )
         mock_config_service.get_publish_result.return_value = None
-        mock_job_svc.get_job.return_value = {
+        mock_converter.get_job_status.return_value = {
             "job_id": "job-1",
             "status": "completed",
             "confidence_score": "0.92",
@@ -614,7 +616,7 @@ class TestDashboardDocumentDetail:
 
         assert response.status_code == 404
 
-    def test_shows_failed_document_with_error(self, client, mock_config_service, mock_job_svc):
+    def test_shows_failed_document_with_error(self, client, mock_config_service, mock_converter):
         """Shows error message for failed documents."""
         mock_config_service.get_processed_file.return_value = ProcessedFile(
             canvas_file_id="42",
@@ -625,7 +627,7 @@ class TestDashboardDocumentDetail:
             original_filename="broken.pdf",
         )
         mock_config_service.get_publish_result.return_value = None
-        mock_job_svc.get_job.return_value = {
+        mock_converter.get_job_status.return_value = {
             "job_id": "job-1",
             "status": "failed",
             "error": "Docling extraction timeout",
@@ -638,7 +640,7 @@ class TestDashboardDocumentDetail:
         assert "Docling extraction timeout" in response.text
         assert "Retry Processing" in response.text
 
-    def test_shows_published_document_with_links(self, client, mock_config_service, mock_job_svc):
+    def test_shows_published_document_with_links(self, client, mock_config_service, mock_converter):
         """Shows published document with Canvas page and download links."""
         mock_config_service.get_processed_file.return_value = ProcessedFile(
             canvas_file_id="42",
@@ -654,7 +656,7 @@ class TestDashboardDocumentDetail:
             "download_url": "https://s3.example.com/bundle.zip",
             "published_at": "2024-06-15T12:00:00Z",
         }
-        mock_job_svc.get_job.return_value = {
+        mock_converter.get_job_status.return_value = {
             "job_id": "job-1",
             "status": "completed",
             "confidence_score": "0.95",
@@ -668,7 +670,7 @@ class TestDashboardDocumentDetail:
         assert "https://canvas.example.com/pages/lecture" in response.text
         assert "Download Bundle" in response.text
 
-    def test_has_back_link(self, client, mock_config_service, mock_job_svc):
+    def test_has_back_link(self, client, mock_config_service, mock_converter):
         """Document detail has back link to index."""
         mock_config_service.get_processed_file.return_value = ProcessedFile(
             canvas_file_id="42",
@@ -679,14 +681,14 @@ class TestDashboardDocumentDetail:
             original_filename="lecture.pdf",
         )
         mock_config_service.get_publish_result.return_value = None
-        mock_job_svc.get_job.return_value = None
+        mock_converter.get_job_status.return_value = None
 
         response = client.get("/lti/dashboard/123/documents/42?lti_session=test-session")
 
         assert response.status_code == 200
         assert "Back to Documents" in response.text
 
-    def test_shows_reprocess_button_for_published_document(self, client, mock_config_service, mock_job_svc):
+    def test_shows_reprocess_button_for_published_document(self, client, mock_config_service, mock_converter):
         """Shows Re-process button for published documents."""
         mock_config_service.get_processed_file.return_value = ProcessedFile(
             canvas_file_id="42",
@@ -701,7 +703,7 @@ class TestDashboardDocumentDetail:
             "canvas_page_id": "999",
             "published_at": "2024-06-15T12:00:00Z",
         }
-        mock_job_svc.get_job.return_value = {
+        mock_converter.get_job_status.return_value = {
             "job_id": "job-1",
             "status": "completed",
             "confidence_score": "0.95",
@@ -713,7 +715,7 @@ class TestDashboardDocumentDetail:
         assert "Re-process" in response.text
         assert "/reprocess" in response.text
 
-    def test_shows_polling_for_processing_document(self, client, mock_config_service, mock_job_svc):
+    def test_shows_polling_for_processing_document(self, client, mock_config_service, mock_converter):
         """Shows htmx polling attributes for processing documents."""
         mock_config_service.get_processed_file.return_value = ProcessedFile(
             canvas_file_id="42",
@@ -724,7 +726,7 @@ class TestDashboardDocumentDetail:
             original_filename="inprogress.pdf",
         )
         mock_config_service.get_publish_result.return_value = None
-        mock_job_svc.get_job.return_value = None
+        mock_converter.get_job_status.return_value = None
 
         response = client.get("/lti/dashboard/123/documents/42?lti_session=test-session")
 
@@ -734,7 +736,7 @@ class TestDashboardDocumentDetail:
         assert "detail_fragment" in response.text
         assert "every 5s" in response.text
 
-    def test_no_polling_for_completed_document(self, client, mock_config_service, mock_job_svc):
+    def test_no_polling_for_completed_document(self, client, mock_config_service, mock_converter):
         """No htmx polling for completed documents."""
         mock_config_service.get_processed_file.return_value = ProcessedFile(
             canvas_file_id="42",
@@ -745,7 +747,7 @@ class TestDashboardDocumentDetail:
             original_filename="lecture.pdf",
         )
         mock_config_service.get_publish_result.return_value = None
-        mock_job_svc.get_job.return_value = None
+        mock_converter.get_job_status.return_value = None
 
         response = client.get("/lti/dashboard/123/documents/42?lti_session=test-session")
 
@@ -761,7 +763,7 @@ class TestDashboardDocumentDetail:
 class TestDashboardDetailFragment:
     """Tests for the htmx detail fragment polling endpoint."""
 
-    def test_returns_fragment_for_processing_document(self, client, mock_config_service, mock_job_svc):
+    def test_returns_fragment_for_processing_document(self, client, mock_config_service, mock_converter):
         """Returns HTML detail fragment with polling attrs for processing document."""
         mock_config_service.get_processed_file.return_value = ProcessedFile(
             canvas_file_id="42",
@@ -772,7 +774,7 @@ class TestDashboardDetailFragment:
             original_filename="inprogress.pdf",
         )
         mock_config_service.get_publish_result.return_value = None
-        mock_job_svc.get_job.return_value = None
+        mock_converter.get_job_status.return_value = None
 
         response = client.get("/lti/dashboard/123/documents/42/detail_fragment?lti_session=test-session")
 
@@ -782,7 +784,7 @@ class TestDashboardDetailFragment:
         assert "hx-get" in response.text
         assert "every 5s" in response.text
 
-    def test_returns_fragment_for_completed_document(self, client, mock_config_service, mock_job_svc):
+    def test_returns_fragment_for_completed_document(self, client, mock_config_service, mock_converter):
         """Returns HTML detail fragment with publish button for completed document."""
         mock_config_service.get_processed_file.return_value = ProcessedFile(
             canvas_file_id="42",
@@ -793,7 +795,7 @@ class TestDashboardDetailFragment:
             original_filename="lecture.pdf",
         )
         mock_config_service.get_publish_result.return_value = None
-        mock_job_svc.get_job.return_value = {
+        mock_converter.get_job_status.return_value = {
             "job_id": "job-1",
             "status": "completed",
             "confidence_score": "0.88",
@@ -807,7 +809,7 @@ class TestDashboardDetailFragment:
         # Completed should NOT have polling
         assert "every 5s" not in response.text
 
-    def test_returns_fragment_for_published_document(self, client, mock_config_service, mock_job_svc):
+    def test_returns_fragment_for_published_document(self, client, mock_config_service, mock_converter):
         """Returns HTML detail fragment with reprocess button for published document."""
         mock_config_service.get_processed_file.return_value = ProcessedFile(
             canvas_file_id="42",
@@ -821,7 +823,7 @@ class TestDashboardDetailFragment:
             "canvas_page_url": "https://canvas.example.com/pages/lecture",
             "published_at": "2024-06-15T12:00:00Z",
         }
-        mock_job_svc.get_job.return_value = None
+        mock_converter.get_job_status.return_value = None
 
         response = client.get("/lti/dashboard/123/documents/42/detail_fragment?lti_session=test-session")
 
@@ -830,7 +832,7 @@ class TestDashboardDetailFragment:
         assert "Re-process" in response.text
         assert "View in Canvas" in response.text
 
-    def test_returns_fragment_for_failed_document(self, client, mock_config_service, mock_job_svc):
+    def test_returns_fragment_for_failed_document(self, client, mock_config_service, mock_converter):
         """Returns HTML detail fragment with retry button and error for failed document."""
         mock_config_service.get_processed_file.return_value = ProcessedFile(
             canvas_file_id="42",
@@ -841,7 +843,7 @@ class TestDashboardDetailFragment:
             original_filename="broken.pdf",
         )
         mock_config_service.get_publish_result.return_value = None
-        mock_job_svc.get_job.return_value = {
+        mock_converter.get_job_status.return_value = {
             "job_id": "job-1",
             "status": "failed",
             "error": "Timeout error",
@@ -857,7 +859,7 @@ class TestDashboardDetailFragment:
         assert 'hx-target="#document-detail"' in response.text
         assert 'hx-swap="outerHTML"' in response.text
 
-    def test_processing_fragment_polling_url_preserves_session(self, client, mock_config_service, mock_job_svc):
+    def test_processing_fragment_polling_url_preserves_session(self, client, mock_config_service, mock_converter):
         """Detail fragment for processing document includes lti_session in polling URL."""
         mock_config_service.get_processed_file.return_value = ProcessedFile(
             canvas_file_id="42",
@@ -868,7 +870,7 @@ class TestDashboardDetailFragment:
             original_filename="inprogress.pdf",
         )
         mock_config_service.get_publish_result.return_value = None
-        mock_job_svc.get_job.return_value = None
+        mock_converter.get_job_status.return_value = None
 
         response = client.get("/lti/dashboard/123/documents/42/detail_fragment?lti_session=my-session-token")
 
@@ -920,7 +922,7 @@ class TestDashboardReprocess:
         assert response.status_code == 400
         assert "not published" in response.text
 
-    def test_returns_404_when_job_missing(self, client, mock_config_service, mock_job_svc):
+    def test_returns_404_when_job_missing(self, client, mock_config_service, mock_converter):
         """Returns 404 when job record is missing."""
         mock_config_service.get_processed_file.return_value = ProcessedFile(
             canvas_file_id="42",
@@ -933,13 +935,14 @@ class TestDashboardReprocess:
         mock_config_service.get_publish_result.return_value = {
             "canvas_page_url": "https://canvas.example.com/pages/lecture",
         }
-        mock_job_svc.get_job.return_value = None
+        mock_converter.retry_job.return_value = False
+        mock_converter.get_job_status.return_value = None
 
         response = client.post("/lti/dashboard/123/documents/42/reprocess?lti_session=test-session")
 
         assert response.status_code == 404
 
-    def test_returns_400_when_s3_key_missing(self, client, mock_config_service, mock_job_svc):
+    def test_returns_400_when_s3_key_missing(self, client, mock_config_service, mock_converter):
         """Returns 400 when job has no S3 key."""
         mock_config_service.get_processed_file.return_value = ProcessedFile(
             canvas_file_id="42",
@@ -952,7 +955,8 @@ class TestDashboardReprocess:
         mock_config_service.get_publish_result.return_value = {
             "canvas_page_url": "https://canvas.example.com/pages/lecture",
         }
-        mock_job_svc.get_job.return_value = {
+        mock_converter.retry_job.return_value = False
+        mock_converter.get_job_status.return_value = {
             "job_id": "job-1",
             "status": "completed",
             "s3_key": "",
@@ -996,7 +1000,7 @@ class TestDashboardRetry:
         assert response.status_code == 400
         assert "Cannot retry" in response.text
 
-    def test_returns_404_when_job_missing(self, client, mock_config_service, mock_job_svc):
+    def test_returns_404_when_job_missing(self, client, mock_config_service, mock_converter):
         """Returns 404 when job record is missing."""
         mock_config_service.get_processed_file.return_value = ProcessedFile(
             canvas_file_id="42",
@@ -1006,13 +1010,14 @@ class TestDashboardRetry:
             processed_at="2024-06-15T11:00:00Z",
             original_filename="lecture.pdf",
         )
-        mock_job_svc.get_job.return_value = None
+        mock_converter.retry_job.return_value = False
+        mock_converter.get_job_status.return_value = None
 
         response = client.post("/lti/dashboard/123/documents/42/retry?lti_session=test-session")
 
         assert response.status_code == 404
 
-    def test_returns_400_when_s3_key_missing(self, client, mock_config_service, mock_job_svc):
+    def test_returns_400_when_s3_key_missing(self, client, mock_config_service, mock_converter):
         """Returns 400 when job has no S3 key."""
         mock_config_service.get_processed_file.return_value = ProcessedFile(
             canvas_file_id="42",
@@ -1022,7 +1027,8 @@ class TestDashboardRetry:
             processed_at="2024-06-15T11:00:00Z",
             original_filename="lecture.pdf",
         )
-        mock_job_svc.get_job.return_value = {
+        mock_converter.retry_job.return_value = False
+        mock_converter.get_job_status.return_value = {
             "job_id": "job-1",
             "status": "failed",
             "s3_key": "",
@@ -1033,10 +1039,8 @@ class TestDashboardRetry:
         assert response.status_code == 400
         assert "Original file not found" in response.text
 
-    def test_successful_retry_returns_processing_row(self, client, mock_config_service, mock_job_svc):
+    def test_successful_retry_returns_processing_row(self, client, mock_config_service, mock_converter):
         """Successful retry queues PII job and returns updated row with processing status."""
-        from unittest.mock import patch
-
         mock_config_service.get_processed_file.return_value = ProcessedFile(
             canvas_file_id="42",
             canvas_updated_at="2024-06-15T10:30:00Z",
@@ -1045,23 +1049,9 @@ class TestDashboardRetry:
             processed_at="2024-06-15T11:00:00Z",
             original_filename="broken.pdf",
         )
-        mock_job_svc.get_job.return_value = {
-            "job_id": "job-1",
-            "status": "failed",
-            "s3_key": "uploads/broken.pdf",
-        }
+        mock_converter.retry_job.return_value = True
 
-        mock_queue_service = AsyncMock()
-        mock_redis_for_retry = AsyncMock()
-
-        async def fake_get_redis_client():
-            yield mock_redis_for_retry
-
-        with (
-            patch("src.services.queue_service.QueueService", return_value=mock_queue_service),
-            patch("src.dependencies.get_redis_client", side_effect=fake_get_redis_client),
-        ):
-            response = client.post("/lti/dashboard/123/documents/42/retry?lti_session=test-session")
+        response = client.post("/lti/dashboard/123/documents/42/retry?lti_session=test-session")
 
         assert response.status_code == 200
         assert "Processing" in response.text
@@ -1070,14 +1060,11 @@ class TestDashboardRetry:
         # Processing row should have polling attrs
         assert "hx-get" in response.text
         assert "every 5s" in response.text
-        mock_job_svc.update_job_status.assert_awaited_once_with("job-1", "pii_scanning")
-        mock_queue_service.queue_pii_job.assert_awaited_once_with("job-1", "uploads/broken.pdf")
+        mock_converter.retry_job.assert_awaited_once_with("job-1")
         mock_config_service.set_processed_file.assert_awaited_once()
 
-    def test_successful_retry_from_detail_returns_detail_fragment(self, client, mock_config_service, mock_job_svc):
+    def test_successful_retry_from_detail_returns_detail_fragment(self, client, mock_config_service, mock_converter):
         """Retry from detail view returns detail fragment with polling when HX-Target is document-detail."""
-        from unittest.mock import patch
-
         mock_config_service.get_processed_file.return_value = ProcessedFile(
             canvas_file_id="42",
             canvas_updated_at="2024-06-15T10:30:00Z",
@@ -1086,26 +1073,12 @@ class TestDashboardRetry:
             processed_at="2024-06-15T11:00:00Z",
             original_filename="broken.pdf",
         )
-        mock_job_svc.get_job.return_value = {
-            "job_id": "job-1",
-            "status": "failed",
-            "s3_key": "uploads/broken.pdf",
-        }
+        mock_converter.retry_job.return_value = True
 
-        mock_queue_service = AsyncMock()
-        mock_redis_for_retry = AsyncMock()
-
-        async def fake_get_redis_client():
-            yield mock_redis_for_retry
-
-        with (
-            patch("src.services.queue_service.QueueService", return_value=mock_queue_service),
-            patch("src.dependencies.get_redis_client", side_effect=fake_get_redis_client),
-        ):
-            response = client.post(
-                "/lti/dashboard/123/documents/42/retry?lti_session=test-session",
-                headers={"HX-Target": "document-detail"},
-            )
+        response = client.post(
+            "/lti/dashboard/123/documents/42/retry?lti_session=test-session",
+            headers={"HX-Target": "document-detail"},
+        )
 
         assert response.status_code == 200
         assert 'id="document-detail"' in response.text
@@ -1115,10 +1088,8 @@ class TestDashboardRetry:
         assert "every 5s" in response.text
         assert "detail_fragment" in response.text
 
-    def test_retry_returns_500_on_queue_error(self, client, mock_config_service, mock_job_svc):
+    def test_retry_returns_500_on_queue_error(self, client, mock_config_service, mock_converter):
         """Returns 500 with error message when queueing fails."""
-        from unittest.mock import patch
-
         mock_config_service.get_processed_file.return_value = ProcessedFile(
             canvas_file_id="42",
             canvas_updated_at="2024-06-15T10:30:00Z",
@@ -1127,24 +1098,9 @@ class TestDashboardRetry:
             processed_at="2024-06-15T11:00:00Z",
             original_filename="broken.pdf",
         )
-        mock_job_svc.get_job.return_value = {
-            "job_id": "job-1",
-            "status": "failed",
-            "s3_key": "uploads/broken.pdf",
-        }
+        mock_converter.retry_job.side_effect = RuntimeError("Redis connection lost")
 
-        mock_queue_service = AsyncMock()
-        mock_queue_service.queue_pii_job.side_effect = RuntimeError("Redis connection lost")
-        mock_redis_for_retry = AsyncMock()
-
-        async def fake_get_redis_client():
-            yield mock_redis_for_retry
-
-        with (
-            patch("src.services.queue_service.QueueService", return_value=mock_queue_service),
-            patch("src.dependencies.get_redis_client", side_effect=fake_get_redis_client),
-        ):
-            response = client.post("/lti/dashboard/123/documents/42/retry?lti_session=test-session")
+        response = client.post("/lti/dashboard/123/documents/42/retry?lti_session=test-session")
 
         assert response.status_code == 500
         assert "Retry failed" in response.text
@@ -1159,7 +1115,7 @@ class TestDashboardRetry:
 class TestDashboardDocumentRow:
     """Tests for the htmx row polling endpoint."""
 
-    def test_returns_row_for_processing_document(self, client, mock_config_service, mock_job_svc):
+    def test_returns_row_for_processing_document(self, client, mock_config_service, mock_converter):
         """Returns HTML row fragment with polling attrs for processing document."""
         mock_config_service.get_processed_file.return_value = ProcessedFile(
             canvas_file_id="42",
@@ -1170,7 +1126,7 @@ class TestDashboardDocumentRow:
             original_filename="inprogress.pdf",
         )
         mock_config_service.get_publish_result.return_value = None
-        mock_job_svc.get_job.return_value = None
+        mock_converter.get_job_status.return_value = None
 
         response = client.get("/lti/dashboard/123/documents/42/row?lti_session=test-session")
 
@@ -1182,7 +1138,7 @@ class TestDashboardDocumentRow:
         assert "hx-get" in response.text
         assert "every 5s" in response.text
 
-    def test_returns_row_for_completed_document(self, client, mock_config_service, mock_job_svc):
+    def test_returns_row_for_completed_document(self, client, mock_config_service, mock_converter):
         """Returns HTML row fragment with publish button for completed document."""
         mock_config_service.get_processed_file.return_value = ProcessedFile(
             canvas_file_id="42",
@@ -1193,7 +1149,7 @@ class TestDashboardDocumentRow:
             original_filename="lecture.pdf",
         )
         mock_config_service.get_publish_result.return_value = None
-        mock_job_svc.get_job.return_value = {
+        mock_converter.get_job_status.return_value = {
             "job_id": "job-1",
             "status": "completed",
             "confidence_score": "0.88",
@@ -1209,7 +1165,7 @@ class TestDashboardDocumentRow:
         # Completed rows should NOT have polling attrs
         assert "every 5s" not in response.text
 
-    def test_returns_row_for_published_document(self, client, mock_config_service, mock_job_svc):
+    def test_returns_row_for_published_document(self, client, mock_config_service, mock_converter):
         """Returns HTML row with View Page link for published document."""
         mock_config_service.get_processed_file.return_value = ProcessedFile(
             canvas_file_id="42",
@@ -1222,7 +1178,7 @@ class TestDashboardDocumentRow:
         mock_config_service.get_publish_result.return_value = {
             "canvas_page_url": "https://canvas.example.com/pages/lecture",
         }
-        mock_job_svc.get_job.return_value = None
+        mock_converter.get_job_status.return_value = None
 
         response = client.get("/lti/dashboard/123/documents/42/row?lti_session=test-session")
 
@@ -1231,7 +1187,7 @@ class TestDashboardDocumentRow:
         assert "View Page" in response.text
         assert "https://canvas.example.com/pages/lecture" in response.text
 
-    def test_returns_row_for_failed_document(self, client, mock_config_service, mock_job_svc):
+    def test_returns_row_for_failed_document(self, client, mock_config_service, mock_converter):
         """Returns HTML row with retry button for failed document."""
         mock_config_service.get_processed_file.return_value = ProcessedFile(
             canvas_file_id="42",
@@ -1242,7 +1198,7 @@ class TestDashboardDocumentRow:
             original_filename="broken.pdf",
         )
         mock_config_service.get_publish_result.return_value = None
-        mock_job_svc.get_job.return_value = None
+        mock_converter.get_job_status.return_value = None
 
         response = client.get("/lti/dashboard/123/documents/42/row?lti_session=test-session")
 
@@ -1250,7 +1206,7 @@ class TestDashboardDocumentRow:
         assert "Failed" in response.text
         assert "Retry" in response.text
 
-    def test_processing_row_polling_url_preserves_session(self, client, mock_config_service, mock_job_svc):
+    def test_processing_row_polling_url_preserves_session(self, client, mock_config_service, mock_converter):
         """Row fragment for processing document includes lti_session in polling URL."""
         mock_config_service.get_processed_file.return_value = ProcessedFile(
             canvas_file_id="42",
@@ -1261,7 +1217,7 @@ class TestDashboardDocumentRow:
             original_filename="inprogress.pdf",
         )
         mock_config_service.get_publish_result.return_value = None
-        mock_job_svc.get_job.return_value = None
+        mock_converter.get_job_status.return_value = None
 
         response = client.get("/lti/dashboard/123/documents/42/row?lti_session=my-session-token")
 
@@ -1348,7 +1304,6 @@ class TestDashboardPublish:
 
         mock_publisher_instance = AsyncMock()
         mock_canvas_client = AsyncMock()
-        mock_storage = AsyncMock()
         mock_redis_for_publish = AsyncMock()
 
         # get_redis_client is an async generator; the handler calls anext() on it
@@ -1363,8 +1318,6 @@ class TestDashboardPublish:
             patch("src.canvas.publisher.CanvasPublisherService", return_value=mock_publisher_instance),
             patch("src.canvas.client.CanvasAPIClient", return_value=mock_canvas_client),
             patch("src.canvas.renderer.CanvasHTMLRenderer"),
-            patch("src.canvas.bundle.DownloadBundleService"),
-            patch("src.dependencies.get_storage_service", new_callable=AsyncMock, return_value=mock_storage),
             patch("src.dependencies.get_redis_client", side_effect=fake_get_redis_client),
             patch("src.config.settings", mock_settings),
         ):
@@ -1397,7 +1350,6 @@ class TestDashboardPublish:
         mock_publisher_instance = AsyncMock()
         mock_publisher_instance.publish.side_effect = RuntimeError("Canvas API timeout")
         mock_canvas_client = AsyncMock()
-        mock_storage = AsyncMock()
         mock_redis_for_publish = AsyncMock()
 
         async def fake_get_redis_client():
@@ -1411,8 +1363,6 @@ class TestDashboardPublish:
             patch("src.canvas.publisher.CanvasPublisherService", return_value=mock_publisher_instance),
             patch("src.canvas.client.CanvasAPIClient", return_value=mock_canvas_client),
             patch("src.canvas.renderer.CanvasHTMLRenderer"),
-            patch("src.canvas.bundle.DownloadBundleService"),
-            patch("src.dependencies.get_storage_service", new_callable=AsyncMock, return_value=mock_storage),
             patch("src.dependencies.get_redis_client", side_effect=fake_get_redis_client),
             patch("src.config.settings", mock_settings),
         ):
@@ -1671,7 +1621,7 @@ class TestDashboardLaunch:
 
     def test_dashboard_launch_redirects_with_valid_session(self, _lti_env):
         """GET /lti/dashboard with valid session and course_id redirects to index."""
-        from src.dependencies import get_course_config_service, get_job_service, get_redis_client
+        from src.dependencies import get_course_config_service, get_converter_client, get_redis_client
         from src.lti.router import router as lti_router
 
         app = FastAPI()
@@ -1684,12 +1634,12 @@ class TestDashboardLaunch:
         mock_redis.exists = AsyncMock(return_value=True)
 
         mock_config_svc = AsyncMock(spec=CourseConfigService)
-        mock_job = MagicMock()
-        mock_job.get_job = AsyncMock(return_value=None)
+        mock_job = MagicMock(spec=ConverterClient)
+        mock_job.get_job_status = AsyncMock(return_value=None)
 
         app.dependency_overrides[get_redis_client] = lambda: mock_redis
         app.dependency_overrides[get_course_config_service] = lambda: mock_config_svc
-        app.dependency_overrides[get_job_service] = lambda: mock_job
+        app.dependency_overrides[get_converter_client] = lambda: mock_job
 
         test_client = TestClient(app, follow_redirects=False)
         response = test_client.get("/lti/dashboard?lti_session=abc123&course_id=456")
@@ -1702,7 +1652,7 @@ class TestDashboardLaunch:
 
     def test_dashboard_launch_rejects_invalid_session(self, _lti_env):
         """GET /lti/dashboard with invalid/expired session shows error using dashboard template."""
-        from src.dependencies import get_course_config_service, get_job_service, get_redis_client
+        from src.dependencies import get_course_config_service, get_converter_client, get_redis_client
         from src.lti.router import router as lti_router
 
         app = FastAPI()
@@ -1712,12 +1662,12 @@ class TestDashboardLaunch:
         mock_redis.get = AsyncMock(return_value=None)
 
         mock_config_svc = AsyncMock(spec=CourseConfigService)
-        mock_job = MagicMock()
-        mock_job.get_job = AsyncMock(return_value=None)
+        mock_job = MagicMock(spec=ConverterClient)
+        mock_job.get_job_status = AsyncMock(return_value=None)
 
         app.dependency_overrides[get_redis_client] = lambda: mock_redis
         app.dependency_overrides[get_course_config_service] = lambda: mock_config_svc
-        app.dependency_overrides[get_job_service] = lambda: mock_job
+        app.dependency_overrides[get_converter_client] = lambda: mock_job
 
         test_client = TestClient(app)
         response = test_client.get("/lti/dashboard?lti_session=expired-token&course_id=456")
@@ -1730,7 +1680,7 @@ class TestDashboardLaunch:
 
     def test_dashboard_launch_rejects_course_id_mismatch(self, _lti_env):
         """GET /lti/dashboard rejects when course_id doesn't match session."""
-        from src.dependencies import get_course_config_service, get_job_service, get_redis_client
+        from src.dependencies import get_course_config_service, get_converter_client, get_redis_client
         from src.lti.router import router as lti_router
 
         app = FastAPI()
@@ -1742,12 +1692,12 @@ class TestDashboardLaunch:
         mock_redis.get = AsyncMock(return_value=session_data)
 
         mock_config_svc = AsyncMock(spec=CourseConfigService)
-        mock_job = MagicMock()
-        mock_job.get_job = AsyncMock(return_value=None)
+        mock_job = MagicMock(spec=ConverterClient)
+        mock_job.get_job_status = AsyncMock(return_value=None)
 
         app.dependency_overrides[get_redis_client] = lambda: mock_redis
         app.dependency_overrides[get_course_config_service] = lambda: mock_config_svc
-        app.dependency_overrides[get_job_service] = lambda: mock_job
+        app.dependency_overrides[get_converter_client] = lambda: mock_job
 
         test_client = TestClient(app)
         response = test_client.get("/lti/dashboard?lti_session=abc123&course_id=456")
@@ -1759,7 +1709,7 @@ class TestDashboardLaunch:
 
     def test_dashboard_launch_error_without_params(self, _lti_env):
         """GET /lti/dashboard without params shows dashboard-styled error."""
-        from src.dependencies import get_course_config_service, get_job_service, get_redis_client
+        from src.dependencies import get_course_config_service, get_converter_client, get_redis_client
         from src.lti.router import router as lti_router
 
         app = FastAPI()
@@ -1769,12 +1719,12 @@ class TestDashboardLaunch:
         mock_redis.get = AsyncMock(return_value=None)
 
         mock_config_svc = AsyncMock(spec=CourseConfigService)
-        mock_job = MagicMock()
-        mock_job.get_job = AsyncMock(return_value=None)
+        mock_job = MagicMock(spec=ConverterClient)
+        mock_job.get_job_status = AsyncMock(return_value=None)
 
         app.dependency_overrides[get_redis_client] = lambda: mock_redis
         app.dependency_overrides[get_course_config_service] = lambda: mock_config_svc
-        app.dependency_overrides[get_job_service] = lambda: mock_job
+        app.dependency_overrides[get_converter_client] = lambda: mock_job
 
         test_client = TestClient(app)
         response = test_client.get("/lti/dashboard")
@@ -1787,7 +1737,7 @@ class TestDashboardLaunch:
 
     def test_dashboard_launch_uses_dashboard_template(self, _lti_env):
         """GET /lti/dashboard error pages use the dashboard Jinja2 template, not inline HTML."""
-        from src.dependencies import get_course_config_service, get_job_service, get_redis_client
+        from src.dependencies import get_course_config_service, get_converter_client, get_redis_client
         from src.lti.router import router as lti_router
 
         app = FastAPI()
@@ -1797,12 +1747,12 @@ class TestDashboardLaunch:
         mock_redis.get = AsyncMock(return_value=None)
 
         mock_config_svc = AsyncMock(spec=CourseConfigService)
-        mock_job = MagicMock()
-        mock_job.get_job = AsyncMock(return_value=None)
+        mock_job = MagicMock(spec=ConverterClient)
+        mock_job.get_job_status = AsyncMock(return_value=None)
 
         app.dependency_overrides[get_redis_client] = lambda: mock_redis
         app.dependency_overrides[get_course_config_service] = lambda: mock_config_svc
-        app.dependency_overrides[get_job_service] = lambda: mock_job
+        app.dependency_overrides[get_converter_client] = lambda: mock_job
 
         test_client = TestClient(app)
         response = test_client.get("/lti/dashboard")
@@ -2083,7 +2033,7 @@ class TestLTISessionStorage:
 class TestDashboardSessionValidation:
     """Tests for Redis-backed LTI session validation in dashboard views."""
 
-    def test_index_returns_403_with_invalid_redis_session(self, mock_config_service, mock_job_svc):
+    def test_index_returns_403_with_invalid_redis_session(self, mock_config_service, mock_converter):
         """Dashboard returns 403 with expired message when lti_session token is not found in Redis."""
         app = FastAPI()
         app.include_router(dashboard_router)
@@ -2093,7 +2043,7 @@ class TestDashboardSessionValidation:
         mock_redis.get = AsyncMock(return_value=None)
 
         app.dependency_overrides[get_course_config_service] = lambda: mock_config_service
-        app.dependency_overrides[get_job_service] = lambda: mock_job_svc
+        app.dependency_overrides[get_converter_client] = lambda: mock_converter
         app.dependency_overrides[get_redis_client] = lambda: mock_redis
 
         test_client = TestClient(app)
@@ -2104,7 +2054,7 @@ class TestDashboardSessionValidation:
 
         app.dependency_overrides.clear()
 
-    def test_index_returns_403_without_lti_session_param(self, mock_config_service, mock_job_svc):
+    def test_index_returns_403_without_lti_session_param(self, mock_config_service, mock_converter):
         """Dashboard returns 403 with launch message when no lti_session param is present."""
         app = FastAPI()
         app.include_router(dashboard_router)
@@ -2113,7 +2063,7 @@ class TestDashboardSessionValidation:
         mock_redis.get = AsyncMock(return_value=None)
 
         app.dependency_overrides[get_course_config_service] = lambda: mock_config_service
-        app.dependency_overrides[get_job_service] = lambda: mock_job_svc
+        app.dependency_overrides[get_converter_client] = lambda: mock_converter
         app.dependency_overrides[get_redis_client] = lambda: mock_redis
 
         test_client = TestClient(app)
@@ -2124,7 +2074,7 @@ class TestDashboardSessionValidation:
 
         app.dependency_overrides.clear()
 
-    def test_index_accessible_with_valid_redis_session(self, mock_config_service, mock_job_svc):
+    def test_index_accessible_with_valid_redis_session(self, mock_config_service, mock_converter):
         """Dashboard returns 200 when lti_session token is valid in Redis."""
         app = FastAPI()
         app.include_router(dashboard_router)
@@ -2134,7 +2084,7 @@ class TestDashboardSessionValidation:
         mock_redis.get = AsyncMock(return_value=session_data)
 
         app.dependency_overrides[get_course_config_service] = lambda: mock_config_service
-        app.dependency_overrides[get_job_service] = lambda: mock_job_svc
+        app.dependency_overrides[get_converter_client] = lambda: mock_converter
         app.dependency_overrides[get_redis_client] = lambda: mock_redis
 
         test_client = TestClient(app)

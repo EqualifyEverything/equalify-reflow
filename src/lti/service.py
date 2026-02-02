@@ -8,8 +8,6 @@ This module handles the business logic for LTI launches:
 """
 
 import logging
-import uuid
-from io import BytesIO
 from typing import TYPE_CHECKING, Any
 
 import httpx
@@ -19,8 +17,7 @@ from ..config import settings
 from .models import FileMenuContent, LTILaunchData, LTILaunchResponse, LTIUser
 
 if TYPE_CHECKING:
-    from ..services.job_service import JobService
-    from ..services.storage_service import StorageService
+    from ..services.converter_client import ConverterClient
 
 logger = logging.getLogger(__name__)
 
@@ -40,19 +37,16 @@ class LTIService:
 
     def __init__(
         self,
-        storage_service: "StorageService",
-        job_service: "JobService",
+        converter: "ConverterClient",
         canvas_base_url: str | None = None,
     ):
         """Initialize LTI service with dependencies.
 
         Args:
-            storage_service: Service for S3 storage operations
-            job_service: Service for Redis job management
+            converter: ConverterClient facade for document submission
             canvas_base_url: Canvas LMS base URL for API calls (e.g., http://localhost:3000)
         """
-        self.storage = storage_service
-        self.jobs = job_service
+        self.converter = converter
         # Default to settings if not provided
         self.canvas_base_url = canvas_base_url or getattr(settings, 'canvas_api_url', '').replace('/api/v1', '') or 'http://localhost:3000'
 
@@ -536,60 +530,30 @@ class LTIService:
         Raises:
             HTTPException: If storage or job creation fails
         """
-        # Generate unique job ID
-        job_id = str(uuid.uuid4())
-        s3_key = f"temp/{job_id}.pdf"
-
         try:
-            # Upload to S3 temp bucket
-            # We use put_object directly instead of upload_fileobj since we have bytes
-            from botocore.exceptions import ClientError
+            # Build LTI-specific metadata with prefixed keys
+            metadata = {
+                "lti_canvas_file_id": lti_context.get("canvas_file_id", ""),
+                "lti_canvas_course_id": lti_context.get("canvas_course_id", ""),
+                "lti_canvas_user_id": lti_context.get("canvas_user_id", ""),
+                "lti_deployment_id": lti_context.get("lti_deployment_id", ""),
+            }
 
-            try:
-                self.storage.s3_client.put_object(
-                    Bucket=self.storage.temp_bucket,
-                    Key=s3_key,
-                    Body=BytesIO(file_content),
-                    ContentType="application/pdf",
-                )
-            except ClientError as e:
-                logger.error(f"S3 upload failed: {e}")
-                raise HTTPException(
-                    status_code=500,
-                    detail=f"Failed to store file: {str(e)}"
-                )
-
-            # Create job in Redis, skipping PII scan
-            # LTI launches are from authenticated Canvas users, so we skip PII scanning
-            await self.jobs.create_job(
-                job_id=job_id,
-                s3_key=s3_key,
-                status="processing",  # Skip pii_scanning, go directly to processing
-                original_filename=original_filename,
-                pii_skipped=True,
-                pii_skip_reason="LTI launch from authenticated Canvas user",
+            result = await self.converter.submit_document(
+                file_content=file_content,
+                filename=original_filename,
+                source="lti",
+                metadata=metadata,
+                skip_pii_scan=True,
+                skip_reason="LTI launch from authenticated Canvas user",
             )
-
-            # Store LTI context as job metadata
-            await self.jobs.redis.hset(
-                f"{self.jobs.status_prefix}{job_id}",
-                mapping={
-                    "lti_canvas_file_id": lti_context.get("canvas_file_id", ""),
-                    "lti_canvas_course_id": lti_context.get("canvas_course_id", ""),
-                    "lti_canvas_user_id": lti_context.get("canvas_user_id", ""),
-                    "lti_deployment_id": lti_context.get("lti_deployment_id", ""),
-                    "source": "lti",
-                },
-            )
-
-            # Note: Processing is triggered via BackgroundTasks in the router
 
             logger.info(
-                f"Created LTI job: job_id={job_id}, "
-                f"file={original_filename}, s3_key={s3_key}"
+                f"Created LTI job: job_id={result.job_id}, "
+                f"file={original_filename}, s3_key={result.s3_key}"
             )
 
-            return job_id, s3_key
+            return result.job_id, result.s3_key
 
         except HTTPException:
             raise

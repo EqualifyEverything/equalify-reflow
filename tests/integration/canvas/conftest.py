@@ -15,6 +15,7 @@ from src.canvas.course_config import CourseConfig, CourseConfigService, Processe
 from src.config import settings
 from src.services.job_service import JobService
 from src.services.queue_service import QueueService
+from src.services.converter_client import ConverterClient
 from src.services.storage_service import StorageService
 
 # ============================================================================
@@ -47,6 +48,16 @@ async def canvas_storage_service(real_s3_client):
         s3_client=real_s3_client,
         temp_bucket=settings.s3_temp_bucket,
         results_bucket=settings.s3_results_bucket,
+    )
+
+
+@pytest_asyncio.fixture
+async def canvas_converter(canvas_job_service, canvas_storage_service, canvas_queue_service):
+    """ConverterClient backed by real Redis + real S3 (canvas-specific alias)."""
+    return ConverterClient(
+        job_service=canvas_job_service,
+        storage_service=canvas_storage_service,
+        queue_service=canvas_queue_service,
     )
 
 

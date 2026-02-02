@@ -8,7 +8,6 @@ import json
 from unittest.mock import AsyncMock
 
 import pytest
-from src.canvas.bundle import DownloadBundleService
 from src.canvas.publisher import CanvasPublisherService, PublishError
 from src.canvas.renderer import CanvasHTMLRenderer
 
@@ -45,7 +44,7 @@ def _mock_canvas_client(
 @pytest.mark.requires_redis
 @pytest.mark.asyncio
 async def test_publish_downloads_markdown_from_s3(
-    canvas_storage_service, seed_s3_result, real_redis_client
+    canvas_converter, seed_s3_result, real_redis_client
 ):
     """Seed result.md in S3 → publish reads it and uses it for page body."""
     job_id = "pub-test-md"
@@ -53,13 +52,11 @@ async def test_publish_downloads_markdown_from_s3(
 
     mock_client = _mock_canvas_client()
     renderer = CanvasHTMLRenderer()
-    bundle_svc = DownloadBundleService(storage_service=canvas_storage_service)
 
     publisher = CanvasPublisherService(
         canvas_client=mock_client,
         renderer=renderer,
-        bundle_service=bundle_svc,
-        storage_service=canvas_storage_service,
+        converter=canvas_converter,
     )
 
     result = await publisher.publish(
@@ -83,7 +80,7 @@ async def test_publish_downloads_markdown_from_s3(
 @pytest.mark.requires_redis
 @pytest.mark.asyncio
 async def test_publish_creates_download_bundle_in_s3(
-    canvas_storage_service, seed_s3_result, real_redis_client, real_s3_client
+    canvas_converter, seed_s3_result, real_redis_client, real_s3_client
 ):
     """After publish, bundle.zip exists in S3 results bucket."""
     from src.config import settings
@@ -93,13 +90,11 @@ async def test_publish_creates_download_bundle_in_s3(
 
     mock_client = _mock_canvas_client()
     renderer = CanvasHTMLRenderer()
-    bundle_svc = DownloadBundleService(storage_service=canvas_storage_service)
 
     publisher = CanvasPublisherService(
         canvas_client=mock_client,
         renderer=renderer,
-        bundle_service=bundle_svc,
-        storage_service=canvas_storage_service,
+        converter=canvas_converter,
     )
 
     await publisher.publish(
@@ -124,7 +119,7 @@ async def test_publish_creates_download_bundle_in_s3(
 @pytest.mark.requires_redis
 @pytest.mark.asyncio
 async def test_publish_stores_result_in_redis(
-    canvas_storage_service, seed_s3_result, real_redis_client
+    canvas_converter, seed_s3_result, real_redis_client
 ):
     """PublishResult stored at correct key with TTL."""
     job_id = "pub-test-redis"
@@ -132,13 +127,11 @@ async def test_publish_stores_result_in_redis(
 
     mock_client = _mock_canvas_client()
     renderer = CanvasHTMLRenderer()
-    bundle_svc = DownloadBundleService(storage_service=canvas_storage_service)
 
     publisher = CanvasPublisherService(
         canvas_client=mock_client,
         renderer=renderer,
-        bundle_service=bundle_svc,
-        storage_service=canvas_storage_service,
+        converter=canvas_converter,
     )
 
     await publisher.publish(
@@ -167,18 +160,16 @@ async def test_publish_stores_result_in_redis(
 @pytest.mark.requires_redis
 @pytest.mark.asyncio
 async def test_publish_raises_when_no_markdown(
-    canvas_storage_service, real_redis_client
+    canvas_converter, real_redis_client
 ):
     """No result.md in S3 → PublishError."""
     mock_client = _mock_canvas_client()
     renderer = CanvasHTMLRenderer()
-    bundle_svc = DownloadBundleService(storage_service=canvas_storage_service)
 
     publisher = CanvasPublisherService(
         canvas_client=mock_client,
         renderer=renderer,
-        bundle_service=bundle_svc,
-        storage_service=canvas_storage_service,
+        converter=canvas_converter,
     )
 
     with pytest.raises(PublishError, match="Failed to download result markdown"):
@@ -196,7 +187,7 @@ async def test_publish_raises_when_no_markdown(
 @pytest.mark.requires_redis
 @pytest.mark.asyncio
 async def test_publish_page_title_convention(
-    canvas_storage_service, seed_s3_result, real_redis_client
+    canvas_converter, seed_s3_result, real_redis_client
 ):
     """'lecture_notes.pdf' → 'lecture_notes - Reflow' page title."""
     job_id = "pub-test-title"
@@ -204,13 +195,11 @@ async def test_publish_page_title_convention(
 
     mock_client = _mock_canvas_client()
     renderer = CanvasHTMLRenderer()
-    bundle_svc = DownloadBundleService(storage_service=canvas_storage_service)
 
     publisher = CanvasPublisherService(
         canvas_client=mock_client,
         renderer=renderer,
-        bundle_service=bundle_svc,
-        storage_service=canvas_storage_service,
+        converter=canvas_converter,
     )
 
     result = await publisher.publish(
@@ -231,7 +220,7 @@ async def test_publish_page_title_convention(
 @pytest.mark.requires_redis
 @pytest.mark.asyncio
 async def test_publish_uploads_figures_to_canvas(
-    canvas_storage_service, seed_s3_result, real_redis_client
+    canvas_converter, seed_s3_result, real_redis_client
 ):
     """Figures from S3 are passed to mocked Canvas upload."""
     job_id = "pub-test-figs"
@@ -244,13 +233,11 @@ async def test_publish_uploads_figures_to_canvas(
 
     mock_client = _mock_canvas_client(upload_file_response={"id": 777})
     renderer = CanvasHTMLRenderer()
-    bundle_svc = DownloadBundleService(storage_service=canvas_storage_service)
 
     publisher = CanvasPublisherService(
         canvas_client=mock_client,
         renderer=renderer,
-        bundle_service=bundle_svc,
-        storage_service=canvas_storage_service,
+        converter=canvas_converter,
     )
 
     result = await publisher.publish(
@@ -272,7 +259,7 @@ async def test_publish_uploads_figures_to_canvas(
 @pytest.mark.requires_redis
 @pytest.mark.asyncio
 async def test_publish_handles_figure_upload_failure(
-    canvas_storage_service, seed_s3_result, real_redis_client
+    canvas_converter, seed_s3_result, real_redis_client
 ):
     """One figure fails to upload to Canvas, others succeed, publish completes."""
     job_id = "pub-test-fig-fail"
@@ -295,13 +282,11 @@ async def test_publish_handles_figure_upload_failure(
     mock_client = _mock_canvas_client()
     mock_client.upload_file = AsyncMock(side_effect=upload_side_effect)
     renderer = CanvasHTMLRenderer()
-    bundle_svc = DownloadBundleService(storage_service=canvas_storage_service)
 
     publisher = CanvasPublisherService(
         canvas_client=mock_client,
         renderer=renderer,
-        bundle_service=bundle_svc,
-        storage_service=canvas_storage_service,
+        converter=canvas_converter,
     )
 
     result = await publisher.publish(

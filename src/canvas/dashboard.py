@@ -16,9 +16,9 @@ from fastapi.templating import Jinja2Templates
 from redis.asyncio import Redis
 
 from ..canvas.course_config import CourseConfig, CourseConfigService
-from ..dependencies import get_course_config_service, get_job_service, get_redis_client
+from ..dependencies import get_converter_client, get_course_config_service, get_redis_client
 from ..lti.adapters import RedisLaunchDataStorage
-from ..services.job_service import JobService
+from ..services.converter_client import ConverterClient
 
 logger = logging.getLogger(__name__)
 
@@ -85,7 +85,7 @@ async def dashboard_index(
     request: Request,
     redis: Redis = Depends(get_redis_client),
     config_service: CourseConfigService = Depends(get_course_config_service),
-    job_service: JobService = Depends(get_job_service),
+    converter: ConverterClient = Depends(get_converter_client),
 ) -> HTMLResponse:
     """Render the document list view."""
     session = await _get_lti_session(request, redis)
@@ -108,7 +108,7 @@ async def dashboard_index(
             canvas_page_url = publish_result.get("canvas_page_url")
 
         if pf.job_id:
-            job = await job_service.get_job(pf.job_id)
+            job = await converter.get_job_status(pf.job_id)
             if job:
                 score = job.get("confidence_score")
                 if score is not None:
@@ -177,7 +177,7 @@ async def dashboard_document_detail(
     request: Request,
     redis: Redis = Depends(get_redis_client),
     config_service: CourseConfigService = Depends(get_course_config_service),
-    job_service: JobService = Depends(get_job_service),
+    converter: ConverterClient = Depends(get_converter_client),
 ) -> HTMLResponse:
     """Render the document detail view."""
     session = await _get_lti_session(request, redis)
@@ -214,7 +214,7 @@ async def dashboard_document_detail(
         published_at = publish_result.get("published_at")
 
     if processed_file.job_id:
-        job = await job_service.get_job(processed_file.job_id)
+        job = await converter.get_job_status(processed_file.job_id)
         if job:
             score = job.get("confidence_score")
             if score is not None:
@@ -260,7 +260,7 @@ async def dashboard_document_detail_fragment(
     file_id: str,
     request: Request,
     config_service: CourseConfigService = Depends(get_course_config_service),
-    job_service: JobService = Depends(get_job_service),
+    converter: ConverterClient = Depends(get_converter_client),
 ) -> HTMLResponse:
     """Return the document detail card as an HTML fragment for htmx polling.
 
@@ -292,7 +292,7 @@ async def dashboard_document_detail_fragment(
         published_at = publish_result.get("published_at")
 
     if processed_file.job_id:
-        job = await job_service.get_job(processed_file.job_id)
+        job = await converter.get_job_status(processed_file.job_id)
         if job:
             score = job.get("confidence_score")
             if score is not None:
@@ -329,7 +329,7 @@ async def dashboard_document_row(
     file_id: str,
     request: Request,
     config_service: CourseConfigService = Depends(get_course_config_service),
-    job_service: JobService = Depends(get_job_service),
+    converter: ConverterClient = Depends(get_converter_client),
 ) -> HTMLResponse:
     """Return a single table row fragment for htmx polling.
 
@@ -356,7 +356,7 @@ async def dashboard_document_row(
         canvas_page_url = publish_result.get("canvas_page_url")
 
     if processed_file.job_id:
-        job = await job_service.get_job(processed_file.job_id)
+        job = await converter.get_job_status(processed_file.job_id)
         if job:
             score = job.get("confidence_score")
             if score is not None:
@@ -386,7 +386,7 @@ async def dashboard_publish(
     file_id: str,
     request: Request,
     config_service: CourseConfigService = Depends(get_course_config_service),
-    job_service: JobService = Depends(get_job_service),
+    converter: ConverterClient = Depends(get_converter_client),
 ) -> HTMLResponse:
     """Publish a draft page and return updated HTML fragment (htmx)."""
     processed_file = await config_service.get_processed_file(course_id, file_id)
@@ -410,15 +410,11 @@ async def dashboard_publish(
         )
 
     try:
-        from ..canvas.bundle import DownloadBundleService
         from ..canvas.client import CanvasAPIClient
         from ..canvas.publisher import CanvasPublisherService
         from ..canvas.renderer import CanvasHTMLRenderer
         from ..config import settings
-        from ..dependencies import get_redis_client, get_storage_service
 
-        # Get services - lazy import to avoid circular deps
-        storage = await get_storage_service()
         redis_gen = get_redis_client()
         redis_client = await anext(redis_gen)
 
@@ -431,12 +427,10 @@ async def dashboard_publish(
 
         try:
             renderer = CanvasHTMLRenderer()
-            bundle_service = DownloadBundleService(storage_service=storage)
             publisher = CanvasPublisherService(
                 canvas_client=canvas_client,
                 renderer=renderer,
-                bundle_service=bundle_service,
-                storage_service=storage,
+                converter=converter,
             )
 
             await publisher.publish(
@@ -476,11 +470,9 @@ async def dashboard_retry(
     file_id: str,
     request: Request,
     config_service: CourseConfigService = Depends(get_course_config_service),
-    job_service: JobService = Depends(get_job_service),
+    converter: ConverterClient = Depends(get_converter_client),
 ) -> HTMLResponse:
     """Retry a failed document and return updated HTML fragment (htmx)."""
-    from ..dependencies import get_redis_client
-
     processed_file = await config_service.get_processed_file(course_id, file_id)
     if processed_file is None:
         return HTMLResponse(
@@ -494,29 +486,19 @@ async def dashboard_retry(
             status_code=400,
         )
 
-    job = await job_service.get_job(processed_file.job_id)
-    if job is None:
-        return HTMLResponse(
-            content='<span class="text-red-600">Job record not found</span>',
-            status_code=404,
-        )
-
-    s3_key = job.get("s3_key", "")
-    if not s3_key:
-        return HTMLResponse(
-            content='<span class="text-red-600">Original file not found</span>',
-            status_code=400,
-        )
-
     try:
-        redis_gen = get_redis_client()
-        redis_client = await anext(redis_gen)
-        from ..services.queue_service import QueueService
-
-        queue_service = QueueService(redis_client=redis_client)
-
-        await job_service.update_job_status(processed_file.job_id, "pii_scanning")
-        await queue_service.queue_pii_job(processed_file.job_id, s3_key)
+        success = await converter.retry_job(processed_file.job_id)
+        if not success:
+            job = await converter.get_job_status(processed_file.job_id)
+            if job is None:
+                return HTMLResponse(
+                    content='<span class="text-red-600">Job record not found</span>',
+                    status_code=404,
+                )
+            return HTMLResponse(
+                content='<span class="text-red-600">Original file not found</span>',
+                status_code=400,
+            )
 
         from datetime import UTC, datetime
 
@@ -572,11 +554,9 @@ async def dashboard_reprocess(
     file_id: str,
     request: Request,
     config_service: CourseConfigService = Depends(get_course_config_service),
-    job_service: JobService = Depends(get_job_service),
+    converter: ConverterClient = Depends(get_converter_client),
 ) -> HTMLResponse:
     """Re-process a published document and return updated HTML fragment (htmx)."""
-    from ..dependencies import get_redis_client
-
     processed_file = await config_service.get_processed_file(course_id, file_id)
     if processed_file is None:
         return HTMLResponse(
@@ -591,29 +571,19 @@ async def dashboard_reprocess(
             status_code=400,
         )
 
-    job = await job_service.get_job(processed_file.job_id)
-    if job is None:
-        return HTMLResponse(
-            content='<span class="text-red-600">Job record not found</span>',
-            status_code=404,
-        )
-
-    s3_key = job.get("s3_key", "")
-    if not s3_key:
-        return HTMLResponse(
-            content='<span class="text-red-600">Original file not found</span>',
-            status_code=400,
-        )
-
     try:
-        redis_gen = get_redis_client()
-        redis_client = await anext(redis_gen)
-        from ..services.queue_service import QueueService
-
-        queue_service = QueueService(redis_client=redis_client)
-
-        await job_service.update_job_status(processed_file.job_id, "pii_scanning")
-        await queue_service.queue_pii_job(processed_file.job_id, s3_key)
+        success = await converter.retry_job(processed_file.job_id)
+        if not success:
+            job = await converter.get_job_status(processed_file.job_id)
+            if job is None:
+                return HTMLResponse(
+                    content='<span class="text-red-600">Job record not found</span>',
+                    status_code=404,
+                )
+            return HTMLResponse(
+                content='<span class="text-red-600">Original file not found</span>',
+                status_code=400,
+            )
 
         from datetime import UTC, datetime
 

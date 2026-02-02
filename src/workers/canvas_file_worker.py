@@ -8,21 +8,17 @@ Runs on a configurable schedule. For each enabled course:
 
 import asyncio
 import logging
-import uuid
 from datetime import UTC, datetime
-from io import BytesIO
 
 from ..canvas.client import CanvasAPIClient, CanvasAPIError
 from ..canvas.course_config import CourseConfigService, ProcessedFile
 from ..config import settings
-from ..services.job_service import JobService
+from ..services.converter_client import ConverterClient
 from ..services.metrics_service import (
     worker_active_gauge,
     worker_errors_total,
     worker_jobs_processed_total,
 )
-from ..services.queue_service import QueueService
-from ..services.storage_service import StorageService
 
 logger = logging.getLogger(__name__)
 
@@ -39,15 +35,11 @@ class CanvasFileWorker:
     def __init__(
         self,
         config_service: CourseConfigService,
-        job_service: JobService,
-        storage_service: StorageService,
-        queue_service: QueueService,
+        converter: ConverterClient,
         polling_interval_seconds: int | None = None,
     ):
         self.config_service = config_service
-        self.job_service = job_service
-        self.storage_service = storage_service
-        self.queue_service = queue_service
+        self.converter = converter
         self.polling_interval_seconds = (
             polling_interval_seconds
             if polling_interval_seconds is not None
@@ -228,38 +220,13 @@ class CanvasFileWorker:
         if len(file_content) < 100:
             raise CanvasAPIError(f"Downloaded file {file_id} too small ({len(file_content)} bytes)")
 
-        # Upload to S3 temp bucket
-        job_id = str(uuid.uuid4())
-        s3_key = f"temp/{job_id}.pdf"
-
-        self.storage_service.s3_client.put_object(
-            Bucket=self.storage_service.temp_bucket,
-            Key=s3_key,
-            Body=BytesIO(file_content),
-            ContentType="application/pdf",
+        # Submit through ConverterClient facade
+        result = await self.converter.submit_document(
+            file_content=file_content,
+            filename=filename,
+            source="canvas_auto",
+            metadata={"course_id": course_id, "canvas_file_id": file_id},
         )
-        logger.info(f"Uploaded file {file_id} to S3: {s3_key}")
-
-        # Create job with canvas_auto source
-        await self.job_service.create_job(
-            job_id=job_id,
-            s3_key=s3_key,
-            status="pii_scanning",
-            original_filename=filename,
-        )
-
-        # Store canvas_auto metadata on the job
-        await self.job_service.redis.hset(
-            f"{self.job_service.status_prefix}{job_id}",
-            mapping={
-                "source": "canvas_auto",
-                "course_id": course_id,
-                "canvas_file_id": file_id,
-            },
-        )
-
-        # Queue for PII scanning (standard pipeline entry point)
-        await self.queue_service.queue_pii_job(job_id, s3_key)
 
         # Store processed file record with status "processing"
         now = datetime.now(UTC).isoformat()
@@ -269,14 +236,14 @@ class CanvasFileWorker:
             ProcessedFile(
                 canvas_file_id=file_id,
                 canvas_updated_at=updated_at,
-                job_id=job_id,
+                job_id=result.job_id,
                 status="processing",
                 processed_at=now,
                 original_filename=filename,
             ),
         )
 
-        return job_id
+        return result.job_id
 
     def stop(self) -> None:
         """Stop the worker gracefully."""
@@ -295,24 +262,27 @@ async def start_canvas_file_worker(shutdown_event: asyncio.Event) -> None:
     logger.info("Initializing Canvas file discovery worker...")
 
     from ..dependencies import get_redis_client, get_s3_client
+    from ..services.job_service import JobService
+    from ..services.queue_service import QueueService
+    from ..services.storage_service import StorageService
 
     redis_client = await anext(get_redis_client())
     s3_client = await anext(get_s3_client())
 
     config_service = CourseConfigService(redis_client=redis_client)
-    job_service = JobService(redis_client=redis_client)
-    queue_service = QueueService(redis_client=redis_client)
-    storage_service = StorageService(
-        s3_client=s3_client,
-        temp_bucket=settings.s3_temp_bucket,
-        results_bucket=settings.s3_results_bucket,
+    converter = ConverterClient(
+        job_service=JobService(redis_client=redis_client),
+        storage_service=StorageService(
+            s3_client=s3_client,
+            temp_bucket=settings.s3_temp_bucket,
+            results_bucket=settings.s3_results_bucket,
+        ),
+        queue_service=QueueService(redis_client=redis_client),
     )
 
     _worker_instance = CanvasFileWorker(
         config_service=config_service,
-        job_service=job_service,
-        storage_service=storage_service,
-        queue_service=queue_service,
+        converter=converter,
         polling_interval_seconds=settings.canvas_polling_interval_seconds,
     )
 

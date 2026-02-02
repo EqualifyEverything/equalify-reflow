@@ -49,8 +49,11 @@ services:
       # Mount pytest configuration
       - ./pytest.ini:/app/pytest.ini:ro
       - ./pyproject.toml:/app/pyproject.toml:ro
+      - ./tailwind.config.js:/app/tailwind.config.js:ro
       # Mount Docker socket for testcontainers
       - /var/run/docker.sock:/var/run/docker.sock
+      # Mount LTI RSA keys for Canvas integration
+      - ./keys:/app/keys:ro
       # Mount built pipeline viewer (run `make build-viewer` to update)
       - ./frontend/demo-ui/dist:/app/static/viewer:ro
     environment:
@@ -74,6 +77,9 @@ services:
       - S3_TEMP_BUCKET=equalify-pdf-temp
       - S3_RESULTS_BUCKET=equalify-pdf-results
       - S3_PUBLIC_URL=http://localhost:4566
+      # Redis: use explicit container name to avoid DNS collision with Canvas Redis
+      # when api-gateway is on both equalify-network and canvas-lms_default network
+      - REDIS_URL=redis://equalify-pdf-redis:6379
       # Application
       - LOG_LEVEL=DEBUG
       - ENVIRONMENT=dev
@@ -82,7 +88,14 @@ services:
       - TELEMETRY_ENABLED=true
       - TELEMETRY_OTLP_ENDPOINT=jaeger:4317
       - TELEMETRY_LOG_PROMPTS=true
-    command: [ "uv", "run", "uvicorn", "src.main:app", "--reload", "--host", "0.0.0.0", "--port", "8080" ]
+    command: [ "uv", "run", "uvicorn", "src.main:app", "--reload", "--host", "0.0.0.0", "--port", "8080", "--proxy-headers", "--forwarded-allow-ips", "*" ]
+    networks:
+      equalify-network:
+        # Default network — redis, localstack hostnames resolve here
+      canvas-network:
+        # Canvas LMS network — canvas-lms-web-1 hostname resolves here
+        # No aliases to avoid DNS conflicts with Canvas's own 'redis' service
+        aliases: []
     depends_on:
       redis:
         condition: service_healthy
@@ -144,14 +157,14 @@ services:
     container_name: equalify-pdf-grafana
     restart: unless-stopped
     ports:
-      - "3000:3000"
+      - "3001:3000"
     environment:
       - GF_SECURITY_ADMIN_USER=admin
       - GF_SECURITY_ADMIN_PASSWORD=admin
       - GF_USERS_ALLOW_SIGN_UP=false
       - GF_USERS_ALLOW_ORG_CREATE=false
       - GF_AUTH_ANONYMOUS_ENABLED=false
-      - GF_SERVER_ROOT_URL=http://localhost:3000
+      - GF_SERVER_ROOT_URL=http://localhost:3001
       - GF_LOG_LEVEL=info
     volumes:
       - ./infrastructure/grafana/dashboards:/etc/grafana/provisioning/dashboards:ro
@@ -190,6 +203,9 @@ services:
 networks:
   equalify-network:
     external: false
+  canvas-network:
+    name: canvas-lms_default
+    external: true
 
 volumes:
   localstack-data:

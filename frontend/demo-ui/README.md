@@ -227,7 +227,7 @@ Create `.env` file (see `.env.example`):
 VITE_API_URL=http://localhost:8080
 
 # Optional: Grafana URL (if PRD-009A complete)
-VITE_GRAFANA_URL=http://localhost:3000
+VITE_GRAFANA_URL=http://localhost:3001
 ```
 
 **Important:** In Docker, `VITE_API_URL` must be `http://localhost:8080` because the browser (not the container) makes API requests.

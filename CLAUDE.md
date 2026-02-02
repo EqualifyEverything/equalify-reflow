@@ -38,8 +38,22 @@ The Equalify PDF Converter transforms PDF documents into accessible, semantic ma
 - Redis: `localhost:6379`
 - LocalStack: `localhost:4566`
 - Prometheus: `http://localhost:9090`
-- Grafana: `http://localhost:3000`
+- Grafana: `http://localhost:3001`
 - Jaeger: `http://localhost:16686`
+
+**Canvas LMS (separate project):** `http://localhost:3000`
+
+## Canvas LMS Integration
+
+A local Canvas LMS instance lives in a separate wrapper repo at `~/Projects/equalify-reflow-canvas/canvas-lms` (cloned Instructure canvas-lms). The `docker-compose.dev.yml` joins the `canvas-lms_default` Docker network so the api-gateway can reach Canvas at hostname `canvas-lms-web-1`.
+
+```bash
+make canvas       # Start Canvas LMS
+make canvas-down  # Stop Canvas LMS
+make canvas-logs  # View Canvas web logs
+```
+
+For LTI 1.3 testing with ngrok, see [Canvas LTI Setup](.claude/docs/canvas-lti-setup.md).
 
 ## Quick Architecture
 
@@ -84,6 +98,7 @@ The Equalify PDF Converter transforms PDF documents into accessible, semantic ma
 
 - [Architecture](.claude/docs/architecture.md) - System design, data flow, service layer, AWS Bedrock setup
 - [Authentication](.claude/docs/authentication.md) - API key auth, docs auth, middleware stack
+- [Canvas LTI Setup](.claude/docs/canvas-lti-setup.md) - Local Canvas + ngrok + LTI 1.3 integration
 - [Testing](.claude/docs/testing.md) - 3-tier strategy, fixtures, markers, running tests
 - [S3 Resilience](.claude/docs/s3-resilience.md) - Circuit breakers, retry logic, metrics
 - [Development](.claude/docs/development.md) - Adding features, debugging, common issues

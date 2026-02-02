@@ -216,5 +216,64 @@ class Settings(BaseSettings):
         default=False, description="Log full LLM prompts and outputs in traces (WARNING: may contain document content)"
     )
 
+    # LTI 1.3 Configuration
+    lti_enabled: bool = Field(default=False, description="Enable LTI 1.3 integration endpoints")
+
+    # Canvas LMS Platform Configuration
+    lti_issuer: str = Field(default="", description="Canvas instance URL (e.g., https://canvas.instructure.com)")
+    lti_client_id: str = Field(default="", description="Canvas Developer Key client ID")
+    lti_deployment_id: str = Field(default="", description="Canvas deployment ID (usually same as client_id)")
+
+    # Canvas OAuth/OIDC Endpoints
+    lti_auth_login_url: str = Field(
+        default="", description="Canvas OIDC authorization URL (e.g., https://canvas.instructure.com/api/lti/authorize)"
+    )
+    lti_auth_token_url: str = Field(
+        default="", description="Canvas OAuth token URL (e.g., https://canvas.instructure.com/login/oauth2/token)"
+    )
+    lti_jwks_url: str = Field(
+        default="",
+        description="Canvas JWKS URL for verifying Canvas signatures (e.g., https://canvas.instructure.com/api/lti/security/jwks)",
+    )
+
+    # Tool RSA Key Configuration
+    lti_private_key_path: str = Field(
+        default="/app/keys/lti_private.pem", description="Path to tool's RSA private key for signing JWTs"
+    )
+    lti_public_key_path: str = Field(
+        default="/app/keys/lti_public.pem", description="Path to tool's RSA public key for JWKS endpoint"
+    )
+
+    # Canvas API Configuration (for file downloads)
+    canvas_api_url: str = Field(default="", description="Canvas API base URL (e.g., https://canvas.instructure.com/api/v1)")
+    canvas_api_token: str = Field(default="", description="Canvas API access token for file downloads")
+    canvas_host_header: str = Field(
+        default="",
+        description="Explicit Host header for Canvas API requests (e.g., localhost:3000). "
+        "Used when connecting to Canvas via Docker container name instead of host.docker.internal.",
+    )
+
+    # Canvas Auto-Publishing Configuration
+    canvas_autopublish_enabled: bool = Field(
+        default=False, description="Enable automatic PDF-to-Canvas Page publishing"
+    )
+    canvas_polling_interval_seconds: int = Field(
+        ge=30, le=600, default=120, description="How often to poll Canvas for new PDFs (seconds)"
+    )
+    canvas_rate_limit_buffer: int = Field(
+        ge=10, le=200, default=50, description="Pause API calls when Canvas rate limit remaining is below this"
+    )
+
+    # Course Config TTL
+    course_config_ttl_days: int = Field(ge=1, le=365, default=90, description="TTL in days for course config keys")
+    course_config_cleanup_interval_hours: int = Field(
+        ge=1, le=168, default=24, description="How often to run stale course config cleanup (hours)"
+    )
+
+    # LTI State Storage Configuration
+    lti_state_ttl_seconds: int = Field(
+        ge=60, le=3600, default=600, description="TTL for LTI OIDC state in Redis (10 minutes default)"
+    )
+
 
 settings = Settings()

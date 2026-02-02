@@ -1134,7 +1134,7 @@ make dev
 - **localstack** (port 4566) - Local AWS emulation
 - **demo-ui** (port 5173) - React demo frontend
 - **prometheus** (port 9090) - Metrics collection
-- **grafana** (port 3000) - Metrics visualization
+- **grafana** (port 3001) - Metrics visualization
 - **redis-exporter** (port 9121) - Redis metrics
 
 **Access points:**
@@ -1143,7 +1143,7 @@ make dev
 - API Docs: <http://localhost:8080/docs>
 - Metrics: <http://localhost:8080/metrics>
 - Demo UI: <http://localhost:5173>
-- Grafana: <http://localhost:3000> (admin/admin)
+- Grafana: <http://localhost:3001> (admin/admin)
 - Prometheus: <http://localhost:9090>
 
 **Hot reload:**

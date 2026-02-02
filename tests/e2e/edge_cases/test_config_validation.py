@@ -7,7 +7,6 @@ from src.config import Settings
 
 @pytest.mark.slow
 @pytest.mark.edge_case
-
 class TestConfigurationValidation:
     """Tests for configuration validation edge cases."""
 
@@ -96,8 +95,8 @@ class TestConfigurationValidation:
         """Test invalid confidence threshold values."""
         invalid_thresholds = [
             {"confidence_threshold_high": -0.1},  # Below 0
-            {"confidence_threshold_high": 1.5},   # Above 1
-            {"confidence_threshold_medium": 2.0}, # Above 1
+            {"confidence_threshold_high": 1.5},  # Above 1
+            {"confidence_threshold_medium": 2.0},  # Above 1
         ]
 
         for invalid_config in invalid_thresholds:
@@ -125,9 +124,9 @@ class TestConfigurationValidation:
         invalid_urls = [
             "not-a-url",
             "http://redis:6379",  # Wrong protocol
-            "redis://",           # Incomplete
-            "",                   # Empty
-            "redis://redis",      # No port (may be valid)
+            "redis://",  # Incomplete
+            "",  # Empty
+            "redis://redis",  # No port (may be valid)
         ]
 
         for url in invalid_urls:
@@ -160,10 +159,10 @@ class TestConfigurationValidation:
         """Test S3 bucket names with invalid characters."""
         invalid_names = [
             "Invalid Bucket Name!",  # Spaces and special chars
-            "UPPERCASE",              # Uppercase (invalid for S3)
-            "bucket_name",            # Underscores
-            "a" * 64,                 # Too long (max 63 chars)
-            "ab",                     # Too short (min 3 chars)
+            "UPPERCASE",  # Uppercase (invalid for S3)
+            "bucket_name",  # Underscores
+            "a" * 64,  # Too long (max 63 chars)
+            "ab",  # Too short (min 3 chars)
         ]
 
         for bucket_name in invalid_names:
@@ -278,9 +277,9 @@ class TestConfigurationValidation:
     def test_invalid_port_numbers(self):
         """Test invalid port number ranges."""
         invalid_ports = [
-            0,      # Port 0 (might be valid for auto-assign)
+            0,  # Port 0 (might be valid for auto-assign)
             70000,  # Above max (65535)
-            -100,   # Negative
+            -100,  # Negative
         ]
 
         for port in invalid_ports:
@@ -295,10 +294,7 @@ class TestConfigurationValidation:
     def test_conflicting_timeout_values(self):
         """Test conflicting timeout configurations."""
         # Processing timeout shorter than approval timeout (might be illogical)
-        settings = Settings(
-            max_processing_hours=1,
-            approval_timeout_hours=10
-        )
+        settings = Settings(max_processing_hours=1, approval_timeout_hours=10)
 
         # Should accept but might warn
         assert settings.max_processing_hours > 0
@@ -359,7 +355,7 @@ class TestConfigurationValidation:
         """Test invalid temperature values."""
         invalid_temps = [
             -0.5,  # Negative
-            2.0,   # Above typical max
+            2.0,  # Above typical max
             10.0,  # Way above max
         ]
 
@@ -402,3 +398,61 @@ class TestConfigurationValidation:
         assert temp_hours > 0
         assert job_hours > 0
         assert metrics_hours > 0
+
+    # --- Canvas Auto-Publishing Configuration Tests ---
+
+    def test_canvas_autopublish_defaults(self, monkeypatch):
+        """Test that Canvas auto-publish configuration has correct defaults."""
+        monkeypatch.delenv("CANVAS_AUTOPUBLISH_ENABLED", raising=False)
+        monkeypatch.delenv("CANVAS_POLLING_INTERVAL_SECONDS", raising=False)
+        monkeypatch.delenv("CANVAS_RATE_LIMIT_BUFFER", raising=False)
+        settings = Settings(_env_file=None)
+
+        assert settings.canvas_autopublish_enabled is False
+        assert settings.canvas_polling_interval_seconds == 120
+        assert settings.canvas_rate_limit_buffer == 50
+
+    def test_canvas_autopublish_enabled_toggle(self):
+        """Test that canvas_autopublish_enabled can be toggled on."""
+        settings = Settings(canvas_autopublish_enabled=True)
+        assert settings.canvas_autopublish_enabled is True
+
+    def test_canvas_polling_interval_boundaries(self):
+        """Test canvas_polling_interval_seconds boundary values."""
+        # Lower bound (ge=30)
+        settings_min = Settings(canvas_polling_interval_seconds=30)
+        assert settings_min.canvas_polling_interval_seconds == 30
+
+        # Upper bound (le=600)
+        settings_max = Settings(canvas_polling_interval_seconds=600)
+        assert settings_max.canvas_polling_interval_seconds == 600
+
+    def test_canvas_polling_interval_below_minimum_rejected(self):
+        """Test that canvas_polling_interval_seconds below 30 is rejected."""
+        with pytest.raises(ValidationError):
+            Settings(canvas_polling_interval_seconds=29)
+
+    def test_canvas_polling_interval_above_maximum_rejected(self):
+        """Test that canvas_polling_interval_seconds above 600 is rejected."""
+        with pytest.raises(ValidationError):
+            Settings(canvas_polling_interval_seconds=601)
+
+    def test_canvas_rate_limit_buffer_boundaries(self):
+        """Test canvas_rate_limit_buffer boundary values."""
+        # Lower bound (ge=10)
+        settings_min = Settings(canvas_rate_limit_buffer=10)
+        assert settings_min.canvas_rate_limit_buffer == 10
+
+        # Upper bound (le=200)
+        settings_max = Settings(canvas_rate_limit_buffer=200)
+        assert settings_max.canvas_rate_limit_buffer == 200
+
+    def test_canvas_rate_limit_buffer_below_minimum_rejected(self):
+        """Test that canvas_rate_limit_buffer below 10 is rejected."""
+        with pytest.raises(ValidationError):
+            Settings(canvas_rate_limit_buffer=9)
+
+    def test_canvas_rate_limit_buffer_above_maximum_rejected(self):
+        """Test that canvas_rate_limit_buffer above 200 is rejected."""
+        with pytest.raises(ValidationError):
+            Settings(canvas_rate_limit_buffer=201)

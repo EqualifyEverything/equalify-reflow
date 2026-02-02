@@ -132,6 +132,14 @@ class APIKeyAuthMiddleware(BaseHTTPMiddleware):
         if path == "/viewer" or path.startswith("/viewer/"):
             return True
 
+        # LTI 1.3 endpoints (use JWT authentication from Canvas)
+        if path.startswith("/lti/"):
+            return True
+
+        # Dashboard static assets (CSS, images served by StaticFiles mount)
+        if path.startswith("/static/canvas/"):
+            return True
+
         # Development monitoring endpoints (public only in dev environment)
         if settings.environment == "dev" and path.startswith("/api/dev/monitoring"):
             return True

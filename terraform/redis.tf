@@ -13,9 +13,11 @@ resource "aws_elasticache_parameter_group" "redis" {
   name   = "${var.project_name}-redis-params"
   family = "redis7"
 
+  # volatile-lru only evicts keys with TTLs set. All application keys already
+  # have TTLs, so this is safer than allkeys-lru which could evict any key.
   parameter {
     name  = "maxmemory-policy"
-    value = "allkeys-lru"
+    value = "volatile-lru"
   }
 
   tags = {

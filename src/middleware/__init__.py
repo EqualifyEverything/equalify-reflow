@@ -6,6 +6,7 @@ from .docs_auth import DocsAuthMiddleware
 from .error_handler import ErrorHandlerMiddleware
 from .logging_middleware import LoggingMiddleware
 from .rate_limit import RateLimitMiddleware
+from .security_headers import SecurityHeadersMiddleware
 
 __all__ = [
     "APIKeyAuthMiddleware",
@@ -13,5 +14,6 @@ __all__ = [
     "DocsAuthMiddleware",
     "ErrorHandlerMiddleware",
     "LoggingMiddleware",
-    "RateLimitMiddleware"
+    "RateLimitMiddleware",
+    "SecurityHeadersMiddleware",
 ]

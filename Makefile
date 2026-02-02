@@ -35,12 +35,17 @@ help:
 	@echo "Production:"
 	@echo "  make prod         - Start production environment"
 	@echo ""
+	@echo "Canvas LMS:"
+	@echo "  make canvas       - Start local Canvas LMS"
+	@echo "  make canvas-down  - Stop local Canvas LMS"
+	@echo "  make canvas-logs  - View Canvas web logs"
+	@echo ""
 	@echo "Utilities:"
 	@echo "  make redis-cli    - Connect to Redis CLI"
 	@echo "  make clean        - Remove containers and volumes"
 	@echo ""
 	@echo "Observability:"
-	@echo "  make grafana-url  - Open Grafana (http://localhost:3000)"
+	@echo "  make grafana-url  - Open Grafana (http://localhost:3001)"
 	@echo "  make prometheus-url - Open Prometheus (http://localhost:9090)"
 	@echo "  make metrics-url  - Open API metrics (http://localhost:8080/metrics)"
 	@echo ""
@@ -192,9 +197,9 @@ clean:
 
 # Observability URLs
 grafana-url:
-	@echo "Opening Grafana at http://localhost:3000"
+	@echo "Opening Grafana at http://localhost:3001"
 	@echo "Default credentials: admin / admin"
-	@open http://localhost:3000 2>/dev/null || xdg-open http://localhost:3000 2>/dev/null || echo "Please open http://localhost:3000 in your browser"
+	@open http://localhost:3001 2>/dev/null || xdg-open http://localhost:3001 2>/dev/null || echo "Please open http://localhost:3001 in your browser"
 
 prometheus-url:
 	@echo "Opening Prometheus at http://localhost:9090"
@@ -216,6 +221,29 @@ coverage-html: coverage
 coverage-report:
 	@echo "Coverage summary:"
 	docker compose -f docker-compose.yml -f docker-compose.dev.yml exec api-gateway uv run coverage report
+
+# ============================================================================
+# Canvas LMS (local development instance)
+# ============================================================================
+# Canvas lives in a separate repo: ~/Projects/equalify-reflow-canvas/canvas-lms
+# The api-gateway joins the canvas-lms_default Docker network (see docker-compose.dev.yml)
+# Full setup guide: ../equalify-reflow-canvas/CANVAS-SETUP.md
+
+CANVAS_DIR ?= $(HOME)/Projects/equalify-reflow-canvas/canvas-lms
+
+canvas:
+	@echo "Starting Canvas LMS from $(CANVAS_DIR)..."
+	@cd $(CANVAS_DIR) && docker compose up -d
+	@echo ""
+	@echo "Canvas is starting at http://localhost:3000"
+	@echo "Run 'make dev' to start the PDF Converter (connects to Canvas automatically)"
+
+canvas-down:
+	@echo "Stopping Canvas LMS..."
+	@cd $(CANVAS_DIR) && docker compose down
+
+canvas-logs:
+	@cd $(CANVAS_DIR) && docker compose logs -f web
 
 # ============================================================================
 # AWS Operations (uses AWS_PROFILE from environment or .env)

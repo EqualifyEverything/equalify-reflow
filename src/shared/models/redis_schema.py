@@ -92,3 +92,6 @@ DAILY_METRICS = metrics_key("daily")
 
 # Job status key prefix for pattern matching
 JOB_STATUS_PREFIX = f"{REDIS_PREFIX}:job:"
+
+# Secondary index: sorted set of job keys ordered by last-updated timestamp
+JOBS_BY_UPDATED = f"{REDIS_PREFIX}:jobs-by-updated"

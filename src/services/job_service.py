@@ -2,16 +2,66 @@
 
 import json
 import logging
+import time
 from datetime import UTC, datetime
 from typing import Any
 
 from redis.asyncio import Redis
 
 from ..config import settings
+from ..shared.constants.redis_keys import JOBS_BY_UPDATED
 from ..shared.constants.statuses import STATUS_COMPLETED, STATUS_DENIED, STATUS_FAILED
 from ..utils.token_generator import generate_secure_token
 
 logger = logging.getLogger(__name__)
+
+# ---------------------------------------------------------------------------
+# Lua scripts – executed atomically by Redis to avoid race conditions between
+# HSET, EXPIRE, and ZADD when the process could crash between calls.
+# ---------------------------------------------------------------------------
+
+# Atomically: HSET fields + EXPIRE ttl + ZADD to secondary index
+# KEYS[1] = job hash key, KEYS[2] = jobs-by-updated sorted set key
+# ARGV[1] = ttl, ARGV[2] = timestamp (score), ARGV[3] = job_id
+# ARGV[4..N] = field/value pairs (must be even count)
+_LUA_HSET_EXPIRE_ZADD = """
+local key = KEYS[1]
+local idx = KEYS[2]
+local ttl = tonumber(ARGV[1])
+local ts  = tonumber(ARGV[2])
+local jid = ARGV[3]
+for i = 4, #ARGV, 2 do
+    redis.call('HSET', key, ARGV[i], ARGV[i+1])
+end
+redis.call('EXPIRE', key, ttl)
+redis.call('ZADD', idx, ts, jid)
+return 1
+"""
+
+# Atomically: HSET fields + ZADD to secondary index (no TTL change)
+# KEYS[1] = job hash key, KEYS[2] = jobs-by-updated sorted set key
+# ARGV[1] = timestamp (score), ARGV[2] = job_id
+# ARGV[3..N] = field/value pairs
+_LUA_HSET_ZADD = """
+local key = KEYS[1]
+local idx = KEYS[2]
+local ts  = tonumber(ARGV[1])
+local jid = ARGV[2]
+for i = 3, #ARGV, 2 do
+    redis.call('HSET', key, ARGV[i], ARGV[i+1])
+end
+redis.call('ZADD', idx, ts, jid)
+return 1
+"""
+
+# Atomically: DEL job hash + ZREM from secondary index
+# KEYS[1] = job hash key, KEYS[2] = jobs-by-updated sorted set key
+# ARGV[1] = job_id
+_LUA_DELETE_JOB = """
+local deleted = redis.call('DEL', KEYS[1])
+redis.call('ZREM', KEYS[2], ARGV[1])
+return deleted
+"""
 
 
 class JobService:
@@ -25,11 +75,17 @@ class JobService:
         """
         self.redis = redis_client
         self.status_prefix = settings.job_status_prefix
+        self.jobs_index_key = JOBS_BY_UPDATED
         # TTL settings from config
         self.job_ttl_active = settings.job_ttl_active
         self.job_ttl_completed = settings.job_ttl_completed
         self.job_ttl_failed = settings.job_ttl_failed
         self.job_ttl_denied = settings.job_ttl_denied
+
+        # Register Lua scripts (sync – returns callable Script objects)
+        self._script_hset_expire_zadd = self.redis.register_script(_LUA_HSET_EXPIRE_ZADD)
+        self._script_hset_zadd = self.redis.register_script(_LUA_HSET_ZADD)
+        self._script_delete_job = self.redis.register_script(_LUA_DELETE_JOB)
 
     def _get_ttl_for_status(self, status: str) -> int:
         """Get appropriate TTL (time-to-live) for job based on status.
@@ -60,32 +116,14 @@ class JobService:
             # Default for active states: pii_scanning, awaiting_approval, processing
             return self.job_ttl_active
 
-    async def _set_job_ttl(self, job_id: str, status: str) -> None:
-        """Set TTL for job hash based on status.
-
-        Automatically sets appropriate expiration time based on job status.
-        Critical for preventing Redis memory exhaustion from abandoned jobs.
-
-        Args:
-            job_id: Job identifier
-            status: Current job status (determines TTL duration)
-
-        Raises:
-            Exception: If Redis EXPIRE command fails
-
-        Example:
-            >>> await self._set_job_ttl("job-123", "completed")
-            # Sets 30-day TTL for completed job
-        """
-        ttl = self._get_ttl_for_status(status)
-        key = f"{self.status_prefix}{job_id}"
-
-        try:
-            await self.redis.expire(key, ttl)
-            logger.debug(f"Set TTL for job {job_id} to {ttl}s ({ttl / 86400:.1f} days) for status '{status}'")
-        except Exception as e:
-            logger.error(f"Failed to set TTL for job {job_id}: {str(e)}", exc_info=True)
-            raise Exception(f"Failed to set TTL for job {job_id}: {str(e)}")
+    @staticmethod
+    def _flatten_mapping(mapping: dict) -> list[str]:
+        """Flatten a dict to [field, value, field, value, ...] for Lua scripts."""
+        flat: list[str] = []
+        for k, v in mapping.items():
+            flat.append(str(k))
+            flat.append(str(v))
+        return flat
 
     async def create_job(
         self,
@@ -102,8 +140,8 @@ class JobService:
         """
         Create a new job in Redis with automatic TTL.
 
-        Sets initial TTL based on job status to prevent Redis memory exhaustion.
-        Jobs will auto-expire after retention period unless status changes.
+        Atomically sets hash fields, TTL, and secondary index via Lua script
+        to prevent memory leaks if the process crashes between operations.
 
         Args:
             job_id: Unique job identifier
@@ -115,23 +153,10 @@ class JobService:
             debug_bundle_requested: Whether to generate debug bundle artifacts
             review_mode: Review mode ('auto' | 'human') for agentic pipeline
             max_rounds: Maximum number of iterative refinement rounds (1-5, default: 1)
-
-        Example:
-            >>> await job_service.create_job("job-123", "temp/file.pdf", original_filename="doc.pdf")
-            # Creates job with 7-day TTL (active job default)
-
-            >>> await job_service.create_job(
-            ...     "job-456", "temp/file.pdf",
-            ...     status="processing",
-            ...     pii_skipped=True,
-            ...     pii_skip_reason="Trusted source",
-            ...     max_rounds=3
-            ... )
-            # Creates job with PII skip audit trail and 3 refinement rounds
         """
         created_at = datetime.now(UTC).isoformat()
 
-        mapping: dict[str | bytes, bytes | float | int | str] = {
+        mapping: dict[str, str] = {
             "job_id": job_id,
             "s3_key": s3_key,
             "status": status,
@@ -156,10 +181,14 @@ class JobService:
         if review_mode:
             mapping["review_mode"] = review_mode
 
-        await self.redis.hset(f"{self.status_prefix}{job_id}", mapping=mapping)
+        ttl = self._get_ttl_for_status(status)
+        key = f"{self.status_prefix}{job_id}"
+        now_ts = time.time()
 
-        # Set TTL based on initial status (prevents memory leaks)
-        await self._set_job_ttl(job_id, status)
+        await self._script_hset_expire_zadd(
+            keys=[key, self.jobs_index_key],
+            args=[str(ttl), str(now_ts), job_id] + self._flatten_mapping(mapping),
+        )
 
     async def get_job(self, job_id: str) -> dict[str, Any] | None:
         """
@@ -201,87 +230,83 @@ class JobService:
         """
         Update job status and additional fields with automatic TTL adjustment.
 
-        When job status changes, TTL is automatically adjusted based on new status:
-        - Transition to 'completed': Sets 30-day TTL
-        - Transition to 'failed': Sets 30-day TTL
-        - Transition to 'denied': Sets 7-day TTL
-        - Other statuses (active): Sets 7-day TTL
+        Atomically sets hash fields, TTL, and secondary index via Lua script.
 
         Args:
             job_id: Job identifier
             status: New status
             **additional_fields: Additional fields to update (auto-serialized if dict/list)
-
-        Example:
-            >>> await job_service.update_job_status("job-123", "completed")
-            # Updates status and sets 30-day TTL
         """
-        update_data: dict[str | bytes, bytes | float | int | str] = {
+        update_data: dict[str, str] = {
             "status": status,
             "updated_at": datetime.now(UTC).isoformat(),
         }
 
         # Serialize complex fields as JSON
-        for key, value in additional_fields.items():
+        for field_key, value in additional_fields.items():
             if isinstance(value, (dict, list)):
-                update_data[key] = json.dumps(value)
+                update_data[field_key] = json.dumps(value)
             else:
-                update_data[key] = str(value)
+                update_data[field_key] = str(value)
 
-        await self.redis.hset(f"{self.status_prefix}{job_id}", mapping=update_data)
+        ttl = self._get_ttl_for_status(status)
+        key = f"{self.status_prefix}{job_id}"
+        now_ts = time.time()
 
-        # Adjust TTL based on new status (critical for memory management)
-        await self._set_job_ttl(job_id, status)
+        await self._script_hset_expire_zadd(
+            keys=[key, self.jobs_index_key],
+            args=[str(ttl), str(now_ts), job_id] + self._flatten_mapping(update_data),
+        )
 
     async def add_pii_findings(self, job_id: str, findings: list[dict[str, Any]]) -> None:
         """
-        Store PII scan results for a job and maintain TTL.
+        Store PII scan results for a job.
 
-        Updates job with PII findings without changing status.
-        Does NOT modify TTL since status remains unchanged.
-        TTL will be adjusted when status changes (e.g., to awaiting_approval).
+        Updates job with PII findings without changing status or TTL.
+        Keeps the secondary index timestamp fresh.
 
         Args:
             job_id: Job identifier
             findings: List of PII finding dictionaries
-
-        Note:
-            This method is typically called before status update to awaiting_approval,
-            which will set the appropriate TTL via update_job_status().
         """
-        await self.redis.hset(
-            f"{self.status_prefix}{job_id}",
-            mapping={"pii_findings": json.dumps(findings), "updated_at": datetime.now(UTC).isoformat()},
+        mapping = {
+            "pii_findings": json.dumps(findings),
+            "updated_at": datetime.now(UTC).isoformat(),
+        }
+        key = f"{self.status_prefix}{job_id}"
+        now_ts = time.time()
+
+        await self._script_hset_zadd(
+            keys=[key, self.jobs_index_key],
+            args=[str(now_ts), job_id] + self._flatten_mapping(mapping),
         )
-        # Note: TTL maintained from previous status, will be updated on next status change
 
     async def add_processing_result(self, job_id: str, result_url: str, confidence: float) -> None:
         """
-        Store processing completion data and maintain TTL.
+        Store processing completion data.
 
-        Updates job with processing results without changing status.
-        Does NOT modify TTL since status remains unchanged.
-        TTL will be adjusted when status changes to 'completed' via update_job_status().
+        Updates job with processing results without changing status or TTL.
+        Keeps the secondary index timestamp fresh.
 
         Args:
             job_id: Job identifier
             result_url: URL to the processed result
             confidence: Processing confidence score (0.0 to 1.0)
-
-        Note:
-            This method is typically called before status update to 'completed',
-            which will set the 30-day retention TTL via update_job_status().
         """
-        await self.redis.hset(
-            f"{self.status_prefix}{job_id}",
-            mapping={
-                "result_url": result_url,
-                "confidence_score": str(confidence),
-                "completed_at": datetime.now(UTC).isoformat(),
-                "updated_at": datetime.now(UTC).isoformat(),
-            },
+        now = datetime.now(UTC).isoformat()
+        mapping = {
+            "result_url": result_url,
+            "confidence_score": str(confidence),
+            "completed_at": now,
+            "updated_at": now,
+        }
+        key = f"{self.status_prefix}{job_id}"
+        now_ts = time.time()
+
+        await self._script_hset_zadd(
+            keys=[key, self.jobs_index_key],
+            args=[str(now_ts), job_id] + self._flatten_mapping(mapping),
         )
-        # Note: TTL maintained from previous status, will be updated on next status change
 
     async def job_exists(self, job_id: str) -> bool:
         """
@@ -301,13 +326,17 @@ class JobService:
 
     async def delete_job(self, job_id: str) -> None:
         """
-        Delete job and all associated metadata.
+        Delete job hash and remove from secondary index atomically.
 
         Args:
             job_id: Job identifier
         """
         try:
-            await self.redis.delete(f"{self.status_prefix}{job_id}")
+            key = f"{self.status_prefix}{job_id}"
+            await self._script_delete_job(
+                keys=[key, self.jobs_index_key],
+                args=[job_id],
+            )
         except Exception as e:
             raise Exception(f"Failed to delete job {job_id}: {str(e)}")
 
@@ -363,6 +392,53 @@ class JobService:
             logger.error(f"Error listing jobs: {str(e)}", exc_info=True)
             return []
 
+    async def list_jobs_updated_before(self, cutoff_timestamp: float) -> list[str]:
+        """List job IDs updated before the given Unix timestamp.
+
+        Uses the ZRANGEBYSCORE on the jobs-by-updated sorted set for
+        efficient lookup instead of scanning all keys.
+
+        Args:
+            cutoff_timestamp: Unix timestamp; jobs updated before this are returned.
+
+        Returns:
+            List of job IDs (without prefix)
+        """
+        try:
+            members = await self.redis.zrangebyscore(
+                self.jobs_index_key, "-inf", str(cutoff_timestamp)
+            )
+            return [m if isinstance(m, str) else m.decode("utf-8") for m in members]
+        except Exception as e:
+            logger.error(f"Error querying jobs-by-updated index: {e}", exc_info=True)
+            return []
+
+    async def backfill_jobs_index(self) -> int:
+        """One-time migration: populate the jobs-by-updated sorted set from existing keys.
+
+        Returns:
+            Number of jobs added to the index.
+        """
+        job_ids = await self.list_all_jobs()
+        added = 0
+        for job_id in job_ids:
+            try:
+                job_data = await self.redis.hgetall(f"{self.status_prefix}{job_id}")
+                if not job_data:
+                    continue
+                updated_at = job_data.get("updated_at") or job_data.get("created_at")
+                if updated_at:
+                    dt = datetime.fromisoformat(str(updated_at).replace("Z", "+00:00"))
+                    ts = dt.timestamp()
+                else:
+                    ts = time.time()
+                await self.redis.zadd(self.jobs_index_key, {job_id: ts})
+                added += 1
+            except Exception as e:
+                logger.warning(f"Failed to backfill index for job {job_id}: {e}")
+        logger.info(f"Backfilled jobs-by-updated index with {added} jobs")
+        return added
+
     async def get_job_status(self, job_id: str) -> dict[str, Any] | None:
         """Get job status and metadata (alias for get_job).
 
@@ -378,53 +454,87 @@ class JobService:
         return await self.get_job(job_id)
 
     async def cleanup_old_job(self, job_id: str) -> bool:
-        """Delete old job status hash from Redis.
-
-        This method is used by the timeout worker to clean up jobs that are:
-        - Completed and past retention period
-        - Failed and past retention period
-        - Denied and past retention period
-        - Stuck in processing state for too long
+        """Delete old job hash and remove from secondary index atomically.
 
         Args:
             job_id: Job identifier (UUID)
 
         Returns:
             bool: True if job existed and was deleted, False if job didn't exist
-
-        Example:
-            >>> job_service = JobService(redis_client)
-            >>> deleted = await job_service.cleanup_old_job("abc-123")
-            >>> if deleted:
-            ...     print("Job cleaned up successfully")
         """
         try:
-            # Check if job exists before deleting
             key = f"{self.status_prefix}{job_id}"
-            exists = await self.redis.exists(key)
+            deleted_count = await self._script_delete_job(
+                keys=[key, self.jobs_index_key],
+                args=[job_id],
+            )
 
-            if not exists:
-                logger.debug(f"Job {job_id} does not exist (already cleaned up)")
-                return False
-
-            # Get job status for logging before deletion
-            job_data = await self.redis.hgetall(key)
-            job_status = job_data.get("status", "unknown") if job_data else "unknown"
-
-            # Delete the job hash
-            deleted_count = await self.redis.delete(key)
-
-            if deleted_count > 0:
-                logger.info(f"Cleaned up old job {job_id} (status: {job_status})")
+            if deleted_count and int(deleted_count) > 0:
+                logger.info(f"Cleaned up old job {job_id}")
                 return True
             else:
-                logger.warning(f"Failed to delete job {job_id} (delete returned 0)")
+                logger.debug(f"Job {job_id} does not exist (already cleaned up)")
                 return False
 
         except Exception as e:
             logger.error(f"Error cleaning up job {job_id}: {str(e)}", exc_info=True)
-            # Return False on error (job not cleaned up)
             return False
+
+    def _build_audit_record(self, job_data: dict[str, Any], reason: str) -> dict[str, Any]:
+        """Build a structured audit record from job data.
+
+        Includes summary information only – no actual PII content is logged.
+
+        Args:
+            job_data: Full job hash data from Redis
+            reason: Why the job is being deleted/transitioned
+
+        Returns:
+            Structured dict suitable for JSON logging
+        """
+        # Summarize PII findings without including actual PII content
+        pii_summary: dict[str, Any] | None = None
+        pii_raw = job_data.get("pii_findings")
+        if pii_raw:
+            try:
+                findings = json.loads(pii_raw) if isinstance(pii_raw, str) else pii_raw
+                if isinstance(findings, list):
+                    entity_types = list({f.get("entity_type", "unknown") for f in findings})
+                    pii_summary = {"count": len(findings), "entity_types": entity_types}
+            except (json.JSONDecodeError, TypeError):
+                pii_summary = {"count": 0, "entity_types": [], "parse_error": True}
+
+        return {
+            "event": "job_audit",
+            "job_id": job_data.get("job_id", "unknown"),
+            "status": job_data.get("status", "unknown"),
+            "created_at": job_data.get("created_at"),
+            "updated_at": job_data.get("updated_at"),
+            "completed_at": job_data.get("completed_at"),
+            "confidence_score": job_data.get("confidence_score"),
+            "error_message": job_data.get("error_message"),
+            "pii_summary": pii_summary,
+            "reason": reason,
+        }
+
+    async def emit_job_audit_log(self, job_id: str, reason: str) -> None:
+        """Emit a structured JSON audit log for a job before deletion or forced transition.
+
+        Never blocks the caller on failure – catches all exceptions and logs a warning.
+
+        Args:
+            job_id: Job identifier
+            reason: Reason for the audit event (e.g., "retention_cleanup", "stuck_job_failed")
+        """
+        try:
+            job_data = await self.redis.hgetall(f"{self.status_prefix}{job_id}")
+            if not job_data:
+                logger.warning(f"Cannot emit audit log for job {job_id}: job not found")
+                return
+            record = self._build_audit_record(dict(job_data), reason)
+            logger.info(json.dumps(record))
+        except Exception as e:
+            logger.warning(f"Failed to emit audit log for job {job_id}: {e}")
 
     async def store_approval_token_mapping(self, approval_token: str, job_id: str, ttl_hours: int = 4) -> None:
         """Store approval token to job ID mapping for O(1) lookup.

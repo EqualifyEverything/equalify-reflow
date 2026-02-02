@@ -11,12 +11,12 @@ Tests the job status endpoint for all status types, including:
 - denied
 """
 
-from unittest.mock import AsyncMock, MagicMock
+from unittest.mock import AsyncMock, MagicMock, patch
 
 import pytest
 from fastapi import status
 from fastapi.testclient import TestClient
-from src.dependencies import get_job_service, get_s3_url_service
+from src.dependencies import get_job_service, get_s3_url_service, get_storage_service
 from src.main import app
 
 pytestmark = pytest.mark.unit
@@ -307,3 +307,114 @@ class TestNeedsReviewStatusValidation:
             assert "processing_result_key" in data
         finally:
             app.dependency_overrides.clear()
+
+
+class TestDownloadBundleFilename:
+    """Tests for GET /api/v1/documents/{job_id}/bundle download filename.
+
+    The zip download should be named {original_filename_without_extension}-reflow.zip.
+    """
+
+    @pytest.mark.asyncio
+    async def test_bundle_filename_uses_original_stem_reflow(
+        self, client, api_key_headers, mock_job_service
+    ):
+        """Content-Disposition filename is {stem}-reflow.zip."""
+        job_id = "test-bundle-job"
+        mock_job_service.get_job.return_value = {
+            "job_id": job_id,
+            "status": "completed",
+            "original_filename": "lecture_notes.pdf",
+            "result_url": f"results/{job_id}/result.md",
+        }
+
+        mock_storage = MagicMock()
+        app.dependency_overrides[get_job_service] = lambda: mock_job_service
+        app.dependency_overrides[get_storage_service] = lambda: mock_storage
+
+        with patch(
+            "src.api.documents.FigureBundleService"
+        ) as mock_bundle_cls:
+            mock_instance = mock_bundle_cls.return_value
+            mock_instance.generate_bundle = AsyncMock(return_value=b"PK\x03\x04fake-zip")
+
+            try:
+                response = client.get(
+                    f"/api/v1/documents/{job_id}/bundle",
+                    headers=api_key_headers,
+                )
+
+                assert response.status_code == 200
+                disposition = response.headers["content-disposition"]
+                assert disposition == 'attachment; filename="lecture_notes-reflow.zip"'
+            finally:
+                app.dependency_overrides.clear()
+
+    @pytest.mark.asyncio
+    async def test_bundle_filename_fallback_when_no_original_filename(
+        self, client, api_key_headers, mock_job_service
+    ):
+        """Falls back to 'document-reflow.zip' when original_filename is missing."""
+        job_id = "test-no-filename"
+        mock_job_service.get_job.return_value = {
+            "job_id": job_id,
+            "status": "completed",
+            "result_url": f"results/{job_id}/result.md",
+        }
+
+        mock_storage = MagicMock()
+        app.dependency_overrides[get_job_service] = lambda: mock_job_service
+        app.dependency_overrides[get_storage_service] = lambda: mock_storage
+
+        with patch(
+            "src.api.documents.FigureBundleService"
+        ) as mock_bundle_cls:
+            mock_instance = mock_bundle_cls.return_value
+            mock_instance.generate_bundle = AsyncMock(return_value=b"PK\x03\x04fake-zip")
+
+            try:
+                response = client.get(
+                    f"/api/v1/documents/{job_id}/bundle",
+                    headers=api_key_headers,
+                )
+
+                assert response.status_code == 200
+                disposition = response.headers["content-disposition"]
+                assert disposition == 'attachment; filename="document-reflow.zip"'
+            finally:
+                app.dependency_overrides.clear()
+
+    @pytest.mark.asyncio
+    async def test_bundle_filename_with_multiple_dots(
+        self, client, api_key_headers, mock_job_service
+    ):
+        """Multi-dot filenames strip only the last extension."""
+        job_id = "test-dots"
+        mock_job_service.get_job.return_value = {
+            "job_id": job_id,
+            "status": "completed",
+            "original_filename": "my.file.name.pdf",
+            "result_url": f"results/{job_id}/result.md",
+        }
+
+        mock_storage = MagicMock()
+        app.dependency_overrides[get_job_service] = lambda: mock_job_service
+        app.dependency_overrides[get_storage_service] = lambda: mock_storage
+
+        with patch(
+            "src.api.documents.FigureBundleService"
+        ) as mock_bundle_cls:
+            mock_instance = mock_bundle_cls.return_value
+            mock_instance.generate_bundle = AsyncMock(return_value=b"PK\x03\x04fake-zip")
+
+            try:
+                response = client.get(
+                    f"/api/v1/documents/{job_id}/bundle",
+                    headers=api_key_headers,
+                )
+
+                assert response.status_code == 200
+                disposition = response.headers["content-disposition"]
+                assert disposition == 'attachment; filename="my.file.name-reflow.zip"'
+            finally:
+                app.dependency_overrides.clear()

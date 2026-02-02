@@ -9,8 +9,10 @@ import redis.asyncio as redis
 from botocore.config import Config
 from fastapi import Depends
 
+from .canvas.course_config import CourseConfigService
 from .config import settings
 from .services.application_service import ApplicationService
+from .services.converter_client import ConverterClient
 from .services.correction_approval_service import CorrectionApprovalService
 from .services.document_processing_service import DocumentProcessingService
 from .services.job_service import JobService
@@ -386,4 +388,58 @@ async def get_document_processing_service(
         redis_client=redis_client,
         storage_service=storage,
         s3_url_service=s3_url,
+    )
+
+
+async def get_course_config_service(
+    redis_client: Any = Depends(get_redis_client),
+) -> CourseConfigService:
+    """Get course config service instance.
+
+    Args:
+        redis_client: Redis client (auto-injected by FastAPI Depends)
+
+    Returns:
+        Configured CourseConfigService instance
+
+    Note:
+        In FastAPI routes, use:
+            config_service: CourseConfigService = Depends(get_course_config_service)
+    """
+    return CourseConfigService(redis_client=redis_client)
+
+
+async def get_converter_client(
+    job_service: JobService = Depends(get_job_service),
+    storage: StorageService = Depends(get_storage_service),
+    queue: QueueService = Depends(get_queue_service),
+) -> ConverterClient:
+    """Get converter client instance.
+
+    Composes from existing service dependencies to provide a unified
+    facade for Canvas/LTI code.
+
+    Args:
+        job_service: Job service (injected)
+        storage: Storage service (injected)
+        queue: Queue service (injected)
+
+    Returns:
+        Configured ConverterClient instance
+
+    Note:
+        In FastAPI routes, use:
+            converter: ConverterClient = Depends(get_converter_client)
+
+        For workers, do NOT use this function. Instead:
+            redis_client = await anext(get_redis_client())
+            job_service = JobService(redis_client=redis_client)
+            storage_service = StorageService(...)
+            queue_service = QueueService(redis_client=redis_client)
+            converter = ConverterClient(job_service, storage_service, queue_service)
+    """
+    return ConverterClient(
+        job_service=job_service,
+        storage_service=storage,
+        queue_service=queue,
     )

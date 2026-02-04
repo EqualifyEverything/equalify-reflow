@@ -19,6 +19,7 @@ from collections.abc import AsyncGenerator
 from typing import TYPE_CHECKING
 from uuid import uuid4
 
+from ..shared.llm_cost import calculate_estimated_cost
 from ..utils.confidence import calculate_confidence, collect_quality_signals
 from ..utils.confidence_scoring import calculate_confidence_from_verification
 from .events import (
@@ -1006,8 +1007,8 @@ async def run_agentic_pipeline(
                 final_markdown, stored_figures
             )
 
-        # Calculate cost (Haiku pricing)
-        cost = (total_input_tokens * 0.00025 / 1000) + (total_output_tokens * 0.00125 / 1000)
+        # Calculate cost in dollars (Haiku pricing)
+        cost = calculate_estimated_cost(total_input_tokens, total_output_tokens) / 100
 
         # Calculate confidence using enhanced quality signals
         # Collect metrics from processing state
@@ -1385,7 +1386,8 @@ async def run_agentic_pipeline_with_streaming_handoff(
         raw_markdown = "\n\n---\n\n".join(final_markdowns[p] for p in sorted(final_markdowns.keys()))
         final_markdown = collect_footnotes_at_end(raw_markdown)
 
-        cost = (total_input_tokens * 0.00025 / 1000) + (total_output_tokens * 0.00125 / 1000)
+        # Calculate cost in dollars (Haiku pricing)
+        cost = calculate_estimated_cost(total_input_tokens, total_output_tokens) / 100
 
         # Calculate confidence using enhanced quality signals
         tables_planned = sum(len(pp.tables) for pp in plan.pages.values())

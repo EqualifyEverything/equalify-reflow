@@ -27,6 +27,7 @@ from typing import TYPE_CHECKING, Any, Literal
 from redis.asyncio import Redis
 
 from ..config import settings
+from ..shared.llm_cost import calculate_estimated_cost
 from .metrics_service import job_duration_seconds, jobs_completed_total
 
 if TYPE_CHECKING:
@@ -758,11 +759,10 @@ class DocumentProcessingService:
             total_issues=0,
         )
 
-        # Calculate approximate cost (rough estimate based on tokens)
-        # Using typical Bedrock Claude 3 pricing: ~$0.003 per 1K input, ~$0.015 per 1K output
-        estimated_cost = (round_result.total_input_tokens / 1000) * 0.003 + (
-            round_result.total_output_tokens / 1000
-        ) * 0.015
+        # Calculate cost in dollars using centralized Haiku pricing
+        estimated_cost = calculate_estimated_cost(
+            round_result.total_input_tokens, round_result.total_output_tokens
+        ) / 100  # Convert cents to dollars
 
         return ProcessingResult(
             document_id=job_id,

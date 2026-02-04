@@ -28,6 +28,7 @@ from pydantic_ai.models.bedrock import BedrockConverseModel
 from src.agents.model_tiers import MODEL_TIER_MAP, ModelTier
 from src.agents.subagents import is_rate_limit_error, llm_circuit_breaker
 from src.services.metrics_service import record_llm_call
+from src.shared.llm_cost import calculate_estimated_cost
 from src.utils.circuit_breaker import CircuitBreakerOpenError
 
 from .debug_capture import extract_raw_response, serialize_text_prompt
@@ -488,7 +489,7 @@ async def analyze_page(
         duration_ms = int((time.time() - start_time) * 1000)
 
         # Create LLM call record
-        cost_cents = ((input_tokens * 0.00025) + (output_tokens * 0.00125)) / 10
+        cost_cents = calculate_estimated_cost(input_tokens, output_tokens)
 
         # Capture debug data if requested
         prompt_text = None

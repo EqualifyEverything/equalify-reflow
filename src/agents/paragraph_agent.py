@@ -37,6 +37,7 @@ from pydantic_ai.models.bedrock import BedrockConverseModel
 
 from src.agents.model_tiers import MODEL_TIER_MAP, ModelTier
 from src.services.metrics_service import record_llm_call
+from src.shared.llm_cost import calculate_estimated_cost
 
 from .debug_capture import extract_raw_response, serialize_prompt
 from .events import (
@@ -1133,7 +1134,7 @@ Remember:
         # Create LLM call record for tracking
         input_tokens = usage.input_tokens or 0
         output_tokens = usage.output_tokens or 0
-        cost_cents = ((input_tokens * 0.00025) + (output_tokens * 0.00125)) / 10
+        cost_cents = calculate_estimated_cost(input_tokens, output_tokens)
 
         # Capture debug data if requested
         prompt_text = None

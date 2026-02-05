@@ -14,11 +14,8 @@ from unittest.mock import AsyncMock, MagicMock, patch
 import pytest
 from PIL import Image
 from src.agents.subagents import (
-    invoke_citation_subagent,
-    invoke_footnote_subagent,
-    invoke_list_subagent,
-    invoke_page_artifact_subagent,
     invoke_paragraph_merge_subagent,
+    invoke_text_structure_subagent,
     invoke_typography_subagent,
     invoke_typography_subagent_batch,
     is_rate_limit_error,
@@ -26,11 +23,8 @@ from src.agents.subagents import (
     reset_llm_circuit_breaker,
 )
 from src.agents.subagents.types import (
-    CitationResult,
-    FootnoteResult,
-    ListResult,
-    PageArtifactResult,
     ParagraphMergeResult,
+    TextStructureResult,
     TypographyResult,
 )
 from src.utils.circuit_breaker import CircuitBreakerOpenError, CircuitState
@@ -220,58 +214,19 @@ class TestSubagentCircuitBreakerIntegration:
             assert "circuit breaker" in result.reasoning.lower()
 
     @pytest.mark.asyncio
-    async def test_footnote_returns_zero_confidence_when_circuit_open(self, mock_image):
-        """Footnote subagent returns zero confidence when circuit is open."""
-        for _ in range(3):
-            llm_circuit_breaker.record_failure()
-
-        result = await invoke_footnote_subagent("test markdown", mock_image)
-
-        assert isinstance(result, FootnoteResult)
-        assert result.confidence == 0.0
-        assert "circuit breaker" in result.reasoning.lower()
-        assert result.corrected_markdown == "test markdown"
-
-    @pytest.mark.asyncio
-    async def test_citation_returns_zero_confidence_when_circuit_open(self, mock_image):
-        """Citation subagent returns zero confidence when circuit is open."""
-        for _ in range(3):
-            llm_circuit_breaker.record_failure()
-
-        result = await invoke_citation_subagent("test markdown", mock_image)
-
-        assert isinstance(result, CitationResult)
-        assert result.confidence == 0.0
-        assert "circuit breaker" in result.reasoning.lower()
-        assert result.bibliography_found is False
-
-    @pytest.mark.asyncio
-    async def test_list_returns_zero_confidence_when_circuit_open(self, mock_image):
-        """List subagent returns zero confidence when circuit is open."""
-        for _ in range(3):
-            llm_circuit_breaker.record_failure()
-
-        result = await invoke_list_subagent("- item", mock_image)
-
-        assert isinstance(result, ListResult)
-        assert result.confidence == 0.0
-        assert "circuit breaker" in result.reasoning.lower()
-        assert result.corrected_markdown == "- item"
-
-    @pytest.mark.asyncio
-    async def test_page_artifact_returns_zero_confidence_when_circuit_open(
+    async def test_text_structure_returns_zero_confidence_when_circuit_open(
         self, mock_image
     ):
-        """Page artifact subagent returns zero confidence when circuit is open."""
+        """Text structure subagent returns zero confidence when circuit is open."""
         for _ in range(3):
             llm_circuit_breaker.record_failure()
 
-        result = await invoke_page_artifact_subagent("test---text", mock_image)
+        result = await invoke_text_structure_subagent("test markdown", mock_image)
 
-        assert isinstance(result, PageArtifactResult)
+        assert isinstance(result, TextStructureResult)
         assert result.confidence == 0.0
         assert "circuit breaker" in result.reasoning.lower()
-        assert result.cleaned_text == "test---text"
+        assert result.corrections == []
 
     @pytest.mark.asyncio
     async def test_paragraph_merge_returns_zero_confidence_when_circuit_open(
@@ -380,14 +335,8 @@ class TestSharedCircuitBreaker:
         assert llm_circuit_breaker.is_open
 
         # Now all other subagents should fail fast
-        footnote_result = await invoke_footnote_subagent("test", mock_image)
-        assert footnote_result.confidence == 0.0
-
-        citation_result = await invoke_citation_subagent("test", mock_image)
-        assert citation_result.confidence == 0.0
-
-        list_result = await invoke_list_subagent("- item", mock_image)
-        assert list_result.confidence == 0.0
+        text_structure_result = await invoke_text_structure_subagent("test", mock_image)
+        assert text_structure_result.confidence == 0.0
 
 
 class TestPageChainCircuitBreaker:

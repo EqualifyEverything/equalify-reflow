@@ -13,25 +13,17 @@ from unittest.mock import AsyncMock, MagicMock, patch
 import pytest
 from PIL import Image
 from src.agents.subagents import (
-    CITATION_SYSTEM_PROMPT,
-    FOOTNOTE_SYSTEM_PROMPT,
-    LIST_SEMANTICS_SYSTEM_PROMPT,
-    PAGE_ARTIFACT_SYSTEM_PROMPT,
     PARAGRAPH_MERGE_SYSTEM_PROMPT,
+    TEXT_STRUCTURE_SYSTEM_PROMPT,
     TYPOGRAPHY_SYSTEM_PROMPT,
-    invoke_citation_subagent,
-    invoke_footnote_subagent,
-    invoke_list_subagent,
-    invoke_page_artifact_subagent,
     invoke_paragraph_merge_subagent,
+    invoke_text_structure_subagent,
     invoke_typography_subagent,
 )
 from src.agents.subagents.types import (
-    CitationResult,
-    FootnoteResult,
-    ListResult,
-    PageArtifactResult,
     ParagraphMergeResult,
+    TextStructureCorrection,
+    TextStructureResult,
     TypographyResult,
 )
 
@@ -41,33 +33,14 @@ pytestmark = pytest.mark.unit
 class TestSystemPrompts:
     """Verify system prompts are defined and contain expected content."""
 
-    def test_page_artifact_prompt_exists(self):
-        """Page artifact prompt is defined with key content."""
-        assert PAGE_ARTIFACT_SYSTEM_PROMPT
-        assert "page artifact" in PAGE_ARTIFACT_SYSTEM_PROMPT.lower()
-        assert "---" in PAGE_ARTIFACT_SYSTEM_PROMPT
-        assert "confidence" in PAGE_ARTIFACT_SYSTEM_PROMPT.lower()
-
-    def test_footnote_prompt_exists(self):
-        """Footnote prompt is defined with key content."""
-        assert FOOTNOTE_SYSTEM_PROMPT
-        assert "footnote" in FOOTNOTE_SYSTEM_PROMPT.lower()
-        assert "[^1]" in FOOTNOTE_SYSTEM_PROMPT
-        assert "confidence" in FOOTNOTE_SYSTEM_PROMPT.lower()
-
-    def test_citation_prompt_exists(self):
-        """Citation prompt is defined with key content."""
-        assert CITATION_SYSTEM_PROMPT
-        assert "citation" in CITATION_SYSTEM_PROMPT.lower()
-        assert "bibliography" in CITATION_SYSTEM_PROMPT.lower()
-        assert "confidence" in CITATION_SYSTEM_PROMPT.lower()
-
-    def test_list_prompt_exists(self):
-        """List prompt is defined with key content."""
-        assert LIST_SEMANTICS_SYSTEM_PROMPT
-        assert "list" in LIST_SEMANTICS_SYSTEM_PROMPT.lower()
-        assert "nesting" in LIST_SEMANTICS_SYSTEM_PROMPT.lower()
-        assert "confidence" in LIST_SEMANTICS_SYSTEM_PROMPT.lower()
+    def test_text_structure_prompt_exists(self):
+        """Text structure prompt is defined with key content."""
+        assert TEXT_STRUCTURE_SYSTEM_PROMPT
+        assert "page artifact" in TEXT_STRUCTURE_SYSTEM_PROMPT.lower()
+        assert "footnote" in TEXT_STRUCTURE_SYSTEM_PROMPT.lower()
+        assert "citation" in TEXT_STRUCTURE_SYSTEM_PROMPT.lower()
+        assert "list" in TEXT_STRUCTURE_SYSTEM_PROMPT.lower()
+        assert "confidence" in TEXT_STRUCTURE_SYSTEM_PROMPT.lower()
 
     def test_typography_prompt_exists(self):
         """Typography prompt is defined with key content."""
@@ -88,60 +61,42 @@ class TestSystemPrompts:
 class TestResultTypes:
     """Verify result types have correct schema."""
 
-    def test_page_artifact_result_schema(self):
-        """PageArtifactResult has expected fields."""
-        result = PageArtifactResult(
+    def test_text_structure_result_schema(self):
+        """TextStructureResult has expected fields."""
+        correction = TextStructureCorrection(
+            task_type="page_artifact",
+            before="---",
+            after="",
+            confidence=0.9,
+            reasoning="Removed page break marker",
+        )
+        result = TextStructureResult(
             confidence=0.9,
             reasoning="Test reasoning",
-            cleaned_text="cleaned text",
-            artifacts_removed=["---"],
-            words_rejoined=["information"],
+            corrections=[correction],
+            artifacts_removed=1,
+            footnotes_fixed=0,
+            citations_linked=0,
+            lists_fixed=0,
         )
         assert 0.0 <= result.confidence <= 1.0
         assert result.reasoning
-        assert result.cleaned_text == "cleaned text"
-        assert "---" in result.artifacts_removed
-        assert "information" in result.words_rejoined
+        assert len(result.corrections) == 1
+        assert result.artifacts_removed == 1
 
-    def test_footnote_result_schema(self):
-        """FootnoteResult has expected fields."""
-        result = FootnoteResult(
+    def test_text_structure_correction_schema(self):
+        """TextStructureCorrection has expected fields."""
+        correction = TextStructureCorrection(
+            task_type="footnote",
+            before="¹",
+            after="[^1]",
             confidence=0.85,
-            reasoning="Test reasoning",
-            corrected_markdown="# Test",
-            footnotes_fixed=[{"marker": "[^1]", "action": "linked", "definition": "test"}],
+            reasoning="Converted superscript to markdown footnote",
         )
-        assert 0.0 <= result.confidence <= 1.0
-        assert result.reasoning
-        assert result.corrected_markdown
-        assert len(result.footnotes_fixed) == 1
-
-    def test_citation_result_schema(self):
-        """CitationResult has expected fields."""
-        result = CitationResult(
-            confidence=0.7,
-            reasoning="Test reasoning",
-            corrected_markdown="# Test",
-            citations_linked=[{"marker": "[1]", "linked_to": "Smith 2023", "status": "linked"}],
-            bibliography_found=True,
-        )
-        assert 0.0 <= result.confidence <= 1.0
-        assert result.reasoning
-        assert result.bibliography_found is True
-        assert len(result.citations_linked) == 1
-
-    def test_list_result_schema(self):
-        """ListResult has expected fields."""
-        result = ListResult(
-            confidence=0.95,
-            reasoning="Test reasoning",
-            corrected_markdown="- item 1\n- item 2",
-            issues_fixed=["Fixed numbering"],
-        )
-        assert 0.0 <= result.confidence <= 1.0
-        assert result.reasoning
-        assert result.corrected_markdown
-        assert "Fixed numbering" in result.issues_fixed
+        assert correction.task_type == "footnote"
+        assert correction.before == "¹"
+        assert correction.after == "[^1]"
+        assert 0.0 <= correction.confidence <= 1.0
 
     def test_typography_result_schema(self):
         """TypographyResult has expected fields."""
@@ -181,32 +136,32 @@ class TestConfidenceBounds:
     def test_confidence_min_bound(self):
         """Confidence cannot be below 0.0."""
         with pytest.raises(ValueError):
-            PageArtifactResult(
+            TextStructureResult(
                 confidence=-0.1,
                 reasoning="Test",
-                cleaned_text="",
+                corrections=[],
             )
 
     def test_confidence_max_bound(self):
         """Confidence cannot be above 1.0."""
         with pytest.raises(ValueError):
-            PageArtifactResult(
+            TextStructureResult(
                 confidence=1.1,
                 reasoning="Test",
-                cleaned_text="",
+                corrections=[],
             )
 
     def test_confidence_at_bounds(self):
         """Confidence at exact bounds is valid."""
-        result_min = PageArtifactResult(
+        result_min = TextStructureResult(
             confidence=0.0,
             reasoning="Test",
-            cleaned_text="",
+            corrections=[],
         )
-        result_max = PageArtifactResult(
+        result_max = TextStructureResult(
             confidence=1.0,
             reasoning="Test",
-            cleaned_text="",
+            corrections=[],
         )
         assert result_min.confidence == 0.0
         assert result_max.confidence == 1.0
@@ -230,193 +185,124 @@ def mock_agent_result():
     return _create_result
 
 
-class TestPageArtifactSubagent:
-    """Tests for page artifact removal subagent."""
+class TestTextStructureSubagent:
+    """Tests for consolidated text structure subagent."""
 
     @pytest.mark.asyncio
     async def test_invoke_returns_correct_type(self, mock_image, mock_agent_result):
-        """invoke_page_artifact_subagent returns PageArtifactResult."""
-        expected_output = PageArtifactResult(
+        """invoke_text_structure_subagent returns TextStructureResult."""
+        expected_output = TextStructureResult(
             confidence=0.9,
-            reasoning="Removed page break marker",
-            cleaned_text="cleaned text",
-            artifacts_removed=["---"],
-            words_rejoined=[],
+            reasoning="Fixed page artifact and footnote",
+            corrections=[
+                TextStructureCorrection(
+                    task_type="page_artifact",
+                    before="---",
+                    after="",
+                    confidence=0.95,
+                    reasoning="Removed page break marker",
+                ),
+                TextStructureCorrection(
+                    task_type="footnote",
+                    before="¹",
+                    after="[^1]",
+                    confidence=0.85,
+                    reasoning="Converted superscript",
+                ),
+            ],
+            artifacts_removed=1,
+            footnotes_fixed=1,
+            citations_linked=0,
+            lists_fixed=0,
         )
 
         with patch(
-            "src.agents.subagents.page_artifacts._get_page_artifact_subagent"
+            "src.agents.subagents.text_structure._get_text_structure_subagent"
         ) as mock_get:
             mock_agent = AsyncMock()
             mock_agent.run = AsyncMock(return_value=mock_agent_result(expected_output))
             mock_get.return_value = mock_agent
 
-            result = await invoke_page_artifact_subagent("test---text", mock_image)
+            result = await invoke_text_structure_subagent("test---text¹", mock_image)
 
-            assert isinstance(result, PageArtifactResult)
+            assert isinstance(result, TextStructureResult)
             assert result.confidence == 0.9
-            assert result.cleaned_text == "cleaned text"
+            assert len(result.corrections) == 2
 
     @pytest.mark.asyncio
     async def test_handles_error_gracefully(self, mock_image):
         """Subagent returns default result on error."""
         with patch(
-            "src.agents.subagents.page_artifacts._get_page_artifact_subagent"
+            "src.agents.subagents.text_structure._get_text_structure_subagent"
         ) as mock_get:
             mock_agent = AsyncMock()
             mock_agent.run = AsyncMock(side_effect=RuntimeError("API Error"))
             mock_get.return_value = mock_agent
 
-            result = await invoke_page_artifact_subagent("test text", mock_image)
+            result = await invoke_text_structure_subagent("test text", mock_image)
 
-            assert isinstance(result, PageArtifactResult)
+            assert isinstance(result, TextStructureResult)
             assert result.confidence == 0.0
             assert "error" in result.reasoning.lower()
-            assert result.cleaned_text == "test text"  # Returns original on error
-
-
-class TestFootnoteSubagent:
-    """Tests for footnote correction subagent."""
+            assert result.corrections == []
 
     @pytest.mark.asyncio
-    async def test_invoke_returns_correct_type(self, mock_image, mock_agent_result):
-        """invoke_footnote_subagent returns FootnoteResult."""
-        expected_output = FootnoteResult(
-            confidence=0.85,
-            reasoning="Fixed footnote linking",
-            corrected_markdown="text[^1]\n\n[^1]: definition",
-            footnotes_fixed=[{"marker": "[^1]", "action": "linked", "definition": "definition"}],
-        )
-
-        with patch("src.agents.subagents.footnotes._get_footnote_subagent") as mock_get:
-            mock_agent = AsyncMock()
-            mock_agent.run = AsyncMock(return_value=mock_agent_result(expected_output))
-            mock_get.return_value = mock_agent
-
-            result = await invoke_footnote_subagent("text[^1]", mock_image)
-
-            assert isinstance(result, FootnoteResult)
-            assert result.confidence == 0.85
-            assert len(result.footnotes_fixed) == 1
-
-    @pytest.mark.asyncio
-    async def test_handles_error_gracefully(self, mock_image):
-        """Subagent returns default result on error."""
-        with patch("src.agents.subagents.footnotes._get_footnote_subagent") as mock_get:
-            mock_agent = AsyncMock()
-            mock_agent.run = AsyncMock(side_effect=RuntimeError("API Error"))
-            mock_get.return_value = mock_agent
-
-            result = await invoke_footnote_subagent("test markdown", mock_image)
-
-            assert isinstance(result, FootnoteResult)
-            assert result.confidence == 0.0
-            assert "error" in result.reasoning.lower()
-            assert result.corrected_markdown == "test markdown"
-
-
-class TestCitationSubagent:
-    """Tests for citation linking subagent."""
-
-    @pytest.mark.asyncio
-    async def test_invoke_returns_correct_type(self, mock_image, mock_agent_result):
-        """invoke_citation_subagent returns CitationResult."""
-        expected_output = CitationResult(
-            confidence=0.8,
-            reasoning="Linked citations to bibliography",
-            corrected_markdown="text [1]",
-            citations_linked=[{"marker": "[1]", "linked_to": "Smith 2023", "status": "linked"}],
-            bibliography_found=True,
-        )
-
-        with patch("src.agents.subagents.citations._get_citation_subagent") as mock_get:
-            mock_agent = AsyncMock()
-            mock_agent.run = AsyncMock(return_value=mock_agent_result(expected_output))
-            mock_get.return_value = mock_agent
-
-            result = await invoke_citation_subagent("text [1]", mock_image)
-
-            assert isinstance(result, CitationResult)
-            assert result.bibliography_found is True
-            assert len(result.citations_linked) == 1
-
-    @pytest.mark.asyncio
-    async def test_accepts_full_document(self, mock_image, mock_agent_result):
-        """Subagent accepts optional full_document parameter."""
-        expected_output = CitationResult(
+    async def test_auto_calculates_summary_counts(self, mock_image, mock_agent_result):
+        """Summary counts are auto-calculated from corrections."""
+        # Return corrections but leave summary counts at 0
+        expected_output = TextStructureResult(
             confidence=0.9,
-            reasoning="Found bibliography in full document",
-            corrected_markdown="text [1]",
-            citations_linked=[],
-            bibliography_found=True,
+            reasoning="Found issues",
+            corrections=[
+                TextStructureCorrection(
+                    task_type="page_artifact",
+                    before="---",
+                    after="",
+                    confidence=0.95,
+                    reasoning="Removed",
+                ),
+                TextStructureCorrection(
+                    task_type="footnote",
+                    before="¹",
+                    after="[^1]",
+                    confidence=0.85,
+                    reasoning="Fixed",
+                ),
+                TextStructureCorrection(
+                    task_type="footnote",
+                    before="²",
+                    after="[^2]",
+                    confidence=0.85,
+                    reasoning="Fixed",
+                ),
+                TextStructureCorrection(
+                    task_type="list",
+                    before="1.",
+                    after="1.",
+                    confidence=0.8,
+                    reasoning="Fixed indent",
+                ),
+            ],
+            artifacts_removed=0,  # Will be auto-calculated
+            footnotes_fixed=0,
+            citations_linked=0,
+            lists_fixed=0,
         )
 
-        with patch("src.agents.subagents.citations._get_citation_subagent") as mock_get:
+        with patch(
+            "src.agents.subagents.text_structure._get_text_structure_subagent"
+        ) as mock_get:
             mock_agent = AsyncMock()
             mock_agent.run = AsyncMock(return_value=mock_agent_result(expected_output))
             mock_get.return_value = mock_agent
 
-            result = await invoke_citation_subagent(
-                "text [1]",
-                mock_image,
-                full_document="# References\n[1] Smith 2023",
-            )
+            result = await invoke_text_structure_subagent("test", mock_image)
 
-            assert isinstance(result, CitationResult)
-            assert result.bibliography_found is True
-
-    @pytest.mark.asyncio
-    async def test_handles_error_gracefully(self, mock_image):
-        """Subagent returns default result on error."""
-        with patch("src.agents.subagents.citations._get_citation_subagent") as mock_get:
-            mock_agent = AsyncMock()
-            mock_agent.run = AsyncMock(side_effect=RuntimeError("API Error"))
-            mock_get.return_value = mock_agent
-
-            result = await invoke_citation_subagent("test markdown", mock_image)
-
-            assert isinstance(result, CitationResult)
-            assert result.confidence == 0.0
-            assert result.bibliography_found is False
-
-
-class TestListSubagent:
-    """Tests for list semantics subagent."""
-
-    @pytest.mark.asyncio
-    async def test_invoke_returns_correct_type(self, mock_image, mock_agent_result):
-        """invoke_list_subagent returns ListResult."""
-        expected_output = ListResult(
-            confidence=0.95,
-            reasoning="Fixed list indentation",
-            corrected_markdown="- item 1\n  - nested",
-            issues_fixed=["Fixed nesting from 3 to 2 spaces"],
-        )
-
-        with patch("src.agents.subagents.lists._get_list_subagent") as mock_get:
-            mock_agent = AsyncMock()
-            mock_agent.run = AsyncMock(return_value=mock_agent_result(expected_output))
-            mock_get.return_value = mock_agent
-
-            result = await invoke_list_subagent("- item 1\n   - nested", mock_image)
-
-            assert isinstance(result, ListResult)
-            assert result.confidence == 0.95
-            assert len(result.issues_fixed) == 1
-
-    @pytest.mark.asyncio
-    async def test_handles_error_gracefully(self, mock_image):
-        """Subagent returns default result on error."""
-        with patch("src.agents.subagents.lists._get_list_subagent") as mock_get:
-            mock_agent = AsyncMock()
-            mock_agent.run = AsyncMock(side_effect=RuntimeError("API Error"))
-            mock_get.return_value = mock_agent
-
-            result = await invoke_list_subagent("- item", mock_image)
-
-            assert isinstance(result, ListResult)
-            assert result.confidence == 0.0
-            assert result.corrected_markdown == "- item"
+            # Verify counts are auto-calculated
+            assert result.artifacts_removed == 1
+            assert result.footnotes_fixed == 2
+            assert result.citations_linked == 0
+            assert result.lists_fixed == 1
 
 
 class TestTypographySubagent:
@@ -517,67 +403,21 @@ class TestParagraphMergeSubagent:
 class TestLazyLoading:
     """Verify lazy loading pattern for subagents."""
 
-    def test_page_artifact_lazy_loading(self):
-        """Page artifact subagent is created only on first call."""
-        # Reset global
-        import src.agents.subagents.page_artifacts as pa_module
+    def test_text_structure_lazy_loading(self):
+        """Text structure subagent is created only on first call."""
+        import src.agents.subagents.text_structure as ts_module
 
-        pa_module._page_artifact_subagent = None
+        ts_module._text_structure_subagent = None
 
-        with patch.object(pa_module, "BedrockConverseModel"):
-            with patch.object(pa_module, "Agent") as mock_agent_class:
+        with patch.object(ts_module, "BedrockConverseModel"):
+            with patch.object(ts_module, "Agent") as mock_agent_class:
                 # First call creates agent
-                pa_module._get_page_artifact_subagent()
+                ts_module._get_text_structure_subagent()
                 assert mock_agent_class.called
 
                 # Second call reuses
                 mock_agent_class.reset_mock()
-                pa_module._get_page_artifact_subagent()
-                assert not mock_agent_class.called
-
-    def test_footnote_lazy_loading(self):
-        """Footnote subagent is created only on first call."""
-        import src.agents.subagents.footnotes as fn_module
-
-        fn_module._footnote_subagent = None
-
-        with patch.object(fn_module, "BedrockConverseModel"):
-            with patch.object(fn_module, "Agent") as mock_agent_class:
-                fn_module._get_footnote_subagent()
-                assert mock_agent_class.called
-
-                mock_agent_class.reset_mock()
-                fn_module._get_footnote_subagent()
-                assert not mock_agent_class.called
-
-    def test_citation_lazy_loading(self):
-        """Citation subagent is created only on first call."""
-        import src.agents.subagents.citations as ct_module
-
-        ct_module._citation_subagent = None
-
-        with patch.object(ct_module, "BedrockConverseModel"):
-            with patch.object(ct_module, "Agent") as mock_agent_class:
-                ct_module._get_citation_subagent()
-                assert mock_agent_class.called
-
-                mock_agent_class.reset_mock()
-                ct_module._get_citation_subagent()
-                assert not mock_agent_class.called
-
-    def test_list_lazy_loading(self):
-        """List subagent is created only on first call."""
-        import src.agents.subagents.lists as ls_module
-
-        ls_module._list_subagent = None
-
-        with patch.object(ls_module, "BedrockConverseModel"):
-            with patch.object(ls_module, "Agent") as mock_agent_class:
-                ls_module._get_list_subagent()
-                assert mock_agent_class.called
-
-                mock_agent_class.reset_mock()
-                ls_module._get_list_subagent()
+                ts_module._get_text_structure_subagent()
                 assert not mock_agent_class.called
 
     def test_typography_lazy_loading(self):

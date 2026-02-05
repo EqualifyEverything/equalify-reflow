@@ -62,18 +62,12 @@ from .models import (
 from .subagents import (
     CONFIDENCE_APPLY_WITH_REVIEW,
     CONFIDENCE_AUTO_APPLY,
-    invoke_citation_subagent,
-    invoke_footnote_subagent,
-    invoke_list_subagent,
-    invoke_page_artifact_subagent,
+    invoke_text_structure_subagent,
     invoke_typography_subagent,
     invoke_typography_subagent_batch,
 )
 from .subagents.types import (
-    CitationResult,
-    FootnoteResult,
-    ListResult,
-    PageArtifactResult,
+    TextStructureResult,
     TypographyResult,
 )
 from .validation import auto_fix_minor_issues, validate_edit
@@ -121,17 +115,9 @@ You do NOT handle:
 These call specialized LLM subagents that return recommendations with confidence scores.
 YOU decide whether to apply their recommendations.
 
-- remove_page_artifacts(text_region): Clean up ---, split words
-  -> Returns: {cleaned_text, artifacts_removed, words_rejoined, confidence, reasoning}
-
-- correct_footnote(): Fix footnote placement and linking
-  -> Returns: {corrected_markdown, footnotes_fixed, confidence, reasoning}
-
-- fix_citation_links(): Link citations to bibliography
-  -> Returns: {corrected_markdown, citations_linked, bibliography_found, confidence, reasoning}
-
-- fix_list_semantics(list_markdown): Fix list structure
-  -> Returns: {corrected_markdown, issues_fixed, confidence, reasoning}
+- fix_text_structure(): Fix page artifacts, footnotes, citations, and lists (all in one call)
+  -> Returns: {corrections: [{task_type, before, after, confidence, reasoning}], ...}
+  -> Each correction specifies what to replace and with what
 
 - fix_typography(text_region): Add semantic bold/italic/code
   -> Returns: {corrected_markdown, formatting_added, confidence, reasoning}
@@ -145,15 +131,15 @@ YOU decide whether to apply their recommendations.
 ## Workflow
 
 1. View the page to understand context
-2. For each task:
-   a. Read the relevant text region
-   b. Call the appropriate subagent tool
-   c. Review the subagent's recommendation
-   d. Based on confidence:
-      - If confidence >= 0.8: propose_edit(needs_review=False)
-      - If confidence 0.5-0.8: propose_edit(needs_review=True)
-      - If confidence < 0.5: skip the edit, note in your output
-   e. If you disagree with subagent, use your judgment
+2. Call fix_text_structure() to get all text corrections at once
+3. Review each correction from the result:
+   - Based on confidence:
+     - If confidence >= 0.8: propose_edit(needs_review=False)
+     - If confidence 0.5-0.8: propose_edit(needs_review=True)
+     - If confidence < 0.5: skip the edit, note in your output
+   - If you disagree with subagent, use your judgment
+4. Call fix_typography() if there are typography tasks
+5. Apply typography corrections with the same confidence logic
 
 ## Important Rules
 
@@ -393,130 +379,44 @@ async def read_context_tool(
 # =============================================================================
 
 
-async def remove_page_artifacts_tool(
+# Task types that are handled by the consolidated text structure subagent
+TEXT_STRUCTURE_TASK_TYPES = {
+    TaskType.PAGE_ARTIFACT_REMOVAL,
+    TaskType.FOOTNOTE_CORRECTION,
+    TaskType.CITATION_LINKING,
+    TaskType.LIST_FIX,
+}
+
+
+async def fix_text_structure_tool(
     ctx: RunContext[ParagraphAgentDeps],
-    text_region: str,
-) -> PageArtifactResult:
-    """Clean up page break artifacts and split words.
+) -> TextStructureResult:
+    """Fix page artifacts, footnotes, citations, and lists in one call.
 
-    Invokes a specialized subagent that analyzes the text and page image
-    to identify and remove extraction artifacts.
-
-    Note: Results may be pre-computed in parallel before this tool is called.
-    The tool checks for pre-computed results first and returns them instantly.
-
-    Args:
-        text_region: The markdown text that may contain artifacts
-
-    Returns:
-        PageArtifactResult with cleaned text and confidence score
-    """
-    # Check for pre-computed result from parallel execution
-    for key, result in ctx.deps.precomputed_subagent_results.items():
-        if key.startswith(TaskType.PAGE_ARTIFACT_REMOVAL.value + ":"):
-            if isinstance(result, PageArtifactResult):
-                logger.debug(f"Using pre-computed page artifact result for {key}")
-                return result
-
-    # Fallback to direct invocation if no pre-computed result
-    result = await invoke_page_artifact_subagent(
-        text_region=text_region,
-        page_image=ctx.deps.page_image,
-    )
-
-    return result
-
-
-async def correct_footnote_tool(
-    ctx: RunContext[ParagraphAgentDeps],
-) -> FootnoteResult:
-    """Fix footnote placement and linking.
-
-    Invokes a specialized subagent that finds footnote markers,
-    locates definitions, and creates proper markdown linking.
+    This consolidated tool handles all text structure issues:
+    - Page artifacts (---, split words, orphaned page numbers)
+    - Footnotes (markers, definitions, linking)
+    - Citations ([1], (Smith, 2023))
+    - Lists (indentation, numbering, bullets)
 
     Note: Results may be pre-computed in parallel before this tool is called.
     The tool checks for pre-computed results first and returns them instantly.
 
     Returns:
-        FootnoteResult with corrected markdown and confidence score
+        TextStructureResult with list of corrections and confidence scores.
+        Each correction specifies: task_type, before, after, confidence, reasoning
     """
     # Check for pre-computed result from parallel execution
-    for key, result in ctx.deps.precomputed_subagent_results.items():
-        if key.startswith(TaskType.FOOTNOTE_CORRECTION.value + ":"):
-            if isinstance(result, FootnoteResult):
-                logger.debug(f"Using pre-computed footnote result for {key}")
-                return result
+    precomputed_key = "text_structure:page"
+    if precomputed_key in ctx.deps.precomputed_subagent_results:
+        result = ctx.deps.precomputed_subagent_results[precomputed_key]
+        if isinstance(result, TextStructureResult):
+            logger.debug("Using pre-computed text structure result")
+            return result
 
     # Fallback to direct invocation if no pre-computed result
-    result = await invoke_footnote_subagent(
+    result = await invoke_text_structure_subagent(
         page_markdown=ctx.deps.current_markdown,
-        page_image=ctx.deps.page_image,
-    )
-
-    return result
-
-
-async def fix_citation_links_tool(
-    ctx: RunContext[ParagraphAgentDeps],
-) -> CitationResult:
-    """Link citations to bibliography entries.
-
-    Invokes a specialized subagent that finds citation markers
-    and matches them to references. Uses full document context
-    to locate the bibliography section.
-
-    Note: Results may be pre-computed in parallel before this tool is called.
-    The tool checks for pre-computed results first and returns them instantly.
-
-    Returns:
-        CitationResult with linked citations and confidence score
-    """
-    # Check for pre-computed result from parallel execution
-    for key, result in ctx.deps.precomputed_subagent_results.items():
-        if key.startswith(TaskType.CITATION_LINKING.value + ":"):
-            if isinstance(result, CitationResult):
-                logger.debug(f"Using pre-computed citation result for {key}")
-                return result
-
-    # Fallback to direct invocation if no pre-computed result
-    result = await invoke_citation_subagent(
-        page_markdown=ctx.deps.current_markdown,
-        page_image=ctx.deps.page_image,
-        full_document=ctx.deps.full_document_markdown,
-    )
-
-    return result
-
-
-async def fix_list_semantics_tool(
-    ctx: RunContext[ParagraphAgentDeps],
-    list_markdown: str,
-) -> ListResult:
-    """Fix list structure (nesting, numbering, bullets).
-
-    Invokes a specialized subagent that compares the visual
-    list layout to the markdown structure.
-
-    Note: Results may be pre-computed in parallel before this tool is called.
-    The tool checks for pre-computed results first and returns them instantly.
-
-    Args:
-        list_markdown: The list section to analyze
-
-    Returns:
-        ListResult with corrected structure and confidence score
-    """
-    # Check for pre-computed result from parallel execution
-    for key, result in ctx.deps.precomputed_subagent_results.items():
-        if key.startswith(TaskType.LIST_FIX.value + ":"):
-            if isinstance(result, ListResult):
-                logger.debug(f"Using pre-computed list result for {key}")
-                return result
-
-    # Fallback to direct invocation if no pre-computed result
-    result = await invoke_list_subagent(
-        list_markdown=list_markdown,
         page_image=ctx.deps.page_image,
     )
 
@@ -584,12 +484,11 @@ async def _run_subagents_parallel(
 ) -> dict[str, Any]:
     """Run subagent calls in parallel before the main agent reasoning loop.
 
-    This function groups tasks by type and invokes the appropriate subagent
-    for each task type concurrently. Results are stored in a dict keyed by
-    task identifier for fast lookup by the tool functions.
+    This function consolidates text structure tasks (page artifacts, footnotes,
+    citations, lists) into a SINGLE LLM call via the TextStructure subagent.
+    Typography tasks are handled separately and batched when multiple exist.
 
-    Typography tasks are batched into a single LLM call when there are multiple,
-    reducing token usage by 30-40%.
+    This consolidation reduces LLM calls from 6/page to 2-3/page.
 
     Args:
         job: The Job containing tasks to process
@@ -601,116 +500,135 @@ async def _run_subagents_parallel(
     if not job.tasks:
         return {}
 
-    # Separate typography tasks from other tasks for batch processing
+    # Separate tasks into text structure vs typography
+    text_structure_tasks: list[Task] = []
     typography_tasks: list[Task] = []
-    other_tasks: list[Task] = []
 
     for task in job.tasks:
         if task.task_type == TaskType.TYPOGRAPHY_FIX:
             typography_tasks.append(task)
-        else:
-            other_tasks.append(task)
+        elif task.task_type in TEXT_STRUCTURE_TASK_TYPES:
+            text_structure_tasks.append(task)
 
     results: dict[str, Any] = {}
-
-    # Single task optimization: skip parallelization overhead
-    if len(job.tasks) == 1 and not typography_tasks:
-        task = job.tasks[0]
-        result = await _invoke_subagent_for_task(task, deps)
-        key = _get_subagent_key(task.task_type, task.target)
-        return {key: result}
-
-    # Semaphore to limit concurrent calls
-    semaphore = asyncio.Semaphore(MAX_CONCURRENT_SUBAGENTS)
-
-    async def run_with_semaphore(task: Task) -> tuple[str, Any]:
-        """Run a single subagent call with semaphore limiting."""
-        async with semaphore:
-            result = await _invoke_subagent_for_task(task, deps)
-            key = _get_subagent_key(task.task_type, task.target)
-            return key, result
-
-    async def run_typography_batch() -> dict[str, Any]:
-        """Run typography tasks as a batch."""
-        if not typography_tasks:
-            return {}
-
-        # Build list of (task_target, text_region) tuples
-        text_regions: list[tuple[str, str]] = []
-        for task in typography_tasks:
-            text_region = task.context if task.context else deps.current_markdown
-            text_regions.append((task.target, text_region))
-
-        # Call batch function
-        async with semaphore:
-            batch_results = await invoke_typography_subagent_batch(
-                text_regions=text_regions,
-                page_image=deps.page_image,
-            )
-
-        # Map results back to task keys
-        batch_dict: dict[str, Any] = {}
-        for task_target, result in batch_results:
-            # Find the corresponding task to get the proper key
-            for task in typography_tasks:
-                if task.target == task_target:
-                    key = _get_subagent_key(task.task_type, task.target)
-                    batch_dict[key] = result
-                    break
-
-        return batch_dict
-
-    # Build list of coroutines to run
     coroutines: list = []
 
-    # Add individual non-typography tasks
-    for task in other_tasks:
-        coroutines.append(run_with_semaphore(task))
+    # Add text structure subagent call if there are any text structure tasks
+    if text_structure_tasks:
+        task_types = [t.task_type.value for t in text_structure_tasks]
+        logger.info(
+            f"Consolidating {len(text_structure_tasks)} text structure tasks "
+            f"({', '.join(task_types)}) into single LLM call"
+        )
+        coroutines.append(_run_text_structure_subagent(deps))
 
-    # Add batch typography task if there are typography tasks
+    # Add typography batch call if there are typography tasks
     if typography_tasks:
         logger.info(
             f"Batching {len(typography_tasks)} typography tasks into single LLM call"
         )
-        coroutines.append(run_typography_batch())
+        coroutines.append(_run_typography_batch(typography_tasks, deps))
 
-    # Run all coroutines in parallel
+    # If no tasks, return empty
+    if not coroutines:
+        return {}
+
+    # Run all subagent calls in parallel (at most 2 calls: text_structure + typography)
     results_list = await asyncio.gather(*coroutines, return_exceptions=True)
 
-    # Process results for non-typography tasks
-    non_typo_results = results_list[: len(other_tasks)]
-    for i, result in enumerate(non_typo_results):
-        task = other_tasks[i]
-        key = _get_subagent_key(task.task_type, task.target)
+    # Process text structure results
+    result_idx = 0
+    if text_structure_tasks:
+        text_result = results_list[result_idx]
+        result_idx += 1
 
-        if isinstance(result, Exception):
-            logger.warning(
-                f"Subagent for task {task.task_type.value} failed: {result}"
+        if isinstance(text_result, Exception):
+            logger.warning(f"Text structure subagent failed: {text_result}")
+            # Create a failed result
+            results["text_structure:page"] = TextStructureResult(
+                confidence=0.0,
+                reasoning=f"Subagent error: {text_result}",
+                corrections=[],
             )
-            results[key] = _create_failed_result(task.task_type, str(result), deps)
         else:
-            # Result is a tuple of (key, actual_result)
-            result_tuple: tuple[str, Any] = result  # type: ignore[assignment]
-            _, actual_result = result_tuple
-            results[key] = actual_result
+            results["text_structure:page"] = text_result
 
-    # Process typography batch results
+    # Process typography results
     if typography_tasks:
-        typo_result = results_list[-1]
+        typo_result = results_list[result_idx]
+
         if isinstance(typo_result, Exception):
             logger.warning(f"Typography batch failed: {typo_result}")
             # Create failed results for all typography tasks
             for task in typography_tasks:
                 key = _get_subagent_key(task.task_type, task.target)
-                results[key] = _create_failed_result(
-                    task.task_type, str(typo_result), deps
+                results[key] = TypographyResult(
+                    confidence=0.0,
+                    reasoning=f"Subagent error: {typo_result}",
+                    corrected_markdown=deps.current_markdown,
+                    formatting_added=[],
                 )
-        else:
+        elif isinstance(typo_result, dict):
             # Merge batch results into main results dict
-            typo_dict: dict[str, Any] = typo_result  # type: ignore[assignment]
-            results.update(typo_dict)
+            results.update(typo_result)
 
     return results
+
+
+async def _run_text_structure_subagent(deps: ParagraphAgentDeps) -> TextStructureResult:
+    """Run the consolidated text structure subagent.
+
+    Args:
+        deps: ParagraphAgentDeps with page image and markdown
+
+    Returns:
+        TextStructureResult with all corrections
+    """
+    return await invoke_text_structure_subagent(
+        page_markdown=deps.current_markdown,
+        page_image=deps.page_image,
+    )
+
+
+async def _run_typography_batch(
+    typography_tasks: list[Task],
+    deps: ParagraphAgentDeps,
+) -> dict[str, Any]:
+    """Run typography tasks as a batch.
+
+    Args:
+        typography_tasks: List of typography tasks
+        deps: ParagraphAgentDeps with page image and markdown
+
+    Returns:
+        Dict mapping task keys to TypographyResult
+    """
+    if not typography_tasks:
+        return {}
+
+    # Build list of (task_target, text_region) tuples
+    text_regions: list[tuple[str, str]] = []
+    for task in typography_tasks:
+        text_region = task.context if task.context else deps.current_markdown
+        text_regions.append((task.target, text_region))
+
+    # Call batch function
+    batch_results = await invoke_typography_subagent_batch(
+        text_regions=text_regions,
+        page_image=deps.page_image,
+    )
+
+    # Map results back to task keys
+    batch_dict: dict[str, Any] = {}
+    for task_target, result in batch_results:
+        # Find the corresponding task to get the proper key
+        for task in typography_tasks:
+            if task.target == task_target:
+                key = _get_subagent_key(task.task_type, task.target)
+                batch_dict[key] = result
+                break
+
+    return batch_dict
 
 
 async def _invoke_subagent_for_task(
@@ -718,6 +636,10 @@ async def _invoke_subagent_for_task(
     deps: ParagraphAgentDeps,
 ) -> Any:
     """Invoke the appropriate subagent based on task type.
+
+    Text structure tasks (page artifacts, footnotes, citations, lists) are
+    handled by the consolidated text structure subagent.
+    Typography is handled separately due to higher resolution needs.
 
     Args:
         task: The task to process
@@ -728,32 +650,10 @@ async def _invoke_subagent_for_task(
     """
     task_type = task.task_type
 
-    if task_type == TaskType.PAGE_ARTIFACT_REMOVAL:
-        # Use task context as text region, or fall back to markdown
-        text_region = task.context if task.context else deps.current_markdown
-        return await invoke_page_artifact_subagent(
-            text_region=text_region,
-            page_image=deps.page_image,
-        )
-
-    elif task_type == TaskType.FOOTNOTE_CORRECTION:
-        return await invoke_footnote_subagent(
+    # Text structure tasks use consolidated subagent
+    if task_type in TEXT_STRUCTURE_TASK_TYPES:
+        return await invoke_text_structure_subagent(
             page_markdown=deps.current_markdown,
-            page_image=deps.page_image,
-        )
-
-    elif task_type == TaskType.CITATION_LINKING:
-        return await invoke_citation_subagent(
-            page_markdown=deps.current_markdown,
-            page_image=deps.page_image,
-            full_document=deps.full_document_markdown,
-        )
-
-    elif task_type == TaskType.LIST_FIX:
-        # Use task context as list markdown, or fall back to full markdown
-        list_markdown = task.context if task.context else deps.current_markdown
-        return await invoke_list_subagent(
-            list_markdown=list_markdown,
             page_image=deps.page_image,
         )
 
@@ -786,35 +686,16 @@ def _create_failed_result(
     Returns:
         An appropriate result object with confidence 0.0
     """
-    if task_type == TaskType.PAGE_ARTIFACT_REMOVAL:
-        return PageArtifactResult(
+    # Text structure tasks use consolidated result type
+    if task_type in TEXT_STRUCTURE_TASK_TYPES:
+        return TextStructureResult(
             confidence=0.0,
             reasoning=f"Subagent error: {error_message}",
-            cleaned_text=deps.current_markdown,
-            artifacts_removed=[],
-            words_rejoined=[],
-        )
-    elif task_type == TaskType.FOOTNOTE_CORRECTION:
-        return FootnoteResult(
-            confidence=0.0,
-            reasoning=f"Subagent error: {error_message}",
-            corrected_markdown=deps.current_markdown,
-            footnotes_fixed=[],
-        )
-    elif task_type == TaskType.CITATION_LINKING:
-        return CitationResult(
-            confidence=0.0,
-            reasoning=f"Subagent error: {error_message}",
-            corrected_markdown=deps.current_markdown,
-            citations_linked=[],
-            bibliography_found=False,
-        )
-    elif task_type == TaskType.LIST_FIX:
-        return ListResult(
-            confidence=0.0,
-            reasoning=f"Subagent error: {error_message}",
-            corrected_markdown=deps.current_markdown,
-            issues_fixed=[],
+            corrections=[],
+            artifacts_removed=0,
+            footnotes_fixed=0,
+            citations_linked=0,
+            lists_fixed=0,
         )
     elif task_type == TaskType.TYPOGRAPHY_FIX:
         return TypographyResult(
@@ -1014,10 +895,7 @@ def _get_paragraph_agent() -> Agent[ParagraphAgentDeps, ParagraphAgentOutput]:
         _paragraph_agent.tool(view_page_tool)
         _paragraph_agent.tool(find_text_tool)
         _paragraph_agent.tool(read_context_tool)
-        _paragraph_agent.tool(remove_page_artifacts_tool)
-        _paragraph_agent.tool(correct_footnote_tool)
-        _paragraph_agent.tool(fix_citation_links_tool)
-        _paragraph_agent.tool(fix_list_semantics_tool)
+        _paragraph_agent.tool(fix_text_structure_tool)  # Consolidated: artifacts, footnotes, citations, lists
         _paragraph_agent.tool(fix_typography_tool)
         _paragraph_agent.tool(propose_edit_tool)
 
@@ -1247,6 +1125,7 @@ __all__ = [
     "CONFIDENCE_AUTO_APPLY",
     "CONFIDENCE_APPLY_WITH_REVIEW",
     "MAX_CONCURRENT_SUBAGENTS",
+    "TEXT_STRUCTURE_TASK_TYPES",
     # Dependencies
     "ParagraphAgentDeps",
     # Output
@@ -1260,9 +1139,9 @@ __all__ = [
     "execute_with_paragraph_agent",
     # Parallel execution (for testing)
     "_run_subagents_parallel",
-    "_invoke_subagent_for_task",
+    "_run_text_structure_subagent",
+    "_run_typography_batch",
     "_get_subagent_key",
-    "_create_failed_result",
     # Agent (for testing)
     "_get_paragraph_agent",
     "reset_agent",

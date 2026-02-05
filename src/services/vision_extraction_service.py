@@ -24,6 +24,7 @@ from pydantic_ai.messages import BinaryContent
 from pydantic_ai.models.bedrock import BedrockConverseModel
 
 from ..agents.model_tiers import MODEL_TIER_MAP, ModelTier
+from ..shared.llm_cost import calculate_estimated_cost
 
 logger = logging.getLogger(__name__)
 
@@ -506,8 +507,9 @@ async def extract_all_pages_vision(
 
     total_duration_ms = int((time.time() - start_time) * 1000)
 
-    # Estimate cost (Haiku pricing: $0.25/M input, $1.25/M output)
-    estimated_cost = (total_tokens_input * 0.00025 / 1000) + (total_tokens_output * 0.00125 / 1000)
+    # Use centralized cost calculation (Haiku pricing: $1.00/1M input, $5.00/1M output)
+    # calculate_estimated_cost returns cents, divide by 100 for dollars
+    estimated_cost = calculate_estimated_cost(total_tokens_input, total_tokens_output) / 100
 
     stats = VisionExtractionStats(
         pages_extracted=pages_extracted,

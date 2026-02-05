@@ -1,13 +1,185 @@
-"""Unit tests for collect_footnotes_at_end() function.
+"""Unit tests for footnote collection and prefixing functions.
 
-Tests the footnote collection helper from src/agents/orchestrator.py
-that moves scattered footnote definitions to the end of the document.
+Tests the footnote collection helpers from src/agents/orchestrator.py:
+- prefix_footnotes_by_page(): Renames footnotes for document-wide uniqueness
+- collect_footnotes_at_end(): Moves scattered footnote definitions to the end
 """
 
 import pytest
-from src.agents.orchestrator import collect_footnotes_at_end
+from src.agents.orchestrator import collect_footnotes_at_end, prefix_footnotes_by_page
 
 pytestmark = pytest.mark.unit
+
+
+# =============================================================================
+# prefix_footnotes_by_page Tests
+# =============================================================================
+
+
+class TestPrefixFootnotesByPage:
+    """Tests for prefix_footnotes_by_page function.
+
+    This function renames footnotes like [^1] to [^fn{page}-{note}] format
+    to avoid collisions when merging pages with duplicate footnote numbers.
+    """
+
+    def test_single_page_no_change_needed(self):
+        """Single page with unique footnotes gets prefixed."""
+        page_markdowns = {
+            1: "Text with footnote[^1].\n\n[^1]: First definition."
+        }
+        result = prefix_footnotes_by_page(page_markdowns)
+
+        assert "[^fn1-1]" in result[1]
+        assert "[^1]" not in result[1]
+        assert "Text with footnote[^fn1-1]." in result[1]
+        assert "[^fn1-1]: First definition." in result[1]
+
+    def test_multiple_pages_with_duplicate_footnote_numbers(self):
+        """Multiple pages with [^1] get unique prefixes."""
+        page_markdowns = {
+            1: "Page 1 text[^1].\n\n[^1]: Page 1 footnote.",
+            2: "Page 2 text[^1].\n\n[^1]: Page 2 footnote.",
+            3: "Page 3 text[^1].\n\n[^1]: Page 3 footnote.",
+        }
+        result = prefix_footnotes_by_page(page_markdowns)
+
+        # Each page should have unique prefixes
+        assert "[^fn1-1]" in result[1]
+        assert "[^fn2-1]" in result[2]
+        assert "[^fn3-1]" in result[3]
+
+        # No unprefixed footnotes
+        assert "[^1]" not in result[1]
+        assert "[^1]" not in result[2]
+        assert "[^1]" not in result[3]
+
+    def test_multiple_footnotes_per_page(self):
+        """Multiple footnotes on same page get unique identifiers."""
+        page_markdowns = {
+            1: "First[^1] and second[^2].\n\n[^1]: Note 1.\n[^2]: Note 2."
+        }
+        result = prefix_footnotes_by_page(page_markdowns)
+
+        assert "[^fn1-1]" in result[1]
+        assert "[^fn1-2]" in result[1]
+        assert "[^1]" not in result[1]
+        assert "[^2]" not in result[1]
+
+    def test_preserves_non_footnote_brackets(self):
+        """Markdown links and other brackets are not affected."""
+        page_markdowns = {
+            1: "Text with [link](url) and [reference][ref] and [^1].\n\n[^1]: Note."
+        }
+        result = prefix_footnotes_by_page(page_markdowns)
+
+        # Footnote is prefixed
+        assert "[^fn1-1]" in result[1]
+        # Other brackets unchanged
+        assert "[link](url)" in result[1]
+        assert "[reference][ref]" in result[1]
+
+    def test_no_footnotes_unchanged(self):
+        """Pages without footnotes are returned unchanged."""
+        page_markdowns = {
+            1: "# Title\n\nParagraph without footnotes."
+        }
+        result = prefix_footnotes_by_page(page_markdowns)
+
+        assert result[1] == page_markdowns[1]
+
+    def test_empty_page(self):
+        """Empty page content is handled gracefully."""
+        page_markdowns = {1: "", 2: "Some content."}
+        result = prefix_footnotes_by_page(page_markdowns)
+
+        assert result[1] == ""
+        assert result[2] == "Some content."
+
+    def test_high_numbered_footnotes(self):
+        """High-numbered footnotes are prefixed correctly."""
+        page_markdowns = {
+            5: "Reference[^42] and [^100].\n\n[^42]: Note 42.\n[^100]: Note 100."
+        }
+        result = prefix_footnotes_by_page(page_markdowns)
+
+        assert "[^fn5-42]" in result[5]
+        assert "[^fn5-100]" in result[5]
+
+    def test_preserves_footnote_definition_content(self):
+        """Footnote definition content is preserved."""
+        page_markdowns = {
+            1: "Ref[^1].\n\n[^1]: Definition with **bold** and `code`."
+        }
+        result = prefix_footnotes_by_page(page_markdowns)
+
+        assert "[^fn1-1]: Definition with **bold** and `code`." in result[1]
+
+    def test_multiple_references_to_same_footnote(self):
+        """Multiple references to same footnote are all renamed."""
+        page_markdowns = {
+            1: "First[^1] and second[^1] reference.\n\n[^1]: Shared note."
+        }
+        result = prefix_footnotes_by_page(page_markdowns)
+
+        # Both references should be renamed
+        assert result[1].count("[^fn1-1]") == 3  # 2 references + 1 definition
+
+    def test_page_numbers_not_sequential(self):
+        """Non-sequential page numbers work correctly."""
+        page_markdowns = {
+            3: "Page three[^1].\n\n[^1]: Note on page 3.",
+            7: "Page seven[^1].\n\n[^1]: Note on page 7.",
+        }
+        result = prefix_footnotes_by_page(page_markdowns)
+
+        assert "[^fn3-1]" in result[3]
+        assert "[^fn7-1]" in result[7]
+
+
+# =============================================================================
+# Integration Test: prefix + collect
+# =============================================================================
+
+
+class TestFootnoteWorkflow:
+    """Integration tests for the full footnote workflow."""
+
+    def test_prefix_then_collect_produces_unique_footnotes(self):
+        """Full workflow: prefix pages, join, collect at end."""
+        # Simulate 3 pages each with [^1] and [^2]
+        page_markdowns = {
+            1: "Page 1 ref[^1] and [^2].\n\n[^1]: P1 Note 1.\n[^2]: P1 Note 2.",
+            2: "Page 2 ref[^1] and [^2].\n\n[^1]: P2 Note 1.\n[^2]: P2 Note 2.",
+            3: "Page 3 ref[^1].\n\n[^1]: P3 Note 1.",
+        }
+
+        # Step 1: Prefix footnotes by page
+        prefixed = prefix_footnotes_by_page(page_markdowns)
+
+        # Step 2: Join pages
+        joined = "\n\n---\n\n".join(
+            prefixed[page] for page in sorted(prefixed.keys())
+        )
+
+        # Step 3: Collect footnotes at end
+        final = collect_footnotes_at_end(joined)
+
+        # Verify all footnotes are unique and present
+        assert "[^fn1-1]:" in final
+        assert "[^fn1-2]:" in final
+        assert "[^fn2-1]:" in final
+        assert "[^fn2-2]:" in final
+        assert "[^fn3-1]:" in final
+
+        # Verify footnotes are at end (after all main content)
+        main_content_end = final.index("Page 3 ref[^fn3-1].")
+        footnote_start = final.index("[^fn1-1]:")
+        assert footnote_start > main_content_end
+
+        # Verify original [^1] [^2] no longer exist
+        assert "[^1]:" not in final
+        assert "[^2]:" not in final
 
 
 class TestCollectFootnotesAtEnd:

@@ -88,14 +88,54 @@ logger = logging.getLogger(__name__)
 
 
 # =============================================================================
-# Footnote Collection Helper
+# Footnote Renumbering and Collection Helpers
 # =============================================================================
+
+
+def prefix_footnotes_by_page(page_markdowns: dict[int, str]) -> dict[int, str]:
+    """Prefix footnotes with page number for document-wide uniqueness.
+
+    When multiple pages each have `[^1]`, they would collide when merged.
+    This function renames them to `[^fn{page}-{note}]` format:
+      - Page 1: `[^1]` → `[^fn1-1]`
+      - Page 2: `[^1]` → `[^fn2-1]`
+
+    The format `[^fn{page}-{note}]` is:
+      - Clear and debuggable
+      - Guaranteed unique across pages
+      - Valid markdown footnote syntax
+
+    Args:
+        page_markdowns: Dict of page_num -> markdown content
+
+    Returns:
+        Updated dict with footnotes renumbered for uniqueness
+    """
+    result: dict[int, str] = {}
+
+    for page_num, markdown in page_markdowns.items():
+        # Find all footnote markers [^N] and definitions [^N]:
+        # Match footnote references and definitions with numeric identifiers
+        marker_pattern = r"\[\^(\d+)\]"
+
+        def replace_footnote(match: re.Match) -> str:
+            note_num = match.group(1)
+            return f"[^fn{page_num}-{note_num}]"
+
+        # Replace all footnote markers with page-prefixed versions
+        updated_markdown = re.sub(marker_pattern, replace_footnote, markdown)
+        result[page_num] = updated_markdown
+
+    return result
 
 
 def collect_footnotes_at_end(markdown: str) -> str:
     """Collect all footnote definitions and move them to the document end.
 
     Also removes page separator markers (---).
+
+    Handles both simple footnotes `[^1]` and page-prefixed footnotes `[^fn1-1]`
+    created by prefix_footnotes_by_page().
 
     Args:
         markdown: Raw markdown with scattered footnote definitions
@@ -104,17 +144,18 @@ def collect_footnotes_at_end(markdown: str) -> str:
         Markdown with footnotes collected at the end
     """
     # Pattern for footnote definitions - captures multiline definitions
-    # Matches [^1]: definition text that may span lines until next footnote or double newline
-    footnote_pattern = r"^\[\^(\d+)\]:\s*(.+?)(?=\n\[\^|\n\n|\Z)"
+    # Matches both [^1]: and [^fn1-1]: formats
+    # The identifier can be: digits only OR fn{page}-{note} format
+    footnote_pattern = r"^\[\^((?:fn\d+-\d+|\d+))\]:\s*(.+?)(?=\n\[\^|\n\n|\Z)"
 
     # Find all footnote definitions
-    footnotes = {}
+    footnotes: dict[str, str] = {}
     for match in re.finditer(footnote_pattern, markdown, re.MULTILINE | re.DOTALL):
-        num = int(match.group(1))
+        footnote_id = match.group(1)
         text = match.group(2).strip()
-        # Keep the first definition for each number (in case of duplicates)
-        if num not in footnotes:
-            footnotes[num] = text
+        # Keep the first definition for each identifier (in case of duplicates)
+        if footnote_id not in footnotes:
+            footnotes[footnote_id] = text
 
     # Remove footnote definitions from their current locations
     cleaned = re.sub(footnote_pattern, "", markdown, flags=re.MULTILINE | re.DOTALL)
@@ -129,8 +170,27 @@ def collect_footnotes_at_end(markdown: str) -> str:
     # Append footnotes at the end if any were found
     if footnotes:
         footnote_section = "\n\n---\n\n"  # Single separator before footnotes
-        for num in sorted(footnotes.keys()):
-            footnote_section += f"[^{num}]: {footnotes[num]}\n"
+
+        # Sort footnotes: page-prefixed ones by page then note, simple ones by number
+        def sort_key(footnote_id: str) -> tuple[int, int]:
+            if footnote_id.startswith("fn"):
+                # Parse fn{page}-{note} format
+                parts = footnote_id[2:].split("-")
+                if len(parts) == 2:
+                    try:
+                        return (int(parts[0]), int(parts[1]))
+                    except ValueError:
+                        pass
+                return (0, 0)
+            else:
+                # Simple numeric footnote
+                try:
+                    return (0, int(footnote_id))
+                except ValueError:
+                    return (0, 0)
+
+        for footnote_id in sorted(footnotes.keys(), key=sort_key):
+            footnote_section += f"[^{footnote_id}]: {footnotes[footnote_id]}\n"
         cleaned += footnote_section.rstrip()
 
     return cleaned
@@ -994,8 +1054,12 @@ async def run_agentic_pipeline(
         # =================================================================
         total_duration_ms = int((time.time() - start_time) * 1000)
 
+        # Prefix footnotes with page numbers for document-wide uniqueness
+        # This transforms [^1] on page 1 to [^fn1-1], [^1] on page 2 to [^fn2-1], etc.
+        prefixed_markdowns = prefix_footnotes_by_page(final_markdowns)
+
         # Combine all page markdowns
-        raw_markdown = "\n\n---\n\n".join(final_markdowns[p] for p in sorted(final_markdowns.keys()))
+        raw_markdown = "\n\n---\n\n".join(prefixed_markdowns[p] for p in sorted(prefixed_markdowns.keys()))
 
         # Post-process: collect footnotes at document end and remove page separators
         final_markdown = collect_footnotes_at_end(raw_markdown)
@@ -1383,7 +1447,10 @@ async def run_agentic_pipeline_with_streaming_handoff(
         # =================================================================
         total_duration_ms = int((time.time() - start_time) * 1000)
 
-        raw_markdown = "\n\n---\n\n".join(final_markdowns[p] for p in sorted(final_markdowns.keys()))
+        # Prefix footnotes with page numbers for document-wide uniqueness
+        prefixed_markdowns = prefix_footnotes_by_page(final_markdowns)
+
+        raw_markdown = "\n\n---\n\n".join(prefixed_markdowns[p] for p in sorted(prefixed_markdowns.keys()))
         final_markdown = collect_footnotes_at_end(raw_markdown)
 
         # Calculate cost in dollars (Haiku pricing)

@@ -9,11 +9,13 @@ Supports both single-region and batch processing modes:
 
 Batch processing reduces token usage by 30-40% when multiple typography tasks
 need to be processed for the same page.
+
+Uses visual analysis compression (1200px width) since this task needs to detect
+visual formatting (bold/italic) that conveys semantic meaning.
 """
 
 import logging
 import re
-from io import BytesIO
 
 from PIL import Image
 from pydantic import BaseModel, Field
@@ -22,6 +24,7 @@ from pydantic_ai.messages import BinaryContent
 from pydantic_ai.models.bedrock import BedrockConverseModel
 
 from src.utils.circuit_breaker import CircuitBreakerOpenError
+from src.utils.image_utils import image_to_compressed_bytes
 
 from ..model_tiers import MODEL_TIER_MAP, ModelTier
 from .types import TypographyResult
@@ -167,10 +170,13 @@ def _get_typography_subagent() -> Agent[None, TypographyResult]:
 
 
 def _image_to_binary(image: Image.Image) -> BinaryContent:
-    """Convert PIL Image to BinaryContent for agent consumption."""
-    buffer = BytesIO()
-    image.save(buffer, format="PNG")
-    return BinaryContent(data=buffer.getvalue(), media_type="image/png")
+    """Convert PIL Image to compressed BinaryContent for agent consumption.
+
+    Uses visual analysis compression (1200px width) since typography detection
+    needs higher resolution to identify bold/italic formatting.
+    """
+    compressed_bytes = image_to_compressed_bytes(image, for_visual_analysis=True)
+    return BinaryContent(data=compressed_bytes, media_type="image/png")
 
 
 async def invoke_typography_subagent(

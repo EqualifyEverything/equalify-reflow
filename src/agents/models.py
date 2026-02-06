@@ -64,6 +64,26 @@ class JobType(str, Enum):
     PARAGRAPH = "paragraph"  # Text flow fixes - ParagraphAgent
 
 
+# Task type classification for conditional tool registration and vision optimization.
+# Vision-required tasks need page images; text-only tasks work from markdown alone.
+VISION_REQUIRED_TASK_TYPES: frozenset[TaskType] = frozenset({
+    TaskType.ALT_TEXT,
+    TaskType.TABLE_TRANSCRIPTION,
+    TaskType.TYPOGRAPHY_FIX,
+})
+
+TEXT_ONLY_TASK_TYPES: frozenset[TaskType] = frozenset({
+    TaskType.HEADING_FIX,
+    TaskType.OCR_FIX,
+    TaskType.FORMAT_FIX,
+    TaskType.SPELLING_FIX,
+    TaskType.PAGE_ARTIFACT_REMOVAL,
+    TaskType.FOOTNOTE_CORRECTION,
+    TaskType.CITATION_LINKING,
+    TaskType.LIST_FIX,
+})
+
+
 class PageType(str, Enum):
     """Types of pages detected in quick scan."""
 
@@ -1214,4 +1234,10 @@ class JobResult(BaseModel):
     error: str | None = Field(default=None, description="Error message if failed")
     llm_call: LLMCallRecord | None = Field(
         default=None, description="LLM call record for cost tracking"
+    )
+
+    # Preserved subagent findings for dossier population
+    subagent_findings: list[dict] = Field(
+        default_factory=list,
+        description="Preserved subagent findings for dossier",
     )

@@ -140,8 +140,12 @@ class APIKeyAuthMiddleware(BaseHTTPMiddleware):
         if path.startswith("/static/canvas/"):
             return True
 
-        # Development monitoring endpoints (public only in dev environment)
-        if settings.environment == "dev" and path.startswith("/api/dev/monitoring"):
+        # Development-only endpoints (public only in dev environment)
+        if settings.environment == "dev" and (
+            path.startswith("/api/dev/monitoring")
+            or path.startswith("/api/dev/minimal")
+            or path.startswith("/api/dev/pipeline-viewer")
+        ):
             return True
 
         # Allow same-origin requests from demo UI (protected by Basic Auth at /demo)

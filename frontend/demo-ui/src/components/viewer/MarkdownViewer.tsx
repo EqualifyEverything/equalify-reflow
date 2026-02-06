@@ -4,7 +4,7 @@ import remarkGfm from 'remark-gfm';
 import { motion, AnimatePresence } from 'framer-motion';
 import { cn } from '@/lib/utils';
 import { Button } from '@/components/ui/button';
-import { Eye, Code2, Download, Bug } from 'lucide-react';
+import { Eye, Code2, Download, Bug, Copy, Check } from 'lucide-react';
 
 interface MarkdownViewerProps {
   content: string;
@@ -13,6 +13,7 @@ interface MarkdownViewerProps {
   showDebugDownload?: boolean;
   onDownloadMarkdown?: () => void;
   onDownloadDebug?: () => void;
+  onCopy?: () => void;
 }
 
 export function MarkdownViewer({
@@ -22,8 +23,20 @@ export function MarkdownViewer({
   showDebugDownload = false,
   onDownloadMarkdown,
   onDownloadDebug,
+  onCopy,
 }: MarkdownViewerProps) {
   const [showRaw, setShowRaw] = useState(false);
+  const [copied, setCopied] = useState(false);
+
+  const handleCopy = () => {
+    if (onCopy) {
+      onCopy();
+    } else {
+      navigator.clipboard.writeText(content);
+    }
+    setCopied(true);
+    setTimeout(() => setCopied(false), 1500);
+  };
 
   return (
     <div className={cn('flex flex-col h-full', className)}>
@@ -56,6 +69,24 @@ export function MarkdownViewer({
             >
               <Bug className="w-4 h-4" />
               <span className="text-xs">Debug</span>
+            </Button>
+          )}
+          {/* Copy page content */}
+          {onCopy && (
+            <Button
+              variant="ghost"
+              size="sm"
+              onClick={handleCopy}
+              title="Copy page markdown"
+              className={cn(
+                'gap-1.5',
+                copied
+                  ? 'text-green-600 hover:text-green-700 hover:bg-green-50'
+                  : 'text-muted-foreground hover:text-foreground'
+              )}
+            >
+              {copied ? <Check className="w-4 h-4" /> : <Copy className="w-4 h-4" />}
+              <span className="text-xs">{copied ? 'Copied' : 'Copy'}</span>
             </Button>
           )}
           {/* Raw/Preview toggle */}

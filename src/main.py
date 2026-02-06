@@ -50,6 +50,21 @@ async def lifespan(app: FastAPI) -> AsyncIterator[None]:
         init_telemetry(app)
         logger.info("✅ OpenTelemetry initialized")
 
+    # Initialize Logfire (if enabled) — auto-instruments PydanticAI agents
+    if settings.logfire_enabled:
+        try:
+            import logfire
+
+            # If token provided via env, use it; otherwise logfire picks up local config
+            if settings.logfire_token:
+                logfire.configure(token=settings.logfire_token)
+            else:
+                logfire.configure()
+            logfire.instrument_pydantic_ai()
+            logger.info("✅ Logfire initialized (PydanticAI instrumentation active)")
+        except Exception as e:
+            logger.warning(f"Failed to initialize Logfire: {e}")
+
     # Startup: Initialize shared services
     logger.info("Initializing shared services...")
     redis_gen = get_redis_client()
@@ -147,10 +162,14 @@ app.include_router(review_checklist.router)
 
 # Conditionally import dev-only endpoints (only in development)
 if settings.environment == "dev":
-    from .api import dev_monitoring
+    from .api import dev_monitoring, minimal_pipeline, pipeline_viewer
 
     app.include_router(dev_monitoring.router)
+    app.include_router(minimal_pipeline.router)
+    app.include_router(pipeline_viewer.router)
     logger.info("✅ Dev monitoring endpoints enabled at /api/dev/monitoring/queues")
+    logger.info("✅ Minimal pipeline endpoint enabled at /api/dev/minimal/process")
+    logger.info("✅ Pipeline Viewer endpoint enabled at /api/dev/pipeline-viewer/process")
 
 # Conditionally enable Canvas config endpoints
 if settings.canvas_autopublish_enabled:

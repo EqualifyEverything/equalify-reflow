@@ -233,7 +233,10 @@ def convert_chain_state_to_page_plans(
     Returns:
         Dict mapping page number to PagePlan
     """
+    from .shared_prompts import derive_section_map
+
     page_plans: dict[int, PagePlan] = {}
+    section_map = derive_section_map(chain_state.outline) if chain_state.outline else {}
 
     for page_num, summary in chain_state.page_summaries.items():
         figures = chain_state.figures_by_page.get(page_num, [])
@@ -254,7 +257,7 @@ def convert_chain_state_to_page_plans(
         page_plans[page_num] = PagePlan(
             page_num=page_num,
             summary=summary,
-            section_context="",  # Could be derived from outline
+            section_context=section_map.get(page_num, ""),
             keywords=[],  # Terms are accumulated in dictionary
             figures=figures,
             tables=tables,
@@ -1262,9 +1265,12 @@ def _convert_chain_state_to_page_plan_single(
     Returns:
         PagePlan for the page, or None if not in the chain state
     """
+    from .shared_prompts import derive_section_map
+
     if page_num not in chain_state.page_summaries:
         return None
 
+    section_map = derive_section_map(chain_state.outline) if chain_state.outline else {}
     summary = chain_state.page_summaries[page_num]
     figures = chain_state.figures_by_page.get(page_num, [])
     tables = chain_state.tables_by_page.get(page_num, [])
@@ -1282,7 +1288,7 @@ def _convert_chain_state_to_page_plan_single(
     return PagePlan(
         page_num=page_num,
         summary=summary,
-        section_context="",
+        section_context=section_map.get(page_num, ""),
         keywords=[],
         figures=figures,
         tables=tables,

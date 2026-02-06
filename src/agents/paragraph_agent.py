@@ -31,7 +31,7 @@ from io import BytesIO
 from typing import TYPE_CHECKING, Any
 
 from pydantic import BaseModel, Field
-from pydantic_ai import Agent, RunContext
+from pydantic_ai import Agent, RunContext, ToolDefinition
 from pydantic_ai.messages import BinaryContent
 from pydantic_ai.models.bedrock import BedrockConverseModel
 
@@ -186,6 +186,9 @@ class ParagraphAgentDeps:
     # Pre-computed subagent results (populated by _run_subagents_parallel)
     # Keys are task identifiers, values are subagent result objects
     precomputed_subagent_results: dict[str, Any] = field(default_factory=dict)
+
+    # Pipeline dossier for context injection
+    dossier: Any | None = None
 
 
 # =============================================================================
@@ -877,6 +880,24 @@ async def propose_edit_tool(
 _paragraph_agent: Agent[ParagraphAgentDeps, ParagraphAgentOutput] | None = None
 
 
+async def _prepare_typography_tool(
+    ctx: RunContext[ParagraphAgentDeps], tool_def: ToolDefinition
+) -> ToolDefinition | None:
+    """Hide typography tool when no typography tasks are present."""
+    has_typography = any(t.task_type == TaskType.TYPOGRAPHY_FIX for t in ctx.deps.job.tasks)
+    return tool_def if has_typography else None
+
+
+async def _prepare_text_structure_tool(
+    ctx: RunContext[ParagraphAgentDeps], tool_def: ToolDefinition
+) -> ToolDefinition | None:
+    """Hide text structure tool when no text structure tasks are present."""
+    from .models import TEXT_ONLY_TASK_TYPES
+
+    has_text_tasks = any(t.task_type in TEXT_ONLY_TASK_TYPES for t in ctx.deps.job.tasks)
+    return tool_def if has_text_tasks else None
+
+
 def _get_paragraph_agent() -> Agent[ParagraphAgentDeps, ParagraphAgentOutput]:
     """Get or create the ParagraphAgent."""
     global _paragraph_agent
@@ -891,13 +912,32 @@ def _get_paragraph_agent() -> Agent[ParagraphAgentDeps, ParagraphAgentOutput]:
             system_prompt=PARAGRAPH_AGENT_SYSTEM_PROMPT,
         )
 
-        # Register tools
+        # Register tools — subagent tools use prepare for conditional registration
         _paragraph_agent.tool(view_page_tool)
         _paragraph_agent.tool(find_text_tool)
         _paragraph_agent.tool(read_context_tool)
-        _paragraph_agent.tool(fix_text_structure_tool)  # Consolidated: artifacts, footnotes, citations, lists
-        _paragraph_agent.tool(fix_typography_tool)
+        _paragraph_agent.tool(fix_text_structure_tool, prepare=_prepare_text_structure_tool)
+        _paragraph_agent.tool(fix_typography_tool, prepare=_prepare_typography_tool)
         _paragraph_agent.tool(propose_edit_tool)
+
+        # Dynamic instructions from dossier
+        @_paragraph_agent.instructions
+        def _inject_dossier_context(ctx: RunContext[ParagraphAgentDeps]) -> str:
+            from .shared_prompts import (
+                format_document_identity,
+                format_page_summary,
+                format_section_context,
+            )
+
+            d = ctx.deps.dossier
+            if d is None:
+                return ""
+            parts = [
+                format_document_identity(d),
+                format_section_context(d, ctx.deps.job.page),
+                format_page_summary(d, ctx.deps.job.page),
+            ]
+            return "\n".join(p for p in parts if p)
 
         logger.info("ParagraphAgent initialized")
 
@@ -918,6 +958,7 @@ async def execute_with_paragraph_agent(
     event_bus: EventBus | None = None,
     dictionary: list[str] | None = None,
     capture_debug: bool = False,
+    dossier: Any | None = None,
 ) -> JobResult:
     """Execute a paragraph job using ParagraphAgent.
 
@@ -955,6 +996,7 @@ async def execute_with_paragraph_agent(
         full_document_markdown=full_document_markdown,
         dictionary=dictionary or [],
         event_bus=event_bus,
+        dossier=dossier,
     )
 
     # Pre-compute subagent results in parallel before running the main agent
@@ -1059,6 +1101,13 @@ Remember:
                 )
             )
 
+        # Extract subagent findings for dossier
+        subagent_findings = _extract_subagent_findings(
+            page=job.page,
+            precomputed=deps.precomputed_subagent_results,
+            applied_edits=deps.validated_edits,
+        )
+
         return JobResult(
             job_id=job.job_id,
             success=tasks_failed == 0,
@@ -1070,6 +1119,7 @@ Remember:
             output_tokens=output_tokens,
             duration_ms=duration_ms,
             llm_call=llm_call,
+            subagent_findings=subagent_findings,
         )
 
     except Exception as e:
@@ -1099,6 +1149,74 @@ Remember:
             duration_ms=duration_ms,
             error=str(e),
         )
+
+
+# =============================================================================
+# Subagent Findings Extraction
+# =============================================================================
+
+
+def _extract_subagent_findings(
+    page: int,
+    precomputed: dict[str, Any],
+    applied_edits: list,
+) -> list[dict]:
+    """Extract subagent findings into dossier-compatible dicts.
+
+    Converts pre-computed subagent results and applied edits into
+    a list of finding dicts for the dossier.
+
+    Args:
+        page: Page number
+        precomputed: Pre-computed subagent results keyed by task identifier
+        applied_edits: List of validated LedgerEntry objects
+
+    Returns:
+        List of finding dicts for SubagentFinding construction
+    """
+    findings: list[dict] = []
+    applied_targets = {e.target for e in applied_edits}
+
+    for key, result in precomputed.items():
+        # Determine task type from key pattern
+        task_type = key.split(":")[0] if ":" in key else key
+
+        # Try to extract description and confidence from result
+        confidence = 0.8
+        if hasattr(result, "corrections"):
+            # TextStructureResult — corrections have task_type, before, after, confidence, reasoning
+            for correction in result.corrections:
+                # Match against applied edits by before text
+                before_text = getattr(correction, "before", "")
+                is_applied = before_text in applied_targets if before_text else len(applied_edits) > 0
+                findings.append({
+                    "page": page,
+                    "task_type": getattr(correction, "task_type", task_type),
+                    "description": getattr(correction, "reasoning", str(correction)),
+                    "confidence": getattr(correction, "confidence", confidence),
+                    "applied": is_applied,
+                })
+        elif hasattr(result, "fixes"):
+            # TypographyResult
+            for fix in result.fixes:
+                findings.append({
+                    "page": page,
+                    "task_type": "typography",
+                    "description": getattr(fix, "description", str(fix)),
+                    "confidence": getattr(fix, "confidence", confidence),
+                    "applied": True,  # Typography fixes are always applied
+                })
+        else:
+            # Generic result
+            findings.append({
+                "page": page,
+                "task_type": task_type,
+                "description": str(result)[:200],
+                "confidence": confidence,
+                "applied": len(applied_edits) > 0,
+            })
+
+    return findings
 
 
 # =============================================================================

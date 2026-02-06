@@ -37,7 +37,7 @@ from io import BytesIO
 from typing import TYPE_CHECKING, Any
 
 from pydantic import BaseModel, Field
-from pydantic_ai import Agent, RunContext
+from pydantic_ai import Agent, RunContext, ToolDefinition
 from pydantic_ai.messages import BinaryContent
 from pydantic_ai.models.bedrock import BedrockConverseModel
 
@@ -99,6 +99,9 @@ class WorkerDeps:
 
     # Event bus for streaming
     event_bus: EventBus | None = None
+
+    # Pipeline dossier for context injection
+    dossier: Any | None = None
 
 
 # =============================================================================
@@ -716,6 +719,16 @@ async def propose_edit_tool(
 _worker_agent: Agent[WorkerDeps, WorkerOutput] | None = None
 
 
+async def _prepare_vision_tool(
+    ctx: RunContext[WorkerDeps], tool_def: ToolDefinition
+) -> ToolDefinition | None:
+    """Hide vision tools for text-only jobs to save prompt tokens."""
+    from .models import VISION_REQUIRED_TASK_TYPES
+
+    job_types = {t.task_type for t in ctx.deps.job.tasks}
+    return tool_def if job_types & VISION_REQUIRED_TASK_TYPES else None
+
+
 def _get_worker_agent() -> Agent[WorkerDeps, WorkerOutput]:
     """Get or create the worker agent."""
     global _worker_agent
@@ -730,14 +743,31 @@ def _get_worker_agent() -> Agent[WorkerDeps, WorkerOutput]:
             system_prompt=WORKER_SYSTEM_PROMPT,
         )
 
-        # Register tools
+        # Register tools — vision tools use prepare for conditional registration
         _worker_agent.tool(view_page_tool)
-        _worker_agent.tool(view_figure_tool)
-        _worker_agent.tool(view_table_tool)
+        _worker_agent.tool(view_figure_tool, prepare=_prepare_vision_tool)
+        _worker_agent.tool(view_table_tool, prepare=_prepare_vision_tool)
         _worker_agent.tool(read_section_tool)
         _worker_agent.tool(find_text_tool)
         _worker_agent.tool(get_table_markdown_tool)
         _worker_agent.tool(propose_edit_tool)
+
+        # Dynamic instructions from dossier
+        @_worker_agent.instructions
+        def _inject_dossier_context(ctx: RunContext[WorkerDeps]) -> str:
+            from .shared_prompts import (
+                format_document_identity,
+                format_section_context,
+            )
+
+            d = ctx.deps.dossier
+            if d is None:
+                return ""
+            parts = [
+                format_document_identity(d),
+                format_section_context(d, ctx.deps.job.page),
+            ]
+            return "\n".join(p for p in parts if p)
 
         logger.info("Worker agent initialized")
 
@@ -1205,6 +1235,7 @@ async def execute_job(
     ledger: Ledger,
     event_bus: EventBus | None = None,
     capture_debug: bool = False,
+    dossier: Any | None = None,
 ) -> JobResult:
     """Execute a single job.
 
@@ -1252,6 +1283,7 @@ async def execute_job(
         validated_edits=[],
         dictionary=context.dictionary,
         event_bus=event_bus,
+        dossier=dossier,
     )
 
     agent = _get_worker_agent()
@@ -1432,6 +1464,7 @@ async def execute_page_jobs(
     ledger: Ledger,
     event_bus: EventBus | None = None,
     capture_debug: bool = False,
+    dossier: Any | None = None,
 ) -> tuple[str, list[LedgerEntry], list[LLMCallRecord], int, int]:
     """Execute all jobs for a single page and return the updated markdown.
 
@@ -1492,6 +1525,7 @@ async def execute_page_jobs(
                 event_bus=event_bus,
                 dictionary=job.context.dictionary if job.context else None,
                 capture_debug=capture_debug,
+                dossier=dossier,
             )
         else:
             # Route STRUCTURE and CONTENT jobs to Worker
@@ -1503,6 +1537,7 @@ async def execute_page_jobs(
                 ledger=ledger,
                 event_bus=event_bus,
                 capture_debug=capture_debug,
+                dossier=dossier,
             )
 
         # Accumulate results
@@ -1532,6 +1567,7 @@ async def execute_jobs_parallel(
     event_bus: EventBus | None = None,
     page_markdowns: dict[int, str] | None = None,
     capture_debug: bool = False,
+    dossier: Any | None = None,
 ) -> list[JobResult]:
     """Execute multiple jobs in parallel with agent routing.
 
@@ -1599,6 +1635,7 @@ async def execute_jobs_parallel(
                     event_bus=event_bus,
                     dictionary=job.context.dictionary if job.context else None,
                     capture_debug=capture_debug,
+                    dossier=dossier,
                 )
 
             # Route other jobs (STRUCTURE, CONTENT) to Worker
@@ -1610,6 +1647,7 @@ async def execute_jobs_parallel(
                 ledger=ledger,
                 event_bus=event_bus,
                 capture_debug=capture_debug,
+                dossier=dossier,
             )
 
     # Sort jobs by priority

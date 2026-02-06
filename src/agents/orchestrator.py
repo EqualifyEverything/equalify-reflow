@@ -22,6 +22,13 @@ from uuid import uuid4
 from ..shared.llm_cost import calculate_estimated_cost
 from ..utils.confidence import calculate_confidence, collect_quality_signals
 from ..utils.confidence_scoring import calculate_confidence_from_verification
+from .dossier import (
+    ExecutionSnapshot,
+    PipelineDossier,
+    PlanningSnapshot,
+    SubagentFinding,
+    VerificationSnapshot,
+)
 from .events import (
     ConvergenceEvent,
     EditCommittedEvent,
@@ -78,6 +85,7 @@ from .recovery import (
     determine_final_status,
     should_attempt_recovery,
 )
+from .shared_prompts import derive_section_map
 from .subagents.paragraph_merge import invoke_paragraph_merge_subagent
 from .worker import execute_jobs_parallel, execute_page_jobs
 
@@ -732,6 +740,7 @@ async def run_recovery_phase(
     page_images: dict[int, Image.Image],
     ledger: Ledger,
     event_bus: EventBus | None = None,
+    dossier: PipelineDossier | None = None,
 ) -> tuple[dict[int, str], RecoveryReport]:
     """Run the recovery phase on failed pages.
 
@@ -810,6 +819,7 @@ async def run_recovery_phase(
                 processing_history=processing_history,
                 attempt_number=attempt_num,
                 event_bus=event_bus,
+                dossier=dossier,
             )
 
             all_attempts.append(attempt)
@@ -877,6 +887,48 @@ async def run_recovery_phase(
 
 
 # =============================================================================
+# Dossier Helpers
+# =============================================================================
+
+
+def _populate_execution_snapshot(
+    dossier: PipelineDossier,
+    job_results: list,
+    plan: DocumentPlan,
+) -> None:
+    """Populate dossier.execution from job results."""
+    pages_processed = set()
+    subagent_findings: dict[int, list[SubagentFinding]] = {}
+    edits_applied_count = 0
+    tasks_completed = 0
+    tasks_failed = 0
+
+    for jr in job_results:
+        # Find the job to get its page
+        job = next((j for j in plan.jobs if j.job_id == jr.job_id), None)
+        if job:
+            pages_processed.add(job.page)
+
+        edits_applied_count += len(jr.ledger_entries)
+        tasks_completed += jr.tasks_completed
+        tasks_failed += jr.tasks_failed
+
+        # Collect preserved subagent findings from JobResult
+        if jr.subagent_findings and job:
+            page_findings = subagent_findings.setdefault(job.page, [])
+            for finding_dict in jr.subagent_findings:
+                page_findings.append(SubagentFinding(**finding_dict))
+
+    dossier.execution = ExecutionSnapshot(
+        pages_processed=sorted(pages_processed),
+        subagent_findings=subagent_findings,
+        edits_applied_count=edits_applied_count,
+        tasks_completed=tasks_completed,
+        tasks_failed=tasks_failed,
+    )
+
+
+# =============================================================================
 # Main Orchestrator
 # =============================================================================
 
@@ -936,6 +988,26 @@ async def run_agentic_pipeline(
             capture_debug=capture_debug,
         )
 
+        # Create pipeline dossier and populate planning snapshot
+        dossier = PipelineDossier(
+            document_id=doc_id,
+            filename=filename,
+            current_phase="planning",
+        )
+        dossier.planning = PlanningSnapshot(
+            document_title=plan.structure.title,
+            document_type=plan.structure.document_type,
+            total_pages=plan.total_pages,
+            outline=plan.structure.outline,
+            dictionary=plan.full_dictionary,
+            page_summaries={p: pp.summary for p, pp in plan.pages.items()},
+            section_map=derive_section_map(plan.structure.outline),
+            heading_fixes_count=len(plan.structure.heading_fixes),
+            figures_planned={p: len(pp.figures) for p, pp in plan.pages.items()},
+            tables_planned={p: len(pp.tables) for p, pp in plan.pages.items()},
+        )
+        dossier.current_phase = "execution"
+
         # =================================================================
         # Phase 2: Execution
         # =================================================================
@@ -951,6 +1023,7 @@ async def run_agentic_pipeline(
             event_bus=event_bus,
             page_markdowns=page_markdowns,  # For PARAGRAPH job routing
             capture_debug=capture_debug,
+            dossier=dossier,
         )
 
         execution_duration_ms = int((time.time() - execution_start) * 1000)
@@ -963,6 +1036,10 @@ async def run_agentic_pipeline(
                 job = next((j for j in plan.jobs if j.job_id == job_result.job_id), None)
                 if job:
                     final_markdowns[job.page] = job_result.updated_markdown
+
+        # Populate dossier execution snapshot
+        _populate_execution_snapshot(dossier, job_results, plan)
+        dossier.current_phase = "assembly"
 
         # Aggregate execution stats
         total_input_tokens = plan.planning_tokens_input + sum(r.input_tokens for r in job_results)
@@ -1014,6 +1091,16 @@ async def run_agentic_pipeline(
             page_width=page_width,  # For table accuracy verification
         )
 
+        # Populate dossier verification snapshot
+        dossier.verification = VerificationSnapshot(
+            passed=verification.passed,
+            pages_passed=[pv.page_num for pv in verification.pages if pv.passed],
+            pages_failed=[pv.page_num for pv in verification.pages if not pv.passed],
+            critical_issues=verification.critical_issues,
+            warnings=verification.warnings,
+        )
+        dossier.current_phase = "recovery"
+
         # =================================================================
         # Phase 6: Recovery (if needed)
         # =================================================================
@@ -1034,6 +1121,7 @@ async def run_agentic_pipeline(
                 page_images=page_images,
                 ledger=ledger,
                 event_bus=event_bus,
+                dossier=dossier,
             )
 
         # Determine final status
@@ -1257,6 +1345,13 @@ async def run_agentic_pipeline_with_streaming_handoff(
 
     logger.info(f"Starting streaming handoff pipeline for {filename} (id={doc_id})")
 
+    # Create dossier early — planning snapshot populated after stream completes
+    dossier = PipelineDossier(
+        document_id=doc_id,
+        filename=filename,
+        current_phase="planning",
+    )
+
     try:
         # =================================================================
         # Phase 1+2: Streaming Planning + Execution
@@ -1381,6 +1476,21 @@ async def run_agentic_pipeline_with_streaming_handoff(
             llm_calls=[],  # LLM calls tracked in all_llm_calls
         )
 
+        # Populate dossier planning snapshot now that plan is built
+        dossier.planning = PlanningSnapshot(
+            document_title=plan.structure.title,
+            document_type=plan.structure.document_type,
+            total_pages=plan.total_pages,
+            outline=plan.structure.outline,
+            dictionary=plan.full_dictionary,
+            page_summaries={p: pp.summary for p, pp in plan.pages.items()},
+            section_map=derive_section_map(plan.structure.outline),
+            heading_fixes_count=len(plan.structure.heading_fixes),
+            figures_planned={p: len(pp.figures) for p, pp in plan.pages.items()},
+            tables_planned={p: len(pp.tables) for p, pp in plan.pages.items()},
+        )
+        dossier.current_phase = "assembly"
+
         # =================================================================
         # Phase 3: Assembly (Cross-Page Merge)
         # =================================================================
@@ -1416,6 +1526,16 @@ async def run_agentic_pipeline_with_streaming_handoff(
             page_width=page_width,
         )
 
+        # Populate dossier verification snapshot
+        dossier.verification = VerificationSnapshot(
+            passed=verification.passed,
+            pages_passed=[pv.page_num for pv in verification.pages if pv.passed],
+            pages_failed=[pv.page_num for pv in verification.pages if not pv.passed],
+            critical_issues=verification.critical_issues,
+            warnings=verification.warnings,
+        )
+        dossier.current_phase = "recovery"
+
         # =================================================================
         # Phase 6: Recovery (if needed)
         # =================================================================
@@ -1431,6 +1551,7 @@ async def run_agentic_pipeline_with_streaming_handoff(
                 page_images=page_images,
                 ledger=ledger,
                 event_bus=event_bus,
+                dossier=dossier,
             )
 
         # Determine final status

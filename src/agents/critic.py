@@ -37,7 +37,7 @@ import re
 import time
 from dataclasses import dataclass, field
 from datetime import UTC, datetime
-from typing import TYPE_CHECKING
+from typing import TYPE_CHECKING, Any
 
 from pydantic import BaseModel, Field
 from pydantic_ai import Agent, RunContext
@@ -83,6 +83,9 @@ class CriticDeps:
 
     # Event bus for streaming
     event_bus: EventBus | None = None
+
+    # Pipeline dossier for context injection
+    dossier: Any | None = None
 
 
 # =============================================================================
@@ -447,6 +450,16 @@ def _get_critic_agent() -> Agent[CriticDeps, None]:
         _critic_agent.tool(find_pattern_tool)
         _critic_agent.tool(report_issue_tool)
         _critic_agent.tool(mark_ready_tool)
+
+        # Dynamic instructions from dossier
+        @_critic_agent.instructions
+        def _inject_dossier_context(ctx: RunContext[CriticDeps]) -> str:
+            from .shared_prompts import format_document_identity
+
+            d = ctx.deps.dossier
+            if d is None:
+                return ""
+            return format_document_identity(d)
 
         logger.info("Critic agent initialized")
 

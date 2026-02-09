@@ -12,6 +12,7 @@ def mock_job_service(mocker):
     """Create mock JobService."""
     service = mocker.AsyncMock()
     service.list_all_jobs = AsyncMock(return_value=[])
+    service.list_jobs_updated_before = AsyncMock(return_value=[])
     service.get_job_status = AsyncMock(return_value=None)
     service.update_job_status = AsyncMock()
     service.cleanup_old_job = AsyncMock()

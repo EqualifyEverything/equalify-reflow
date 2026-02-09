@@ -1,7 +1,7 @@
 """Integration tests for approval workflow API endpoints."""
 
 from datetime import UTC, datetime, timedelta
-from unittest.mock import AsyncMock, patch
+from unittest.mock import AsyncMock, MagicMock, patch
 
 import pytest
 from httpx import ASGITransport, AsyncClient
@@ -154,6 +154,9 @@ async def test_submit_approval_approved_decision(valid_job_data, api_key_headers
 
     # Mock Redis client with proper method returns
     mock_redis = AsyncMock()
+    # register_script is a SYNC method that returns a callable Script object.
+    # AsyncMock would return a coroutine (not callable), so use MagicMock.
+    mock_redis.register_script = MagicMock(return_value=AsyncMock())
     # For get_job_by_approval_token -> get job_id from token
     mock_redis.get.return_value = job_id
 
@@ -205,8 +208,8 @@ async def test_submit_approval_approved_decision(valid_job_data, api_key_headers
             assert data["job_id"] == valid_job_data["job_id"]
             assert "approved" in data["message"]
 
-            # Verify job status update was called (for quick_approve)
-            mock_redis.hset.assert_called()  # Status update to processing_queued
+            # Verify Lua script was called for status update (quick_approve uses update_job_status)
+            mock_redis.register_script.assert_called()  # Lua scripts registered in JobService.__init__
         finally:
             # Clean up overrides
             app.dependency_overrides.clear()

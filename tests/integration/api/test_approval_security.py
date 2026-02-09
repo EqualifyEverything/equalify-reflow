@@ -1,7 +1,7 @@
 """Security tests for approval workflow API."""
 
 from datetime import UTC, datetime, timedelta
-from unittest.mock import AsyncMock, patch
+from unittest.mock import AsyncMock, MagicMock, patch
 
 import pytest
 from httpx import ASGITransport, AsyncClient
@@ -131,7 +131,7 @@ async def test_approval_no_pii_data_in_url(api_key_headers):
 @pytest.mark.asyncio
 async def test_approval_decision_sanitization(api_key_headers):
     """Test that user input is properly sanitized."""
-    from src.dependencies import get_redis_client, get_s3_client
+    from src.dependencies import get_redis_client, get_s3_client, get_s3_url_service, get_storage_service
 
     valid_job = {
         "job_id": "550e8400-e29b-41d4-a716-446655440010",
@@ -153,6 +153,8 @@ async def test_approval_decision_sanitization(api_key_headers):
 
     # Mock Redis client with proper method returns
     mock_redis = AsyncMock()
+    # register_script is a SYNC method that returns a callable Script object
+    mock_redis.register_script = MagicMock(return_value=AsyncMock())
     # For get_job_by_approval_token
     mock_redis.get.return_value = valid_job["job_id"]
     mock_redis.hgetall.return_value = valid_job
@@ -165,10 +167,14 @@ async def test_approval_decision_sanitization(api_key_headers):
 
     # Mock S3 client
     mock_s3 = AsyncMock()
+    mock_storage = AsyncMock()
+    mock_s3_url = AsyncMock()
 
-    # Override dependencies (only Redis and S3, not services)
+    # Override dependencies
     app.dependency_overrides[get_redis_client] = lambda: mock_redis
     app.dependency_overrides[get_s3_client] = lambda: mock_s3
+    app.dependency_overrides[get_storage_service] = lambda: mock_storage
+    app.dependency_overrides[get_s3_url_service] = lambda: mock_s3_url
 
     try:
         # Make request with API key headers
@@ -302,7 +308,7 @@ async def test_approval_token_not_leaked_in_error_messages(api_key_headers):
 @pytest.mark.asyncio
 async def test_approval_decision_idempotency(api_key_headers):
     """Test that submitting the same decision twice is safe."""
-    from src.dependencies import get_redis_client, get_s3_client
+    from src.dependencies import get_redis_client, get_s3_client, get_s3_url_service, get_storage_service
 
     valid_job = {
         "job_id": "550e8400-e29b-41d4-a716-446655440011",
@@ -323,6 +329,8 @@ async def test_approval_decision_idempotency(api_key_headers):
 
     # Mock Redis client with proper method returns
     mock_redis = AsyncMock()
+    # register_script is a SYNC method that returns a callable Script object
+    mock_redis.register_script = MagicMock(return_value=AsyncMock())
     # For get_job_by_approval_token
     mock_redis.get.return_value = valid_job["job_id"]
     mock_redis.hgetall.return_value = valid_job
@@ -335,10 +343,14 @@ async def test_approval_decision_idempotency(api_key_headers):
 
     # Mock S3 client
     mock_s3 = AsyncMock()
+    mock_storage = AsyncMock()
+    mock_s3_url = AsyncMock()
 
-    # Override dependencies (only Redis and S3, not services)
+    # Override dependencies
     app.dependency_overrides[get_redis_client] = lambda: mock_redis
     app.dependency_overrides[get_s3_client] = lambda: mock_s3
+    app.dependency_overrides[get_storage_service] = lambda: mock_storage
+    app.dependency_overrides[get_s3_url_service] = lambda: mock_s3_url
 
     try:
         # Make request with API key headers

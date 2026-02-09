@@ -19,7 +19,6 @@ from unittest.mock import AsyncMock, MagicMock
 import pytest
 from fastapi.testclient import TestClient
 from src.main import app
-from src.services.pdf_converter import PageData, PDFConversionResult
 from src.shared.models.queue import ProcessingQueuePayload
 
 # Import shared fixtures to make them available to all tests
@@ -80,41 +79,6 @@ def sample_pdf():
     return pdf_content
 
 
-@pytest.fixture(autouse=True)
-def reset_agent_singletons():
-    """Reset all agent module singletons before and after each test.
-
-    This ensures test isolation by clearing cached agent instances.
-    Each test starts with a fresh agent state, preventing test pollution.
-
-    NOTE: The old multi-agent system was removed. The current agentic pipeline
-    uses lazy-loaded agents in worker.py, page_chain.py, etc. that have
-    module-level reset functions where needed.
-    """
-    # Import agentic pipeline modules that use singleton/cached agents
-    from src.agents import issue_fixer, page_chain, paragraph_agent, worker
-
-    # List of modules with reset functions
-    modules_with_reset = [
-        worker,
-        page_chain,
-        issue_fixer,
-        paragraph_agent,
-    ]
-
-    # Reset before test
-    for agent_module in modules_with_reset:
-        if hasattr(agent_module, "reset_agent"):
-            agent_module.reset_agent()
-
-    yield
-
-    # Reset after test (cleanup)
-    for agent_module in modules_with_reset:
-        if hasattr(agent_module, "reset_agent"):
-            agent_module.reset_agent()
-
-
 # ============================================================================
 # Core Pipeline Test Fixtures
 # ============================================================================
@@ -127,26 +91,6 @@ def sample_job_payload():
         job_id="550e8400-e29b-41d4-a716-446655440000",
         s3_key="temp/550e8400-e29b-41d4-a716-446655440000/input.pdf",
         approved_at=None,
-    )
-
-
-@pytest.fixture
-def sample_page_data():
-    """Sample PageData for testing AI processing."""
-    return PageData(
-        page_num=1,
-        image_base64="iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJAAAADUlEQVR42mNk+M9QDwADhgGAWjR9awAAAABJRU5ErkJggg==",
-    )
-
-
-@pytest.fixture
-def sample_pdf_conversion_result(sample_page_data):
-    """Sample PDFConversionResult for testing."""
-    return PDFConversionResult(
-        pages=[sample_page_data],
-        total_pages=1,
-        has_page_images=True,
-        extracted_images=[],
     )
 
 
@@ -194,13 +138,3 @@ def mock_job_service():
     return mock
 
 
-@pytest.fixture
-def mock_pdf_converter(sample_pdf_conversion_result):
-    """Mock PDFConverter for unit tests.
-
-    Uses MagicMock as container with AsyncMock for async methods.
-    This prevents unawaited coroutine warnings when tests access unmocked attributes.
-    """
-    mock = MagicMock()
-    mock.convert_with_page_images = AsyncMock(return_value=sample_pdf_conversion_result)
-    return mock

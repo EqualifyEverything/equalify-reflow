@@ -212,49 +212,34 @@ async def approval_service(
 
 
 @pytest.fixture(autouse=True)
-def mock_ai_agents(request):
-    """Auto-mock all AI agents for integration tests (no API keys needed).
+def mock_pipeline_processing(request):
+    """Auto-mock PipelineViewerService for integration tests (no API keys needed).
 
-    This fixture mocks the agentic document processing pipeline:
-    - run_agentic_pipeline: Returns mock ProcessingResult with markdown and ledger
-    - All Bedrock/AI operations are bypassed
-
-    NOTE: This fixture is EXCLUDED for test_bedrock_agent.py tests which
-    are designed to test real Bedrock API integration.
+    Mocks the pipeline processing to avoid real LLM calls during integration tests.
     """
     from unittest.mock import AsyncMock, patch
 
-    from src.agents import Ledger, ProcessingResult, VerificationReport
+    from src.services.pipeline_viewer_models import PipelineViewerResult
 
     # Skip mocking for bedrock integration tests (they test real Bedrock)
     if "test_bedrock_agent" in request.node.nodeid:
         yield
         return
 
-    # Create mock processing result
-    mock_result = ProcessingResult(
-        document_id="test-job-id",
-        success=True,
-        final_markdown="# Test Document\n\nThis is mock extracted content.",
-        ledger=Ledger(document_id="test-job-id", entries=[]),
-        verification=VerificationReport(document_id="test-job-id", passed=True),
-        total_cost_cents=0.01,
-        processing_time_seconds=1.0,
+    mock_result = PipelineViewerResult(
+        filename="test.pdf",
+        versions={"v0": "# Test Document\n\nMock content."},
+        steps=[],
+        figures=[],
+        total_pages=1,
     )
 
-    # Mock the main processing function (imported from agents.orchestrator)
     with patch(
-        "src.agents.orchestrator.run_agentic_pipeline",
+        "src.services.pipeline_viewer.PipelineViewerService.process",
         new_callable=AsyncMock,
-        return_value=(mock_result, MagicMock()),  # Returns (result, event_bus)
+        return_value=mock_result,
     ):
-        # Also mock the streaming version
-        with patch(
-            "src.agents.orchestrator.run_agentic_pipeline_streaming",
-            new_callable=AsyncMock,
-            return_value=(mock_result, MagicMock()),
-        ):
-            yield
+        yield
 
 
 @pytest.fixture

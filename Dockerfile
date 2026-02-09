@@ -1,7 +1,7 @@
 # Equalify PDF Converter
 
 # ==============================================================================
-# Stage 1: Frontend - Build React demo UI
+# Stage 1: Frontend - Build Pipeline Viewer
 # ==============================================================================
 FROM node:20-alpine AS frontend-builder
 
@@ -11,11 +11,11 @@ RUN corepack enable && corepack prepare pnpm@latest --activate
 WORKDIR /app
 
 # Install dependencies first (better caching)
-COPY frontend/demo-ui/package.json frontend/demo-ui/pnpm-lock.yaml* frontend/demo-ui/.npmrc ./
+COPY clients/viewer/package.json clients/viewer/pnpm-lock.yaml* clients/viewer/.npmrc ./
 RUN pnpm install --frozen-lockfile
 
 # Copy source and build
-COPY frontend/demo-ui/ ./
+COPY clients/viewer/ ./
 RUN pnpm run build
 
 # ==============================================================================

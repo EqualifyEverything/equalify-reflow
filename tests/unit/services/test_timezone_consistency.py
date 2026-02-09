@@ -9,12 +9,33 @@ Tests all datetime operations to ensure:
 """
 
 from datetime import UTC, datetime, timedelta
-from unittest.mock import AsyncMock, patch
+from unittest.mock import AsyncMock, MagicMock, patch
 
 import pytest
 from src.services.approval_service import ApprovalService
 from src.services.job_service import JobService
 from src.services.queue_service import QueueService
+
+
+def _extract_lua_mapping(lua_script_mock) -> dict:
+    """Extract the field mapping from a Lua script mock call.
+
+    Lua script args format: [str(ttl), str(now_ts), job_id, k1, v1, k2, v2, ...]
+    or for scripts without TTL: [str(now_ts), job_id, k1, v1, k2, v2, ...]
+
+    Returns the key-value pairs as a dict.
+    """
+    call_args = lua_script_mock.call_args
+    args = call_args.kwargs.get("args", call_args[1] if len(call_args) > 1 else [])
+
+    # Find where field/value pairs start (after ttl, now_ts, job_id)
+    # The first 3 args are always ttl, now_ts, job_id for hset_expire_zadd
+    field_args = args[3:]
+
+    mapping = {}
+    for i in range(0, len(field_args), 2):
+        mapping[field_args[i]] = field_args[i + 1]
+    return mapping
 
 
 class TestDatetimeCreation:
@@ -31,9 +52,9 @@ class TestDatetimeCreation:
             status="pii_scanning"
         )
 
-        # Get the stored data
-        call_args = mock_redis.hset.call_args
-        stored_data = call_args.kwargs['mapping']
+        # Extract data from Lua script call
+        lua_mock = mock_redis.register_script.return_value
+        stored_data = _extract_lua_mapping(lua_mock)
 
         # Verify created_at is timezone-aware ISO format
         created_at_str = stored_data['created_at']
@@ -56,9 +77,9 @@ class TestDatetimeCreation:
             status="processing"
         )
 
-        # Get the stored data
-        call_args = mock_redis.hset.call_args
-        stored_data = call_args.kwargs['mapping']
+        # Extract data from Lua script call
+        lua_mock = mock_redis.register_script.return_value
+        stored_data = _extract_lua_mapping(lua_mock)
 
         # Verify updated_at is timezone-aware
         updated_at_str = stored_data['updated_at']
@@ -264,8 +285,8 @@ class TestTimezoneEdgeCases:
                 s3_key="temp/midnight.pdf"
             )
 
-        call_args = mock_redis.hset.call_args
-        stored_data = call_args.kwargs['mapping']
+        lua_mock = mock_redis.register_script.return_value
+        stored_data = _extract_lua_mapping(lua_mock)
         created_at_str = stored_data['created_at']
 
         # Should handle midnight correctly
@@ -291,8 +312,8 @@ class TestTimezoneEdgeCases:
                 s3_key="temp/dst.pdf"
             )
 
-        call_args = mock_redis.hset.call_args
-        stored_data = call_args.kwargs['mapping']
+        lua_mock = mock_redis.register_script.return_value
+        stored_data = _extract_lua_mapping(lua_mock)
         created_at_str = stored_data['created_at']
 
         # UTC should be unaffected by DST
@@ -317,8 +338,8 @@ class TestTimezoneEdgeCases:
                 s3_key="temp/year-end.pdf"
             )
 
-        call_args = mock_redis.hset.call_args
-        stored_data = call_args.kwargs['mapping']
+        lua_mock = mock_redis.register_script.return_value
+        stored_data = _extract_lua_mapping(lua_mock)
         created_at_str = stored_data['created_at']
 
         created_at = datetime.fromisoformat(created_at_str.replace("Z", "+00:00"))
@@ -343,9 +364,9 @@ class TestJobLifecycleTimezoneConsistency:
             status="pii_scanning"
         )
 
-        # Mock retrieval
-        create_call_args = mock_redis.hset.call_args
-        stored_data = create_call_args.kwargs['mapping']
+        # Extract stored data from Lua script
+        lua_mock = mock_redis.register_script.return_value
+        stored_data = _extract_lua_mapping(lua_mock)
 
         mock_redis.hgetall.return_value = stored_data
 
@@ -363,23 +384,17 @@ class TestJobLifecycleTimezoneConsistency:
         """Test that job updates maintain timezone-aware timestamps."""
         job_service = JobService(mock_redis)
 
-        # Create job
-        await job_service.create_job(
-            job_id="update-job",
-            s3_key="temp/update.pdf"
-        )
-
         # Update job
         await job_service.update_job_status(
             job_id="update-job",
             status="processing"
         )
 
-        # Verify updated_at is timezone-aware
-        update_call_args = mock_redis.hset.call_args
-        update_data = update_call_args.kwargs['mapping']
+        # Extract data from Lua script call
+        lua_mock = mock_redis.register_script.return_value
+        stored_data = _extract_lua_mapping(lua_mock)
 
-        updated_at_str = update_data['updated_at']
+        updated_at_str = stored_data['updated_at']
         updated_at = datetime.fromisoformat(updated_at_str.replace("Z", "+00:00"))
 
         assert updated_at.tzinfo is not None
@@ -440,6 +455,9 @@ def mock_redis():
     redis.zadd = AsyncMock()
     redis.zrangebyscore = AsyncMock()
     redis.zrem = AsyncMock()
+    # register_script is a SYNC method returning a callable Script object.
+    # AsyncMock would return a coroutine (not callable), so use MagicMock.
+    redis.register_script = MagicMock(return_value=AsyncMock())
     return redis
 
 

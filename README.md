@@ -6,7 +6,7 @@ Equalify Reflow frees content trapped inside PDFs. It takes a PDF and produces s
 
 ## What It Is
 
-A server-side pipeline that converts PDFs into semantic markdown using document extraction (IBM Docling) and AI text correction agents (Claude via AWS Bedrock). Upload a PDF, get back structured markdown with proper headings, alt text on images, accessible tables, and extracted figures.
+A server-side pipeline that converts PDFs into semantic markdown using document extraction (IBM Docling) and AI text correction (Claude Haiku via AWS Bedrock). Upload a PDF, get back structured markdown with proper headings, alt text on images, accessible tables, and extracted figures.
 
 ## What It Is Not
 
@@ -18,7 +18,7 @@ A server-side pipeline that converts PDFs into semantic markdown using document 
 ## How It Works
 
 ```
-PDF uploaded via API or Canvas LTI
+PDF uploaded via API
          |
          v
 PII scan (Microsoft Presidio)
@@ -26,25 +26,27 @@ PII scan (Microsoft Presidio)
   Fail: await instructor approval
          |
          v
-Docling extracts document structure (headings, tables, figures, text)
-         |
-         v
-AI agents correct and enrich the text (Claude Haiku + Sonnet via Bedrock)
-  - Multi-phase pipeline: Plan → Execute → Verify → Recover
-  - Parallel page processing with confidence scoring
+Versioned pipeline (7 steps):
+  1. Docling extraction (v0) -- PDF → markdown + page images
+  2. Structure analysis -- AI identifies headings, footnotes, page types
+  3. Heading level fix -- normalize heading hierarchy
+  4. Page content corrections (v1) -- AI fixes OCR errors per-page
+  5. Code block tagging -- identify programming languages
+  6. Cross-page boundary fixes (v2) -- rejoin split content, relocate footnotes
+  7. Final cleanup (v3) -- normalize whitespace and formatting
          |
          v
 Semantic markdown + extracted figures stored in S3
          |
          v
-Results available via API, SSE streaming, or Canvas Page
+Results available via API or pipeline viewer UI
 ```
 
 ## What's Implemented
 
 | Feature | Status |
 |---|---|
-| **PDF processing pipeline** -- Docling extraction, AI text correction, confidence scoring | Complete |
+| **Versioned processing pipeline** -- Docling extraction, AI structure analysis, page corrections, boundary fixes | Complete |
 | **REST API** -- Submit documents, poll status, stream events (SSE), retrieve results | Complete |
 | **PII detection** -- Microsoft Presidio scans all documents before AI processing | Complete |
 | **Approval workflow** -- Token-based PII approval with configurable timeouts | Complete |
@@ -52,23 +54,9 @@ Results available via API, SSE streaming, or Canvas Page
 | **Redis job management** -- Job state, queuing, rate limiting, event bus | Complete |
 | **Authentication** -- API key auth, protected Swagger docs | Complete |
 | **Monitoring** -- Prometheus metrics, Grafana dashboards, Jaeger tracing | Complete |
-| **Pipeline viewer** -- React UI for upload, status tracking, PII review, diff view | Complete |
-| **Testing** -- 984 tests, 83.7% coverage (unit, integration, E2E) | Complete |
+| **Pipeline viewer** -- React UI for upload, step-by-step review, version diff comparison | Complete |
+| **Testing** -- 1133 tests (unit, integration, E2E) | Complete |
 | **AWS deployment** -- ECS Fargate, Terraform, CloudWatch, budget alerts | Complete |
-| **Canvas LTI 1.3** -- OIDC auth, file menu launch, file download from Canvas | Complete |
-
-## What's In Progress
-
-| Feature | Status |
-|---|---|
-| **Canvas auto-publishing** -- Automatically convert PDFs to Canvas Pages when uploaded | Design phase ([proposal](docs/features/canvas-auto-publish.md)) |
-| **Markdown-to-HTML renderer** -- Convert pipeline output to Canvas-compatible semantic HTML | Not started |
-| **Canvas Publisher** -- Upload images to Canvas Files, create Pages, link in Modules | Not started |
-| **File discovery worker** -- Poll Canvas for new PDFs in enabled courses | Not started |
-| **Instructor dashboard** -- Server-rendered course management UI (Jinja2 + Tailwind) | Not started |
-| **Markdown download bundle** -- Zip of markdown + image assets for student download | Not started |
-
-See [Canvas Auto-Publish Proposal](docs/features/canvas-auto-publish.md) for the full design.
 
 ## Quick Start
 
@@ -113,35 +101,33 @@ src/
 ├── main.py                 # FastAPI app entry point
 ├── config.py               # Settings from environment variables
 ├── dependencies.py         # Dependency injection
-├── api/                    # REST endpoints (documents, approval, health)
-├── agents/                 # AI pipeline (16 modules, multi-phase orchestration)
-├── services/               # Business logic (24 services)
-│   ├── document_processing_service.py  # Pipeline orchestration
-│   ├── storage_service.py              # S3 with circuit breakers
-│   ├── job_service.py                  # Redis job state
-│   ├── queue_service.py                # Redis queues
-│   └── pii_service.py                  # Presidio PII detection
+├── api/                    # REST endpoints (documents, approval, pipeline, health)
+├── agents/                 # AI prompt modules (structure, boundary, footnote)
+├── services/               # Business logic (20 services)
+│   ├── pipeline_viewer.py             # Core versioned processing pipeline
+│   ├── document_processing_service.py # Pipeline orchestration + S3/Redis
+│   ├── storage_service.py             # S3 with circuit breakers
+│   ├── job_service.py                 # Redis job state (Lua scripts)
+│   ├── queue_service.py               # Redis queues
+│   └── pii_service.py                 # Presidio PII detection
 ├── workers/                # Background tasks (PII scan, timeout checks)
 ├── middleware/              # Auth, logging, rate limiting, metrics, CORS
-├── lti/                    # Canvas LTI 1.3 integration
-├── shared/                 # Pydantic models
+├── shared/                 # Constants and shared utilities
 └── utils/                  # Retry logic, circuit breakers, tokens
 
-frontend/demo-ui/           # React pipeline viewer (Vite + TypeScript + Tailwind)
+clients/viewer/             # React pipeline viewer (Vite + TypeScript + Tailwind)
 tests/                      # Unit, integration, and E2E tests
 infrastructure/             # Prometheus, Grafana, LocalStack configs
-docs/                       # Architecture, guides, proposals
+docs/                       # Architecture, guides
 ```
 
 ## Technology Stack
 
-**Backend:** Python 3.11+, FastAPI, PydanticAI, IBM Docling, Microsoft Presidio, AWS Bedrock (Claude Haiku + Sonnet)
+**Backend:** Python 3.11+, FastAPI, PydanticAI, IBM Docling, Microsoft Presidio, AWS Bedrock (Claude Haiku)
 
 **Infrastructure:** Docker, Redis, AWS S3, AWS ECS Fargate, LocalStack, Terraform
 
 **Monitoring:** Prometheus, Grafana, Jaeger (OpenTelemetry), CloudWatch
-
-**Canvas Integration:** LTI 1.3 (pylti1p3), Canvas REST API
 
 **Pipeline Viewer:** React 18, TypeScript, Vite, ShadCN/Radix, Tailwind CSS
 
@@ -162,8 +148,6 @@ docs/                       # Architecture, guides, proposals
 
 | Document | What it covers |
 |---|---|
-| [Canvas Auto-Publish Proposal](docs/features/canvas-auto-publish.md) | Design for automatic PDF-to-Canvas Page publishing |
-| [Canvas LTI Setup](.claude/docs/canvas-lti-setup.md) | Local Canvas + LTI 1.3 development setup |
 | [Architecture](docs/architecture.md) | System design, data flows, service layer |
 | [Environment Setup](docs/environment-setup.md) | Complete setup guide |
 | [Testing](docs/ci-cd.md) | Test tiers, CI/CD, GitHub Actions |

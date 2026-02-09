@@ -66,7 +66,7 @@ The Equalify PDF Converter is a monolithic Python application with background ta
 ```
 ┌─────────────────────────────────────────────────────────────┐
 │                    CLIENT APPLICATION                        │
-│                 (Web UI / Canvas LMS / API)                  │
+│                    (Web UI / API)                             │
 └──────────────────────────┬──────────────────────────────────┘
                            │ HTTP/REST
                            ▼
@@ -92,8 +92,8 @@ The Equalify PDF Converter is a monolithic Python application with background ta
 │  ┌──────────────────────────────────────────────────────┐   │
 │  │          BACKGROUND WORKERS (Threads)                │   │
 │  │  • PII Worker        (BLPOP eq-pdf:queue:pii)        │   │
-│  │  • Processing Worker (BLPOP eq-pdf:queue:processing) │   │
 │  │  • Timeout Worker    (Scheduled cleanup)             │   │
+│  │  • Processing runs via FastAPI BackgroundTasks       │   │
 │  └──────────────────────────────────────────────────────┘   │
 └─────────────────────────────────────────────────────────────┘
                            │
@@ -130,8 +130,8 @@ src/
 ├── workers/                        # Background Task Processors
 │   ├── __init__.py
 │   ├── pii_worker.py               # Monitors eq-pdf:queue:pii (Microsoft Presidio)
-│   ├── processing_worker.py        # Monitors eq-pdf:queue:processing (Docling + AI)
 │   └── timeout_worker.py           # Scheduled: approval timeouts, temp cleanup, orphan detection
+│   # Note: Document processing runs via FastAPI BackgroundTasks, not a separate worker
 │
 ├── services/                       # Business Logic Layer
 │   ├── __init__.py
@@ -140,10 +140,9 @@ src/
 │   ├── job_service.py              # Job state management (Redis hashes + TTL)
 │   ├── pii_service.py              # PII detection orchestration
 │   ├── pii_analyzer.py             # Microsoft Presidio wrapper
-│   ├── processing_service.py       # Main processing pipeline orchestrator
-│   ├── pdf_converter.py            # Docling PDF → Markdown conversion
+│   ├── pipeline_viewer.py          # Core 7-step versioned processing pipeline
+│   ├── document_processing_service.py # Pipeline orchestration + S3/Redis integration
 │   ├── pdf_extractor.py            # Docling text extraction
-│   ├── ai_enhancement_service.py   # AI page-by-page enhancement (PydanticAI)
 │   ├── approval_service.py         # Approval workflow (token validation, state transitions)
 │   ├── timeout_service.py          # Approval timeout monitoring (sorted sets)
 │   ├── cleanup_service.py          # Denied job file cleanup
@@ -160,9 +159,10 @@ src/
 │   ├── error_handler.py            # Global exception handling and error formatting
 │   └── metrics.py                  # Prometheus metrics collection
 │
-├── agents/                         # AI Agents (PydanticAI)
+├── agents/                         # AI Prompt Modules (PydanticAI)
 │   ├── __init__.py
-│   └── accessibility_agent.py      # Accessibility enhancement agent (alt text, headings, ARIA)
+│   ├── model_tiers.py              # Model selection (Haiku/Sonnet tier mapping)
+│   └── prompts/                    # Agent prompt templates (structure, boundary, footnote)
 │
 ├── shared/                         # Data Models and Constants
 │   ├── __init__.py
@@ -357,15 +357,13 @@ src/
 - **If PII found:** Update status to awaiting_approval, add to timeout queue
 - Graceful shutdown on signal (completes current job, max 30s)
 
-**`workers/processing_worker.py`** - Document processing worker
+**Document Processing** (via FastAPI BackgroundTasks)
 
-- `BLPOP eq-pdf:queue:processing` - Wait for approved jobs
-- Download PDF from S3
-- Docling: PDF → Markdown with page images
-- AI: Enhance accessibility (page-by-page concurrent processing)
-- Store HTML/MDX in S3 results bucket
-- Update job status to completed with result URLs
-- Graceful shutdown on signal
+- `DocumentProcessingService.process_document()` runs as background task
+- Downloads PDF from S3
+- `PipelineViewerService` runs 7-step versioned pipeline (Docling → Structure → Headings → Pages → Code Blocks → Boundaries → Cleanup)
+- Stores final markdown + figures to S3 results bucket
+- Updates job state to "completed" with cost/token metadata
 
 **`workers/timeout_worker.py`** - Scheduled maintenance worker
 
@@ -682,57 +680,43 @@ LOCK_PREFIX = "eq-pdf:lock:"
 
 ### Stage 4: Document Processing
 
-**Worker:** `processing_worker.py`
+**Service:** `DocumentProcessingService` + `PipelineViewerService`
+**Trigger:** FastAPI BackgroundTasks (inline, not a separate worker)
 **Duration:** 2-8 minutes
 **Status:** `processing` → `completed` OR `failed`
 
 #### Flow
 
-1. Processing worker blocks on queue:
-
-   ```python
-   job = BLPOP eq-pdf:queue:processing 60
-   ```
-
+1. `DocumentProcessingService.process_document()` runs as a background task
 2. Download PDF from S3 temp bucket
-3. **Docling conversion** (PDF → Markdown):
-   - Extract text with structure (headings, lists, tables)
-   - Generate page images for AI context
-   - Preserve formatting and layout
-   - Duration: 30-90 seconds for typical document
-4. **AI enhancement** (page-by-page):
-   - Split Markdown into pages
-   - Process pages concurrently (default: 5 concurrent)
-   - For each page:
-     - Send to Claude via AWS Bedrock (Haiku model)
-     - Add alt text to images
-     - Improve heading hierarchy (proper h1-h6)
-     - Add ARIA labels for semantic structure
-     - Enhance list formatting
-     - Retry failed pages (max 3 attempts)
-   - Duration: 1-7 minutes depending on page count
-5. **Quality assessment:**
-   - Calculate confidence score (weighted by page length)
-   - Classify as HIGH (>0.85), MEDIUM (0.60-0.85), LOW (<0.60)
-6. **Store results in S3:**
-   - Upload Markdown: `s3://equalify-pdf-results/{job_id}/result.md`
-   - Generate presigned URL (valid 7 days)
-7. **Update job:**
+3. **PipelineViewerService** runs 7-step versioned pipeline:
+   - **Step 1 - Docling extraction (v0):** PDF → markdown + page images (30-90s)
+   - **Step 2 - Structure analysis:** AI identifies headings, footnotes, page types per-page
+   - **Step 3 - Heading level fix:** Deterministic heading hierarchy normalization
+   - **Step 4 - Page content corrections (v1):** AI fixes OCR errors per-page (parallel, semaphore-limited)
+   - **Step 5 - Code block tagging:** Identify programming languages in code blocks
+   - **Step 6 - Cross-page boundary fixes (v2):** Rejoin split content, relocate footnotes
+   - **Step 7 - Final cleanup (v3):** Normalize whitespace and formatting
+4. Each step produces a versioned snapshot (v0, v1, v2, v3) with complete markdown for review
+5. **Store results in S3:**
+   - Upload final markdown + extracted figures to results bucket
+   - Store change ledger (audit trail of all AI edits)
+6. **Update job:**
 
    ```python
    HSET eq-pdf:job:{job_id}
      status "completed"
-     markdown_url "https://s3.../result.md?..."
+     markdown_url "jobs/{job_id}/final.md"
      confidence_score "0.87"
+     llm_cost_cents "5.25"
      completed_at "2025-01-15T10:05:23Z"
    ```
 
 #### Edge Cases
 
 - **Processing timeout (>10 minutes):** Kill job, mark as failed
-- **Individual page AI failures:** Log error, continue with lower confidence
+- **Individual page AI failures:** Log error, keep original markdown for that page
 - **S3 upload failure:** Retry 3 times, then mark job as failed
-- **Memory limits (large PDFs):** Process pages in smaller batches
 - **Malformed PDF:** Docling failures handled, return structured error
 - **Circuit breaker open (S3 degraded):** Fail fast, retry later
 
@@ -1076,8 +1060,8 @@ equalify-pdf-temp/
 ```
 equalify-pdf-results/
 ├── abc-123-def-456/
-│   ├── result.html                # Accessible HTML
-│   ├── result.mdx                 # MDX for Canvas LMS
+│   ├── final.md                   # Final semantic markdown
+│   ├── ledger.json                # Change ledger (audit trail of AI edits)
 │   └── metadata.json              # Processing metadata (confidence, timestamps)
 ├── ghi-789-jkl-012/
 │   ├── result.html
@@ -1421,7 +1405,6 @@ await asyncio.wait_for(worker_task, timeout=30)  # Max 30s grace period
     "s3": {"status": "ok", "latency_ms": 45},
     "workers": {
       "pii_worker": "running",
-      "processing_worker": "running",
       "timeout_worker": "running"
     }
   },

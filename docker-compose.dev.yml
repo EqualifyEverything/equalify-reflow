@@ -55,7 +55,7 @@ services:
       # Mount LTI RSA keys for Canvas integration
       - ./keys:/app/keys:ro
       # Mount built pipeline viewer (run `make build-viewer` to update)
-      - ./frontend/demo-ui/dist:/app/static/viewer:ro
+      - ./clients/viewer/dist:/app/static/viewer:ro
     environment:
       # AWS Hybrid Configuration - LocalStack for S3/CloudWatch, Real AWS for Bedrock
       # Use service-specific endpoints (no global endpoint to avoid bedrock conflicts)
@@ -95,19 +95,15 @@ services:
     networks:
       equalify-network:
         # Default network — redis, localstack hostnames resolve here
-      canvas-network:
-        # Canvas LMS network — canvas-lms-web-1 hostname resolves here
-        # No aliases to avoid DNS conflicts with Canvas's own 'redis' service
-        aliases: []
     depends_on:
       redis:
         condition: service_healthy
       localstack:
         condition: service_healthy
 
-  # NOTE: Demo UI is now bundled into the API container
-  # In development, run `make build-demo-ui` to rebuild the frontend
-  # Then access it at http://localhost:8080/demo
+  # NOTE: Viewer is bundled into the API container
+  # In development, run `make build-viewer` to rebuild the frontend
+  # Then access it at http://localhost:8080/viewer
 
   # Redis Exporter - Exposes Redis metrics to Prometheus
   redis-exporter:
@@ -206,9 +202,6 @@ services:
 networks:
   equalify-network:
     external: false
-  canvas-network:
-    name: canvas-lms_default
-    external: true
 
 volumes:
   localstack-data:

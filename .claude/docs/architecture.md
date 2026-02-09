@@ -10,8 +10,9 @@ The application runs as one process with:
 
 - FastAPI server (main thread)
 - PII worker (background thread)
-- Processing worker (background thread)
 - Timeout worker (background thread)
+
+Document processing runs inline via FastAPI `BackgroundTasks`, not a separate worker.
 
 All workers start in `src/main.py` via `lifespan` context manager.
 
@@ -30,13 +31,12 @@ The service layer is split into specialized services for clean separation of con
 - **RateLimitService** - Rate limiting (Redis sorted sets)
 
 ### Processing Services
+- **PipelineViewerService** - 7-step versioned document processing (Docling → Structure → Headings → Pages → Code Blocks → Boundaries → Cleanup)
+- **DocumentProcessingService** - Pipeline orchestration with S3 storage and Redis job state
 - **PIIDetectionService** - Microsoft Presidio PII scanning
-- **ProcessingService** - AI pipeline orchestration
-- **TextCorrectionService** - AWS Bedrock text correction (Claude Haiku)
 
 ### Approval Services
 - **ApprovalService** - PII approval workflow
-- **CorrectionApprovalService** - Text correction approval workflow
 - **TimeoutService** - Approval timeout monitoring
 
 ## Redis Data Structures
@@ -85,7 +85,7 @@ All services communicate via Docker DNS:
 The application uses a **hybrid AWS configuration**:
 
 - **LocalStack** for S3 and CloudWatch (development/testing)
-- **Real AWS Bedrock** for AI text correction (Claude Haiku via Converse API)
+- **Real AWS Bedrock** for AI text correction (Claude Haiku via PydanticAI BedrockConverseModel)
 
 ### Why Hybrid?
 
@@ -152,27 +152,9 @@ aws sso login --profile uic
 
 ### Lazy Initialization
 
-- TextCorrectionAgent is NOT created during worker startup
-- Agent initializes on first job (lazy init pattern)
-- Prevents BedrockConverseModel from blocking event loop during startup
+- PydanticAI agents are created on-demand during pipeline processing
+- BedrockConverseModel initialized per-step, not at startup
 - All workers start in <1 second
-
-## Multi-Round Processing Architecture
-
-The pipeline supports iterative refinement when `max_rounds > 1`:
-
-**Round 1:** Standard agentic pipeline (planning → execution → verification → recovery)
-- Page-based processing with specialized agents
-- Produces initial markdown + PageBoundaryMap (line-to-page mappings)
-
-**Rounds 2+:** Document-based refinement loop
-- CriticAgent (Efficient tier) analyzes full markdown for issues across structure, accessibility, content, formatting
-- DocumentWorker (Reasoning tier) fixes identified issues using page images as reference
-- Convergence check determines if processing should continue (max_rounds, quality score, no improvement, ready signal)
-
-**Data Models:** PageBoundary, CriticIssue, CriticReport, DocumentJob, RoundContext, RoundLoopResult
-
-**New Agents:** CriticAgent (4 tools), DocumentWorker (3 tools)
 
 ## Processing Pipeline Flow
 
@@ -190,30 +172,21 @@ The pipeline supports iterative refinement when `max_rounds > 1`:
    - If clean → Queue for processing
    - If PII found → Set status "awaiting_approval"
 
-3. **Processing Worker** (Background)
-   - BLPOP from `eq-pdf:queue:processing`
-   - Download PDF from S3
-   - **Docling Conversion**: PDF → Markdown + Page Images (PNG)
-   - **Text Correction via AWS Bedrock**:
-     - Lazy-initialize TextCorrectionAgent (Claude Haiku)
-     - Process pages concurrently (max 5 at once)
-     - For each page:
-       - Send page image + extracted markdown to Claude
-       - Claude compares visual layout to markdown structure
-       - Identifies corrections (heading levels, list types, tables, paragraph breaks)
-       - Returns corrections with confidence scores
-     - Apply corrections to markdown
-     - Calculate overall document confidence (avg of page confidences)
-   - Store corrected Markdown in S3 results bucket
-   - Update job: `{status: "awaiting_correction_approval" | "completed"}`
+3. **Processing** (BackgroundTasks)
+   - `DocumentProcessingService.process_document()` runs as a FastAPI background task
+   - Downloads PDF from S3
+   - `PipelineViewerService` runs 7-step versioned pipeline:
+     1. Docling extraction (v0) — PDF → markdown + page images
+     2. Structure analysis — AI identifies headings, footnotes, page types
+     3. Heading level fix — normalize heading hierarchy
+     4. Page content corrections (v1) — AI fixes OCR errors per-page (parallel, semaphore-limited)
+     5. Code block tagging — identify programming languages
+     6. Cross-page boundary fixes (v2) — rejoin split content, relocate footnotes
+     7. Final cleanup (v3) — normalize whitespace and formatting
+   - Stores final markdown + figures to S3 results bucket
+   - Updates job state to "completed" with cost/token metadata
 
-4. **Correction Approval** (Manual Review)
-   - GET `/api/v1/corrections/{job_id}/review?token={token}` - View corrections
-   - PATCH `/api/v1/corrections/{job_id}` - Approve or reject
-   - If approved: Corrected markdown → final location
-   - If rejected: Original markdown → final location
-
-5. **GET /api/v1/documents/{job_id}** (API)
+4. **GET /api/v1/documents/{job_id}** (API)
    - Return status-specific response with URLs generated on-demand
 
 ## API Design Principles

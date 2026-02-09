@@ -41,64 +41,51 @@ The Equalify PDF Converter transforms PDF documents into accessible, semantic ma
 - Grafana: `http://localhost:3001`
 - Jaeger: `http://localhost:16686`
 
-**Canvas LMS (separate project):** `http://localhost:3000`
-
-## Canvas LMS Integration
-
-A local Canvas LMS instance lives in a separate wrapper repo at `~/Projects/equalify-reflow-canvas/canvas-lms` (cloned Instructure canvas-lms). The `docker-compose.dev.yml` joins the `canvas-lms_default` Docker network so the api-gateway can reach Canvas at hostname `canvas-lms-web-1`.
-
-```bash
-make canvas       # Start Canvas LMS
-make canvas-down  # Stop Canvas LMS
-make canvas-logs  # View Canvas web logs
-```
-
-For LTI 1.3 testing with ngrok, see [Canvas LTI Setup](.claude/docs/canvas-lti-setup.md).
-
 ## Quick Architecture
 
-**Pattern:** Monolith with Inline Agentic Pipeline
+**Pattern:** Monolith with Versioned Processing Pipeline
 
 ```
 ├── API Layer (FastAPI) - All endpoints prefixed with /api/v1/
-│   ├── POST /api/v1/documents/submit     → PII scan + inline processing
+│   ├── POST /api/v1/documents/submit     → PII scan + pipeline processing
 │   ├── GET /api/v1/documents/{job_id}    → Job status + results
 │   ├── GET /api/v1/documents/{job_id}/stream → SSE event stream
 │   ├── GET /api/v1/documents/{job_id}/ledger → Change ledger for review
-│   └── POST /api/v1/approval/{token}/decision → PII approval
+│   ├── POST /api/v1/approval/{token}/decision → PII approval
+│   └── POST /api/v1/pipeline/process     → Standalone pipeline processing
 │
 ├── Workers (Background threads)
 │   ├── PII Worker         → Microsoft Presidio PII detection
 │   └── Timeout Worker     → Approval timeout checks
 │
 ├── Services (Business logic)
+│   ├── PipelineViewerService → 7-step versioned document processing
+│   ├── DocumentProcessingService → Pipeline orchestration + S3/Redis
 │   ├── StorageService     → S3 upload/download (circuit breakers)
 │   ├── S3URLService       → URL generation (LocalStack vs AWS)
 │   ├── S3CleanupService   → File cleanup (best-effort, no circuit breakers)
 │   ├── QueueService       → Redis queue operations
-│   ├── JobService         → Redis job state management
+│   ├── JobService         → Redis job state management (Lua scripts)
 │   ├── PIIDetectionService → Presidio-based PII scanning
-│   ├── DocumentProcessingService → Inline agentic pipeline orchestration
-│   └── AssemblyService    → Correction application and confidence scoring
+│   └── MetricsService     → Prometheus metrics collection
 │
 └── Infrastructure
     ├── Redis              → Job state, rate limiting, event bus
     ├── LocalStack (dev)   → S3 + CloudWatch emulation
-    └── AWS Bedrock        → Claude models for extraction and analysis
+    └── AWS Bedrock        → Claude Haiku for AI text correction
 ```
 
 **Data Flow:**
 
 1. PDF uploaded → S3 temp bucket
 2. PII scan (Presidio) → Pass: queue processing | Fail: await approval
-3. Processing (Docling + Bedrock) → Markdown + confidence score
-4. Correction approval → Final markdown to results bucket
+3. Processing (PipelineViewerService) → 7-step versioned pipeline → markdown + figures
+4. Results stored in S3 results bucket, job marked completed
 
 ## Detailed Documentation
 
 - [Architecture](.claude/docs/architecture.md) - System design, data flow, service layer, AWS Bedrock setup
 - [Authentication](.claude/docs/authentication.md) - API key auth, docs auth, middleware stack
-- [Canvas LTI Setup](.claude/docs/canvas-lti-setup.md) - Local Canvas + ngrok + LTI 1.3 integration
 - [Testing](.claude/docs/testing.md) - 3-tier strategy, fixtures, markers, running tests
 - [S3 Resilience](.claude/docs/s3-resilience.md) - Circuit breakers, retry logic, metrics
 - [Development](.claude/docs/development.md) - Adding features, debugging, common issues
@@ -122,14 +109,14 @@ src/
 ├── workers/                   # Background task processors
 ├── services/                  # Business logic (storage, queue, job, PII, processing)
 ├── middleware/                # Auth, logging, rate limiting, CORS, metrics
-├── agents/                    # PydanticAI agents (text correction)
-├── shared/                    # Pydantic models and constants
+├── agents/                    # AI prompt modules (structure, boundary, footnote)
+├── shared/                    # Constants and shared utilities
 └── utils/                     # Helpers (retry, circuit breaker, tokens)
 ```
 
 ## Technology Stack
 
-**Backend:** Python 3.11+, FastAPI, PydanticAI, IBM Docling, Microsoft Presidio, AWS Bedrock
+**Backend:** Python 3.11+, FastAPI, PydanticAI, IBM Docling, Microsoft Presidio, AWS Bedrock (Claude Haiku)
 **Infrastructure:** Docker, Redis, AWS S3, AWS ECS, LocalStack, Prometheus + Grafana
 **Testing:** pytest, pytest-asyncio, pytest-xdist, pytest-cov, testcontainers
 
@@ -144,9 +131,6 @@ For MCP integration, use these library IDs:
 - **Microsoft Presidio:** `/microsoft/presidio`
 - **Docling:** `/docling-project/docling`
 - **Redis:** `/redis/redis-py`
-- **Canvas LMS:** `/instructure/canvas-lms`
-- **Canvas API:** `/ucfopen/canvasapi`
-
 ## Additional Documentation
 
 For broader project documentation in `docs/`:

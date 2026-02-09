@@ -162,6 +162,37 @@ def _apply_code_block_fence(
     )
 
 
+def _replace_image_placeholders(
+    markdown: str,
+    figures: list[FigureData],
+) -> str:
+    """Replace ``<!-- image -->`` placeholders with markdown image syntax.
+
+    Docling emits one ``<!-- image -->`` placeholder per picture in document
+    order.  The Nth placeholder corresponds to the Nth figure.  We walk through
+    both lists sequentially: for each figure we replace the *first* remaining
+    ``<!-- image -->`` with ``![caption](figures/ref_id.png)``.
+
+    Uses a relative ``figures/`` path so the markdown is portable (works in ZIP
+    bundles or relative to the S3 result prefix).
+
+    If there are more placeholders than figures, the extras are left as-is.
+    If there are more figures than placeholders (shouldn't happen), extras are
+    ignored.
+    """
+    PLACEHOLDER = "<!-- image -->"
+
+    for fig in figures:
+        idx = markdown.find(PLACEHOLDER)
+        if idx == -1:
+            break
+        alt = fig.caption.replace("]", "\\]") if fig.caption else ""
+        image_ref = f"![{alt}](figures/{fig.ref_id}.png)"
+        markdown = markdown[:idx] + image_ref + markdown[idx + len(PLACEHOLDER) :]
+
+    return markdown
+
+
 class PipelineViewerService:
     """Versioned pipeline that stores full markdown at every step.
 
@@ -214,6 +245,20 @@ class PipelineViewerService:
         if enable_boundaries and structure is not None:
             await self._step_boundaries(result, structure)
             await self._step_cleanup(result)
+
+        # Replace <!-- image --> placeholders with inline image refs in the
+        # latest full-document version.  Done after all AI steps so agents
+        # don't interfere with image syntax.
+        if result.figures:
+            latest_version = next(
+                (v for v in ("v3", "v2", "v1", "v0") if v in result.versions),
+                None,
+            )
+            if latest_version is not None:
+                result.versions[latest_version] = _replace_image_placeholders(
+                    result.versions[latest_version],
+                    result.figures,
+                )
 
         return result
 
@@ -278,11 +323,11 @@ class PipelineViewerService:
         result.page_markdowns["v0"] = page_mds
 
         # Extract figures
-        for pic in doc.pictures:
+        for i, pic in enumerate(doc.pictures):
             if pic.image and hasattr(pic.image, "pil_image") and pic.image.pil_image:
                 result.figures.append(
                     FigureData(
-                        ref_id=str(pic.self_ref) if pic.self_ref else "",
+                        ref_id=f"figure-{i + 1}",
                         caption=pic.caption_text(doc=doc) or "",
                         page_number=pic.prov[0].page_no if pic.prov else 1,
                         image_base64=_pil_to_base64(pic.image.pil_image),

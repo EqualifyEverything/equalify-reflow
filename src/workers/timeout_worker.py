@@ -11,7 +11,6 @@ import asyncio
 import logging
 from datetime import UTC, datetime
 
-from ..canvas.course_config import CourseConfigService
 from ..config import settings
 from ..services.cleanup_service import CleanupService
 from ..services.job_service import JobService
@@ -39,7 +38,7 @@ class TimeoutWorker:
         job_service: JobService,
         metrics_service: MetricsService,
         s3_cleanup_service: S3CleanupService,
-        course_config_service: CourseConfigService | None = None,
+        course_config_service: object | None = None,
     ) -> None:
         """Initialize timeout worker with service dependencies.
 
@@ -307,9 +306,6 @@ async def start_timeout_worker(shutdown_event: asyncio.Event | None = None) -> N
         temp_bucket=settings.s3_temp_bucket,
     )
 
-    # Create course config service for stale entry cleanup
-    course_config_service = CourseConfigService(redis_client=redis_client)
-
     # Create worker
     _worker_instance = TimeoutWorker(
         storage_service=storage_service,
@@ -317,7 +313,6 @@ async def start_timeout_worker(shutdown_event: asyncio.Event | None = None) -> N
         job_service=job_service,
         metrics_service=metrics_service,
         s3_cleanup_service=s3_cleanup_service,
-        course_config_service=course_config_service,
     )
 
     logger.info("Timeout worker services initialized, starting worker loop...")

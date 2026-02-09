@@ -432,10 +432,6 @@ class DocumentProcessingService:
                     stored_figures=stored_figures,
                 )
 
-            # Save debug artifacts if requested
-            if capture_debug:
-                await self._save_debug_artifacts(job_id, processing_result)
-
             # Store ledger to S3
             ledger_s3_key = await self._store_ledger(job_id, processing_result)
 
@@ -681,51 +677,6 @@ class DocumentProcessingService:
             logger.warning(f"Failed to retrieve ledger for job {job_id}: {e}")
             return None
 
-    async def _save_debug_artifacts(self, job_id: str, result: ProcessingResult) -> None:
-        """Save LLM call artifacts to S3 for debug bundle generation.
-
-        Iterates through all LLM calls that have debug data captured
-        and saves them as artifacts using the DebugBundleService.
-
-        Args:
-            job_id: Job identifier
-            result: Processing result containing llm_calls with debug data
-        """
-        from ..services.debug_bundle_service import get_debug_bundle_service
-
-        debug_service = get_debug_bundle_service(self.storage)
-        saved_count = 0
-
-        for llm_call in result.llm_calls:
-            # Only save if debug data was captured
-            if llm_call.prompt_text:
-                phase = self._map_purpose_to_phase(llm_call.purpose)
-                agent_name = f"{llm_call.agent}_{llm_call.purpose}"
-
-                try:
-                    await debug_service.save_artifact_from_agent_run(
-                        job_id=job_id,
-                        phase=phase,
-                        agent_name=agent_name,
-                        input_data={"purpose": llm_call.purpose, "page": llm_call.page},
-                        prompt=llm_call.prompt_text,
-                        response_raw=llm_call.response_raw or "",
-                        output_parsed="",
-                        tokens={
-                            "input": llm_call.input_tokens,
-                            "output": llm_call.output_tokens,
-                            "total": llm_call.input_tokens + llm_call.output_tokens,
-                        },
-                        cost_cents=llm_call.cost_cents,
-                        model_id=llm_call.model_id or "unknown",
-                        duration_ms=llm_call.duration_ms,
-                    )
-                    saved_count += 1
-                except Exception as e:
-                    logger.warning(f"Failed to save debug artifact for {agent_name}: {e}")
-
-        logger.info(f"Saved {saved_count} debug artifacts for job {job_id}")
-
     def _convert_round_loop_result(
         self,
         round_result: RoundLoopResult,
@@ -782,21 +733,3 @@ class DocumentProcessingService:
             total_duration_ms=round_result.total_duration_ms,
         )
 
-    def _map_purpose_to_phase(self, purpose: str) -> str:
-        """Map LLMCallRecord purpose to debug bundle phase name.
-
-        Args:
-            purpose: Purpose string from LLMCallRecord (e.g., "page_1_analysis")
-
-        Returns:
-            Phase name for organizing in debug bundle
-        """
-        if "analysis" in purpose:
-            return "phase_1_planning"
-        elif "recovery" in purpose:
-            return "phase_4_recovery"
-        elif "verification" in purpose:
-            return "phase_3_verification"
-        else:
-            # alt_text, table_transcription, heading_fix, paragraph_fixes, etc.
-            return "phase_2_execution"

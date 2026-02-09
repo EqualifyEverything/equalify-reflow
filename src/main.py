@@ -12,7 +12,7 @@ from fastapi import FastAPI
 from fastapi.openapi.utils import get_openapi
 from fastapi.staticfiles import StaticFiles
 
-from .api import approval, corrections, documents, health, review, review_checklist
+from .api import approval, documents, health
 from .config import settings
 from .dependencies import get_redis_client
 from .middleware import (
@@ -27,7 +27,6 @@ from .middleware import (
 from .middleware.metrics import setup_metrics
 from .services.rate_limit_service import RateLimitService
 from .telemetry import init_telemetry, shutdown_telemetry
-from .workers.canvas_file_worker import start_canvas_file_worker
 from .workers.pii_worker import start_pii_worker
 from .workers.timeout_worker import start_timeout_worker
 
@@ -92,9 +91,8 @@ async def lifespan(app: FastAPI) -> AsyncIterator[None]:
         worker_tasks = [
             asyncio.create_task(start_pii_worker(shutdown_event)),
             asyncio.create_task(start_timeout_worker(shutdown_event)),
-            asyncio.create_task(start_canvas_file_worker(shutdown_event)),
         ]
-        logger.info("PII, Timeout, and Canvas file discovery worker tasks created")
+        logger.info("PII and Timeout worker tasks created")
 
     yield
 
@@ -156,46 +154,15 @@ add_cors_middleware(app)  # CORS headers
 app.include_router(health.router)
 app.include_router(documents.router)
 app.include_router(approval.router)
-app.include_router(corrections.router)
-app.include_router(review.router)
-app.include_router(review_checklist.router)
 
 # Conditionally import dev-only endpoints (only in development)
 if settings.environment == "dev":
-    from .api import dev_monitoring, minimal_pipeline, pipeline_viewer
+    from .api import minimal_pipeline, pipeline_viewer
 
-    app.include_router(dev_monitoring.router)
     app.include_router(minimal_pipeline.router)
     app.include_router(pipeline_viewer.router)
-    logger.info("✅ Dev monitoring endpoints enabled at /api/dev/monitoring/queues")
     logger.info("✅ Minimal pipeline endpoint enabled at /api/dev/minimal/process")
     logger.info("✅ Pipeline Viewer endpoint enabled at /api/dev/pipeline-viewer/process")
-
-# Conditionally enable Canvas config endpoints
-if settings.canvas_autopublish_enabled:
-    from .api.canvas_config import router as canvas_config_router
-
-    app.include_router(canvas_config_router)
-    logger.info("✅ Canvas config endpoints enabled at /api/v1/canvas/courses/*")
-
-# Conditionally enable LTI 1.3 integration
-if settings.lti_enabled:
-    from .lti import router as lti_router
-
-    app.include_router(lti_router)
-    logger.info("✅ LTI 1.3 endpoints enabled at /lti/*")
-
-    # Mount instructor dashboard (requires LTI)
-    from .canvas.dashboard import router as dashboard_router
-
-    app.include_router(dashboard_router)
-    logger.info("✅ Instructor dashboard enabled at /lti/dashboard/*")
-
-    # Mount dashboard static files (compiled Tailwind CSS)
-    _dashboard_static = Path(__file__).parent / "canvas" / "static" / "dist"
-    if _dashboard_static.exists():
-        app.mount("/static/canvas", StaticFiles(directory=_dashboard_static), name="canvas-static")
-        logger.info("✅ Dashboard static files mounted at /static/canvas")
 
 
 def custom_openapi() -> dict[str, object]:

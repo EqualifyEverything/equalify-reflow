@@ -115,7 +115,7 @@ class DocumentProcessingService:
             # 4. Store results to S3
             markdown_s3_key = await self._store_markdown(job_id, final_markdown)
             ledger_s3_key = await self._store_change_ledger(job_id, result)
-            await self._store_figures_from_pipeline(job_id, result.figures)
+            stored_figures = await self._store_figures_from_pipeline(job_id, result.figures)
 
             # 5. Aggregate cost/token info from steps
             total_input_tokens = sum(s.input_tokens for s in result.steps)
@@ -137,6 +137,7 @@ class DocumentProcessingService:
                 llm_output_tokens=total_output_tokens,
                 llm_total_tokens=total_tokens,
                 llm_cost_cents=cost_cents,
+                stored_figures=stored_figures,
             )
 
             # 7. Record Prometheus metrics
@@ -243,10 +244,16 @@ class DocumentProcessingService:
         self,
         job_id: str,
         figures: list[FigureData],
-    ) -> None:
-        """Store pipeline figures to S3 (base64 → PNG files)."""
+    ) -> list[dict[str, str | int]]:
+        """Store pipeline figures to S3 (base64 → PNG files).
+
+        Returns:
+            List of stored figure metadata dicts for Redis (figure_id, s3_key,
+            page_num, caption).
+        """
+        stored: list[dict[str, str | int]] = []
         if not figures:
-            return
+            return stored
 
         for fig in figures:
             if not fig.image_base64:
@@ -259,10 +266,18 @@ class DocumentProcessingService:
                     content=image_data,
                     content_type="image/png",
                 )
+                stored.append({
+                    "figure_id": fig.ref_id,
+                    "s3_key": dest_key,
+                    "page_num": fig.page_number,
+                    "alt_text": "",
+                    "caption": fig.caption,
+                })
             except Exception as e:
                 logger.warning(f"Job {job_id}: Failed to store figure {fig.ref_id}: {e}")
 
-        logger.info(f"Job {job_id}: Stored {len(figures)} figures to results/{job_id}/figures/")
+        logger.info(f"Job {job_id}: Stored {len(stored)} figures to results/{job_id}/figures/")
+        return stored
 
     async def get_ledger(self, job_id: str) -> dict[str, Any] | None:
         """Retrieve ledger from S3."""

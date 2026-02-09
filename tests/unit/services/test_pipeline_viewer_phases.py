@@ -405,8 +405,8 @@ class TestPhase3Assembly:
     async def test_pages_concatenated_in_order(self, service, base_result, sample_structure):
         """Pages should be joined with double newlines in page order."""
         # Mock both agents to do nothing
-        service._run_boundary_agent = AsyncMock(return_value=("joined", [], []))
-        service._run_footnote_agent = AsyncMock(return_value=("joined", [], []))
+        service._run_boundary_agent = AsyncMock(return_value=("joined", [], [], 0, 0))
+        service._run_footnote_agent = AsyncMock(return_value=("joined", [], [], 0, 0))
 
         await service._step_boundaries(base_result, sample_structure)
 
@@ -428,8 +428,8 @@ class TestPhase3Assembly:
             stats={},
         )
 
-        service._run_boundary_agent = AsyncMock(return_value=("", [], []))
-        service._run_footnote_agent = AsyncMock(return_value=("", [], []))
+        service._run_boundary_agent = AsyncMock(return_value=("", [], [], 0, 0))
+        service._run_footnote_agent = AsyncMock(return_value=("", [], [], 0, 0))
 
         await service._step_boundaries(single_page_result, sample_structure)
 
@@ -446,9 +446,9 @@ class TestPhase3Assembly:
         )
 
         service._run_boundary_agent = AsyncMock(
-            return_value=("assembled doc", [], [])
+            return_value=("assembled doc", [], [], 0, 0)
         )
-        service._run_footnote_agent = AsyncMock(return_value=("", [], []))
+        service._run_footnote_agent = AsyncMock(return_value=("", [], [], 0, 0))
 
         await service._step_boundaries(base_result, no_fn_structure)
 
@@ -462,10 +462,10 @@ class TestPhase3Assembly:
         async def capture_boundary_agent(document, boundary_snippets, footnote_numbers):
             nonlocal captured_snippets
             captured_snippets = boundary_snippets
-            return (document, [], [])
+            return (document, [], [], 0, 0)
 
         service._run_boundary_agent = capture_boundary_agent
-        service._run_footnote_agent = AsyncMock(return_value=("", [], []))
+        service._run_footnote_agent = AsyncMock(return_value=("", [], [], 0, 0))
 
         await service._step_boundaries(base_result, sample_structure)
 
@@ -490,6 +490,8 @@ class TestPhase3Assembly:
                     )
                 ],
                 [],
+                0,
+                0,
             )
         )
         service._run_footnote_agent = AsyncMock(
@@ -505,6 +507,8 @@ class TestPhase3Assembly:
                     )
                 ],
                 [],
+                0,
+                0,
             )
         )
 

@@ -10,13 +10,10 @@ from botocore.config import Config
 from fastapi import Depends
 
 from .config import settings
-from .services.application_service import ApplicationService
-from .services.correction_approval_service import CorrectionApprovalService
 from .services.document_processing_service import DocumentProcessingService
 from .services.job_service import JobService
 from .services.queue_service import QueueService
 from .services.rate_limit_service import RateLimitService
-from .services.remediation_storage_service import RemediationStorageService
 from .services.s3_cleanup_service import S3CleanupService
 from .services.s3_url_service import S3URLService
 from .services.storage_service import StorageService
@@ -261,127 +258,12 @@ async def get_rate_limit_service(
     yield RateLimitService(redis=redis_client)
 
 
-async def get_correction_approval_service(
-    redis: redis.Redis = Depends(get_redis_client),
-    job_service: JobService = Depends(get_job_service),
-    storage: StorageService = Depends(get_storage_service),
-) -> CorrectionApprovalService:
-    """Get correction approval service instance.
-
-    Handles text correction approval workflow including token validation,
-    decision processing, and markdown finalization.
-
-    Args:
-        redis: Redis client (injected)
-        job_service: Job service (injected)
-        storage: Storage service (injected)
-
-    Returns:
-        CorrectionApprovalService instance
-
-    Note:
-        In FastAPI routes, use:
-            correction_approval: CorrectionApprovalService = Depends(
-                get_correction_approval_service
-            )
-
-        For workers, do NOT use this function. Instead:
-            redis_client = await anext(get_redis_client())
-            job_service = JobService(redis_client=redis_client)
-            storage_service = StorageService(...)
-            correction_approval = CorrectionApprovalService(
-                redis_client=redis_client,
-                job_service=job_service,
-                storage_service=storage_service
-            )
-    """
-    return CorrectionApprovalService(redis_client=redis, job_service=job_service, storage_service=storage)
-
-
-async def get_remediation_storage(
-    storage: StorageService = Depends(get_storage_service),
-) -> RemediationStorageService:
-    """Get remediation storage service instance.
-
-    Provides S3 operations for remediation artifacts:
-    - observations.json
-    - proposals.json
-    - manifest.json
-
-    Args:
-        storage: StorageService (injected)
-
-    Returns:
-        RemediationStorageService instance
-
-    Note:
-        In FastAPI routes, use:
-            remediation_storage: RemediationStorageService = Depends(
-                get_remediation_storage
-            )
-    """
-    return RemediationStorageService(storage_service=storage)
-
-
-async def get_application_service(
-    remediation_storage: RemediationStorageService = Depends(get_remediation_storage),
-    storage: StorageService = Depends(get_storage_service),
-    job_service: JobService = Depends(get_job_service),
-) -> ApplicationService:
-    """Get application service instance.
-
-    Provides search-replace application of approved proposals
-    to markdown documents.
-
-    Args:
-        remediation_storage: RemediationStorageService (injected)
-        storage: StorageService for S3 operations (injected)
-        job_service: JobService for status updates (injected)
-
-    Returns:
-        ApplicationService instance
-
-    Note:
-        In FastAPI routes, use:
-            application: ApplicationService = Depends(
-                get_application_service
-            )
-    """
-    return ApplicationService(
-        remediation_storage=remediation_storage,
-        storage=storage,
-        job_service=job_service,
-    )
-
-
 async def get_document_processing_service(
     redis_client: Any = Depends(get_redis_client),
     storage: StorageService = Depends(get_storage_service),
     s3_url: S3URLService = Depends(get_s3_url_service),
 ) -> DocumentProcessingService:
-    """Get document processing service instance.
-
-    Orchestrates the agentic document processing pipeline including:
-    - Docling PDF extraction
-    - Planning phase (structure inference)
-    - Execution phase (parallel workers)
-    - Verification phase
-    - Recovery phase (if needed)
-
-    Args:
-        redis_client: Redis client (injected)
-        storage: Storage service for S3 operations (injected)
-        s3_url: S3 URL service for generating presigned URLs (injected)
-
-    Returns:
-        DocumentProcessingService instance
-
-    Note:
-        In FastAPI routes, use:
-            processing: DocumentProcessingService = Depends(
-                get_document_processing_service
-            )
-    """
+    """Get document processing service instance."""
     return DocumentProcessingService(
         redis_client=redis_client,
         storage_service=storage,

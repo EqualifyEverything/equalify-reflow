@@ -155,14 +155,18 @@ app.include_router(health.router)
 app.include_router(documents.router)
 app.include_router(approval.router)
 
+# Pipeline viewer — always available (primary processing API)
+from .api import pipeline_viewer
+
+app.include_router(pipeline_viewer.router)
+logger.info("✅ Pipeline endpoint enabled at /api/v1/pipeline/process")
+
 # Conditionally import dev-only endpoints (only in development)
 if settings.environment == "dev":
-    from .api import minimal_pipeline, pipeline_viewer
+    from .api import minimal_pipeline
 
     app.include_router(minimal_pipeline.router)
-    app.include_router(pipeline_viewer.router)
     logger.info("✅ Minimal pipeline endpoint enabled at /api/dev/minimal/process")
-    logger.info("✅ Pipeline Viewer endpoint enabled at /api/dev/pipeline-viewer/process")
 
 
 def custom_openapi() -> dict[str, object]:

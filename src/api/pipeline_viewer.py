@@ -1,7 +1,4 @@
-"""Dev-only Pipeline Viewer endpoint for versioned step-by-step PDF processing.
-
-SECURITY: Only available when ENVIRONMENT=dev
-"""
+"""Pipeline endpoint for versioned step-by-step PDF processing."""
 
 import json
 import logging
@@ -12,19 +9,12 @@ from typing import Any
 from fastapi import APIRouter, File, Form, HTTPException, UploadFile
 from fastapi.responses import StreamingResponse
 
-from ..config import settings
 from ..services.pipeline_viewer import PipelineViewerService
 from ..services.pipeline_viewer_models import PipelineViewerResult
 
 logger = logging.getLogger(__name__)
 
-router = APIRouter(prefix="/api/dev/pipeline-viewer", tags=["Development - Pipeline Viewer"])
-
-
-def _require_dev_mode() -> None:
-    """Ensure endpoint only accessible in development."""
-    if settings.environment != "dev":
-        raise HTTPException(status_code=404, detail="Not found")
+router = APIRouter(prefix="/api/v1/pipeline", tags=["Pipeline"])
 
 
 def _sse_event(event_type: str, data: Any) -> str:
@@ -47,7 +37,7 @@ async def process_pdf(
     Synchronous dev endpoint: upload PDF, wait for extraction, get JSON back.
     Returns versioned markdown snapshots for each pipeline step.
     """
-    _require_dev_mode()
+
 
     if not file.filename or not file.filename.lower().endswith(".pdf"):
         raise HTTPException(status_code=400, detail="Only PDF files are supported")
@@ -93,7 +83,7 @@ async def process_pdf_stream(
         error — If a step fails (non-fatal).
         done — Stream complete.
     """
-    _require_dev_mode()
+
 
     if not file.filename or not file.filename.lower().endswith(".pdf"):
         raise HTTPException(status_code=400, detail="Only PDF files are supported")

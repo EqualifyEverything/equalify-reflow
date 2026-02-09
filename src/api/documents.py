@@ -3,11 +3,8 @@
 import asyncio
 import json
 import logging
-import os
-from collections import Counter
 from collections.abc import AsyncGenerator
 from datetime import UTC, datetime
-from io import BytesIO
 from typing import Any, Literal
 
 from fastapi import APIRouter, BackgroundTasks, Depends, File, Form, HTTPException, Query, UploadFile, status
@@ -19,20 +16,15 @@ from ..dependencies import (
     get_job_service,
     get_queue_service,
     get_redis_client,
-    get_remediation_storage,
     get_s3_url_service,
     get_storage_service,
 )
 from ..services import JobService, QueueService, S3URLService, StorageService
 from ..services.document_processing_service import DocumentProcessingService
 from ..services.metrics_service import jobs_submitted_total
-from ..services.remediation_storage_service import RemediationStorageService
 from .schemas import (
     AgenticCompletedResponse,
     AgenticProcessingResponse,
-    AgentsPhase,
-    AnalysisPhase,
-    AutoCorrectionSummary,
     AwaitingCorrectionApprovalResponse,
     AwaitingPIIApprovalResponse,
     CompletedResponse,
@@ -41,7 +33,6 @@ from .schemas import (
     CorrectionSummary,
     DeniedResponse,
     DocumentStatusResponse,
-    ExtractionPhase,
     FailedResponse,
     FigureAsset,
     LedgerEntryResponse,
@@ -50,15 +41,9 @@ from .schemas import (
     LLMCallInfo,
     LLMCostInfo,
     NeedsReviewResponse,
-    ObservationSummary,
-    PageFeatureSummary,
     PIIFinding,
     PIIScanningResponse,
-    ProcessingPhasesResponse,
     ProcessingResponse,
-    RemediationPhase,
-    VerificationPageResult,
-    VerificationPhase,
 )
 
 logger = logging.getLogger(__name__)
@@ -506,196 +491,6 @@ async def get_job(
                 status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
                 detail=f"Unknown job status: {job['status']}",
             )
-
-
-@router.get("/{job_id}/phases", response_model=ProcessingPhasesResponse)
-async def get_job_phases(
-    job_id: str,
-    show_raw: bool = False,
-    job_service: JobService = Depends(get_job_service),
-    url_service: S3URLService = Depends(get_s3_url_service),
-    remediation_storage: RemediationStorageService = Depends(get_remediation_storage),
-) -> ProcessingPhasesResponse:
-    """
-    Get detailed processing phase outputs for a job.
-
-    Returns structured data from each phase of the processing pipeline:
-    - Analysis: Document structure, page features, heading tree
-    - Extraction: Original markdown (v0), extraction confidence
-    - Agents: Observations from specialized agents
-    - Remediation: Auto corrections and review items
-
-    Query params:
-        show_raw: Include full raw JSON from each phase artifact
-    """
-    job = await job_service.get_job(job_id)
-    if not job:
-        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail=f"Job {job_id} not found")
-
-    # Load artifacts from S3
-    manifest = await remediation_storage.load_manifest(job_id)
-    observations = await remediation_storage.load_observations(job_id)
-
-    # Build Analysis Phase
-    analysis_phase = AnalysisPhase(status="skipped")
-    if manifest:
-        page_features_list = []
-        for pf in manifest.page_features:
-            page_features_list.append(
-                PageFeatureSummary(
-                    page_num=pf.page_num,
-                    has_images=pf.has_images,
-                    image_count=pf.image_count,
-                    has_tables=pf.has_tables,
-                    table_count=pf.table_count,
-                    has_lists=pf.has_lists,
-                    complexity_score=pf.complexity_score,
-                )
-            )
-
-        # Build heading tree from manifest's heading_tree_json
-        heading_tree = None
-        layout_type = None
-        if manifest.heading_tree_json:
-            try:
-                tree_data = json.loads(manifest.heading_tree_json)
-                heading_tree = tree_data
-                # HeadingTree model has layout_type at document level
-                layout_type = tree_data.get("layout_type")
-            except json.JSONDecodeError:
-                pass
-
-        # If no layout from heading tree, derive from page features
-        if not layout_type and manifest.page_features:
-            layouts = [pf.layout_type for pf in manifest.page_features]
-            # Use most common layout as the document layout
-            layout_counts = Counter(layouts)
-            layout_type = layout_counts.most_common(1)[0][0] if layout_counts else None
-
-        analysis_phase = AnalysisPhase(
-            status="completed",
-            document_title=manifest.document_title,
-            document_type=manifest.document_type,
-            total_pages=manifest.total_pages,
-            layout_type=layout_type,
-            required_agents=manifest.required_agents,
-            analysis_confidence=manifest.analysis_confidence,
-            page_features=page_features_list,
-            heading_tree=heading_tree,
-            raw_manifest=manifest.model_dump(mode="json") if show_raw else None,
-        )
-
-    # Build Extraction Phase
-    extraction_phase = ExtractionPhase(status="skipped")
-    v0_key = f"{job_id}-v0.md"
-    try:
-        v0_url = await url_service.generate_url(v0_key, bucket=url_service.results_bucket)
-        extraction_phase = ExtractionPhase(
-            status="completed",
-            markdown_url=v0_url,
-            confidence_score=float(job.get("confidence_score", 0.0)),
-            extraction_model=job.get("extraction_model"),
-        )
-    except Exception:
-        pass  # v0 may not exist yet
-
-    # Build Agents Phase
-    agents_phase = AgentsPhase(status="skipped")
-    if observations:
-        agents_run = list(set(obs.agent for obs in observations))
-        obs_summaries = [
-            ObservationSummary(
-                id=obs.id,
-                agent=obs.agent,
-                severity=obs.severity,
-                confidence=obs.confidence,
-                category=obs.category,
-                status=obs.status,
-                resolution=obs.resolution,
-                visual_description=obs.visual_description[:200] if obs.visual_description else None,
-                markup_description=obs.markup_description[:200] if obs.markup_description else None,
-                page_num=obs.location.page_num if obs.location else None,
-            )
-            for obs in observations
-        ]
-        agents_phase = AgentsPhase(
-            status="completed",
-            agents_run=agents_run,
-            observation_count=len(observations),
-            observations=obs_summaries,
-            raw_observations=[obs.model_dump(mode="json") for obs in observations] if show_raw else None,
-        )
-
-    # Build Remediation Phase (auto corrections)
-    auto_corrections = await remediation_storage.load_auto_corrections(job_id)
-    remediation_phase = RemediationPhase(status="skipped")
-    if auto_corrections:
-        applied_count = sum(1 for c in auto_corrections if c.applied)
-        pending_count = sum(1 for c in auto_corrections if not c.applied)
-
-        correction_summaries = [
-            AutoCorrectionSummary(
-                id=c.id,
-                observation_id=c.observation_id,
-                applied=c.applied,
-                page_num=c.page_num,
-                search_preview=c.search[:100] if c.search else "",
-                replace_preview=c.replace[:100] if c.replace else "",
-                justification=c.justification,
-                confidence=c.confidence,
-                agent=c.agent,
-            )
-            for c in auto_corrections
-        ]
-        remediation_phase = RemediationPhase(
-            status="completed",
-            auto_correction_count=len(auto_corrections),
-            applied_count=applied_count,
-            pending_count=pending_count,
-            auto_corrections=correction_summaries,
-            raw_corrections=[c.model_dump(mode="json") for c in auto_corrections] if show_raw else None,
-        )
-
-    # Build Verification Phase
-    verification_phase: VerificationPhase | None = None
-    verification_summary = job.get("verification_summary")
-    if verification_summary:
-        page_results = [
-            VerificationPageResult(
-                page_num=pr["page_num"],
-                is_accurate=pr["is_accurate"],
-                corrections_applied=pr.get("corrections_applied", 0),
-                corrections_failed=pr.get("corrections_failed", 0),
-                issues_count=pr.get("issues_count", 0),
-                summary=pr.get("summary", ""),
-            )
-            for pr in verification_summary.get("page_results", [])
-        ]
-        verification_phase = VerificationPhase(
-            status="completed",
-            total_pages=verification_summary.get("total_pages", 0),
-            corrections_applied=verification_summary.get("corrections_applied", 0),
-            corrections_failed=verification_summary.get("corrections_failed", 0),
-            issues_found=verification_summary.get("issues_found", 0),
-            all_pages_accurate=verification_summary.get("all_pages_accurate", True),
-            page_results=page_results,
-            cost_cents=verification_summary.get("cost_cents", 0.0),
-        )
-
-    return ProcessingPhasesResponse(
-        job_id=job["job_id"],
-        filename=job.get("original_filename", ""),
-        status=job["status"],
-        created_at=job["created_at"],
-        updated_at=job["updated_at"],
-        analysis=analysis_phase,
-        extraction=extraction_phase,
-        agents=agents_phase,
-        remediation=remediation_phase,
-        verification=verification_phase,
-        total_llm_cost=_build_llm_cost(job),
-    )
-
 
 
 

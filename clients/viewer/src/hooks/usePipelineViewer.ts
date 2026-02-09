@@ -80,7 +80,7 @@ export function usePipelineViewer() {
       formData.append('images_scale', String(options.imagesScale));
       formData.append('do_table_structure', String(options.doTableStructure));
 
-      const response = await fetch(`${API_URL}/api/dev/pipeline-viewer/process/stream`, {
+      const response = await fetch(`${API_URL}/api/v1/pipeline/process/stream`, {
         method: 'POST',
         body: formData,
         signal: controller.signal,

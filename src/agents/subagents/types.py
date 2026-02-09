@@ -149,12 +149,59 @@ class ParagraphMergeResult(SubagentResult):
     )
 
 
+# =============================================================================
+# Consolidated Text Structure Types
+# =============================================================================
+
+
+class TextStructureCorrection(BaseModel):
+    """A single correction from the TextStructure subagent.
+
+    Represents one text fix with its type and confidence.
+    """
+
+    task_type: str = Field(
+        description="Type of correction: page_artifact, footnote, citation, or list"
+    )
+    before: str = Field(description="Text to find and replace")
+    after: str = Field(description="Corrected text")
+    confidence: float = Field(
+        ge=0.0, le=1.0, description="Confidence in this correction"
+    )
+    reasoning: str = Field(description="Why this correction was made")
+
+
+class TextStructureResult(SubagentResult):
+    """Result from consolidated text structure subagent.
+
+    Handles all text corrections in one LLM call:
+    - Page artifacts (---, split words, orphaned page numbers)
+    - Footnotes (markers, definitions, linking)
+    - Citations ([1], (Smith, 2023))
+    - Lists (indentation, numbering, bullets)
+    """
+
+    corrections: list[TextStructureCorrection] = Field(
+        default_factory=list,
+        description="List of corrections to apply",
+    )
+    # Summary counts for logging/metrics
+    artifacts_removed: int = Field(default=0, description="Count of page artifacts removed")
+    footnotes_fixed: int = Field(default=0, description="Count of footnotes corrected")
+    citations_linked: int = Field(default=0, description="Count of citations linked")
+    lists_fixed: int = Field(default=0, description="Count of list issues fixed")
+
+
 __all__ = [
     "SubagentResult",
+    # Legacy result types
     "PageArtifactResult",
     "FootnoteResult",
     "CitationResult",
     "ListResult",
     "TypographyResult",
     "ParagraphMergeResult",
+    # Consolidated text structure types
+    "TextStructureCorrection",
+    "TextStructureResult",
 ]

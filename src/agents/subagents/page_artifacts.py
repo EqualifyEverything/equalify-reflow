@@ -3,10 +3,12 @@
 Specialized LLM agent for cleaning up extraction artifacts that incorrectly
 split text, including page break markers, split words from page/column breaks,
 and orphaned page numbers.
+
+Uses compressed images (800px width) since this task only needs to verify
+text layout, not detect pixel-level visual formatting.
 """
 
 import logging
-from io import BytesIO
 
 from PIL import Image
 from pydantic_ai import Agent
@@ -14,6 +16,7 @@ from pydantic_ai.messages import BinaryContent
 from pydantic_ai.models.bedrock import BedrockConverseModel
 
 from src.utils.circuit_breaker import CircuitBreakerOpenError
+from src.utils.image_utils import image_to_compressed_bytes
 
 from ..model_tiers import MODEL_TIER_MAP, ModelTier
 from .types import PageArtifactResult
@@ -84,10 +87,13 @@ def _get_page_artifact_subagent() -> Agent[None, PageArtifactResult]:
 
 
 def _image_to_binary(image: Image.Image) -> BinaryContent:
-    """Convert PIL Image to BinaryContent for agent consumption."""
-    buffer = BytesIO()
-    image.save(buffer, format="PNG")
-    return BinaryContent(data=buffer.getvalue(), media_type="image/png")
+    """Convert PIL Image to compressed BinaryContent for agent consumption.
+
+    Uses text verification compression (800px width) since page artifact
+    detection only needs to verify layout, not pixel-level formatting.
+    """
+    compressed_bytes = image_to_compressed_bytes(image, for_visual_analysis=False)
+    return BinaryContent(data=compressed_bytes, media_type="image/png")
 
 
 async def invoke_page_artifact_subagent(

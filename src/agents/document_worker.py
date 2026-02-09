@@ -72,6 +72,9 @@ class DocumentWorkerDeps:
     # Event bus for streaming
     event_bus: EventBus | None = None
 
+    # Pipeline dossier for context injection
+    dossier: Any | None = None
+
 
 # =============================================================================
 # Tool Return Types
@@ -347,6 +350,16 @@ def _get_document_worker_agent() -> Agent[DocumentWorkerDeps, None]:
         _document_worker_agent.tool(view_context_tool)
         _document_worker_agent.tool(view_source_page_tool)
         _document_worker_agent.tool(propose_edit_tool)
+
+        # Dynamic instructions from dossier
+        @_document_worker_agent.instructions
+        def _inject_dossier_context(ctx: RunContext[DocumentWorkerDeps]) -> str:
+            from .shared_prompts import format_document_identity
+
+            d = ctx.deps.dossier
+            if d is None:
+                return ""
+            return format_document_identity(d)
 
         logger.info("DocumentWorker agent initialized")
 

@@ -3,19 +3,35 @@
 Each subagent is a specialized LLM that returns structured recommendations
 with confidence scores. Parent agents review recommendations and decide
 whether to apply edits via propose_edit().
+
+Subagent Organization:
+- TextStructure: Consolidated handler for page artifacts, footnotes, citations, lists
+- Typography: Semantic bold/italic/code detection (needs higher resolution)
+- ParagraphMerge: Cross-page paragraph joining
+
+Legacy subagents (page_artifacts, footnotes, citations, lists) are kept for
+backwards compatibility but should not be used in new code - use TextStructure instead.
 """
 
 from src.utils.circuit_breaker import CircuitBreaker
 
+# Legacy subagents (kept for backwards compatibility)
 from .citations import CITATION_SYSTEM_PROMPT, invoke_citation_subagent
 from .footnotes import FOOTNOTE_SYSTEM_PROMPT, invoke_footnote_subagent
 from .lists import LIST_SEMANTICS_SYSTEM_PROMPT, invoke_list_subagent
 from .page_artifacts import PAGE_ARTIFACT_SYSTEM_PROMPT, invoke_page_artifact_subagent
+
+# Active subagents
 from .paragraph_merge import (
     PARAGRAPH_MERGE_SYSTEM_PROMPT,
     invoke_paragraph_merge_subagent,
 )
-from .types import SubagentResult
+from .text_structure import (
+    TEXT_STRUCTURE_SYSTEM_PROMPT,
+    invoke_text_structure_subagent,
+    reset_text_structure_agent,
+)
+from .types import SubagentResult, TextStructureCorrection, TextStructureResult
 from .typography import (
     MAX_BATCH_SIZE,
     TYPOGRAPHY_BATCH_SYSTEM_PROMPT,
@@ -97,22 +113,29 @@ __all__ = [
     "reset_llm_circuit_breaker",
     # Base type
     "SubagentResult",
-    # Subagent invoke functions
+    # Result types
+    "TextStructureCorrection",
+    "TextStructureResult",
+    # Text structure subagent (consolidated: artifacts, footnotes, citations, lists)
+    "invoke_text_structure_subagent",
+    "TEXT_STRUCTURE_SYSTEM_PROMPT",
+    "reset_text_structure_agent",
+    # Typography subagent (separate due to higher resolution needs)
+    "invoke_typography_subagent",
+    "invoke_typography_subagent_batch",
+    "TYPOGRAPHY_SYSTEM_PROMPT",
+    "TYPOGRAPHY_BATCH_SYSTEM_PROMPT",
+    "reset_typography_agents",
+    # Paragraph merge subagent
+    "invoke_paragraph_merge_subagent",
+    "PARAGRAPH_MERGE_SYSTEM_PROMPT",
+    # Legacy subagents (kept for backwards compatibility - use TextStructure instead)
     "invoke_page_artifact_subagent",
     "invoke_footnote_subagent",
     "invoke_citation_subagent",
     "invoke_list_subagent",
-    "invoke_typography_subagent",
-    "invoke_typography_subagent_batch",
-    "invoke_paragraph_merge_subagent",
-    # System prompts (for testing/inspection)
     "PAGE_ARTIFACT_SYSTEM_PROMPT",
     "FOOTNOTE_SYSTEM_PROMPT",
     "CITATION_SYSTEM_PROMPT",
     "LIST_SEMANTICS_SYSTEM_PROMPT",
-    "TYPOGRAPHY_SYSTEM_PROMPT",
-    "TYPOGRAPHY_BATCH_SYSTEM_PROMPT",
-    "PARAGRAPH_MERGE_SYSTEM_PROMPT",
-    # Agent reset functions (for testing)
-    "reset_typography_agents",
 ]

@@ -22,6 +22,13 @@ from uuid import uuid4
 from ..shared.llm_cost import calculate_estimated_cost
 from ..utils.confidence import calculate_confidence, collect_quality_signals
 from ..utils.confidence_scoring import calculate_confidence_from_verification
+from .dossier import (
+    ExecutionSnapshot,
+    PipelineDossier,
+    PlanningSnapshot,
+    SubagentFinding,
+    VerificationSnapshot,
+)
 from .events import (
     ConvergenceEvent,
     EditCommittedEvent,
@@ -78,6 +85,7 @@ from .recovery import (
     determine_final_status,
     should_attempt_recovery,
 )
+from .shared_prompts import derive_section_map
 from .subagents.paragraph_merge import invoke_paragraph_merge_subagent
 from .worker import execute_jobs_parallel, execute_page_jobs
 
@@ -88,14 +96,54 @@ logger = logging.getLogger(__name__)
 
 
 # =============================================================================
-# Footnote Collection Helper
+# Footnote Renumbering and Collection Helpers
 # =============================================================================
+
+
+def prefix_footnotes_by_page(page_markdowns: dict[int, str]) -> dict[int, str]:
+    """Prefix footnotes with page number for document-wide uniqueness.
+
+    When multiple pages each have `[^1]`, they would collide when merged.
+    This function renames them to `[^fn{page}-{note}]` format:
+      - Page 1: `[^1]` → `[^fn1-1]`
+      - Page 2: `[^1]` → `[^fn2-1]`
+
+    The format `[^fn{page}-{note}]` is:
+      - Clear and debuggable
+      - Guaranteed unique across pages
+      - Valid markdown footnote syntax
+
+    Args:
+        page_markdowns: Dict of page_num -> markdown content
+
+    Returns:
+        Updated dict with footnotes renumbered for uniqueness
+    """
+    result: dict[int, str] = {}
+
+    for page_num, markdown in page_markdowns.items():
+        # Find all footnote markers [^N] and definitions [^N]:
+        # Match footnote references and definitions with numeric identifiers
+        marker_pattern = r"\[\^(\d+)\]"
+
+        def replace_footnote(match: re.Match) -> str:
+            note_num = match.group(1)
+            return f"[^fn{page_num}-{note_num}]"
+
+        # Replace all footnote markers with page-prefixed versions
+        updated_markdown = re.sub(marker_pattern, replace_footnote, markdown)
+        result[page_num] = updated_markdown
+
+    return result
 
 
 def collect_footnotes_at_end(markdown: str) -> str:
     """Collect all footnote definitions and move them to the document end.
 
     Also removes page separator markers (---).
+
+    Handles both simple footnotes `[^1]` and page-prefixed footnotes `[^fn1-1]`
+    created by prefix_footnotes_by_page().
 
     Args:
         markdown: Raw markdown with scattered footnote definitions
@@ -104,17 +152,18 @@ def collect_footnotes_at_end(markdown: str) -> str:
         Markdown with footnotes collected at the end
     """
     # Pattern for footnote definitions - captures multiline definitions
-    # Matches [^1]: definition text that may span lines until next footnote or double newline
-    footnote_pattern = r"^\[\^(\d+)\]:\s*(.+?)(?=\n\[\^|\n\n|\Z)"
+    # Matches both [^1]: and [^fn1-1]: formats
+    # The identifier can be: digits only OR fn{page}-{note} format
+    footnote_pattern = r"^\[\^((?:fn\d+-\d+|\d+))\]:\s*(.+?)(?=\n\[\^|\n\n|\Z)"
 
     # Find all footnote definitions
-    footnotes = {}
+    footnotes: dict[str, str] = {}
     for match in re.finditer(footnote_pattern, markdown, re.MULTILINE | re.DOTALL):
-        num = int(match.group(1))
+        footnote_id = match.group(1)
         text = match.group(2).strip()
-        # Keep the first definition for each number (in case of duplicates)
-        if num not in footnotes:
-            footnotes[num] = text
+        # Keep the first definition for each identifier (in case of duplicates)
+        if footnote_id not in footnotes:
+            footnotes[footnote_id] = text
 
     # Remove footnote definitions from their current locations
     cleaned = re.sub(footnote_pattern, "", markdown, flags=re.MULTILINE | re.DOTALL)
@@ -129,8 +178,27 @@ def collect_footnotes_at_end(markdown: str) -> str:
     # Append footnotes at the end if any were found
     if footnotes:
         footnote_section = "\n\n---\n\n"  # Single separator before footnotes
-        for num in sorted(footnotes.keys()):
-            footnote_section += f"[^{num}]: {footnotes[num]}\n"
+
+        # Sort footnotes: page-prefixed ones by page then note, simple ones by number
+        def sort_key(footnote_id: str) -> tuple[int, int]:
+            if footnote_id.startswith("fn"):
+                # Parse fn{page}-{note} format
+                parts = footnote_id[2:].split("-")
+                if len(parts) == 2:
+                    try:
+                        return (int(parts[0]), int(parts[1]))
+                    except ValueError:
+                        pass
+                return (0, 0)
+            else:
+                # Simple numeric footnote
+                try:
+                    return (0, int(footnote_id))
+                except ValueError:
+                    return (0, 0)
+
+        for footnote_id in sorted(footnotes.keys(), key=sort_key):
+            footnote_section += f"[^{footnote_id}]: {footnotes[footnote_id]}\n"
         cleaned += footnote_section.rstrip()
 
     return cleaned
@@ -672,6 +740,7 @@ async def run_recovery_phase(
     page_images: dict[int, Image.Image],
     ledger: Ledger,
     event_bus: EventBus | None = None,
+    dossier: PipelineDossier | None = None,
 ) -> tuple[dict[int, str], RecoveryReport]:
     """Run the recovery phase on failed pages.
 
@@ -750,6 +819,7 @@ async def run_recovery_phase(
                 processing_history=processing_history,
                 attempt_number=attempt_num,
                 event_bus=event_bus,
+                dossier=dossier,
             )
 
             all_attempts.append(attempt)
@@ -817,6 +887,48 @@ async def run_recovery_phase(
 
 
 # =============================================================================
+# Dossier Helpers
+# =============================================================================
+
+
+def _populate_execution_snapshot(
+    dossier: PipelineDossier,
+    job_results: list,
+    plan: DocumentPlan,
+) -> None:
+    """Populate dossier.execution from job results."""
+    pages_processed = set()
+    subagent_findings: dict[int, list[SubagentFinding]] = {}
+    edits_applied_count = 0
+    tasks_completed = 0
+    tasks_failed = 0
+
+    for jr in job_results:
+        # Find the job to get its page
+        job = next((j for j in plan.jobs if j.job_id == jr.job_id), None)
+        if job:
+            pages_processed.add(job.page)
+
+        edits_applied_count += len(jr.ledger_entries)
+        tasks_completed += jr.tasks_completed
+        tasks_failed += jr.tasks_failed
+
+        # Collect preserved subagent findings from JobResult
+        if jr.subagent_findings and job:
+            page_findings = subagent_findings.setdefault(job.page, [])
+            for finding_dict in jr.subagent_findings:
+                page_findings.append(SubagentFinding(**finding_dict))
+
+    dossier.execution = ExecutionSnapshot(
+        pages_processed=sorted(pages_processed),
+        subagent_findings=subagent_findings,
+        edits_applied_count=edits_applied_count,
+        tasks_completed=tasks_completed,
+        tasks_failed=tasks_failed,
+    )
+
+
+# =============================================================================
 # Main Orchestrator
 # =============================================================================
 
@@ -876,6 +988,26 @@ async def run_agentic_pipeline(
             capture_debug=capture_debug,
         )
 
+        # Create pipeline dossier and populate planning snapshot
+        dossier = PipelineDossier(
+            document_id=doc_id,
+            filename=filename,
+            current_phase="planning",
+        )
+        dossier.planning = PlanningSnapshot(
+            document_title=plan.structure.title,
+            document_type=plan.structure.document_type,
+            total_pages=plan.total_pages,
+            outline=plan.structure.outline,
+            dictionary=plan.full_dictionary,
+            page_summaries={p: pp.summary for p, pp in plan.pages.items()},
+            section_map=derive_section_map(plan.structure.outline),
+            heading_fixes_count=len(plan.structure.heading_fixes),
+            figures_planned={p: len(pp.figures) for p, pp in plan.pages.items()},
+            tables_planned={p: len(pp.tables) for p, pp in plan.pages.items()},
+        )
+        dossier.current_phase = "execution"
+
         # =================================================================
         # Phase 2: Execution
         # =================================================================
@@ -891,6 +1023,7 @@ async def run_agentic_pipeline(
             event_bus=event_bus,
             page_markdowns=page_markdowns,  # For PARAGRAPH job routing
             capture_debug=capture_debug,
+            dossier=dossier,
         )
 
         execution_duration_ms = int((time.time() - execution_start) * 1000)
@@ -903,6 +1036,10 @@ async def run_agentic_pipeline(
                 job = next((j for j in plan.jobs if j.job_id == job_result.job_id), None)
                 if job:
                     final_markdowns[job.page] = job_result.updated_markdown
+
+        # Populate dossier execution snapshot
+        _populate_execution_snapshot(dossier, job_results, plan)
+        dossier.current_phase = "assembly"
 
         # Aggregate execution stats
         total_input_tokens = plan.planning_tokens_input + sum(r.input_tokens for r in job_results)
@@ -954,6 +1091,16 @@ async def run_agentic_pipeline(
             page_width=page_width,  # For table accuracy verification
         )
 
+        # Populate dossier verification snapshot
+        dossier.verification = VerificationSnapshot(
+            passed=verification.passed,
+            pages_passed=[pv.page_num for pv in verification.pages if pv.passed],
+            pages_failed=[pv.page_num for pv in verification.pages if not pv.passed],
+            critical_issues=verification.critical_issues,
+            warnings=verification.warnings,
+        )
+        dossier.current_phase = "recovery"
+
         # =================================================================
         # Phase 6: Recovery (if needed)
         # =================================================================
@@ -974,6 +1121,7 @@ async def run_agentic_pipeline(
                 page_images=page_images,
                 ledger=ledger,
                 event_bus=event_bus,
+                dossier=dossier,
             )
 
         # Determine final status
@@ -994,8 +1142,12 @@ async def run_agentic_pipeline(
         # =================================================================
         total_duration_ms = int((time.time() - start_time) * 1000)
 
+        # Prefix footnotes with page numbers for document-wide uniqueness
+        # This transforms [^1] on page 1 to [^fn1-1], [^1] on page 2 to [^fn2-1], etc.
+        prefixed_markdowns = prefix_footnotes_by_page(final_markdowns)
+
         # Combine all page markdowns
-        raw_markdown = "\n\n---\n\n".join(final_markdowns[p] for p in sorted(final_markdowns.keys()))
+        raw_markdown = "\n\n---\n\n".join(prefixed_markdowns[p] for p in sorted(prefixed_markdowns.keys()))
 
         # Post-process: collect footnotes at document end and remove page separators
         final_markdown = collect_footnotes_at_end(raw_markdown)
@@ -1193,6 +1345,13 @@ async def run_agentic_pipeline_with_streaming_handoff(
 
     logger.info(f"Starting streaming handoff pipeline for {filename} (id={doc_id})")
 
+    # Create dossier early — planning snapshot populated after stream completes
+    dossier = PipelineDossier(
+        document_id=doc_id,
+        filename=filename,
+        current_phase="planning",
+    )
+
     try:
         # =================================================================
         # Phase 1+2: Streaming Planning + Execution
@@ -1317,6 +1476,21 @@ async def run_agentic_pipeline_with_streaming_handoff(
             llm_calls=[],  # LLM calls tracked in all_llm_calls
         )
 
+        # Populate dossier planning snapshot now that plan is built
+        dossier.planning = PlanningSnapshot(
+            document_title=plan.structure.title,
+            document_type=plan.structure.document_type,
+            total_pages=plan.total_pages,
+            outline=plan.structure.outline,
+            dictionary=plan.full_dictionary,
+            page_summaries={p: pp.summary for p, pp in plan.pages.items()},
+            section_map=derive_section_map(plan.structure.outline),
+            heading_fixes_count=len(plan.structure.heading_fixes),
+            figures_planned={p: len(pp.figures) for p, pp in plan.pages.items()},
+            tables_planned={p: len(pp.tables) for p, pp in plan.pages.items()},
+        )
+        dossier.current_phase = "assembly"
+
         # =================================================================
         # Phase 3: Assembly (Cross-Page Merge)
         # =================================================================
@@ -1352,6 +1526,16 @@ async def run_agentic_pipeline_with_streaming_handoff(
             page_width=page_width,
         )
 
+        # Populate dossier verification snapshot
+        dossier.verification = VerificationSnapshot(
+            passed=verification.passed,
+            pages_passed=[pv.page_num for pv in verification.pages if pv.passed],
+            pages_failed=[pv.page_num for pv in verification.pages if not pv.passed],
+            critical_issues=verification.critical_issues,
+            warnings=verification.warnings,
+        )
+        dossier.current_phase = "recovery"
+
         # =================================================================
         # Phase 6: Recovery (if needed)
         # =================================================================
@@ -1367,6 +1551,7 @@ async def run_agentic_pipeline_with_streaming_handoff(
                 page_images=page_images,
                 ledger=ledger,
                 event_bus=event_bus,
+                dossier=dossier,
             )
 
         # Determine final status
@@ -1383,7 +1568,10 @@ async def run_agentic_pipeline_with_streaming_handoff(
         # =================================================================
         total_duration_ms = int((time.time() - start_time) * 1000)
 
-        raw_markdown = "\n\n---\n\n".join(final_markdowns[p] for p in sorted(final_markdowns.keys()))
+        # Prefix footnotes with page numbers for document-wide uniqueness
+        prefixed_markdowns = prefix_footnotes_by_page(final_markdowns)
+
+        raw_markdown = "\n\n---\n\n".join(prefixed_markdowns[p] for p in sorted(prefixed_markdowns.keys()))
         final_markdown = collect_footnotes_at_end(raw_markdown)
 
         # Calculate cost in dollars (Haiku pricing)

@@ -2,14 +2,36 @@
 
 Provides functions for cropping and highlighting elements on page images
 using bounding box coordinates from Docling.
+
+Also provides image compression utilities for optimizing LLM token usage
+when sending images to subagents.
 """
 
 from __future__ import annotations
 
+import logging
+from io import BytesIO
 from typing import TYPE_CHECKING
 
 if TYPE_CHECKING:
     from PIL import Image
+
+logger = logging.getLogger(__name__)
+
+# =============================================================================
+# Image Compression Settings for LLM Subagents
+# =============================================================================
+
+# Maximum width for text verification tasks (page artifacts, footnotes, citations, lists)
+# These tasks only need to verify text layout, not pixel-perfect visual formatting
+TEXT_VERIFICATION_MAX_WIDTH = 800
+
+# Maximum width for visual analysis tasks (typography)
+# These tasks need higher resolution to detect bold/italic formatting
+VISUAL_ANALYSIS_MAX_WIDTH = 1200
+
+# JPEG quality for compressed images (balance between size and readability)
+COMPRESSION_QUALITY = 85
 
 # Type alias for bounding box (left, top, right, bottom)
 BBox = tuple[float, float, float, float]
@@ -139,3 +161,132 @@ def crop_and_highlight(
     cropped = crop_element(page_image, bbox, page_width, padding)
     highlighted = highlight_element(page_image, bbox, page_width, highlight_color, highlight_width)
     return cropped, highlighted
+
+
+# =============================================================================
+# Image Compression for LLM Token Optimization
+# =============================================================================
+
+
+def compress_for_text_verification(
+    image: "Image.Image",
+    max_width: int = TEXT_VERIFICATION_MAX_WIDTH,
+) -> "Image.Image":
+    """Compress image for text verification tasks.
+
+    Used by subagents that need to verify text layout (page artifacts,
+    footnotes, citations, lists) but don't need pixel-perfect visual detail.
+
+    Reduces image width to max_width while maintaining aspect ratio.
+    This significantly reduces token count when images are sent to LLMs.
+
+    Args:
+        image: Original PIL Image
+        max_width: Maximum width in pixels (default: 800)
+
+    Returns:
+        Resized PIL Image (or original if already smaller)
+
+    Example:
+        >>> from PIL import Image
+        >>> img = Image.new("RGB", (2400, 3200))
+        >>> compressed = compress_for_text_verification(img)
+        >>> compressed.size
+        (800, 1066)  # Maintains aspect ratio
+    """
+    if image.width <= max_width:
+        return image
+
+    ratio = max_width / image.width
+    new_height = int(image.height * ratio)
+    new_size = (max_width, new_height)
+
+    # Import here to avoid circular imports at module level
+    from PIL import Image as PILImage
+
+    resized = image.resize(new_size, PILImage.Resampling.LANCZOS)
+
+    logger.debug(
+        f"Compressed image for text verification: {image.size} -> {resized.size} "
+        f"({100 * resized.width * resized.height / (image.width * image.height):.1f}% of original pixels)"
+    )
+
+    return resized
+
+
+def compress_for_visual_analysis(
+    image: "Image.Image",
+    max_width: int = VISUAL_ANALYSIS_MAX_WIDTH,
+) -> "Image.Image":
+    """Compress image for visual analysis tasks.
+
+    Used by subagents that need to detect visual formatting (typography)
+    where higher resolution helps identify bold/italic text.
+
+    Args:
+        image: Original PIL Image
+        max_width: Maximum width in pixels (default: 1200)
+
+    Returns:
+        Resized PIL Image (or original if already smaller)
+    """
+    if image.width <= max_width:
+        return image
+
+    ratio = max_width / image.width
+    new_height = int(image.height * ratio)
+    new_size = (max_width, new_height)
+
+    from PIL import Image as PILImage
+
+    resized = image.resize(new_size, PILImage.Resampling.LANCZOS)
+
+    logger.debug(
+        f"Compressed image for visual analysis: {image.size} -> {resized.size} "
+        f"({100 * resized.width * resized.height / (image.width * image.height):.1f}% of original pixels)"
+    )
+
+    return resized
+
+
+def image_to_compressed_bytes(
+    image: "Image.Image",
+    for_visual_analysis: bool = False,
+    format: str = "PNG",
+) -> bytes:
+    """Convert PIL Image to compressed bytes for LLM consumption.
+
+    Combines compression and serialization in one call. Use this when
+    preparing images for LLM subagents.
+
+    Args:
+        image: Original PIL Image
+        for_visual_analysis: If True, uses higher resolution (typography tasks).
+                            If False, uses lower resolution (text verification).
+        format: Output format ("PNG" or "JPEG"). PNG is lossless, JPEG is smaller.
+
+    Returns:
+        Compressed image as bytes
+
+    Example:
+        >>> img = Image.open("page.png")
+        >>> # For footnote/citation/list/artifact detection (text verification)
+        >>> bytes_data = image_to_compressed_bytes(img, for_visual_analysis=False)
+        >>> # For typography detection (visual analysis)
+        >>> bytes_data = image_to_compressed_bytes(img, for_visual_analysis=True)
+    """
+    if for_visual_analysis:
+        compressed = compress_for_visual_analysis(image)
+    else:
+        compressed = compress_for_text_verification(image)
+
+    buffer = BytesIO()
+    if format.upper() == "JPEG":
+        # Convert to RGB if necessary (JPEG doesn't support transparency)
+        if compressed.mode in ("RGBA", "LA", "P"):
+            compressed = compressed.convert("RGB")
+        compressed.save(buffer, format="JPEG", quality=COMPRESSION_QUALITY)
+    else:
+        compressed.save(buffer, format="PNG")
+
+    return buffer.getvalue()

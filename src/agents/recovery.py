@@ -18,7 +18,7 @@ import logging
 import time
 from dataclasses import dataclass, field
 from io import BytesIO
-from typing import TYPE_CHECKING
+from typing import TYPE_CHECKING, Any
 
 from pydantic import BaseModel, Field
 from pydantic_ai import Agent, RunContext
@@ -81,6 +81,9 @@ class RecoveryDeps:
     # Mutable state
     edits_applied: list[RecoveryEdit] = field(default_factory=list)
     caveats: list[str] = field(default_factory=list)
+
+    # Pipeline dossier for context injection
+    dossier: Any | None = None
 
 
 # =============================================================================
@@ -471,6 +474,25 @@ def _get_recovery_agent() -> Agent[RecoveryDeps, RecoveryOutput]:
         _recovery_agent.tool(view_processing_history_tool)
         _recovery_agent.tool(propose_cleanup_tool)
 
+        # Dynamic instructions from dossier — critical for recovery context
+        @_recovery_agent.instructions
+        def _inject_dossier_context(ctx: RunContext[RecoveryDeps]) -> str:
+            from .shared_prompts import (
+                format_document_identity,
+                format_execution_findings,
+                format_verification_context,
+            )
+
+            d = ctx.deps.dossier
+            if d is None:
+                return ""
+            parts = [
+                format_document_identity(d),
+                format_verification_context(d),
+                format_execution_findings(d, ctx.deps.page_num),
+            ]
+            return "\n".join(p for p in parts if p)
+
         logger.info("Recovery agent initialized")
 
     return _recovery_agent
@@ -489,6 +511,7 @@ async def attempt_page_recovery(
     processing_history: list[str],
     attempt_number: int,
     event_bus: EventBus | None = None,
+    dossier: Any | None = None,
 ) -> tuple[str, RecoveryAttempt]:
     """Attempt to recover a single page.
 
@@ -525,6 +548,7 @@ async def attempt_page_recovery(
         issues=issues,
         processing_history=processing_history,
         event_bus=event_bus,
+        dossier=dossier,
     )
 
     agent = _get_recovery_agent()

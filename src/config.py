@@ -216,6 +216,10 @@ class Settings(BaseSettings):
         default=False, description="Log full LLM prompts and outputs in traces (WARNING: may contain document content)"
     )
 
+    # Logfire Configuration (PydanticAI agent tracing)
+    logfire_enabled: bool = Field(default=False, description="Enable Logfire tracing for PydanticAI agents")
+    logfire_token: str = Field(default="", description="Logfire API token")
+
     # LTI 1.3 Configuration
     lti_enabled: bool = Field(default=False, description="Enable LTI 1.3 integration endpoints")
 

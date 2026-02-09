@@ -2,6 +2,11 @@
 
 Tests the parallelization optimization that runs multiple subagent calls
 concurrently before the main agent reasoning loop.
+
+With the consolidated TextStructure subagent, text structure tasks (page
+artifacts, footnotes, citations, lists) are handled in a SINGLE LLM call.
+Typography tasks are batched separately. This reduces LLM calls from 6/page
+to 2-3/page.
 """
 
 import asyncio
@@ -19,6 +24,7 @@ from src.agents.models import (
 )
 from src.agents.paragraph_agent import (
     MAX_CONCURRENT_SUBAGENTS,
+    TEXT_STRUCTURE_TASK_TYPES,
     ParagraphAgentDeps,
     _create_failed_result,
     _get_subagent_key,
@@ -26,10 +32,8 @@ from src.agents.paragraph_agent import (
     _run_subagents_parallel,
 )
 from src.agents.subagents.types import (
-    CitationResult,
-    FootnoteResult,
-    ListResult,
-    PageArtifactResult,
+    TextStructureCorrection,
+    TextStructureResult,
     TypographyResult,
 )
 
@@ -130,52 +134,64 @@ class TestGetSubagentKey:
 
 
 class TestCreateFailedResult:
-    """Tests for _create_failed_result function."""
+    """Tests for _create_failed_result function.
 
-    def test_creates_page_artifact_result(self, sample_deps: ParagraphAgentDeps) -> None:
-        """Should create PageArtifactResult with zero confidence."""
+    With the consolidated TextStructure subagent, all text structure task
+    types (page artifacts, footnotes, citations, lists) return TextStructureResult.
+    Typography tasks return TypographyResult.
+    """
+
+    def test_creates_text_structure_result_for_page_artifact(
+        self, sample_deps: ParagraphAgentDeps
+    ) -> None:
+        """Should create TextStructureResult for page artifact tasks."""
         result = _create_failed_result(
             TaskType.PAGE_ARTIFACT_REMOVAL,
             "Test error",
             sample_deps,
         )
-        assert isinstance(result, PageArtifactResult)
+        assert isinstance(result, TextStructureResult)
         assert result.confidence == 0.0
         assert "Test error" in result.reasoning
-        assert result.cleaned_text == sample_deps.current_markdown
+        assert result.corrections == []
 
-    def test_creates_footnote_result(self, sample_deps: ParagraphAgentDeps) -> None:
-        """Should create FootnoteResult with zero confidence."""
+    def test_creates_text_structure_result_for_footnote(
+        self, sample_deps: ParagraphAgentDeps
+    ) -> None:
+        """Should create TextStructureResult for footnote tasks."""
         result = _create_failed_result(
             TaskType.FOOTNOTE_CORRECTION,
             "Test error",
             sample_deps,
         )
-        assert isinstance(result, FootnoteResult)
+        assert isinstance(result, TextStructureResult)
         assert result.confidence == 0.0
         assert "Test error" in result.reasoning
 
-    def test_creates_citation_result(self, sample_deps: ParagraphAgentDeps) -> None:
-        """Should create CitationResult with zero confidence."""
+    def test_creates_text_structure_result_for_citation(
+        self, sample_deps: ParagraphAgentDeps
+    ) -> None:
+        """Should create TextStructureResult for citation tasks."""
         result = _create_failed_result(
             TaskType.CITATION_LINKING,
             "Test error",
             sample_deps,
         )
-        assert isinstance(result, CitationResult)
+        assert isinstance(result, TextStructureResult)
         assert result.confidence == 0.0
-        assert result.bibliography_found is False
 
-    def test_creates_list_result(self, sample_deps: ParagraphAgentDeps) -> None:
-        """Should create ListResult with zero confidence."""
+    def test_creates_text_structure_result_for_list(
+        self, sample_deps: ParagraphAgentDeps
+    ) -> None:
+        """Should create TextStructureResult for list tasks."""
         result = _create_failed_result(
             TaskType.LIST_FIX,
             "Test error",
             sample_deps,
         )
-        assert isinstance(result, ListResult)
+        assert isinstance(result, TextStructureResult)
         assert result.confidence == 0.0
-        assert result.issues_fixed == []
+        assert result.corrections == []
 
     def test_creates_typography_result(self, sample_deps: ParagraphAgentDeps) -> None:
         """Should create TypographyResult with zero confidence."""
@@ -206,13 +222,17 @@ class TestCreateFailedResult:
 
 
 class TestInvokeSubagentForTask:
-    """Tests for _invoke_subagent_for_task function."""
+    """Tests for _invoke_subagent_for_task function.
+
+    With the consolidated TextStructure subagent, all text structure tasks
+    invoke the same consolidated subagent.
+    """
 
     @pytest.mark.asyncio
-    async def test_invokes_page_artifact_subagent(
+    async def test_invokes_text_structure_subagent_for_page_artifact(
         self, sample_deps: ParagraphAgentDeps
     ) -> None:
-        """Should invoke page artifact subagent for PAGE_ARTIFACT_REMOVAL."""
+        """Should invoke text structure subagent for PAGE_ARTIFACT_REMOVAL."""
         task = Task(
             task_type=TaskType.PAGE_ARTIFACT_REMOVAL,
             target="line:5",
@@ -220,26 +240,32 @@ class TestInvokeSubagentForTask:
         )
 
         with patch(
-            "src.agents.paragraph_agent.invoke_page_artifact_subagent"
+            "src.agents.paragraph_agent.invoke_text_structure_subagent"
         ) as mock_invoke:
-            mock_invoke.return_value = PageArtifactResult(
+            mock_invoke.return_value = TextStructureResult(
                 confidence=0.9,
                 reasoning="Removed artifact",
-                cleaned_text="cleaned",
-                artifacts_removed=["---"],
-                words_rejoined=[],
+                corrections=[
+                    TextStructureCorrection(
+                        task_type="page_artifact",
+                        before="---",
+                        after="",
+                        confidence=0.9,
+                        reasoning="Page break marker",
+                    )
+                ],
             )
             result = await _invoke_subagent_for_task(task, sample_deps)
 
             mock_invoke.assert_called_once()
-            assert isinstance(result, PageArtifactResult)
+            assert isinstance(result, TextStructureResult)
             assert result.confidence == 0.9
 
     @pytest.mark.asyncio
-    async def test_invokes_footnote_subagent(
+    async def test_invokes_text_structure_subagent_for_footnote(
         self, sample_deps: ParagraphAgentDeps
     ) -> None:
-        """Should invoke footnote subagent for FOOTNOTE_CORRECTION."""
+        """Should invoke text structure subagent for FOOTNOTE_CORRECTION."""
         task = Task(
             task_type=TaskType.FOOTNOTE_CORRECTION,
             target="footnote:1",
@@ -247,24 +273,23 @@ class TestInvokeSubagentForTask:
         )
 
         with patch(
-            "src.agents.paragraph_agent.invoke_footnote_subagent"
+            "src.agents.paragraph_agent.invoke_text_structure_subagent"
         ) as mock_invoke:
-            mock_invoke.return_value = FootnoteResult(
+            mock_invoke.return_value = TextStructureResult(
                 confidence=0.85,
                 reasoning="Fixed footnote",
-                corrected_markdown="fixed",
-                footnotes_fixed=[],
+                corrections=[],
             )
             result = await _invoke_subagent_for_task(task, sample_deps)
 
             mock_invoke.assert_called_once()
-            assert isinstance(result, FootnoteResult)
+            assert isinstance(result, TextStructureResult)
 
     @pytest.mark.asyncio
-    async def test_invokes_citation_subagent(
+    async def test_invokes_text_structure_subagent_for_citation(
         self, sample_deps: ParagraphAgentDeps
     ) -> None:
-        """Should invoke citation subagent for CITATION_LINKING."""
+        """Should invoke text structure subagent for CITATION_LINKING."""
         task = Task(
             task_type=TaskType.CITATION_LINKING,
             target="citation:1",
@@ -272,42 +297,41 @@ class TestInvokeSubagentForTask:
         )
 
         with patch(
-            "src.agents.paragraph_agent.invoke_citation_subagent"
+            "src.agents.paragraph_agent.invoke_text_structure_subagent"
         ) as mock_invoke:
-            mock_invoke.return_value = CitationResult(
+            mock_invoke.return_value = TextStructureResult(
                 confidence=0.7,
                 reasoning="Linked citation",
-                corrected_markdown="linked",
-                citations_linked=[],
-                bibliography_found=True,
+                corrections=[],
             )
             result = await _invoke_subagent_for_task(task, sample_deps)
 
             mock_invoke.assert_called_once()
-            assert isinstance(result, CitationResult)
+            assert isinstance(result, TextStructureResult)
 
     @pytest.mark.asyncio
-    async def test_invokes_list_subagent(
+    async def test_invokes_text_structure_subagent_for_list(
         self, sample_deps: ParagraphAgentDeps
     ) -> None:
-        """Should invoke list subagent for LIST_FIX."""
+        """Should invoke text structure subagent for LIST_FIX."""
         task = Task(
             task_type=TaskType.LIST_FIX,
             target="list:1",
             context="1. Item one\n2. Item two",
         )
 
-        with patch("src.agents.paragraph_agent.invoke_list_subagent") as mock_invoke:
-            mock_invoke.return_value = ListResult(
+        with patch(
+            "src.agents.paragraph_agent.invoke_text_structure_subagent"
+        ) as mock_invoke:
+            mock_invoke.return_value = TextStructureResult(
                 confidence=0.8,
                 reasoning="Fixed list",
-                corrected_markdown="fixed list",
-                issues_fixed=["numbering"],
+                corrections=[],
             )
             result = await _invoke_subagent_for_task(task, sample_deps)
 
             mock_invoke.assert_called_once()
-            assert isinstance(result, ListResult)
+            assert isinstance(result, TextStructureResult)
 
     @pytest.mark.asyncio
     async def test_invokes_typography_subagent(
@@ -354,7 +378,14 @@ class TestInvokeSubagentForTask:
 
 
 class TestRunSubagentsParallel:
-    """Tests for _run_subagents_parallel function."""
+    """Tests for _run_subagents_parallel function.
+
+    The consolidated approach:
+    - All text structure tasks (page artifacts, footnotes, citations, lists)
+      are handled by ONE TextStructure subagent call
+    - Typography tasks are batched separately
+    - Maximum of 2 LLM calls per page (TextStructure + Typography)
+    """
 
     @pytest.mark.asyncio
     async def test_returns_empty_dict_for_no_tasks(
@@ -373,46 +404,10 @@ class TestRunSubagentsParallel:
         assert result == {}
 
     @pytest.mark.asyncio
-    async def test_single_task_skips_parallelization(
+    async def test_text_structure_tasks_consolidated(
         self, sample_deps: ParagraphAgentDeps, sample_job_context: JobContext
     ) -> None:
-        """Single task should bypass asyncio.gather for efficiency."""
-        task = Task(
-            task_type=TaskType.PAGE_ARTIFACT_REMOVAL,
-            target="line:5",
-            context="---",
-        )
-        job = Job(
-            job_id="test",
-            page=1,
-            job_type=JobType.PARAGRAPH,
-            context=sample_job_context,
-            page_markdown="# Test",
-            tasks=[task],
-        )
-
-        with patch(
-            "src.agents.paragraph_agent._invoke_subagent_for_task"
-        ) as mock_invoke:
-            mock_invoke.return_value = PageArtifactResult(
-                confidence=0.9,
-                reasoning="test",
-                cleaned_text="clean",
-                artifacts_removed=[],
-                words_rejoined=[],
-            )
-            result = await _run_subagents_parallel(job, sample_deps)
-
-            mock_invoke.assert_called_once_with(task, sample_deps)
-            assert len(result) == 1
-            key = _get_subagent_key(TaskType.PAGE_ARTIFACT_REMOVAL, "line:5")
-            assert key in result
-
-    @pytest.mark.asyncio
-    async def test_all_five_subagents_run_in_parallel(
-        self, sample_deps: ParagraphAgentDeps, sample_job_context: JobContext
-    ) -> None:
-        """All 5 subagent types should run concurrently."""
+        """Multiple text structure tasks should result in single LLM call."""
         tasks = [
             Task(
                 task_type=TaskType.PAGE_ARTIFACT_REMOVAL,
@@ -434,6 +429,115 @@ class TestRunSubagentsParallel:
                 target="list:1",
                 context="1. Item",
             ),
+        ]
+        job = Job(
+            job_id="test",
+            page=1,
+            job_type=JobType.PARAGRAPH,
+            context=sample_job_context,
+            page_markdown="# Test",
+            tasks=tasks,
+        )
+
+        with patch(
+            "src.agents.paragraph_agent.invoke_text_structure_subagent"
+        ) as mock_text_structure:
+            mock_text_structure.return_value = TextStructureResult(
+                confidence=0.9,
+                reasoning="Fixed all",
+                corrections=[
+                    TextStructureCorrection(
+                        task_type="page_artifact",
+                        before="---",
+                        after="",
+                        confidence=0.9,
+                        reasoning="Removed artifact",
+                    )
+                ],
+            )
+            result = await _run_subagents_parallel(job, sample_deps)
+
+            # Only ONE call to text structure subagent
+            assert mock_text_structure.call_count == 1
+
+            # Result stored under single key
+            assert "text_structure:page" in result
+            assert isinstance(result["text_structure:page"], TextStructureResult)
+
+    @pytest.mark.asyncio
+    async def test_typography_tasks_batched_separately(
+        self, sample_deps: ParagraphAgentDeps, sample_job_context: JobContext
+    ) -> None:
+        """Typography tasks should be batched into single call."""
+        tasks = [
+            Task(
+                task_type=TaskType.TYPOGRAPHY_FIX,
+                target="typography:1",
+                context="bold text 1",
+            ),
+            Task(
+                task_type=TaskType.TYPOGRAPHY_FIX,
+                target="typography:2",
+                context="bold text 2",
+            ),
+        ]
+        job = Job(
+            job_id="test",
+            page=1,
+            job_type=JobType.PARAGRAPH,
+            context=sample_job_context,
+            page_markdown="# Test",
+            tasks=tasks,
+        )
+
+        with patch(
+            "src.agents.paragraph_agent.invoke_typography_subagent_batch"
+        ) as mock_batch:
+            mock_batch.return_value = [
+                (
+                    "typography:1",
+                    TypographyResult(
+                        confidence=0.9,
+                        reasoning="Added bold",
+                        corrected_markdown="**bold text 1**",
+                        formatting_added=[],
+                    ),
+                ),
+                (
+                    "typography:2",
+                    TypographyResult(
+                        confidence=0.85,
+                        reasoning="Added bold",
+                        corrected_markdown="**bold text 2**",
+                        formatting_added=[],
+                    ),
+                ),
+            ]
+            result = await _run_subagents_parallel(job, sample_deps)
+
+            # Only ONE call to typography batch
+            assert mock_batch.call_count == 1
+
+            # Results mapped to task keys
+            assert "typography_fix:typography:1" in result
+            assert "typography_fix:typography:2" in result
+
+    @pytest.mark.asyncio
+    async def test_mixed_tasks_run_in_parallel(
+        self, sample_deps: ParagraphAgentDeps, sample_job_context: JobContext
+    ) -> None:
+        """Text structure and typography should run in parallel (2 calls max)."""
+        tasks = [
+            Task(
+                task_type=TaskType.PAGE_ARTIFACT_REMOVAL,
+                target="artifact:1",
+                context="---",
+            ),
+            Task(
+                task_type=TaskType.FOOTNOTE_CORRECTION,
+                target="footnote:1",
+                context="[^1]",
+            ),
             Task(
                 task_type=TaskType.TYPOGRAPHY_FIX,
                 target="typography:1",
@@ -449,92 +553,65 @@ class TestRunSubagentsParallel:
             tasks=tasks,
         )
 
-        # Track call order to verify parallel execution
         call_times: list[float] = []
 
-        async def mock_subagent_call(task: Task, deps: ParagraphAgentDeps):
-            """Mock that records when it was called."""
+        async def mock_text_structure(*args, **kwargs):
             import time
 
             call_times.append(time.time())
-            await asyncio.sleep(0.01)  # Small delay to verify concurrency
-            if task.task_type == TaskType.PAGE_ARTIFACT_REMOVAL:
-                return PageArtifactResult(
-                    confidence=0.9,
-                    reasoning="test",
-                    cleaned_text="clean",
-                    artifacts_removed=[],
-                    words_rejoined=[],
+            await asyncio.sleep(0.01)
+            return TextStructureResult(
+                confidence=0.9,
+                reasoning="Fixed",
+                corrections=[],
+            )
+
+        async def mock_typography_batch(text_regions, page_image):
+            import time
+
+            call_times.append(time.time())
+            await asyncio.sleep(0.01)
+            return [
+                (
+                    target,
+                    TypographyResult(
+                        confidence=0.9,
+                        reasoning="Fixed",
+                        corrected_markdown="**bold**",
+                        formatting_added=[],
+                    ),
                 )
-            elif task.task_type == TaskType.FOOTNOTE_CORRECTION:
-                return FootnoteResult(
-                    confidence=0.85,
-                    reasoning="test",
-                    corrected_markdown="fixed",
-                    footnotes_fixed=[],
-                )
-            elif task.task_type == TaskType.CITATION_LINKING:
-                return CitationResult(
-                    confidence=0.7,
-                    reasoning="test",
-                    corrected_markdown="linked",
-                    citations_linked=[],
-                    bibliography_found=True,
-                )
-            elif task.task_type == TaskType.LIST_FIX:
-                return ListResult(
-                    confidence=0.8,
-                    reasoning="test",
-                    corrected_markdown="fixed list",
-                    issues_fixed=[],
-                )
-            elif task.task_type == TaskType.TYPOGRAPHY_FIX:
-                return TypographyResult(
-                    confidence=0.75,
-                    reasoning="test",
-                    corrected_markdown="**bold**",
-                    formatting_added=[],
-                )
-            return None
+                for target, _ in text_regions
+            ]
 
         with patch(
-            "src.agents.paragraph_agent._invoke_subagent_for_task",
-            side_effect=mock_subagent_call,
+            "src.agents.paragraph_agent.invoke_text_structure_subagent",
+            side_effect=mock_text_structure,
+        ), patch(
+            "src.agents.paragraph_agent.invoke_typography_subagent_batch",
+            side_effect=mock_typography_batch,
         ):
             result = await _run_subagents_parallel(job, sample_deps)
 
-            # All 5 results should be present
-            assert len(result) == 5
-
-            # Verify keys are correct
-            assert "page_artifact_removal:artifact:1" in result
-            assert "footnote_correction:footnote:1" in result
-            assert "citation_linking:citation:1" in result
-            assert "list_fix:list:1" in result
+            # Should have results for both
+            assert "text_structure:page" in result
             assert "typography_fix:typography:1" in result
 
-            # Verify all calls started within a short window (parallel execution)
-            # With sequential execution, calls would be spread apart
+            # Both calls should start near-simultaneously (parallel execution)
             if len(call_times) >= 2:
                 time_spread = max(call_times) - min(call_times)
-                # Parallel execution should have all calls start nearly simultaneously
                 assert time_spread < 0.05  # 50ms tolerance
 
     @pytest.mark.asyncio
-    async def test_one_subagent_fails_others_succeed(
+    async def test_text_structure_failure_handled_gracefully(
         self, sample_deps: ParagraphAgentDeps, sample_job_context: JobContext
     ) -> None:
-        """Exception in one subagent should not affect others."""
+        """Exception in text structure subagent should create failed result."""
         tasks = [
             Task(
                 task_type=TaskType.PAGE_ARTIFACT_REMOVAL,
                 target="artifact:1",
                 context="---",
-            ),
-            Task(
-                task_type=TaskType.FOOTNOTE_CORRECTION,
-                target="footnote:1",  # This one will fail
-                context="[^1]",
             ),
             Task(
                 task_type=TaskType.TYPOGRAPHY_FIX,
@@ -551,135 +628,55 @@ class TestRunSubagentsParallel:
             tasks=tasks,
         )
 
-        async def mock_with_failure(task: Task, deps: ParagraphAgentDeps):
-            """Mock that fails for footnote task."""
-            if task.task_type == TaskType.FOOTNOTE_CORRECTION:
-                raise ValueError("Simulated footnote subagent failure")
-            elif task.task_type == TaskType.PAGE_ARTIFACT_REMOVAL:
-                return PageArtifactResult(
-                    confidence=0.9,
-                    reasoning="success",
-                    cleaned_text="clean",
-                    artifacts_removed=[],
-                    words_rejoined=[],
-                )
-            return None
-
         async def mock_typography_batch(text_regions, page_image):
-            """Mock typography batch that returns success for all regions."""
             return [
-                (target, TypographyResult(
-                    confidence=0.8,
-                    reasoning="success",
-                    corrected_markdown="**bold**",
-                    formatting_added=[],
-                ))
+                (
+                    target,
+                    TypographyResult(
+                        confidence=0.9,
+                        reasoning="success",
+                        corrected_markdown="**bold**",
+                        formatting_added=[],
+                    ),
+                )
                 for target, _ in text_regions
             ]
 
         with patch(
-            "src.agents.paragraph_agent._invoke_subagent_for_task",
-            side_effect=mock_with_failure,
+            "src.agents.paragraph_agent.invoke_text_structure_subagent",
+            side_effect=RuntimeError("Connection error"),
         ), patch(
             "src.agents.paragraph_agent.invoke_typography_subagent_batch",
             side_effect=mock_typography_batch,
         ):
             result = await _run_subagents_parallel(job, sample_deps)
 
-            # All 3 tasks should have results
-            assert len(result) == 3
+            # Text structure should have failed result
+            text_result = result["text_structure:page"]
+            assert isinstance(text_result, TextStructureResult)
+            assert text_result.confidence == 0.0
+            assert "Connection error" in text_result.reasoning
 
-            # Successful tasks should have proper results
-            artifact_result = result["page_artifact_removal:artifact:1"]
-            assert isinstance(artifact_result, PageArtifactResult)
-            assert artifact_result.confidence == 0.9
-
-            typography_result = result["typography_fix:typography:1"]
-            assert isinstance(typography_result, TypographyResult)
-            assert typography_result.confidence == 0.8
-
-            # Failed task should have zero-confidence result
-            footnote_result = result["footnote_correction:footnote:1"]
-            assert isinstance(footnote_result, FootnoteResult)
-            assert footnote_result.confidence == 0.0
-            assert "Simulated footnote subagent failure" in footnote_result.reasoning
+            # Typography should have succeeded
+            typo_result = result["typography_fix:typography:1"]
+            assert isinstance(typo_result, TypographyResult)
+            assert typo_result.confidence == 0.9
 
     @pytest.mark.asyncio
-    async def test_semaphore_limits_concurrent_calls(
+    async def test_typography_batch_failure_handled_gracefully(
         self, sample_deps: ParagraphAgentDeps, sample_job_context: JobContext
     ) -> None:
-        """Semaphore should limit concurrent calls to MAX_CONCURRENT_SUBAGENTS."""
-        # Create more tasks than the semaphore limit
-        num_tasks = MAX_CONCURRENT_SUBAGENTS + 3
+        """Exception in typography batch should create failed results for each task."""
         tasks = [
             Task(
-                task_type=TaskType.PAGE_ARTIFACT_REMOVAL,
-                target=f"artifact:{i}",
-                context=f"Context {i}",
-            )
-            for i in range(num_tasks)
-        ]
-        job = Job(
-            job_id="test",
-            page=1,
-            job_type=JobType.PARAGRAPH,
-            context=sample_job_context,
-            page_markdown="# Test",
-            tasks=tasks,
-        )
-
-        # Track concurrent execution count
-        max_concurrent = 0
-        current_concurrent = 0
-        lock = asyncio.Lock()
-
-        async def mock_with_tracking(task: Task, deps: ParagraphAgentDeps):
-            """Mock that tracks concurrent execution count."""
-            nonlocal max_concurrent, current_concurrent
-            async with lock:
-                current_concurrent += 1
-                max_concurrent = max(max_concurrent, current_concurrent)
-
-            await asyncio.sleep(0.05)  # Simulate work
-
-            async with lock:
-                current_concurrent -= 1
-
-            return PageArtifactResult(
-                confidence=0.9,
-                reasoning="test",
-                cleaned_text="clean",
-                artifacts_removed=[],
-                words_rejoined=[],
-            )
-
-        with patch(
-            "src.agents.paragraph_agent._invoke_subagent_for_task",
-            side_effect=mock_with_tracking,
-        ):
-            result = await _run_subagents_parallel(job, sample_deps)
-
-            # All tasks should complete
-            assert len(result) == num_tasks
-
-            # Max concurrent should not exceed semaphore limit
-            assert max_concurrent <= MAX_CONCURRENT_SUBAGENTS
-
-    @pytest.mark.asyncio
-    async def test_results_correctly_mapped_to_tasks(
-        self, sample_deps: ParagraphAgentDeps, sample_job_context: JobContext
-    ) -> None:
-        """Results should be mapped to correct task identifiers."""
-        tasks = [
-            Task(
-                task_type=TaskType.PAGE_ARTIFACT_REMOVAL,
-                target="unique_target_A",
-                context="context A",
+                task_type=TaskType.TYPOGRAPHY_FIX,
+                target="typography:1",
+                context="bold 1",
             ),
             Task(
-                task_type=TaskType.PAGE_ARTIFACT_REMOVAL,
-                target="unique_target_B",
-                context="context B",
+                task_type=TaskType.TYPOGRAPHY_FIX,
+                target="typography:2",
+                context="bold 2",
             ),
         ]
         job = Job(
@@ -691,32 +688,42 @@ class TestRunSubagentsParallel:
             tasks=tasks,
         )
 
-        results_by_target = {}
-
-        async def mock_capture_target(task: Task, deps: ParagraphAgentDeps):
-            """Mock that returns result tied to target."""
-            result = PageArtifactResult(
-                confidence=0.9,
-                reasoning=f"Result for {task.target}",
-                cleaned_text=f"cleaned_{task.target}",
-                artifacts_removed=[],
-                words_rejoined=[],
-            )
-            results_by_target[task.target] = result
-            return result
-
         with patch(
-            "src.agents.paragraph_agent._invoke_subagent_for_task",
-            side_effect=mock_capture_target,
+            "src.agents.paragraph_agent.invoke_typography_subagent_batch",
+            side_effect=RuntimeError("Batch error"),
         ):
             result = await _run_subagents_parallel(job, sample_deps)
 
-            # Verify correct mapping
-            key_a = "page_artifact_removal:unique_target_A"
-            key_b = "page_artifact_removal:unique_target_B"
+            # Both typography tasks should have failed results
+            for key in ["typography_fix:typography:1", "typography_fix:typography:2"]:
+                assert key in result
+                typo_result = result[key]
+                assert isinstance(typo_result, TypographyResult)
+                assert typo_result.confidence == 0.0
+                assert "Batch error" in typo_result.reasoning
 
-            assert result[key_a].reasoning == "Result for unique_target_A"
-            assert result[key_b].reasoning == "Result for unique_target_B"
+
+# =============================================================================
+# Text Structure Task Types Tests
+# =============================================================================
+
+
+class TestTextStructureTaskTypes:
+    """Tests for TEXT_STRUCTURE_TASK_TYPES constant."""
+
+    def test_includes_all_text_structure_types(self) -> None:
+        """Should include all text structure task types."""
+        expected = {
+            TaskType.PAGE_ARTIFACT_REMOVAL,
+            TaskType.FOOTNOTE_CORRECTION,
+            TaskType.CITATION_LINKING,
+            TaskType.LIST_FIX,
+        }
+        assert TEXT_STRUCTURE_TASK_TYPES == expected
+
+    def test_does_not_include_typography(self) -> None:
+        """Typography should NOT be in text structure types."""
+        assert TaskType.TYPOGRAPHY_FIX not in TEXT_STRUCTURE_TASK_TYPES
 
 
 # =============================================================================

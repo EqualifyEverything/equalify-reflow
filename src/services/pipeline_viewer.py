@@ -26,6 +26,7 @@ from .pipeline_viewer_models import (
     FigureData,
     FootnoteInfo,
     OutlineEntry,
+    PageAttributes,
     PageCorrectionResult,
     PipelineViewerResult,
     StepResult,
@@ -47,14 +48,62 @@ def _pil_to_base64(image: object) -> str:
     return base64.b64encode(buf.getvalue()).decode("utf-8")
 
 
-def _load_procedure(doc_type: str) -> str:
-    """Load a page correction procedure file by document type."""
-    path = PROCEDURES_DIR / "page_correction" / f"{doc_type}.md"
+def _load_fragment(name: str) -> str:
+    """Load a procedure fragment by relative name.
+
+    Args:
+        name: Fragment path relative to page_correction/, without .md extension.
+              e.g. "base", "layout/double_column", "content/academic".
+    """
+    path = PROCEDURES_DIR / "page_correction" / f"{name}.md"
     if not path.exists():
-        available = [p.stem for p in (PROCEDURES_DIR / "page_correction").glob("*.md")]
-        logger.warning(f"No procedure for '{doc_type}', available: {available}")
+        logger.warning(f"No fragment at {path}")
         return ""
     return path.read_text()
+
+
+def _compose_page_prompt(attrs: PageAttributes) -> str:
+    """Compose a correction prompt from page attribute fragments.
+
+    Always includes the base fragment. Layout fragment is selected by
+    attrs.layout. Boolean flags toggle content and quality fragments.
+    """
+    fragments = []
+
+    base = _load_fragment("base")
+    if base:
+        fragments.append(base)
+
+    layout = _load_fragment(f"layout/{attrs.layout.value}")
+    if layout:
+        fragments.append(layout)
+
+    if attrs.is_academic:
+        acad = _load_fragment("content/academic")
+        if acad:
+            fragments.append(acad)
+
+    if attrs.has_images:
+        img = _load_fragment("content/has_images")
+        if img:
+            fragments.append(img)
+
+    if attrs.has_tables:
+        tbl = _load_fragment("content/has_tables")
+        if tbl:
+            fragments.append(tbl)
+
+    if attrs.has_equations:
+        eq = _load_fragment("content/has_equations")
+        if eq:
+            fragments.append(eq)
+
+    if attrs.is_scanned:
+        scan = _load_fragment("quality/scanned")
+        if scan:
+            fragments.append(scan)
+
+    return "\n\n".join(fragments)
 
 
 def _fuzzy_find_line(lines: list[str], target: str, threshold: float = 0.6) -> int:
@@ -246,20 +295,6 @@ class PipelineViewerService:
             await self._step_boundaries(result, structure)
             await self._step_cleanup(result)
 
-        # Replace <!-- image --> placeholders with inline image refs in the
-        # latest full-document version.  Done after all AI steps so agents
-        # don't interfere with image syntax.
-        if result.figures:
-            latest_version = next(
-                (v for v in ("v3", "v2", "v1", "v0") if v in result.versions),
-                None,
-            )
-            if latest_version is not None:
-                result.versions[latest_version] = _replace_image_placeholders(
-                    result.versions[latest_version],
-                    result.figures,
-                )
-
         return result
 
     async def _step_docling(
@@ -333,6 +368,21 @@ class PipelineViewerService:
                         image_base64=_pil_to_base64(pic.image.pil_image),
                     )
                 )
+
+        # Replace <!-- image --> placeholders with inline image refs in v0.
+        # Done immediately so all downstream steps see image syntax.
+        if result.figures:
+            # Per-page replacement: filter figures by page_number
+            for page_key, page_md in page_mds.items():
+                page_figures = [f for f in result.figures if str(f.page_number) == page_key]
+                if page_figures:
+                    page_mds[page_key] = _replace_image_placeholders(page_md, page_figures)
+            result.page_markdowns["v0"] = page_mds
+
+            # Full document replacement
+            result.versions["v0"] = _replace_image_placeholders(
+                result.versions["v0"], result.figures
+            )
 
         elapsed_ms = int((time.time() - step_start) * 1000)
 
@@ -442,7 +492,7 @@ class PipelineViewerService:
                 continue
 
             # Accumulate results
-            structure.page_types[page_num] = page_output.page_type
+            structure.page_attributes[page_num] = page_output.page_attributes
 
             for heading in page_output.headings:
                 structure.outline.append(
@@ -473,9 +523,10 @@ class PipelineViewerService:
                     )
                 )
 
+            attrs = page_output.page_attributes
             logger.info(
                 f"Structure page {page_num}/{result.total_pages}: "
-                f"type={page_output.page_type.value}, "
+                f"layout={attrs.layout.value}, "
                 f"headings={len(page_output.headings)}, "
                 f"footnotes={len(page_output.footnotes)}, "
                 f"code_blocks={len(page_output.code_blocks)}"
@@ -497,8 +548,8 @@ class PipelineViewerService:
                 elapsed_ms=elapsed_ms,
                 changes=[],
                 metadata={
-                    "page_types": {
-                        str(k): v.value for k, v in structure.page_types.items()
+                    "page_attributes": {
+                        str(k): v.model_dump() for k, v in structure.page_attributes.items()
                     },
                     "outline": [e.model_dump() for e in structure.outline],
                     "footnotes": [f.model_dump() for f in structure.footnotes],
@@ -728,9 +779,9 @@ class PipelineViewerService:
 
         from ..agents.model_tiers import MODEL_TIER_MAP, ModelTier
 
-        # Load procedure for this page's document type
-        page_type = structure.page_types.get(page_num)
-        procedure = _load_procedure(page_type.value) if page_type else ""
+        # Compose procedure from page attributes
+        page_attrs = structure.page_attributes.get(page_num)
+        procedure = _compose_page_prompt(page_attrs) if page_attrs else ""
 
         # Mutable state for str_replace tool
         current_markdown = page_markdown

@@ -11,6 +11,7 @@ interface MarkdownViewerProps {
   className?: string;
   isComplete?: boolean;
   showDebugDownload?: boolean;
+  figureMap?: Record<string, string>;
   onDownloadMarkdown?: () => void;
   onDownloadDebug?: () => void;
   onCopy?: () => void;
@@ -21,6 +22,7 @@ export function MarkdownViewer({
   className,
   isComplete = false,
   showDebugDownload = false,
+  figureMap,
   onDownloadMarkdown,
   onDownloadDebug,
   onCopy,
@@ -217,6 +219,11 @@ export function MarkdownViewer({
                       {children}
                     </a>
                   ),
+                  // Image — resolve from figureMap when available
+                  img: ({ src, alt }) => {
+                    const resolved = figureMap?.[src ?? ''] ?? src;
+                    return <img src={resolved} alt={alt ?? ''} className="max-w-full rounded my-4" />;
+                  },
                   // Horizontal rule
                   hr: () => <hr className="my-8 border-t-2 border-slate-200" />,
                   // Strong/emphasis

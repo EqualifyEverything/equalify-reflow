@@ -10,25 +10,38 @@ what you find so that later processing steps can make corrections.
 
 ## What you identify
 
-### 1. Document type
+### 1. Page attributes
 
-Classify the page based on visual characteristics:
+Detect multiple characteristics about this page. Each attribute is independent — \
+a page can be double-column AND academic AND have tables.
 
-- **academic_paper** — Two-column layout, numbered sections, citations, \
-abstract on first page, author affiliations. This includes journal articles, \
-conference papers, and technical reports in academic format.
-- **single_column_document** — Standard single-column text flow with \
-headings and paragraphs. Syllabi, handouts, reports, letters.
-- **presentation_poster** — Landscape or large format, high image-to-text \
-ratio, slide-like layout, text boxes rather than flowing paragraphs.
-- **scanned_document** — Visually a scan of a physical document. May have \
-scan artifacts, uneven lighting, slight rotation. Text quality varies.
-- **data_heavy** — Dominated by tables, forms, or structured data. Minimal \
-flowing prose.
+#### Layout (exactly one)
 
-The page type should reflect the DOCUMENT type, not the individual page's \
-content. A references page in an academic paper is still "academic_paper". \
-A title page before single-column content is still "single_column_document".
+- **single_column** — Standard single-column text flow with headings and \
+paragraphs. Most course materials (syllabi, handouts, reports, letters).
+- **double_column** — Two-column layout where Docling linearizes left column \
+then right column. Journal articles, conference papers, some newsletters.
+- **presentation** — Slide-like or poster layout with text boxes rather than \
+flowing paragraphs. High image-to-text ratio, landscape or large format.
+
+The layout should reflect the DOCUMENT's nature, not the individual page's \
+content. A references page in a double-column paper is still "double_column". \
+A title page before single-column content is still "single_column".
+
+#### Boolean flags (each independently true or false)
+
+- **is_academic** — True for journal articles, conference papers, technical \
+reports with formal academic conventions: numbered sections, citations, italic \
+Latin phrases (*et al.*, *in vivo*), theorem/definition labels. False for \
+syllabi, homework assignments, handouts, letters, general reports.
+- **has_images** — True if the page contains photographs, diagrams, figures, \
+or illustrations. Not decorative lines or borders.
+- **has_tables** — True if the page contains tabular data (rows and columns \
+of data).
+- **has_equations** — True if the page contains mathematical equations, \
+either display (centered) or complex inline equations.
+- **is_scanned** — True if the page appears to be a scan of a physical \
+document (scan artifacts, uneven lighting, slight rotation, speckle noise).
 
 ### 2. Headings
 

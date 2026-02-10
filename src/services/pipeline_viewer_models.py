@@ -11,14 +11,27 @@ from pydantic import BaseModel, Field
 # ---------------------------------------------------------------------------
 
 
-class PageType(str, Enum):
-    """Document type classification."""
+class LayoutType(str, Enum):
+    """Page layout classification based on text flow."""
 
-    ACADEMIC_PAPER = "academic_paper"
-    SINGLE_COLUMN = "single_column_document"
-    PRESENTATION = "presentation_poster"
-    SCANNED = "scanned_document"
-    DATA_HEAVY = "data_heavy"
+    SINGLE_COLUMN = "single_column"
+    DOUBLE_COLUMN = "double_column"
+    PRESENTATION = "presentation"
+
+
+class PageAttributes(BaseModel):
+    """Compositional page characteristics detected during structure analysis.
+
+    Each attribute maps to a procedure fragment that provides targeted
+    correction guidance for Phase 2 agents.
+    """
+
+    layout: LayoutType
+    is_academic: bool = False
+    has_images: bool = False
+    has_tables: bool = False
+    has_equations: bool = False
+    is_scanned: bool = False
 
 
 class HeadingRecommendation(BaseModel):
@@ -86,8 +99,8 @@ class StructurePageOutput(BaseModel):
     findings. It does NOT modify the markdown — that happens in Phase 2.
     """
 
-    page_type: PageType
-    """Document type classification based on visual characteristics."""
+    page_attributes: PageAttributes
+    """Compositional page characteristics detected from the page image."""
 
     headings: list[HeadingRecommendation] = Field(default_factory=list)
     """Headings found on this page with recommended levels."""
@@ -106,8 +119,8 @@ class StructureResult(BaseModel):
     Consumed by Phase 2 (per-page agents) and Phase 3 (cross-page).
     """
 
-    page_types: dict[int, PageType] = Field(default_factory=dict)
-    """Page number -> document type. Usually uniform across all pages."""
+    page_attributes: dict[int, PageAttributes] = Field(default_factory=dict)
+    """Page number -> compositional attributes detected for that page."""
 
     outline: list[OutlineEntry] = Field(default_factory=list)
     """Full document outline in page order."""

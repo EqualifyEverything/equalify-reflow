@@ -204,6 +204,7 @@ async def process_pdf_stream(
             try:
                 await service._step_cleanup(result)
                 total_steps += 1
+
                 step = result.steps[-1]
                 yield _sse_event("step", {
                     "step": step.model_dump(),

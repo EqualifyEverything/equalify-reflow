@@ -16,14 +16,16 @@ import pytest
 from src.services.pipeline_viewer import (
     PAGE_AGENT_SEMAPHORE_LIMIT,
     PipelineViewerService,
-    _load_procedure,
+    _compose_page_prompt,
+    _load_fragment,
 )
 from src.services.pipeline_viewer_models import (
     DocumentChange,
     FootnoteInfo,
+    LayoutType,
     OutlineEntry,
+    PageAttributes,
     PageCorrectionResult,
-    PageType,
     PipelineViewerResult,
     StepResult,
     StructurePageOutput,
@@ -75,11 +77,11 @@ def base_result():
 
 @pytest.fixture
 def sample_structure():
-    """Create a StructureResult with outline, page types, and footnotes."""
+    """Create a StructureResult with outline, page attributes, and footnotes."""
     return StructureResult(
-        page_types={
-            1: PageType.ACADEMIC_PAPER,
-            2: PageType.ACADEMIC_PAPER,
+        page_attributes={
+            1: PageAttributes(layout=LayoutType.DOUBLE_COLUMN, is_academic=True),
+            2: PageAttributes(layout=LayoutType.DOUBLE_COLUMN, is_academic=True),
         },
         outline=[
             OutlineEntry(level=1, text="Title", page=1),
@@ -108,7 +110,7 @@ class TestPhase1Accumulation:
     async def test_outline_accumulates_across_pages(self, service, base_result):
         """Outline entries from each page should be appended in order."""
         page1_output = StructurePageOutput(
-            page_type=PageType.ACADEMIC_PAPER,
+            page_attributes=PageAttributes(layout=LayoutType.DOUBLE_COLUMN, is_academic=True),
             headings=[
                 HeadingRecommendation(
                     text="Title", recommended_level=1, reasoning="doc title"
@@ -117,7 +119,7 @@ class TestPhase1Accumulation:
             footnotes=[],
         )
         page2_output = StructurePageOutput(
-            page_type=PageType.ACADEMIC_PAPER,
+            page_attributes=PageAttributes(layout=LayoutType.DOUBLE_COLUMN, is_academic=True),
             headings=[
                 HeadingRecommendation(
                     text="Methods", recommended_level=2, reasoning="section"
@@ -163,10 +165,10 @@ class TestPhase1Accumulation:
         assert structure.outline[1].page == 2
 
     @pytest.mark.asyncio
-    async def test_page_types_collected(self, service, base_result):
-        """Each page should have its type recorded."""
+    async def test_page_attributes_collected(self, service, base_result):
+        """Each page should have its attributes recorded."""
         page_output = StructurePageOutput(
-            page_type=PageType.SINGLE_COLUMN,
+            page_attributes=PageAttributes(layout=LayoutType.SINGLE_COLUMN),
             headings=[],
             footnotes=[],
         )
@@ -190,21 +192,21 @@ class TestPhase1Accumulation:
         ):
             structure = await service._step_structure(base_result)
 
-        assert structure.page_types[1] == PageType.SINGLE_COLUMN
-        assert structure.page_types[2] == PageType.SINGLE_COLUMN
+        assert structure.page_attributes[1].layout == LayoutType.SINGLE_COLUMN
+        assert structure.page_attributes[2].layout == LayoutType.SINGLE_COLUMN
 
     @pytest.mark.asyncio
     async def test_footnotes_collected_with_source_page(self, service, base_result):
         """Footnotes should be collected with correct source page."""
         page1_output = StructurePageOutput(
-            page_type=PageType.ACADEMIC_PAPER,
+            page_attributes=PageAttributes(layout=LayoutType.DOUBLE_COLUMN, is_academic=True),
             headings=[],
             footnotes=[
                 FootnoteInfo(number="1", body_text="First note.", source_page=1),
             ],
         )
         page2_output = StructurePageOutput(
-            page_type=PageType.ACADEMIC_PAPER,
+            page_attributes=PageAttributes(layout=LayoutType.DOUBLE_COLUMN, is_academic=True),
             headings=[],
             footnotes=[
                 FootnoteInfo(number="2", body_text="Second note.", source_page=2),
@@ -263,8 +265,8 @@ class TestPhase1Accumulation:
         ):
             structure = await service._step_structure(base_result)
 
-        # No page types should be recorded if all pages failed
-        assert len(structure.page_types) == 0
+        # No page attributes should be recorded if all pages failed
+        assert len(structure.page_attributes) == 0
         assert len(structure.outline) == 0
 
 
@@ -440,7 +442,10 @@ class TestPhase3Assembly:
     async def test_footnote_agent_skipped_when_no_footnotes(self, service, base_result):
         """If no footnotes were found in Phase 1, skip footnote agent."""
         no_fn_structure = StructureResult(
-            page_types={1: PageType.ACADEMIC_PAPER, 2: PageType.ACADEMIC_PAPER},
+            page_attributes={
+                1: PageAttributes(layout=LayoutType.DOUBLE_COLUMN, is_academic=True),
+                2: PageAttributes(layout=LayoutType.DOUBLE_COLUMN, is_academic=True),
+            },
             outline=[],
             footnotes=[],
         )
@@ -570,16 +575,87 @@ class TestCleanupStep:
 # ---------------------------------------------------------------------------
 
 
-class TestProcedureLoading:
-    """Test the _load_procedure utility."""
+class TestFragmentComposition:
+    """Test _load_fragment and _compose_page_prompt utilities."""
 
-    def test_loads_existing_procedure(self):
-        """academic_paper.md should load successfully."""
-        content = _load_procedure("academic_paper")
+    def test_loads_base_fragment(self):
+        """base.md should load successfully."""
+        content = _load_fragment("base")
         assert content != ""
-        assert "Academic Paper" in content
+        assert "Page Correction Procedure" in content
 
-    def test_missing_procedure_returns_empty(self):
-        """A nonexistent procedure type should return empty string."""
-        content = _load_procedure("nonexistent_type_12345")
+    def test_loads_layout_fragment(self):
+        """Layout fragments should load."""
+        content = _load_fragment("layout/double_column")
+        assert content != ""
+        assert "Double-Column" in content
+
+    def test_loads_content_fragment(self):
+        """Content fragments should load."""
+        content = _load_fragment("content/academic")
+        assert content != ""
+        assert "Academic" in content
+
+    def test_loads_quality_fragment(self):
+        """Quality fragments should load."""
+        content = _load_fragment("quality/scanned")
+        assert content != ""
+        assert "Scanned" in content
+
+    def test_missing_fragment_returns_empty(self):
+        """A nonexistent fragment should return empty string."""
+        content = _load_fragment("nonexistent/fragment_12345")
         assert content == ""
+
+    def test_compose_base_only(self):
+        """Minimal attributes should include base + layout only."""
+        attrs = PageAttributes(layout=LayoutType.SINGLE_COLUMN)
+        prompt = _compose_page_prompt(attrs)
+        assert "Page Correction Procedure" in prompt
+        assert "Single-Column" in prompt
+        assert "Academic" not in prompt
+        assert "Scanned" not in prompt
+
+    def test_compose_academic_double_column(self):
+        """Academic double-column should include base + layout + academic."""
+        attrs = PageAttributes(
+            layout=LayoutType.DOUBLE_COLUMN,
+            is_academic=True,
+        )
+        prompt = _compose_page_prompt(attrs)
+        assert "Page Correction Procedure" in prompt
+        assert "Double-Column" in prompt
+        assert "Academic" in prompt
+
+    def test_compose_all_flags(self):
+        """All flags set should include all fragments."""
+        attrs = PageAttributes(
+            layout=LayoutType.DOUBLE_COLUMN,
+            is_academic=True,
+            has_images=True,
+            has_tables=True,
+            has_equations=True,
+            is_scanned=True,
+        )
+        prompt = _compose_page_prompt(attrs)
+        assert "Page Correction Procedure" in prompt
+        assert "Double-Column" in prompt
+        assert "Academic" in prompt
+        assert "Images" in prompt
+        assert "Tables" in prompt
+        assert "Equations" in prompt
+        assert "Scanned" in prompt
+
+    def test_compose_selective_flags(self):
+        """Only active flags should contribute fragments."""
+        attrs = PageAttributes(
+            layout=LayoutType.PRESENTATION,
+            has_tables=True,
+        )
+        prompt = _compose_page_prompt(attrs)
+        assert "Presentation" in prompt
+        assert "Tables" in prompt
+        assert "Academic" not in prompt
+        assert "Images" not in prompt
+        assert "Equations" not in prompt
+        assert "Scanned" not in prompt

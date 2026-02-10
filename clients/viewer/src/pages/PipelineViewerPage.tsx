@@ -1,4 +1,4 @@
-import { useState, useCallback, useRef, useEffect } from 'react';
+import { useState, useCallback, useRef, useEffect, useMemo } from 'react';
 import { Panel, Group as PanelGroup, Separator as PanelResizeHandle } from 'react-resizable-panels';
 import { cn } from '@/lib/utils';
 import { Button } from '@/components/ui/button';
@@ -21,46 +21,190 @@ import {
   DollarSign,
 } from 'lucide-react';
 
+const FLAG_STYLES: Record<string, { bg: string; text: string; label: string }> = {
+  academic: { bg: 'bg-indigo-50', text: 'text-indigo-700', label: 'Academic' },
+  images: { bg: 'bg-emerald-50', text: 'text-emerald-700', label: 'Images' },
+  tables: { bg: 'bg-sky-50', text: 'text-sky-700', label: 'Tables' },
+  equations: { bg: 'bg-violet-50', text: 'text-violet-700', label: 'Equations' },
+  scanned: { bg: 'bg-amber-50', text: 'text-amber-700', label: 'Scanned' },
+};
+
+const LAYOUT_STYLES: Record<string, { bg: string; text: string; label: string }> = {
+  single_column: { bg: 'bg-slate-100', text: 'text-slate-700', label: 'Single Column' },
+  double_column: { bg: 'bg-blue-100', text: 'text-blue-800', label: 'Double Column' },
+  presentation: { bg: 'bg-rose-100', text: 'text-rose-700', label: 'Presentation' },
+};
+
+type PageAttrs = {
+  layout: string;
+  is_academic: boolean;
+  has_images: boolean;
+  has_tables: boolean;
+  has_equations: boolean;
+  is_scanned: boolean;
+};
+
+function CollapsibleSection({
+  title,
+  count,
+  defaultOpen = true,
+  children,
+}: {
+  title: string;
+  count?: number;
+  defaultOpen?: boolean;
+  children: React.ReactNode;
+}) {
+  const [open, setOpen] = useState(defaultOpen);
+  return (
+    <div className="border-b last:border-b-0">
+      <button
+        onClick={() => setOpen(!open)}
+        className="w-full flex items-center justify-between px-4 py-2.5 hover:bg-gray-50 transition-colors"
+      >
+        <h4 className="text-xs font-semibold text-muted-foreground uppercase tracking-wide">
+          {title}{count != null ? ` (${count})` : ''}
+        </h4>
+        {open ? (
+          <ChevronUp className="w-3.5 h-3.5 text-muted-foreground" />
+        ) : (
+          <ChevronDown className="w-3.5 h-3.5 text-muted-foreground" />
+        )}
+      </button>
+      {open && <div className="px-4 pb-3">{children}</div>}
+    </div>
+  );
+}
+
 function StructureMetadataPanel({ metadata }: { metadata: Record<string, unknown> }) {
-  const pageTypes = (metadata.page_types ?? {}) as Record<string, string>;
+  const pageAttributes = (metadata.page_attributes ?? {}) as Record<string, PageAttrs>;
   const outline = (metadata.outline ?? []) as Array<{ level: number; text: string; page: number }>;
   const footnotes = (metadata.footnotes ?? []) as Array<{
     number: string;
     body_text: string;
     source_page: number;
   }>;
+  const codeBlocks = (metadata.code_blocks ?? []) as Array<{
+    language: string;
+    first_line: string;
+    page: number;
+    reasoning: string;
+  }>;
+
+  const pages = Object.entries(pageAttributes);
+  const totalPages = pages.length;
+
+  // Compute document-level summary from page attributes
+  const layouts = new Map<string, number>();
+  const flagCounts: Record<string, number> = { academic: 0, images: 0, tables: 0, equations: 0, scanned: 0 };
+  for (const [, attrs] of pages) {
+    layouts.set(attrs.layout, (layouts.get(attrs.layout) ?? 0) + 1);
+    if (attrs.is_academic) flagCounts.academic++;
+    if (attrs.has_images) flagCounts.images++;
+    if (attrs.has_tables) flagCounts.tables++;
+    if (attrs.has_equations) flagCounts.equations++;
+    if (attrs.is_scanned) flagCounts.scanned++;
+  }
+
+  const hasAnyData = totalPages > 0 || outline.length > 0 || footnotes.length > 0 || codeBlocks.length > 0;
 
   return (
-    <div className="w-64 border-l bg-white flex flex-col overflow-y-auto">
+    <div className="w-72 border-l bg-white flex flex-col overflow-y-auto">
       <div className="px-4 py-3 border-b">
-        <h3 className="text-sm font-medium text-muted-foreground">Structure Metadata</h3>
+        <h3 className="text-sm font-semibold text-gray-800">Structure Metadata</h3>
       </div>
 
-      {/* Page types */}
-      {Object.keys(pageTypes).length > 0 && (
-        <div className="px-4 py-3 border-b">
-          <h4 className="text-xs font-semibold text-muted-foreground mb-2 uppercase tracking-wide">
-            Page Types
+      {/* Document summary */}
+      {totalPages > 0 && (
+        <div className="px-4 py-3 border-b bg-gray-50/50">
+          <h4 className="text-xs font-semibold text-muted-foreground uppercase tracking-wide mb-2">
+            Document Summary
           </h4>
-          <div className="space-y-1">
-            {Object.entries(pageTypes).map(([page, type]) => (
-              <div key={page} className="flex items-center gap-2 text-xs">
-                <span className="px-1.5 py-0.5 rounded bg-blue-50 text-blue-700 font-medium">
-                  p{page}
+
+          {/* Layout distribution */}
+          <div className="flex flex-wrap gap-1.5 mb-2">
+            {[...layouts.entries()].map(([layout, count]) => {
+              const style = LAYOUT_STYLES[layout] ?? { bg: 'bg-gray-100', text: 'text-gray-700', label: layout };
+              return (
+                <span
+                  key={layout}
+                  className={cn('px-2 py-1 rounded-md text-[11px] font-medium', style.bg, style.text)}
+                >
+                  {style.label}
+                  {count < totalPages && (
+                    <span className="ml-1 opacity-60">{count}/{totalPages}</span>
+                  )}
                 </span>
-                <span className="text-muted-foreground">{type.replace(/_/g, ' ')}</span>
-              </div>
-            ))}
+              );
+            })}
+          </div>
+
+          {/* Flag summary bar */}
+          <div className="flex flex-wrap gap-1">
+            {Object.entries(flagCounts)
+              .filter(([, count]) => count > 0)
+              .map(([flag, count]) => {
+                const style = FLAG_STYLES[flag]!;
+                return (
+                  <span
+                    key={flag}
+                    className={cn('px-1.5 py-0.5 rounded text-[10px] font-medium', style.bg, style.text)}
+                  >
+                    {style.label} {count < totalPages ? `${count}p` : ''}
+                  </span>
+                );
+              })}
           </div>
         </div>
       )}
 
+      {/* Per-page attributes */}
+      {totalPages > 0 && (
+        <CollapsibleSection title="Page Attributes" count={totalPages} defaultOpen={totalPages <= 12}>
+          <div className="space-y-1.5">
+            {pages.map(([page, attrs]) => {
+              const layoutStyle = LAYOUT_STYLES[attrs.layout] ?? { bg: 'bg-gray-100', text: 'text-gray-700', label: attrs.layout };
+              const activeFlags = [
+                attrs.is_academic && 'academic',
+                attrs.has_images && 'images',
+                attrs.has_tables && 'tables',
+                attrs.has_equations && 'equations',
+                attrs.is_scanned && 'scanned',
+              ].filter(Boolean) as string[];
+
+              return (
+                <div key={page} className="flex items-start gap-1.5 text-xs">
+                  <span className="px-1.5 py-0.5 rounded bg-gray-100 text-gray-600 font-mono font-medium shrink-0 w-6 text-center">
+                    {page}
+                  </span>
+                  <div className="flex flex-wrap gap-1 min-w-0">
+                    <span
+                      className={cn('px-1.5 py-0.5 rounded font-medium text-[10px]', layoutStyle.bg, layoutStyle.text)}
+                    >
+                      {layoutStyle.label.toLowerCase().replace(' ', '-')}
+                    </span>
+                    {activeFlags.map((flag) => {
+                      const style = FLAG_STYLES[flag]!;
+                      return (
+                        <span
+                          key={flag}
+                          className={cn('px-1.5 py-0.5 rounded font-medium text-[10px]', style.bg, style.text)}
+                        >
+                          {style.label.toLowerCase()}
+                        </span>
+                      );
+                    })}
+                  </div>
+                </div>
+              );
+            })}
+          </div>
+        </CollapsibleSection>
+      )}
+
       {/* Outline */}
       {outline.length > 0 && (
-        <div className="px-4 py-3 border-b">
-          <h4 className="text-xs font-semibold text-muted-foreground mb-2 uppercase tracking-wide">
-            Outline ({outline.length} headings)
-          </h4>
+        <CollapsibleSection title="Outline" count={outline.length} defaultOpen={outline.length <= 25}>
           <div className="space-y-0.5">
             {outline.map((entry, idx) => (
               <div
@@ -74,15 +218,31 @@ function StructureMetadataPanel({ metadata }: { metadata: Record<string, unknown
               </div>
             ))}
           </div>
-        </div>
+        </CollapsibleSection>
+      )}
+
+      {/* Code blocks */}
+      {codeBlocks.length > 0 && (
+        <CollapsibleSection title="Code Blocks" count={codeBlocks.length}>
+          <div className="space-y-2">
+            {codeBlocks.map((cb, idx) => (
+              <div key={idx} className="text-xs">
+                <div className="flex items-center gap-1.5 mb-0.5">
+                  <span className="px-1.5 py-0.5 rounded bg-gray-800 text-gray-100 font-mono font-medium text-[10px]">
+                    {cb.language}
+                  </span>
+                  <span className="text-gray-400">p{cb.page}</span>
+                </div>
+                <p className="text-muted-foreground line-clamp-1 pl-1 font-mono text-[10px]">{cb.first_line}</p>
+              </div>
+            ))}
+          </div>
+        </CollapsibleSection>
       )}
 
       {/* Footnotes */}
       {footnotes.length > 0 && (
-        <div className="px-4 py-3">
-          <h4 className="text-xs font-semibold text-muted-foreground mb-2 uppercase tracking-wide">
-            Footnotes ({footnotes.length})
-          </h4>
+        <CollapsibleSection title="Footnotes" count={footnotes.length}>
           <div className="space-y-2">
             {footnotes.map((fn, idx) => (
               <div key={idx} className="text-xs">
@@ -96,10 +256,10 @@ function StructureMetadataPanel({ metadata }: { metadata: Record<string, unknown
               </div>
             ))}
           </div>
-        </div>
+        </CollapsibleSection>
       )}
 
-      {Object.keys(pageTypes).length === 0 && outline.length === 0 && footnotes.length === 0 && (
+      {!hasAnyData && (
         <div className="flex-1 flex items-center justify-center p-4">
           <p className="text-xs text-muted-foreground text-center">
             No structural metadata found.
@@ -153,6 +313,16 @@ export function PipelineViewerPage() {
 
   // Full document markdown for active version
   const fullMarkdown = result?.versions[activeVersion] ?? '';
+
+  // Map figure paths to base64 data URIs for inline rendering
+  const figureMap = useMemo(() => {
+    if (!result?.figures.length) return {};
+    const map: Record<string, string> = {};
+    for (const fig of result.figures) {
+      map[`figures/${fig.ref_id}.png`] = `data:image/png;base64,${fig.image_base64}`;
+    }
+    return map;
+  }, [result?.figures]);
 
   /** Convert a base64 PNG string to a Blob. */
   const base64ToBlob = useCallback((b64: string, mime = 'image/png'): Blob => {
@@ -474,6 +644,7 @@ export function PipelineViewerPage() {
                         ?? result.versions[versionA]
                         ?? ''
                       }
+                      figureMap={figureMap}
                       isComplete={true}
                       onCopy={() => {
                         const md = result.page_markdowns[versionA]?.[String(currentPage)]
@@ -490,6 +661,7 @@ export function PipelineViewerPage() {
                         ?? result.versions[versionB]
                         ?? ''
                       }
+                      figureMap={figureMap}
                       isComplete={true}
                       onCopy={() => {
                         const md = result.page_markdowns[versionB]?.[String(currentPage)]
@@ -551,6 +723,7 @@ export function PipelineViewerPage() {
                   <Panel defaultSize={55} minSize={20}>
                     <MarkdownViewer
                       content={pageMarkdown}
+                      figureMap={figureMap}
                       isComplete={true}
                       onCopy={() => {
                         navigator.clipboard.writeText(pageMarkdown);
@@ -588,7 +761,7 @@ export function PipelineViewerPage() {
             </button>
             {showFullMarkdown && (
               <div className="max-h-80 overflow-auto border-t">
-                <MarkdownViewer content={fullMarkdown} isComplete={true} />
+                <MarkdownViewer content={fullMarkdown} figureMap={figureMap} isComplete={true} />
               </div>
             )}
 

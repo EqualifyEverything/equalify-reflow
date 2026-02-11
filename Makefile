@@ -79,7 +79,7 @@ dev: build-viewer-dev
 
 # Build pipeline viewer (used by dev target)
 build-viewer-dev:
-	@cd clients/viewer && pnpm install --silent 2>/dev/null && pnpm run build 2>/dev/null && cp dist/viewer.html dist/index.html 2>/dev/null || echo "Viewer build skipped"
+	@cd clients/viewer && pnpm install --silent 2>/dev/null && pnpm run build 2>/dev/null || echo "Viewer build skipped"
 
 # Production environment
 prod:
@@ -170,11 +170,8 @@ build:
 build-viewer:
 	@echo "Building pipeline viewer..."
 	cd clients/viewer && pnpm install && pnpm run build
-	cp clients/viewer/dist/viewer.html clients/viewer/dist/index.html
-	rm -rf static/viewer/* && cp -r clients/viewer/dist/* static/viewer/
-	cp clients/viewer/public/favicon.* static/viewer/
 	@echo ""
-	@echo "✅ Pipeline viewer built to static/viewer/"
+	@echo "✅ Pipeline viewer built to clients/viewer/dist/"
 	@echo "   Restart with: make down && make dev"
 	@echo "   Then access: http://localhost:8080/viewer"
 

@@ -33,7 +33,7 @@ export function ChangesSidebar({ changes, totalPages }: ChangesSidebarProps) {
 
   if (changes.length === 0) {
     return (
-      <div className="w-64 border-l bg-white flex flex-col">
+      <div className="w-64 flex-shrink-0 border-l bg-white flex flex-col">
         <div className="px-4 py-3 border-b">
           <h3 className="text-sm font-medium text-muted-foreground">Changes</h3>
         </div>
@@ -51,7 +51,7 @@ export function ChangesSidebar({ changes, totalPages }: ChangesSidebarProps) {
   const pages = Array.from(new Set(changes.map((c) => c.page))).sort((a, b) => a - b);
 
   return (
-    <div className="w-64 border-l bg-white flex flex-col">
+    <div className="w-64 flex-shrink-0 border-l bg-white flex flex-col">
       {/* Header + filters */}
       <div className="px-3 py-2 border-b space-y-2">
         <h3 className="text-sm font-medium text-muted-foreground">

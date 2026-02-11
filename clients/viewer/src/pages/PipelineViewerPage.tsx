@@ -2,11 +2,9 @@ import { useState, useCallback, useRef, useEffect, useMemo } from 'react';
 import { Panel, Group as PanelGroup, Separator as PanelResizeHandle } from 'react-resizable-panels';
 import { cn } from '@/lib/utils';
 import { Button } from '@/components/ui/button';
-import { Input } from '@/components/ui/input';
 import { MarkdownViewer } from '@/components/viewer/MarkdownViewer';
 import { StepTabs } from '@/components/pipeline-viewer/StepTabs';
 import { ChangesSidebar } from '@/components/pipeline-viewer/ChangesSidebar';
-import { VersionCompare } from '@/components/pipeline-viewer/VersionCompare';
 import { usePipelineViewer } from '@/hooks/usePipelineViewer';
 import {
   Upload,
@@ -109,7 +107,7 @@ function StructureMetadataPanel({ metadata }: { metadata: Record<string, unknown
   const hasAnyData = totalPages > 0 || outline.length > 0 || footnotes.length > 0 || codeBlocks.length > 0;
 
   return (
-    <div className="w-72 border-l bg-white flex flex-col overflow-y-auto">
+    <div className="w-72 flex-shrink-0 border-l bg-white flex flex-col overflow-y-auto">
       <div className="px-4 py-3 border-b">
         <h3 className="text-sm font-semibold text-gray-800">Structure Metadata</h3>
       </div>
@@ -275,18 +273,8 @@ export function PipelineViewerPage() {
 
   const [currentPage, setCurrentPage] = useState(1);
   const [activeStepIdx, setActiveStepIdx] = useState(0);
-  const [showFullMarkdown, setShowFullMarkdown] = useState(false);
-  const [showFigures, setShowFigures] = useState(false);
-  const [imagesScale, setImagesScale] = useState(2.0);
-  const [doTableStructure, setDoTableStructure] = useState(true);
-  const [copiedAll, setCopiedAll] = useState(false);
   const [copiedImage, setCopiedImage] = useState(false);
   const [dragOver, setDragOver] = useState(false);
-
-  // Compare mode state
-  const [compareMode, setCompareMode] = useState(false);
-  const [versionA, setVersionA] = useState('v0');
-  const [versionB, setVersionB] = useState('v0');
 
   const fileInputRef = useRef<HTMLInputElement>(null);
 
@@ -310,9 +298,6 @@ export function PipelineViewerPage() {
     ? (result?.page_markdowns[activeVersion]?.[String(currentPage)] ?? '')
     : (result?.versions[activeVersion] ?? '');
   const pageImage = result?.page_images[String(currentPage)] ?? null;
-
-  // Full document markdown for active version
-  const fullMarkdown = result?.versions[activeVersion] ?? '';
 
   // Map figure paths to base64 data URIs for inline rendering
   const figureMap = useMemo(() => {
@@ -347,48 +332,16 @@ export function PipelineViewerPage() {
     }
   }, [pageImage, currentPage, base64ToBlob]);
 
-  /** Copy all: rich HTML + plain text. */
-  const handleCopyAll = useCallback(async () => {
-    if (!result) return;
-    try {
-      const pages = Object.keys(result.page_markdowns[activeVersion] ?? {})
-        .sort((a, b) => Number(a) - Number(b));
-      const htmlParts = pages.map((p) => {
-        const md = result.page_markdowns[activeVersion]?.[p] ?? '';
-        const img = result.page_images[p];
-        const imgTag = img
-          ? `<img src="data:image/png;base64,${img}" alt="Page ${p}" style="max-width:100%;margin-bottom:8px;" />`
-          : '';
-        const escapedMd = md
-          .replace(/&/g, '&amp;')
-          .replace(/</g, '&lt;')
-          .replace(/>/g, '&gt;');
-        return `<h3>Page ${p}</h3>${imgTag}<pre style="white-space:pre-wrap;font-size:13px;">${escapedMd}</pre>`;
-      });
-      const html = `<div>${htmlParts.join('<hr/>')}</div>`;
-      const htmlBlob = new Blob([html], { type: 'text/html' });
-      const textBlob = new Blob([fullMarkdown], { type: 'text/plain' });
-      await navigator.clipboard.write([
-        new ClipboardItem({ 'text/html': htmlBlob, 'text/plain': textBlob }),
-      ]);
-    } catch {
-      await navigator.clipboard.writeText(fullMarkdown);
-    }
-    setCopiedAll(true);
-    setTimeout(() => setCopiedAll(false), 1500);
-  }, [result, activeVersion, fullMarkdown]);
-
   const handleProcess = useCallback(
     async (file: File) => {
       setCurrentPage(1);
       setActiveStepIdx(0);
-      setCompareMode(false);
       await processFile(file, {
-        imagesScale,
-        doTableStructure,
+        imagesScale: 2.0,
+        doTableStructure: true,
       });
     },
-    [processFile, imagesScale, doTableStructure],
+    [processFile],
   );
 
   const handleDrop = useCallback(
@@ -414,68 +367,11 @@ export function PipelineViewerPage() {
   return (
     <div className="flex flex-col h-screen bg-gray-50">
       {/* Header */}
-      <header className="flex items-center justify-between px-6 py-3 bg-white border-b shadow-sm">
-        <div className="flex items-center gap-3">
-          <h1 className="text-lg font-bold text-uic-blue">Pipeline Viewer</h1>
-          <span className="text-xs font-medium text-muted-foreground bg-gray-100 px-2 py-0.5 rounded">
-            Dev Tool
-          </span>
-          {result && (
-            <Button
-              variant="ghost"
-              size="sm"
-              onClick={handleCopyAll}
-              title="Copy full document markdown"
-              className={cn(
-                'gap-1.5 h-7 text-xs',
-                copiedAll
-                  ? 'text-green-600 hover:text-green-700 hover:bg-green-50'
-                  : 'text-muted-foreground hover:text-foreground',
-              )}
-            >
-              {copiedAll ? <Check className="w-3.5 h-3.5" /> : <Copy className="w-3.5 h-3.5" />}
-              {copiedAll ? 'Copied' : 'Copy All'}
-            </Button>
-          )}
-        </div>
-
-        <div className="flex items-center gap-4 text-sm">
-          {/* Compare toggle */}
-          {result && (
-            <VersionCompare
-              steps={result.steps}
-              compareMode={compareMode}
-              onToggleCompare={() => setCompareMode(!compareMode)}
-              versionA={versionA}
-              versionB={versionB}
-              onChangeA={setVersionA}
-              onChangeB={setVersionB}
-            />
-          )}
-
-          {/* Pipeline options */}
-          <label className="flex items-center gap-1.5">
-            <span className="text-muted-foreground">Scale:</span>
-            <Input
-              type="number"
-              min={1.0}
-              max={3.0}
-              step={0.5}
-              value={imagesScale}
-              onChange={(e) => setImagesScale(parseFloat(e.target.value) || 2.0)}
-              className="w-16 h-7 text-xs"
-            />
-          </label>
-          <label className="flex items-center gap-1.5 cursor-pointer">
-            <input
-              type="checkbox"
-              checked={doTableStructure}
-              onChange={(e) => setDoTableStructure(e.target.checked)}
-              className="rounded border-gray-300"
-            />
-            <span className="text-muted-foreground">Tables</span>
-          </label>
-        </div>
+      <header className="flex items-center px-6 py-3 bg-white border-b shadow-sm">
+        <h1 className="text-lg font-bold text-uic-blue">Pipeline Viewer</h1>
+        <span className="ml-3 text-xs font-medium text-muted-foreground bg-gray-100 px-2 py-0.5 rounded">
+          Dev Tool
+        </span>
       </header>
 
       {/* Upload area */}
@@ -580,24 +476,6 @@ export function PipelineViewerPage() {
 
             <div className="flex-1" />
 
-            {/* Page nav */}
-            <div className="flex items-center gap-1">
-              {Array.from({ length: totalPages }, (_, i) => i + 1).map((p) => (
-                <button
-                  key={p}
-                  onClick={() => setCurrentPage(p)}
-                  className={cn(
-                    'w-7 h-7 text-xs font-medium rounded transition-colors',
-                    p === currentPage
-                      ? 'bg-uic-blue text-white'
-                      : 'text-muted-foreground hover:bg-gray-100',
-                  )}
-                >
-                  {p}
-                </button>
-              ))}
-            </div>
-
             {/* New upload */}
             <Button
               variant="outline"
@@ -611,7 +489,7 @@ export function PipelineViewerPage() {
           </div>
 
           {/* Main content area */}
-          <div className="flex-1 flex min-h-0">
+          <div className="flex-1 flex min-h-0 overflow-hidden">
             {/* Page sidebar */}
             {totalPages > 1 && (
               <div className="w-16 border-r bg-white overflow-y-auto flex-shrink-0">
@@ -633,105 +511,63 @@ export function PipelineViewerPage() {
             )}
 
             {/* Split view */}
-            <PanelGroup orientation="horizontal" className="flex-1">
-              {compareMode ? (
-                <>
-                  {/* Compare mode: version A | version B */}
-                  <Panel defaultSize={50} minSize={20}>
-                    <MarkdownViewer
-                      content={
-                        result.page_markdowns[versionA]?.[String(currentPage)]
-                        ?? result.versions[versionA]
-                        ?? ''
-                      }
-                      figureMap={figureMap}
-                      isComplete={true}
-                      onCopy={() => {
-                        const md = result.page_markdowns[versionA]?.[String(currentPage)]
-                          ?? result.versions[versionA] ?? '';
-                        navigator.clipboard.writeText(md);
-                      }}
-                    />
-                  </Panel>
-                  <PanelResizeHandle className="w-1.5 bg-gray-200 hover:bg-uic-blue/30 transition-colors cursor-col-resize" />
-                  <Panel defaultSize={50} minSize={20}>
-                    <MarkdownViewer
-                      content={
-                        result.page_markdowns[versionB]?.[String(currentPage)]
-                        ?? result.versions[versionB]
-                        ?? ''
-                      }
-                      figureMap={figureMap}
-                      isComplete={true}
-                      onCopy={() => {
-                        const md = result.page_markdowns[versionB]?.[String(currentPage)]
-                          ?? result.versions[versionB] ?? '';
-                        navigator.clipboard.writeText(md);
-                      }}
-                    />
-                  </Panel>
-                </>
-              ) : (
-                <>
-                  {/* Normal mode: image | markdown */}
-                  <Panel defaultSize={45} minSize={20}>
-                    <div className="h-full flex flex-col">
-                      {pageImage && (
-                        <div className="flex items-center justify-between px-4 py-2 border-b bg-gray-50">
-                          <span className="text-sm font-medium text-muted-foreground">
-                            Page {currentPage} Image
-                          </span>
-                          <Button
-                            variant="ghost"
-                            size="sm"
-                            onClick={handleCopyImage}
-                            title="Copy page image"
-                            className={cn(
-                              'gap-1.5',
-                              copiedImage
-                                ? 'text-green-600 hover:text-green-700 hover:bg-green-50'
-                                : 'text-muted-foreground hover:text-foreground',
-                            )}
-                          >
-                            {copiedImage ? (
-                              <Check className="w-4 h-4" />
-                            ) : (
-                              <Copy className="w-4 h-4" />
-                            )}
-                            <span className="text-xs">{copiedImage ? 'Copied' : 'Copy Image'}</span>
-                          </Button>
-                        </div>
-                      )}
-                      <div className="flex-1 overflow-auto bg-gray-100 flex items-start justify-center p-4">
-                        {pageImage ? (
-                          <img
-                            src={`data:image/png;base64,${pageImage}`}
-                            alt={`Page ${currentPage}`}
-                            className="max-w-full shadow-lg rounded"
-                          />
-                        ) : (
-                          <div className="text-muted-foreground text-sm mt-20">
-                            No image available
-                          </div>
+            <PanelGroup orientation="horizontal" className="flex-1 min-w-0 overflow-hidden">
+              <Panel defaultSize={45} minSize={20}>
+                <div className="h-full flex flex-col">
+                  {pageImage && (
+                    <div className="flex items-center justify-between px-4 py-2 border-b bg-gray-50">
+                      <span className="text-sm font-medium text-muted-foreground">
+                        Page {currentPage} Image
+                      </span>
+                      <Button
+                        variant="ghost"
+                        size="sm"
+                        onClick={handleCopyImage}
+                        title="Copy page image"
+                        className={cn(
+                          'gap-1.5',
+                          copiedImage
+                            ? 'text-green-600 hover:text-green-700 hover:bg-green-50'
+                            : 'text-muted-foreground hover:text-foreground',
                         )}
-                      </div>
+                      >
+                        {copiedImage ? (
+                          <Check className="w-4 h-4" />
+                        ) : (
+                          <Copy className="w-4 h-4" />
+                        )}
+                        <span className="text-xs">{copiedImage ? 'Copied' : 'Copy Image'}</span>
+                      </Button>
                     </div>
-                  </Panel>
+                  )}
+                  <div className="flex-1 overflow-auto bg-gray-100 flex items-start justify-center p-4">
+                    {pageImage ? (
+                      <img
+                        src={`data:image/png;base64,${pageImage}`}
+                        alt={`Page ${currentPage}`}
+                        className="max-w-full shadow-lg rounded"
+                      />
+                    ) : (
+                      <div className="text-muted-foreground text-sm mt-20">
+                        No image available
+                      </div>
+                    )}
+                  </div>
+                </div>
+              </Panel>
 
-                  <PanelResizeHandle className="w-1.5 bg-gray-200 hover:bg-uic-blue/30 transition-colors cursor-col-resize" />
+              <PanelResizeHandle className="w-1.5 bg-gray-200 hover:bg-uic-blue/30 transition-colors cursor-col-resize" />
 
-                  <Panel defaultSize={55} minSize={20}>
-                    <MarkdownViewer
-                      content={pageMarkdown}
-                      figureMap={figureMap}
-                      isComplete={true}
-                      onCopy={() => {
-                        navigator.clipboard.writeText(pageMarkdown);
-                      }}
-                    />
-                  </Panel>
-                </>
-              )}
+              <Panel defaultSize={55} minSize={20}>
+                <MarkdownViewer
+                  content={pageMarkdown}
+                  figureMap={figureMap}
+                  isComplete={true}
+                  onCopy={() => {
+                    navigator.clipboard.writeText(pageMarkdown);
+                  }}
+                />
+              </Panel>
             </PanelGroup>
 
             {/* Changes sidebar / metadata panel */}
@@ -745,62 +581,6 @@ export function PipelineViewerPage() {
             )}
           </div>
 
-          {/* Collapsible sections */}
-          <div className="border-t bg-white">
-            {/* Full document markdown */}
-            <button
-              onClick={() => setShowFullMarkdown(!showFullMarkdown)}
-              className="w-full flex items-center justify-between px-6 py-2 hover:bg-gray-50 transition-colors text-sm font-medium text-muted-foreground"
-            >
-              <span>Full Document Markdown ({activeVersion})</span>
-              {showFullMarkdown ? (
-                <ChevronUp className="w-4 h-4" />
-              ) : (
-                <ChevronDown className="w-4 h-4" />
-              )}
-            </button>
-            {showFullMarkdown && (
-              <div className="max-h-80 overflow-auto border-t">
-                <MarkdownViewer content={fullMarkdown} figureMap={figureMap} isComplete={true} />
-              </div>
-            )}
-
-            {/* Figures */}
-            {result.figures.length > 0 && (
-              <>
-                <button
-                  onClick={() => setShowFigures(!showFigures)}
-                  className="w-full flex items-center justify-between px-6 py-2 hover:bg-gray-50 transition-colors text-sm font-medium text-muted-foreground border-t"
-                >
-                  <span>Extracted Figures ({result.figures.length})</span>
-                  {showFigures ? (
-                    <ChevronUp className="w-4 h-4" />
-                  ) : (
-                    <ChevronDown className="w-4 h-4" />
-                  )}
-                </button>
-                {showFigures && (
-                  <div className="max-h-96 overflow-auto border-t p-4 grid grid-cols-2 md:grid-cols-3 gap-4">
-                    {result.figures.map((fig, idx) => (
-                      <div key={idx} className="border rounded-lg overflow-hidden bg-gray-50">
-                        <img
-                          src={`data:image/png;base64,${fig.image_base64}`}
-                          alt={fig.caption || `Figure from page ${fig.page_number}`}
-                          className="w-full"
-                        />
-                        {fig.caption && (
-                          <p className="p-2 text-xs text-muted-foreground">{fig.caption}</p>
-                        )}
-                        <p className="px-2 pb-2 text-xs text-gray-400">
-                          Page {fig.page_number}
-                        </p>
-                      </div>
-                    ))}
-                  </div>
-                )}
-              </>
-            )}
-          </div>
         </div>
       )}
     </div>

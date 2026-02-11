@@ -114,7 +114,7 @@ export function MarkdownViewer({
       </div>
 
       {/* Content Area */}
-      <div className="flex-1 overflow-y-auto">
+      <div className="flex-1 overflow-y-auto overflow-x-hidden">
         <AnimatePresence mode="wait">
           {showRaw ? (
             <motion.pre
@@ -134,7 +134,7 @@ export function MarkdownViewer({
               animate={{ opacity: 1 }}
               exit={{ opacity: 0 }}
               transition={{ duration: 0.15 }}
-              className="p-6 prose prose-slate max-w-none min-h-full"
+              className="p-6 prose prose-slate max-w-none min-h-full break-words overflow-hidden"
             >
               <ReactMarkdown
                 remarkPlugins={[remarkGfm]}

@@ -5,7 +5,7 @@
   "packageManager": "pnpm@9.0.0",
   "scripts": {
     "dev": "vite",
-    "build": "tsc && vite build && cp dist/viewer.html dist/index.html",
+    "build": "tsc && vite build",
     "preview": "vite preview",
     "lint": "eslint . --ext ts,tsx"
   },

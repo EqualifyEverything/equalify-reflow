@@ -167,6 +167,9 @@ project-docs/UIC Documents/
 .mypy_cache/
 debug_bundle/
 
+# Built viewer (Docker mounts clients/viewer/dist/ directly)
+static/viewer/
+
 # AI tooling
 .ralphy/
 docs/prd/

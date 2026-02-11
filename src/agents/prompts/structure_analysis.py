@@ -17,12 +17,30 @@ a page can be double-column AND academic AND have tables.
 
 #### Layout (exactly one)
 
-- **single_column** — Standard single-column text flow with headings and \
-paragraphs. Most course materials (syllabi, handouts, reports, letters).
-- **double_column** — Two-column layout where Docling linearizes left column \
-then right column. Journal articles, conference papers, some newsletters.
-- **presentation** — Slide-like or poster layout with text boxes rather than \
-flowing paragraphs. High image-to-text ratio, landscape or large format.
+Determine layout from the **page image** — the markdown is useless for this \
+because Docling linearizes all layouts into flowing text.
+
+- **single_column** — Body text spans most of the page width (~70-90%). \
+Text flows straight down with no vertical gutter splitting the page.
+- **double_column** — Body text is arranged in two parallel columns, each \
+~40-48% of page width, separated by a visible vertical gutter (a narrow \
+strip of whitespace running top to bottom). Docling linearizes left column \
+top-to-bottom, then right column top-to-bottom.
+- **presentation** — Slide-like layout with discrete text boxes positioned \
+freely on the page rather than flowing paragraphs. High image-to-text ratio, \
+often landscape format.
+
+**How to decide** — look at the body paragraphs (not titles or abstracts, \
+which may span the full width even in double-column documents):
+
+1. If body paragraphs form two narrow parallel columns with a gutter between \
+them → **double_column**.
+2. If body text spans the full page width → **single_column**.
+3. If content is arranged in discrete boxes rather than flowing text → \
+**presentation**.
+
+A layout hint from bounding-box analysis may be provided in the user message. \
+It is usually correct, but always verify against the image.
 
 The layout should reflect the DOCUMENT's nature, not the individual page's \
 content. A references page in a double-column paper is still "double_column". \
@@ -132,6 +150,7 @@ def build_structure_user_message(
     outline_so_far: list[dict],
     page_number: int,
     total_pages: int,
+    layout_hint: str | None = None,
 ) -> str:
     """Build the user message for a single Phase 1 agent call.
 
@@ -144,6 +163,8 @@ def build_structure_user_message(
             each with keys: level, text, page.
         page_number: Current page number (1-indexed).
         total_pages: Total number of pages in the document.
+        layout_hint: Optional layout hint from bounding-box analysis
+            (e.g. "double_column", "single_column", "unknown").
 
     Returns:
         Text portion of the user message.
@@ -152,6 +173,17 @@ def build_structure_user_message(
 
     parts.append(f"## Page {page_number} of {total_pages}")
     parts.append("")
+
+    # Layout hint from bounding-box analysis
+    if layout_hint and layout_hint != "unknown":
+        parts.append("### Layout hint (from bounding-box analysis)")
+        parts.append("")
+        parts.append(
+            f"Docling's text block positions suggest this page is **{layout_hint}**. "
+            "Verify this against the page image — the hint is usually correct "
+            "but can be wrong for title pages or unusual layouts."
+        )
+        parts.append("")
 
     # Accumulated outline
     if outline_so_far:

@@ -23,15 +23,19 @@ from typing import Any
 from .pipeline_viewer_models import (
     CodeBlockInfo,
     DocumentChange,
+    FeedbackAnalysis,
     FigureData,
     FootnoteInfo,
     OutlineEntry,
     PageAttributes,
     PageCorrectionResult,
     PipelineViewerResult,
+    RevisionTask,
+    RevisionTaskCategory,
     StepResult,
     StructurePageOutput,
     StructureResult,
+    TaskDecompositionResult,
 )
 
 logger = logging.getLogger(__name__)
@@ -242,6 +246,56 @@ def _replace_image_placeholders(
     return markdown
 
 
+def _detect_page_columns(doc: Any, page_no: int) -> str:
+    """Infer column layout from Docling item bounding boxes.
+
+    Analyses the horizontal positions of text items on a page to determine
+    whether they form one column or two.  Uses median item width (robust
+    against full-width titles/abstracts) and checks for items in both
+    halves of the page.
+
+    Returns:
+        "double_column", "single_column", or "unknown".
+    """
+    page = doc.pages.get(page_no)
+    if not page or not page.size or page.size.width <= 0:
+        return "unknown"
+
+    page_width = page.size.width
+
+    item_widths: list[float] = []
+    item_centers: list[float] = []
+
+    for item, _level in doc.iterate_items(page_no=page_no):
+        if not hasattr(item, "prov") or not item.prov:
+            continue
+        for p in item.prov:
+            if p.page_no != page_no:
+                continue
+            bbox = p.bbox
+            width = abs(bbox.r - bbox.l)
+            # Skip very narrow items (footnote markers, page numbers, etc.)
+            if width < page_width * 0.1:
+                continue
+            item_widths.append(width / page_width)
+            item_centers.append(((bbox.l + bbox.r) / 2) / page_width)
+
+    if len(item_widths) < 4:
+        return "unknown"
+
+    sorted_widths = sorted(item_widths)
+    median_width = sorted_widths[len(sorted_widths) // 2]
+
+    if median_width < 0.55:
+        # Most items are narrow — verify items exist in both halves
+        left_count = sum(1 for c in item_centers if c < 0.45)
+        right_count = sum(1 for c in item_centers if c > 0.55)
+        if left_count >= 2 and right_count >= 2:
+            return "double_column"
+
+    return "single_column"
+
+
 class PipelineViewerService:
     """Versioned pipeline that stores full markdown at every step.
 
@@ -384,6 +438,11 @@ class PipelineViewerService:
                 result.versions["v0"], result.figures
             )
 
+        # Detect column layout per page from Docling bounding boxes
+        layout_hints: dict[str, str] = {}
+        for page_no in sorted(doc.pages.keys()):
+            layout_hints[str(page_no)] = _detect_page_columns(doc, page_no)
+
         elapsed_ms = int((time.time() - step_start) * 1000)
 
         result.steps.append(
@@ -413,6 +472,7 @@ class PipelineViewerService:
             "images_scale": images_scale,
             "do_table_structure": do_table_structure,
             "total_elapsed_ms": elapsed_ms,
+            "layout_hints": layout_hints,
         }
 
     # ------------------------------------------------------------------
@@ -466,11 +526,14 @@ class PipelineViewerService:
 
             # Build text portion of user message
             outline_dicts = [e.model_dump() for e in structure.outline]
+            layout_hints = result.stats.get("layout_hints", {})
+            layout_hint = layout_hints.get(page_key)
             text_msg = build_structure_user_message(
                 page_markdown=page_md,
                 outline_so_far=outline_dicts,
                 page_number=page_num,
                 total_pages=result.total_pages,
+                layout_hint=layout_hint,
             )
 
             # Build message list: image + text
@@ -1342,4 +1405,397 @@ class PipelineViewerService:
                 changes=changes,
                 metadata={},
             )
+        )
+
+    # ------------------------------------------------------------------
+    # Human Review — Revision
+    # ------------------------------------------------------------------
+
+    async def decompose_feedback(
+        self,
+        feedback: str,
+        result: PipelineViewerResult,
+        structure: StructureResult | None,
+        feedback_history: list[str] | None = None,
+    ) -> TaskDecompositionResult:
+        """Decompose freeform feedback into discrete revision tasks.
+
+        Public method so the API can call it before run_revision and emit
+        SSE events between stages.
+
+        Args:
+            feedback: Freeform reviewer feedback.
+            result: Current pipeline result.
+            structure: Structure analysis result (for outline + page attrs).
+            feedback_history: Previous rounds of feedback (if any).
+
+        Returns:
+            TaskDecompositionResult with tasks and reasoning.
+        """
+        return await self._decompose_feedback(
+            feedback, result, structure, feedback_history
+        )
+
+    async def run_revision(
+        self,
+        result: PipelineViewerResult,
+        structure: StructureResult | None,
+        tasks: list[RevisionTask],
+        feedback: str,
+        revision_round: int,
+    ) -> StepResult:
+        """Run a revision pass using pre-decomposed tasks.
+
+        Groups tasks by page, runs revision agents in parallel on affected
+        pages with selective image attachment, and assembles a new version.
+
+        Args:
+            result: Current pipeline result (mutated in place).
+            structure: Structure analysis result (for outline context).
+            tasks: Pre-decomposed revision tasks.
+            feedback: Original freeform feedback (for metadata).
+            revision_round: 1-based revision round number.
+
+        Returns:
+            The StepResult for this revision.
+        """
+        step_start = time.time()
+
+        # Determine the latest version key (highest numeric suffix)
+        version_nums = [
+            int(k[1:]) for k in result.versions if k.startswith("v") and k[1:].isdigit()
+        ]
+        latest_num = max(version_nums) if version_nums else 0
+        source_version = f"v{latest_num}"
+        new_version = f"v{latest_num + 1}"
+
+        # Get per-page markdowns — fall back to splitting full doc
+        source_pages = result.page_markdowns.get(source_version)
+        if source_pages is None:
+            for v in sorted(version_nums, reverse=True):
+                vk = f"v{v}"
+                if vk in result.page_markdowns:
+                    source_pages = dict(result.page_markdowns[vk])
+                    break
+            if source_pages is None:
+                source_pages = dict(result.page_markdowns.get("v0", {}))
+
+        # Group tasks by page
+        page_tasks: dict[int, list[RevisionTask]] = {}
+        for task in tasks:
+            for page_num in task.affected_pages:
+                if 1 <= page_num <= result.total_pages:
+                    page_tasks.setdefault(page_num, []).append(task)
+
+        affected_pages = sorted(page_tasks.keys())
+
+        # Build outline text
+        outline_text = ""
+        if structure:
+            outline_text = "\n".join(
+                f"  {'#' * e.level} {e.text} (p{e.page})"
+                for e in structure.outline
+            )
+
+        # Determine which pages need images
+        pages_with_image: list[int] = []
+        for page_num, ptasks in page_tasks.items():
+            if any(t.needs_image for t in ptasks):
+                pages_with_image.append(page_num)
+
+        # Run revision agents in parallel on affected pages
+        all_changes: list[DocumentChange] = []
+        semaphore = asyncio.Semaphore(PAGE_AGENT_SEMAPHORE_LIMIT)
+        total_input_tokens = 0
+        total_output_tokens = 0
+
+        async def _revise_page(page_num: int) -> PageCorrectionResult:
+            async with semaphore:
+                page_image_b64 = (
+                    result.page_images.get(str(page_num))
+                    if page_num in pages_with_image
+                    else None
+                )
+                page_attrs = (
+                    structure.page_attributes.get(page_num)
+                    if structure
+                    else None
+                )
+                return await self._run_revision_agent(
+                    page_num=page_num,
+                    page_markdown=source_pages.get(str(page_num), ""),
+                    tasks=page_tasks[page_num],
+                    outline_text=outline_text,
+                    page_image_b64=page_image_b64,
+                    page_attrs=page_attrs,
+                )
+
+        agent_tasks = [_revise_page(p) for p in affected_pages]
+        page_results = await asyncio.gather(*agent_tasks, return_exceptions=True)
+
+        # Assemble new per-page markdowns
+        new_page_mds: dict[str, str] = {}
+        for page_num in range(1, result.total_pages + 1):
+            page_key = str(page_num)
+            new_page_mds[page_key] = source_pages.get(page_key, "")
+
+        for i, pr in enumerate(page_results):
+            page_num = affected_pages[i]
+            page_key = str(page_num)
+            if isinstance(pr, Exception):
+                logger.error(f"Revision agent page {page_num} failed: {pr}")
+                continue
+            new_page_mds[page_key] = pr.corrected_markdown
+            all_changes.extend(pr.changes)
+            total_input_tokens += pr.input_tokens
+            total_output_tokens += pr.output_tokens
+
+        # Write new version
+        result.page_markdowns[new_version] = new_page_mds
+        result.versions[new_version] = "\n\n".join(
+            new_page_mds[str(p)] for p in range(1, result.total_pages + 1)
+        )
+
+        elapsed_ms = int((time.time() - step_start) * 1000)
+
+        from ..shared.llm_cost import calculate_estimated_cost
+
+        cost_cents = calculate_estimated_cost(
+            total_input_tokens, total_output_tokens
+        )
+
+        step_result = StepResult(
+            name=f"revision_{revision_round}",
+            display_name=f"Revision {revision_round}",
+            version_before=source_version,
+            version_after=new_version,
+            elapsed_ms=elapsed_ms,
+            changes=all_changes,
+            metadata={
+                "feedback": feedback,
+                "affected_pages": affected_pages,
+                "revision_round": revision_round,
+                "tasks": [t.model_dump() for t in tasks],
+                "task_count": len(tasks),
+                "pages_with_image": pages_with_image,
+            },
+            input_tokens=total_input_tokens,
+            output_tokens=total_output_tokens,
+            cost_cents=cost_cents,
+        )
+        result.steps.append(step_result)
+        return step_result
+
+    async def _decompose_feedback(
+        self,
+        feedback: str,
+        result: PipelineViewerResult,
+        structure: StructureResult | None,
+        feedback_history: list[str] | None = None,
+    ) -> TaskDecompositionResult:
+        """Decompose freeform feedback into discrete revision tasks.
+
+        Uses a Haiku structured output call. Falls back to a single catch-all
+        task targeting all pages on error.
+        """
+        from pydantic_ai import Agent
+        from pydantic_ai.models.bedrock import BedrockConverseModel
+
+        from ..agents.model_tiers import MODEL_TIER_MAP, ModelTier
+        from ..agents.prompts.revision import (
+            DECOMPOSITION_SYSTEM_PROMPT,
+            build_decomposition_user_message,
+            build_page_attributes_summary,
+        )
+
+        # Build outline text
+        outline_text = ""
+        if structure:
+            outline_text = "\n".join(
+                f"  {'#' * e.level} {e.text} (p{e.page})"
+                for e in structure.outline
+            )
+
+        # Build page attributes summary
+        page_attrs_summary = ""
+        if structure and structure.page_attributes:
+            page_attrs_summary = build_page_attributes_summary(
+                structure.page_attributes
+            )
+
+        user_msg = build_decomposition_user_message(
+            feedback=feedback,
+            outline_text=outline_text,
+            total_pages=result.total_pages,
+            page_attributes_summary=page_attrs_summary,
+            feedback_history=feedback_history,
+        )
+
+        all_pages = list(range(1, result.total_pages + 1))
+
+        try:
+            model = BedrockConverseModel(MODEL_TIER_MAP[ModelTier.EFFICIENT])
+            agent: Agent[None, TaskDecompositionResult] = Agent(
+                model=model,
+                output_type=TaskDecompositionResult,
+                system_prompt=DECOMPOSITION_SYSTEM_PROMPT,
+            )
+            agent_result = await agent.run(user_msg)
+            decomposition = agent_result.output
+
+            # Filter tasks with invalid page numbers
+            for task in decomposition.tasks:
+                task.affected_pages = [
+                    p for p in task.affected_pages
+                    if 1 <= p <= result.total_pages
+                ]
+            # Remove tasks with no valid pages
+            decomposition.tasks = [
+                t for t in decomposition.tasks if t.affected_pages
+            ]
+
+            if not decomposition.tasks:
+                return self._fallback_decomposition(feedback, all_pages)
+
+            return decomposition
+
+        except Exception as e:
+            logger.warning(f"Feedback decomposition failed, using fallback: {e}")
+            return self._fallback_decomposition(feedback, all_pages)
+
+    @staticmethod
+    def _fallback_decomposition(
+        feedback: str,
+        all_pages: list[int],
+    ) -> TaskDecompositionResult:
+        """Create a single catch-all task as fallback."""
+        return TaskDecompositionResult(
+            tasks=[
+                RevisionTask(
+                    id=1,
+                    description=feedback,
+                    affected_pages=all_pages,
+                    needs_image=False,
+                    category=RevisionTaskCategory.CONTENT,
+                )
+            ],
+            reasoning="Fallback: could not decompose feedback, created single catch-all task.",
+        )
+
+    async def _run_revision_agent(
+        self,
+        page_num: int,
+        page_markdown: str,
+        tasks: list[RevisionTask],
+        outline_text: str,
+        page_image_b64: str | None = None,
+        page_attrs: PageAttributes | None = None,
+    ) -> PageCorrectionResult:
+        """Run a revision agent on a single page with task-based input.
+
+        Receives specific revision tasks instead of raw feedback. Page image
+        is conditionally attached when any task has needs_image=True.
+        """
+        from pydantic_ai import Agent
+        from pydantic_ai.messages import BinaryContent
+        from pydantic_ai.models.bedrock import BedrockConverseModel
+
+        from ..agents.model_tiers import MODEL_TIER_MAP, ModelTier
+        from ..agents.prompts.revision import (
+            REVISION_SYSTEM_PROMPT,
+            build_revision_user_message,
+        )
+
+        current_markdown = page_markdown
+        changes: list[DocumentChange] = []
+        issues: list[str] = []
+
+        model = BedrockConverseModel(MODEL_TIER_MAP[ModelTier.EFFICIENT])
+        agent: Agent[None, None] = Agent(
+            model=model,
+            output_type=None,
+            system_prompt=REVISION_SYSTEM_PROMPT,
+        )
+
+        @agent.tool_plain
+        def str_replace(old_text: str, new_text: str, reasoning: str, category: str) -> str:
+            """Replace exact text in the page markdown.
+
+            Args:
+                old_text: Exact text to find. Must appear once.
+                new_text: Corrected text.
+                reasoning: Why this change is needed.
+                category: Should be "revision".
+            """
+            nonlocal current_markdown
+
+            count = current_markdown.count(old_text)
+            if count == 0:
+                return (
+                    f"ERROR: old_text not found in page markdown.\n\n"
+                    f"You searched for:\n  {old_text!r}\n\n"
+                    f"Current page markdown:\n---\n{current_markdown}\n---\n\n"
+                    f"Review the current markdown and try again."
+                )
+            if count > 1:
+                return (
+                    f"ERROR: old_text found {count} times. Include more "
+                    f"surrounding context to make it unique."
+                )
+
+            current_markdown = current_markdown.replace(old_text, new_text, 1)
+            changes.append(
+                DocumentChange(
+                    page=page_num,
+                    old_text=old_text,
+                    new_text=new_text,
+                    reasoning=reasoning,
+                    stage="revision",
+                )
+            )
+            return f"OK — replaced on page {page_num}."
+
+        @agent.tool_plain
+        def no_changes(confidence: str, notes: str = "") -> str:
+            """Affirm that no revision is needed for this page.
+
+            Args:
+                confidence: How confident: "high", "medium", or "low".
+                notes: Optional observations.
+            """
+            if notes:
+                issues.append(f"Page {page_num} ({confidence}): {notes}")
+            return "Acknowledged — no changes needed."
+
+        # Build user message parts
+        user_parts: list[Any] = []
+
+        # Conditionally attach page image
+        if page_image_b64:
+            user_parts.append(
+                BinaryContent(
+                    data=base64.b64decode(page_image_b64),
+                    media_type="image/png",
+                )
+            )
+
+        text_msg = build_revision_user_message(
+            tasks=tasks,
+            page_num=page_num,
+            current_markdown=page_markdown,
+            outline_text=outline_text,
+            page_attrs=page_attrs,
+        )
+        user_parts.append(text_msg)
+
+        agent_result = await agent.run(user_parts)
+        usage = agent_result.usage()
+
+        return PageCorrectionResult(
+            page=page_num,
+            corrected_markdown=current_markdown,
+            changes=changes,
+            issues=issues,
+            input_tokens=usage.request_tokens or 0,
+            output_tokens=usage.response_tokens or 0,
         )

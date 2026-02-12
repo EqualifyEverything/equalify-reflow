@@ -7,6 +7,7 @@ resource "aws_lb" "main" {
   security_groups    = [aws_security_group.alb.id]
   subnets            = module.vpc.public_subnets
 
+  idle_timeout               = 300 # 5 min — SSE streams during PDF processing
   enable_deletion_protection = var.environment == "production"
   enable_http2              = true
 

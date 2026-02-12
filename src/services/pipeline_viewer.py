@@ -23,7 +23,6 @@ from typing import Any
 from .pipeline_viewer_models import (
     CodeBlockInfo,
     DocumentChange,
-    FeedbackAnalysis,
     FigureData,
     FootnoteInfo,
     OutlineEntry,

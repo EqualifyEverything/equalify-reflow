@@ -177,6 +177,49 @@ class BoundaryContext(BaseModel):
 
 
 # ---------------------------------------------------------------------------
+# Revision / Feedback Decomposition models
+# ---------------------------------------------------------------------------
+
+
+class RevisionTaskCategory(str, Enum):
+    """Category of a revision task."""
+
+    CONTENT = "content"
+    FORMATTING = "formatting"
+    ACCESSIBILITY = "accessibility"
+    STRUCTURE = "structure"
+
+
+class RevisionTask(BaseModel):
+    """A single discrete revision task decomposed from freeform feedback."""
+
+    id: int
+    """Sequential task identifier."""
+
+    description: str
+    """What needs to be changed."""
+
+    affected_pages: list[int]
+    """Page numbers this task applies to."""
+
+    needs_image: bool = False
+    """Whether the revision agent needs the page image for this task."""
+
+    category: RevisionTaskCategory = RevisionTaskCategory.CONTENT
+    """Task category for grouping and prioritization."""
+
+
+class TaskDecompositionResult(BaseModel):
+    """Result of decomposing freeform feedback into discrete revision tasks."""
+
+    tasks: list[RevisionTask]
+    """Ordered list of revision tasks."""
+
+    reasoning: str
+    """Explanation of how the feedback was decomposed."""
+
+
+# ---------------------------------------------------------------------------
 # Viewer response models (used by API)
 # ---------------------------------------------------------------------------
 

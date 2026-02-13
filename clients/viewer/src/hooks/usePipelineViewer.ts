@@ -160,7 +160,14 @@ export function usePipelineViewer() {
         // User cancelled — not an error
         return;
       }
-      setError(err instanceof Error ? err.message : 'Unknown error');
+      // Only set error if we have no results yet.
+      // Late-stage disconnects are non-fatal when steps have already been received.
+      setResult((prev) => {
+        if (!prev) {
+          setError(err instanceof Error ? err.message : 'Unknown error');
+        }
+        return prev;
+      });
     } finally {
       setUploading(false);
       setProcessing(false);

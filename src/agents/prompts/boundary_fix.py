@@ -35,6 +35,12 @@ one continuous sentence. If the text before a boundary ends mid-sentence \
 (no period or other terminal punctuation) and the text after the boundary \
 continues that sentence, join them into one paragraph.
 
+### 4. Running headers and footers
+
+Context hints may identify running page headers (repeated document title at top of pages) \
+or page number footers. When a hint identifies one, verify against surrounding context \
+and remove it with str_replace.
+
 ## What you do NOT fix
 
 - **Footnote bodies**: Do not move or modify footnote bodies. A separate \
@@ -79,8 +85,15 @@ def build_boundary_user_message(
 
     parts.append("## Boundary locations\n")
     for b in boundary_snippets:
+        hints = b.get("hints", [])
+        hints_block = ""
+        if hints:
+            hints_lines = "\n".join(f"- {h}" for h in hints)
+            hints_block = f"**Context hints:**\n{hints_lines}\n\n"
+
         parts.append(
             f"### Between page {b['page_before']} and page {b['page_after']}\n"
+            f"{hints_block}"
             f"**End of page {b['page_before']}:**\n"
             f"```\n{b['tail_text']}\n```\n"
             f"**Start of page {b['page_after']}:**\n"

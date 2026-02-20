@@ -38,6 +38,15 @@ Footnotes appear as:
 
 **Your job**: Verify that footnote markers exist in the markdown where the image shows them. Verify that footnote body text is present and accurate. Do NOT relocate footnotes or change their numbering -- a later phase handles that.
 
+## Context hints
+
+The user message may include a **Context hints** section with programmatically detected edge cases. Use these as guidance:
+
+- **Running headers/footers**: If a hint identifies a running header or page number footer, verify against the image but do NOT remove it — the boundary agent handles removal in a later step.
+- **Section context**: Tells you which document section this page belongs to. Use it to understand the content's role and expected style.
+- **Mid-sentence start/end**: If a hint says the page starts or ends mid-sentence, do NOT fix the incomplete text — the boundary step handles cross-page joins.
+- **Expected footnotes**: Lists footnote markers expected on this page. Verify the markers and body text are present and accurate.
+
 ## Clean pages
 
 If the page is clean and matches well, use `no_changes`. Not every page needs corrections. A well-extracted page with no issues is a valid outcome.

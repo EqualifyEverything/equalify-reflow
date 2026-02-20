@@ -346,6 +346,30 @@ class TestPhase2Orchestration:
         # Page 2 should have corrected markdown
         assert v1_pages["2"] == "# Page 2 corrected"
 
+    @pytest.mark.asyncio
+    async def test_hints_passed_to_page_agents(self, service, base_result, sample_structure):
+        """Verify page_hints are threaded from _step_page_content to _run_page_agent."""
+        received_hints: dict[int, list[str] | None] = {}
+
+        async def mock_run_page_agent(page_num, **kwargs):
+            received_hints[page_num] = kwargs.get("context_hints")
+            return PageCorrectionResult(
+                page=page_num,
+                corrected_markdown=base_result.page_markdowns["v0"][str(page_num)],
+                changes=[],
+                issues=[],
+            )
+
+        service._run_page_agent = mock_run_page_agent
+
+        test_hints = {1: ["Hint for page 1"], 2: ["Hint A", "Hint B"]}
+        await service._step_page_content(
+            base_result, sample_structure, page_hints=test_hints
+        )
+
+        assert received_hints[1] == ["Hint for page 1"]
+        assert received_hints[2] == ["Hint A", "Hint B"]
+
 
 # ---------------------------------------------------------------------------
 # Phase 2 — str_replace tool behavior
@@ -401,14 +425,21 @@ class TestStrReplaceTool:
 
 
 class TestPhase3Assembly:
-    """Test Phase 3 assembly and boundary fix orchestration."""
+    """Test Phase 3 assembly and boundary fix orchestration.
+
+    Boundary agent is called with section-aware hints. Tests mock both
+    _run_boundary_agent and _run_footnote_agent.
+    """
 
     @pytest.mark.asyncio
-    async def test_pages_concatenated_in_order(self, service, base_result, sample_structure):
-        """Pages should be joined with double newlines in page order."""
-        # Mock both agents to do nothing
-        service._run_boundary_agent = AsyncMock(return_value=("joined", [], [], 0, 0))
-        service._run_footnote_agent = AsyncMock(return_value=("joined", [], [], 0, 0))
+    async def test_v2_produced_from_v1(self, service, base_result, sample_structure):
+        """v2 should be produced from v1 (or v0 if no v1)."""
+        service._run_boundary_agent = AsyncMock(
+            return_value=(base_result.versions["v0"], [], [], 0, 0)
+        )
+        service._run_footnote_agent = AsyncMock(
+            return_value=(base_result.versions["v0"], [], [], 0, 0)
+        )
 
         await service._step_boundaries(base_result, sample_structure)
 
@@ -417,26 +448,36 @@ class TestPhase3Assembly:
         assert "v2" in base_result.versions
 
     @pytest.mark.asyncio
-    async def test_boundary_agent_skipped_when_single_page(self, service, sample_structure):
-        """With only one page, no boundary snippets exist so agent is skipped."""
-        single_page_result = PipelineViewerResult(
-            filename="single.pdf",
-            total_pages=1,
-            versions={"v0": "# Page 1\n\nContent"},
-            page_images={"1": "AAAA"},
-            page_markdowns={"v0": {"1": "# Page 1\n\nContent"}},
+    async def test_deterministic_hyphen_join(self, service, sample_structure):
+        """Hyphenated words at page joins should be deterministically joined."""
+        result = PipelineViewerResult(
+            filename="test.pdf",
+            total_pages=2,
+            versions={"v1": "The develop-\n\nment of new tools."},
+            page_images={},
+            page_markdowns={"v1": {"1": "develop-", "2": "ment of new tools."}},
             figures=[],
             steps=[],
             stats={},
         )
 
-        service._run_boundary_agent = AsyncMock(return_value=("", [], [], 0, 0))
-        service._run_footnote_agent = AsyncMock(return_value=("", [], [], 0, 0))
+        # No footnotes to skip the footnote agent
+        no_fn_structure = StructureResult(
+            page_attributes={},
+            outline=[],
+            footnotes=[],
+        )
 
-        await service._step_boundaries(single_page_result, sample_structure)
+        # Mock boundary agent to pass through without changes
+        service._run_boundary_agent = AsyncMock(
+            side_effect=lambda doc, *a, **kw: (doc, [], [], 0, 0)
+        )
 
-        # Boundary agent should not have been called (no boundaries)
-        service._run_boundary_agent.assert_not_called()
+        await service._step_boundaries(result, no_fn_structure)
+
+        assert "development" in result.versions["v2"]
+        step = result.steps[-1]
+        assert step.metadata["boundary_fixes"] == 1
 
     @pytest.mark.asyncio
     async def test_footnote_agent_skipped_when_no_footnotes(self, service, base_result):
@@ -451,7 +492,7 @@ class TestPhase3Assembly:
         )
 
         service._run_boundary_agent = AsyncMock(
-            return_value=("assembled doc", [], [], 0, 0)
+            side_effect=lambda doc, *a, **kw: (doc, [], [], 0, 0)
         )
         service._run_footnote_agent = AsyncMock(return_value=("", [], [], 0, 0))
 
@@ -460,44 +501,10 @@ class TestPhase3Assembly:
         service._run_footnote_agent.assert_not_called()
 
     @pytest.mark.asyncio
-    async def test_boundary_snippets_computed_correctly(self, service, base_result, sample_structure):
-        """Boundary snippets should capture tail/head text from adjacent pages."""
-        captured_snippets = None
-
-        async def capture_boundary_agent(document, boundary_snippets, footnote_numbers):
-            nonlocal captured_snippets
-            captured_snippets = boundary_snippets
-            return (document, [], [], 0, 0)
-
-        service._run_boundary_agent = capture_boundary_agent
-        service._run_footnote_agent = AsyncMock(return_value=("", [], [], 0, 0))
-
-        await service._step_boundaries(base_result, sample_structure)
-
-        assert captured_snippets is not None
-        assert len(captured_snippets) == 1  # 2 pages = 1 boundary
-        assert captured_snippets[0]["page_before"] == 1
-        assert captured_snippets[0]["page_after"] == 2
-
-    @pytest.mark.asyncio
-    async def test_changes_metadata_includes_counts(self, service, base_result, sample_structure):
-        """Step metadata should count boundary and footnote changes."""
+    async def test_footnote_changes_metadata(self, service, base_result, sample_structure):
+        """Step metadata should count footnote changes."""
         service._run_boundary_agent = AsyncMock(
-            return_value=(
-                "fixed doc",
-                [
-                    DocumentChange(
-                        page=0,
-                        old_text="de-\nveloping",
-                        new_text="developing",
-                        reasoning="split word",
-                        stage="boundary_fix",
-                    )
-                ],
-                [],
-                0,
-                0,
-            )
+            side_effect=lambda doc, *a, **kw: (doc, [], [], 0, 0)
         )
         service._run_footnote_agent = AsyncMock(
             return_value=(
@@ -520,9 +527,43 @@ class TestPhase3Assembly:
         await service._step_boundaries(base_result, sample_structure)
 
         step = base_result.steps[-1]
-        assert step.metadata["boundary_fixes"] == 1
         assert step.metadata["footnotes_relocated"] == 1
-        assert len(step.changes) == 2
+
+    @pytest.mark.asyncio
+    async def test_boundary_agent_receives_section_hints(self, service, base_result, sample_structure):
+        """When section_map is provided, boundary agent receives hint snippets."""
+        from src.services.pipeline_viewer_models import SectionEntry, SectionMap
+
+        section_map = SectionMap(sections=[
+            SectionEntry(
+                index=0,
+                heading_text="Introduction",
+                heading_level=2,
+                pages=[1, 2],
+                markdown="content",
+                outline_position=0,
+            ),
+        ])
+
+        received_snippets = []
+
+        async def mock_boundary_agent(doc, snippets, footnotes):
+            received_snippets.extend(snippets)
+            return doc, [], [], 0, 0
+
+        service._run_boundary_agent = mock_boundary_agent
+        service._run_footnote_agent = AsyncMock(
+            return_value=(base_result.versions["v0"], [], [], 0, 0)
+        )
+
+        await service._step_boundaries(
+            base_result, sample_structure, section_map=section_map
+        )
+
+        assert len(received_snippets) == 1
+        assert received_snippets[0]["page_before"] == 1
+        assert received_snippets[0]["page_after"] == 2
+        assert "hints" in received_snippets[0]
 
 
 # ---------------------------------------------------------------------------

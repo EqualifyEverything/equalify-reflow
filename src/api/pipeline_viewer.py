@@ -155,7 +155,26 @@ async def process_pdf_stream(
             logger.error(f"Structure analysis failed: {e}")
             yield _sse_event("error", {"step_name": "structure", "message": str(e)})
 
-        # Step 2b: Deterministic heading level fix
+        # Step 2b: Heading reconciliation
+        if structure is not None:
+            yield _sse_event("processing", {"step_name": "heading_reconciliation", "display_name": "Heading Reconciliation"})
+            try:
+                task = asyncio.create_task(service._step_heading_reconciliation(result, structure))
+                async for hb in _heartbeats_until_done(task):
+                    yield hb
+                structure = task.result()
+                total_steps += 1
+                step = result.steps[-1]
+                yield _sse_event("step", {
+                    "step": step.model_dump(),
+                    "new_versions": {},
+                    "new_page_markdowns": {},
+                })
+            except Exception as e:
+                logger.error(f"Heading reconciliation failed: {e}")
+                yield _sse_event("error", {"step_name": "heading_reconciliation", "message": str(e)})
+
+        # Step 2c: Deterministic heading level fix
         if structure is not None:
             yield _sse_event("processing", {"step_name": "heading_levels", "display_name": "Heading Levels"})
             try:
@@ -174,11 +193,16 @@ async def process_pdf_stream(
                 logger.error(f"Heading level fix failed: {e}")
                 yield _sse_event("error", {"step_name": "heading_levels", "message": str(e)})
 
-        # Step 3: Page content corrections
+        # Step 3: Page content corrections (with programmatic hints)
+        section_map = None
         if structure is not None:
             yield _sse_event("processing", {"step_name": "page_content", "display_name": "Page Content Corrections"})
             try:
-                task = asyncio.create_task(service._step_page_content(result, structure))
+                section_map = service._build_section_map(result, structure)
+                page_hints = service._generate_page_hints(result, structure, section_map)
+                task = asyncio.create_task(
+                    service._step_page_content(result, structure, page_hints=page_hints)
+                )
                 async for hb in _heartbeats_until_done(task):
                     yield hb
                 task.result()
@@ -218,7 +242,11 @@ async def process_pdf_stream(
         if structure is not None:
             yield _sse_event("processing", {"step_name": "boundaries", "display_name": "Cross-Page Fixes"})
             try:
-                task = asyncio.create_task(service._step_boundaries(result, structure))
+                if section_map is None:
+                    section_map = service._build_section_map(result, structure)
+                task = asyncio.create_task(
+                    service._step_boundaries(result, structure, section_map=section_map)
+                )
                 async for hb in _heartbeats_until_done(task):
                     yield hb
                 task.result()

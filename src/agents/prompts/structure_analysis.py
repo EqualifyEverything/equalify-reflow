@@ -82,6 +82,13 @@ other headings to infer the level.
 previous pages. Use it to determine whether a heading is a sibling, child, \
 or new top-level section. For example, if the outline shows "2. Background" \
 at h2, then "2.1 Related Work" on your page should be h3.
+- **Unnumbered headings — look at neighbors**: An unnumbered heading that \
+appears between numbered sub-section children should match those children's \
+level, not the parent's level. For example, if the outline has "3.2 AI \
+Models" at h3 with children "Layout Analysis Model" and "Table Structure \
+Recognition" at h4, and your page has an unnumbered heading "OCR" that is \
+topically related, it should be h4 (a sibling of the other children), not \
+h3 (a sibling of "3.2 AI Models"). When in doubt, prefer the deeper level.
 
 Report the heading text exactly as it appears in the IMAGE (not the \
 markdown — the markdown may have OCR errors). Report your reasoning for \

@@ -25,12 +25,16 @@ from .pipeline_viewer_models import (
     DocumentChange,
     FigureData,
     FootnoteInfo,
+    HeadingReconciliationOutput,
+    ImageDescriptionResult,
     OutlineEntry,
     PageAttributes,
     PageCorrectionResult,
     PipelineViewerResult,
     RevisionTask,
     RevisionTaskCategory,
+    SectionEntry,
+    SectionMap,
     StepResult,
     StructurePageOutput,
     StructureResult,
@@ -295,6 +299,49 @@ def _detect_page_columns(doc: Any, page_no: int) -> str:
     return "single_column"
 
 
+def _is_running_header(line: str, doc_title: str, page_num: int) -> bool:
+    """Detect if *line* is a running page header (repeated title at top of page).
+
+    Never matches markdown headings (lines starting with #).
+    """
+    stripped = line.strip()
+    if not stripped or stripped.startswith("#"):
+        return False
+
+    if doc_title:
+        # Fuzzy-match against doc title (strip trailing digits/spaces)
+        cleaned = stripped.lower().rstrip("0123456789 ")
+        ratio = difflib.SequenceMatcher(None, cleaned, doc_title.lower()).ratio()
+        if ratio >= 0.7:
+            return True
+
+    # Pattern: "{title text} {page_num}" at end of line
+    m = re.match(r"^(.+?)\s+(\d+)\s*$", stripped)
+    if m and int(m.group(2)) == page_num and len(m.group(1)) < 80:
+        return True
+
+    return False
+
+
+def _is_running_footer(line: str, page_num: int) -> bool:
+    """Detect if *line* is a running page footer (page number, etc.)."""
+    stripped = line.strip()
+    if not stripped:
+        return False
+
+    # Bare digit close to page number
+    if stripped.isdigit() and abs(int(stripped) - page_num) <= 1:
+        return True
+
+    # "Page N" or "N of M"
+    if re.match(r"^[Pp]age\s+\d+", stripped):
+        return True
+    if re.match(r"^\d+\s+of\s+\d+$", stripped):
+        return True
+
+    return False
+
+
 class PipelineViewerService:
     """Versioned pipeline that stores full markdown at every step.
 
@@ -338,14 +385,20 @@ class PipelineViewerService:
 
         if enable_structure:
             structure = await self._step_structure(result)
+            structure = await self._step_heading_reconciliation(result, structure)
             await self._step_heading_levels(result, structure)
 
+        section_map: SectionMap | None = None
         if enable_page_content and structure is not None:
-            await self._step_page_content(result, structure)
+            section_map = self._build_section_map(result, structure)
+            page_hints = self._generate_page_hints(result, structure, section_map)
+            await self._step_page_content(result, structure, page_hints=page_hints)
             await self._step_code_blocks(result, structure)
 
         if enable_boundaries and structure is not None:
-            await self._step_boundaries(result, structure)
+            if section_map is None and structure is not None:
+                section_map = self._build_section_map(result, structure)
+            await self._step_boundaries(result, structure, section_map=section_map)
             await self._step_cleanup(result)
 
         return result
@@ -562,6 +615,7 @@ class PipelineViewerService:
                         level=heading.recommended_level,
                         text=heading.text,
                         page=page_num,
+                        reasoning=heading.reasoning,
                     )
                 )
 
@@ -626,7 +680,137 @@ class PipelineViewerService:
         return structure
 
     # ------------------------------------------------------------------
-    # Phase 1b — Deterministic heading level fix
+    # Phase 1b — Heading Reconciliation (single LLM call, all headings)
+    # ------------------------------------------------------------------
+
+    async def _step_heading_reconciliation(
+        self,
+        result: PipelineViewerResult,
+        structure: StructureResult,
+    ) -> StructureResult:
+        """Reconcile heading levels across the full document.
+
+        The per-page structure analysis assigns heading levels based on
+        limited context (one page + accumulated outline). This step reviews
+        ALL heading candidates at once and assigns globally consistent levels.
+
+        Returns:
+            Updated StructureResult with reconciled outline.
+        """
+        from pydantic_ai import Agent
+        from pydantic_ai.models.bedrock import BedrockConverseModel
+
+        from ..agents.model_tiers import MODEL_TIER_MAP, ModelTier
+        from ..agents.prompts.heading_reconciliation import (
+            HEADING_RECONCILIATION_SYSTEM_PROMPT,
+            build_heading_reconciliation_message,
+        )
+
+        step_start = time.time()
+
+        if not structure.outline:
+            result.steps.append(
+                StepResult(
+                    name="heading_reconciliation",
+                    display_name="Heading Reconciliation",
+                    version_before="v0",
+                    version_after="v0",
+                    elapsed_ms=0,
+                    changes=[],
+                    metadata={"headings_reviewed": 0, "headings_changed": 0},
+                    skipped=True,
+                )
+            )
+            return structure
+
+        # Build heading candidates with reasoning from per-page analysis
+        heading_candidates = []
+        for entry in structure.outline:
+            heading_candidates.append({
+                "text": entry.text,
+                "page": entry.page,
+                "recommended_level": entry.level,
+                "reasoning": entry.reasoning or f"Assigned h{entry.level} on page {entry.page}",
+            })
+
+        model = BedrockConverseModel(MODEL_TIER_MAP[ModelTier.EFFICIENT])
+        agent: Agent[None, HeadingReconciliationOutput] = Agent(
+            model=model,
+            output_type=HeadingReconciliationOutput,
+            system_prompt=HEADING_RECONCILIATION_SYSTEM_PROMPT,
+        )
+
+        user_msg = build_heading_reconciliation_message(
+            heading_candidates=heading_candidates,
+            total_pages=result.total_pages,
+        )
+
+        total_input_tokens = 0
+        total_output_tokens = 0
+        changes: list[DocumentChange] = []
+
+        try:
+            agent_result = await agent.run(user_msg)
+            reconciled = agent_result.output
+            usage = agent_result.usage()
+            total_input_tokens = usage.request_tokens or 0
+            total_output_tokens = usage.response_tokens or 0
+
+            # Compare old and new outlines, record changes
+            old_by_key = {
+                (e.text, e.page): e.level for e in structure.outline
+            }
+            for entry in reconciled.outline:
+                key = (entry.text, entry.page)
+                old_level = old_by_key.get(key)
+                if old_level is not None and old_level != entry.level:
+                    changes.append(
+                        DocumentChange(
+                            page=entry.page,
+                            old_text=f"h{old_level}: {entry.text}",
+                            new_text=f"h{entry.level}: {entry.text}",
+                            reasoning=(
+                                f"Reconciliation changed from h{old_level} to h{entry.level}"
+                            ),
+                            stage="heading_reconciliation",
+                        )
+                    )
+
+            # Update the structure's outline with reconciled levels
+            structure.outline = reconciled.outline
+
+        except Exception as e:
+            logger.error(f"Heading reconciliation failed: {e}")
+            # Keep original outline on failure
+
+        elapsed_ms = int((time.time() - step_start) * 1000)
+
+        from ..shared.llm_cost import calculate_estimated_cost
+
+        cost_cents = calculate_estimated_cost(total_input_tokens, total_output_tokens)
+
+        result.steps.append(
+            StepResult(
+                name="heading_reconciliation",
+                display_name="Heading Reconciliation",
+                version_before="v0",
+                version_after="v0",
+                elapsed_ms=elapsed_ms,
+                changes=changes,
+                metadata={
+                    "headings_reviewed": len(heading_candidates),
+                    "headings_changed": len(changes),
+                },
+                input_tokens=total_input_tokens,
+                output_tokens=total_output_tokens,
+                cost_cents=cost_cents,
+            )
+        )
+
+        return structure
+
+    # ------------------------------------------------------------------
+    # Phase 1c — Deterministic heading level fix
     # ------------------------------------------------------------------
 
     async def _step_heading_levels(
@@ -726,6 +910,457 @@ class PipelineViewerService:
         )
 
     # ------------------------------------------------------------------
+    # Section Map Construction (deterministic, no LLM)
+    # ------------------------------------------------------------------
+
+    def _build_section_map(
+        self,
+        result: PipelineViewerResult,
+        structure: StructureResult,
+    ) -> SectionMap:
+        """Build a map of sections from the reconciled outline.
+
+        Deterministic step — no LLM call. Concatenates all v0 page markdowns,
+        finds heading positions, and splits the document at heading boundaries.
+
+        Returns:
+            SectionMap with ordered sections.
+        """
+        page_mds = result.page_markdowns["v0"]
+        heading_re = re.compile(r"^(#{1,6})\s+(.+)$", re.MULTILINE)
+
+        # Build full document from pages with page boundary markers
+        # We need to track which page each line belongs to
+        page_line_offsets: list[tuple[int, int]] = []  # (start_line, page_num)
+        all_lines: list[str] = []
+        for page_num in range(1, result.total_pages + 1):
+            page_md = page_mds.get(str(page_num), "")
+            page_line_offsets.append((len(all_lines), page_num))
+            all_lines.extend(page_md.split("\n"))
+            # Add blank line between pages (matching the \n\n join)
+            if page_num < result.total_pages:
+                all_lines.append("")
+
+        full_text = "\n".join(all_lines)
+
+        def _line_to_page(line_idx: int) -> int:
+            """Map a line index to its page number."""
+            result_page = 1
+            for start_line, page_num in page_line_offsets:
+                if start_line <= line_idx:
+                    result_page = page_num
+                else:
+                    break
+            return result_page
+
+        # Find all headings in the full text with their positions
+        heading_positions: list[tuple[int, int, str, int]] = []  # (char_pos, line_idx, text, level)
+        for line_idx, line in enumerate(all_lines):
+            m = heading_re.match(line)
+            if m:
+                level = len(m.group(1))
+                text = m.group(2).strip()
+                char_pos = sum(len(all_lines[j]) + 1 for j in range(line_idx))
+                heading_positions.append((char_pos, line_idx, text, level))
+
+        # Match headings to outline entries via fuzzy match
+        matched_outline: list[tuple[int, int, str, int, int]] = []  # (char_pos, line_idx, text, level, outline_idx)
+        used_outline_indices: set[int] = set()
+
+        for char_pos, line_idx, text, level in heading_positions:
+            best_idx = -1
+            best_ratio = 0.0
+            for oi, entry in enumerate(structure.outline):
+                if oi in used_outline_indices:
+                    continue
+                ratio = difflib.SequenceMatcher(
+                    None, text.lower(), entry.text.lower()
+                ).ratio()
+                if ratio > best_ratio:
+                    best_ratio = ratio
+                    best_idx = oi
+
+            if best_idx >= 0 and best_ratio >= 0.6:
+                used_outline_indices.add(best_idx)
+                matched_outline.append((char_pos, line_idx, text, level, best_idx))
+
+        # Build sections by splitting at heading boundaries
+        sections: list[SectionEntry] = []
+        section_idx = 0
+
+        # Preamble: content before first heading
+        if matched_outline:
+            first_heading_line = matched_outline[0][1]
+            if first_heading_line > 0:
+                preamble_lines = all_lines[:first_heading_line]
+                preamble_md = "\n".join(preamble_lines).strip()
+                if preamble_md:
+                    preamble_pages = sorted({
+                        _line_to_page(li) for li in range(first_heading_line)
+                        if all_lines[li].strip()
+                    })
+                    sections.append(SectionEntry(
+                        index=section_idx,
+                        heading_text="(Preamble)",
+                        heading_level=0,
+                        pages=preamble_pages or [1],
+                        markdown=preamble_md,
+                        outline_position=-1,
+                    ))
+                    section_idx += 1
+
+            # Each heading starts a section
+            for i, (_, line_idx, text, level, outline_idx) in enumerate(matched_outline):
+                # Section ends at the next heading or end of document
+                if i + 1 < len(matched_outline):
+                    end_line = matched_outline[i + 1][1]
+                else:
+                    end_line = len(all_lines)
+
+                section_lines = all_lines[line_idx:end_line]
+                section_md = "\n".join(section_lines).strip()
+
+                # Determine pages this section spans
+                section_pages = sorted({
+                    _line_to_page(li)
+                    for li in range(line_idx, end_line)
+                    if li < len(all_lines) and all_lines[li].strip()
+                })
+                if not section_pages:
+                    section_pages = [_line_to_page(line_idx)]
+
+                sections.append(SectionEntry(
+                    index=section_idx,
+                    heading_text=text,
+                    heading_level=level,
+                    pages=section_pages,
+                    markdown=section_md,
+                    outline_position=outline_idx,
+                ))
+                section_idx += 1
+        else:
+            # No headings found — entire document is one section
+            full_md = full_text.strip()
+            if full_md:
+                sections.append(SectionEntry(
+                    index=0,
+                    heading_text="(Preamble)",
+                    heading_level=0,
+                    pages=list(range(1, result.total_pages + 1)),
+                    markdown=full_md,
+                    outline_position=-1,
+                ))
+
+        return SectionMap(sections=sections)
+
+    # ------------------------------------------------------------------
+    # Hint generation (programmatic edge-case detection)
+    # ------------------------------------------------------------------
+
+    def _generate_page_hints(
+        self,
+        result: PipelineViewerResult,
+        structure: StructureResult,
+        section_map: SectionMap,
+    ) -> dict[int, list[str]]:
+        """Generate per-page context hints from programmatic edge-case detection.
+
+        Returns:
+            Mapping of page_num -> list of plain-text hint strings.
+        """
+        page_mds = result.page_markdowns.get("v0", {})
+        hints: dict[int, list[str]] = {}
+
+        # Determine document title (h1 from outline)
+        doc_title = ""
+        for entry in structure.outline:
+            if entry.level == 1:
+                doc_title = entry.text
+                break
+
+        # Build per-page section lookup
+        page_to_sections: dict[int, list[SectionEntry]] = {}
+        for section in section_map.sections:
+            for p in section.pages:
+                page_to_sections.setdefault(p, []).append(section)
+
+        for page_num in range(1, result.total_pages + 1):
+            page_md = page_mds.get(str(page_num), "")
+            page_hints: list[str] = []
+            lines = page_md.split("\n")
+            non_blank = [l for l in lines if l.strip()]
+
+            if not non_blank:
+                continue
+
+            # --- Running header (page > 1 only) ---
+            if page_num > 1:
+                first_line = non_blank[0]
+                if _is_running_header(first_line, doc_title, page_num):
+                    page_hints.append(
+                        f"First line '{first_line.strip()}' appears to be a "
+                        f"running page header, not document content."
+                    )
+
+            # --- Running footer ---
+            last_line = non_blank[-1]
+            if _is_running_footer(last_line, page_num):
+                page_hints.append(
+                    f"Last line '{last_line.strip()}' appears to be a "
+                    f"page number footer."
+                )
+
+            # --- Section context ---
+            sections_on_page = page_to_sections.get(page_num, [])
+            for section in sections_on_page:
+                if section.heading_level == 0:
+                    continue  # skip preamble
+                if len(section.pages) == 1:
+                    position = "only page"
+                elif page_num == section.pages[0]:
+                    position = "start of section"
+                elif page_num == section.pages[-1]:
+                    position = "end of section"
+                else:
+                    position = f"middle of section"
+                page_hints.append(
+                    f"This page is in section '{section.heading_text}' "
+                    f"(h{section.heading_level}, pages {section.pages[0]}-"
+                    f"{section.pages[-1]}). You are on page {page_num} "
+                    f"({position})."
+                )
+
+            # --- Mid-sentence start ---
+            first_content = ""
+            for l in non_blank:
+                if not l.strip().startswith("#"):
+                    first_content = l.strip()
+                    break
+            if first_content and first_content[0].islower():
+                page_hints.append(
+                    "This page starts mid-sentence (continues from previous "
+                    "page). Do not fix the incomplete start."
+                )
+
+            # --- Mid-sentence end ---
+            last_content = non_blank[-1].strip()
+            if last_content and not last_content[-1] in ".!?:":
+                # Don't flag headings or list items as mid-sentence
+                if not last_content.startswith("#") and not last_content.startswith("- "):
+                    page_hints.append(
+                        "This page ends mid-sentence. Content continues on "
+                        "next page."
+                    )
+
+            # --- Expected footnotes ---
+            page_footnotes = [
+                fn for fn in structure.footnotes if fn.source_page == page_num
+            ]
+            if page_footnotes:
+                markers = ", ".join(f"[{fn.number}]" for fn in page_footnotes)
+                page_hints.append(
+                    f"Footnotes {markers} are expected on this page."
+                )
+
+            if page_hints:
+                hints[page_num] = page_hints
+
+        return hints
+
+    def _generate_boundary_hints(
+        self,
+        result: PipelineViewerResult,
+        structure: StructureResult,
+        section_map: SectionMap,
+    ) -> list[dict]:
+        """Build boundary snippets with section-aware hints.
+
+        Returns a list of boundary snippet dicts, each with:
+            page_before, page_after, tail_text, head_text, hints: list[str]
+        """
+        source_version = "v1" if "v1" in result.page_markdowns else "v0"
+        page_mds = result.page_markdowns.get(source_version, {})
+
+        # Determine document title (h1 from outline)
+        doc_title = ""
+        for entry in structure.outline:
+            if entry.level == 1:
+                doc_title = entry.text
+                break
+
+        # Build per-page section lookup
+        page_to_sections: dict[int, list[SectionEntry]] = {}
+        for section in section_map.sections:
+            for p in section.pages:
+                page_to_sections.setdefault(p, []).append(section)
+
+        snippets: list[dict] = []
+
+        for page_num in range(1, result.total_pages):
+            page_before = page_num
+            page_after = page_num + 1
+
+            md_before = page_mds.get(str(page_before), "")
+            md_after = page_mds.get(str(page_after), "")
+
+            lines_before = md_before.split("\n")
+            lines_after = md_after.split("\n")
+
+            tail_text = "\n".join(lines_before[-5:])
+            head_text = "\n".join(lines_after[:5])
+
+            boundary_hints: list[str] = []
+
+            # --- Section context ---
+            sections_before = page_to_sections.get(page_before, [])
+            sections_after = page_to_sections.get(page_after, [])
+
+            # Check if same section spans both pages
+            shared = [s for s in sections_before if s in sections_after]
+            if shared:
+                sec = shared[0]
+                boundary_hints.append(
+                    f"SAME SECTION ('{sec.heading_text}'): content flows "
+                    f"continuously. Join split words/sentences."
+                )
+            else:
+                # Section transition
+                if sections_before and sections_after:
+                    sec_a = sections_before[-1]
+                    sec_b = sections_after[0]
+                    if sec_a.heading_level > 0 and sec_b.heading_level > 0:
+                        boundary_hints.append(
+                            f"SECTION TRANSITION: '{sec_a.heading_text}' ends "
+                            f"→ '{sec_b.heading_text}' begins. This is a "
+                            f"natural break."
+                        )
+
+            # --- Running header at start of page_after ---
+            non_blank_after = [l for l in lines_after if l.strip()]
+            if non_blank_after:
+                first_line = non_blank_after[0]
+                if _is_running_header(first_line, doc_title, page_after):
+                    boundary_hints.append(
+                        f"Running header: '{first_line.strip()}' at start of "
+                        f"page {page_after}. Remove this line."
+                    )
+
+            # --- Running footer at end of page_before ---
+            non_blank_before = [l for l in lines_before if l.strip()]
+            if non_blank_before:
+                last_line = non_blank_before[-1]
+                if _is_running_footer(last_line, page_before):
+                    boundary_hints.append(
+                        f"Page number footer: '{last_line.strip()}' at end of "
+                        f"page {page_before}. Remove this line."
+                    )
+
+            snippets.append({
+                "page_before": page_before,
+                "page_after": page_after,
+                "tail_text": tail_text,
+                "head_text": head_text,
+                "hints": boundary_hints,
+            })
+
+        return snippets
+
+    # ------------------------------------------------------------------
+    # Image description subagent
+    # ------------------------------------------------------------------
+
+    async def _run_image_describer(
+        self,
+        figure: FigureData,
+        current_markdown: str,
+        page_images: dict[int, str | None],
+        describer_tokens: dict[str, int],
+        update_tokens: Any,
+    ) -> str:
+        """Spawn a vision subagent to generate alt text for a single figure.
+
+        Returns a formatted instruction string for the section agent.
+        """
+        from pydantic_ai import Agent
+        from pydantic_ai.messages import BinaryContent
+        from pydantic_ai.models.bedrock import BedrockConverseModel
+
+        from ..agents.model_tiers import MODEL_TIER_MAP, ModelTier
+        from ..agents.prompts.image_description import (
+            IMAGE_DESCRIBER_SYSTEM_PROMPT,
+            build_describer_user_message,
+        )
+
+        # Extract surrounding context (~200 chars around the figure reference)
+        ref_pattern = f"figures/{figure.ref_id}"
+        idx = current_markdown.find(ref_pattern)
+        if idx >= 0:
+            start = max(0, idx - 200)
+            end = min(len(current_markdown), idx + len(ref_pattern) + 200)
+            surrounding_text = current_markdown[start:end]
+        else:
+            surrounding_text = ""
+
+        user_message = build_describer_user_message(
+            caption=figure.caption,
+            surrounding_text=surrounding_text,
+            ref_id=figure.ref_id,
+        )
+
+        # Build multimodal user message: figure image + optional page image + text
+        user_parts: list[Any] = []
+
+        # Attach the extracted figure image
+        if figure.image_base64:
+            user_parts.append(
+                BinaryContent(
+                    data=base64.b64decode(figure.image_base64),
+                    media_type="image/png",
+                )
+            )
+
+        # Attach the full page image for broader context
+        page_img = page_images.get(figure.page_number)
+        if page_img:
+            user_parts.append(
+                BinaryContent(
+                    data=base64.b64decode(page_img),
+                    media_type="image/png",
+                )
+            )
+
+        user_parts.append(user_message)
+
+        model = BedrockConverseModel(MODEL_TIER_MAP[ModelTier.EFFICIENT])
+        describer_agent: Agent[None, ImageDescriptionResult] = Agent(
+            model=model,
+            output_type=ImageDescriptionResult,
+            system_prompt=IMAGE_DESCRIBER_SYSTEM_PROMPT,
+        )
+
+        try:
+            desc_result = await describer_agent.run(user_parts)
+            usage = desc_result.usage()
+            update_tokens(
+                usage.request_tokens or 0,
+                usage.response_tokens or 0,
+            )
+
+            result = desc_result.output
+            if result.is_decorative:
+                return (
+                    f"Figure '{figure.ref_id}' is decorative. "
+                    f"No alt text needed — leave the alt attribute empty."
+                )
+            return (
+                f"Use this alt text for '{figure.ref_id}': {result.alt_text}\n"
+                f"Use str_replace to update the markdown image syntax to include this alt text."
+            )
+        except Exception as e:
+            logger.warning(f"Image describer failed for {figure.ref_id}: {e}")
+            return f"ERROR: Image describer failed for '{figure.ref_id}': {e}"
+
+    # ------------------------------------------------------------------
     # Phase 2 — Page Content Corrections (parallel, semaphore-limited)
     # ------------------------------------------------------------------
 
@@ -733,6 +1368,8 @@ class PipelineViewerService:
         self,
         result: PipelineViewerResult,
         structure: StructureResult,
+        *,
+        page_hints: dict[int, list[str]] | None = None,
     ) -> None:
         """Correct each page's markdown against its page image.
 
@@ -755,13 +1392,21 @@ class PipelineViewerService:
         page_mds = dict(result.page_markdowns["v0"])  # copy to mutate
         semaphore = asyncio.Semaphore(PAGE_AGENT_SEMAPHORE_LIMIT)
 
+        # Build per-page figure lookup
+        page_figures_map: dict[int, list[FigureData]] = {}
+        for fig in result.figures:
+            page_figures_map.setdefault(fig.page_number, []).append(fig)
+
         async def _process_page(page_num: int) -> PageCorrectionResult:
+            pf = page_figures_map.get(page_num) or None
             async with semaphore:
                 return await self._run_page_agent(
                     page_num=page_num,
                     page_markdown=page_mds[str(page_num)],
                     page_image_b64=result.page_images.get(str(page_num)),
                     structure=structure,
+                    context_hints=page_hints.get(page_num) if page_hints else None,
+                    page_figures=pf,
                 )
 
         # Fan out all pages
@@ -772,6 +1417,8 @@ class PipelineViewerService:
         corrected_mds: dict[str, str] = {}
         total_input_tokens = 0
         total_output_tokens = 0
+        total_describer_input = 0
+        total_describer_output = 0
         for i, pr in enumerate(page_results):
             page_num = i + 1
             page_key = str(page_num)
@@ -787,6 +1434,8 @@ class PipelineViewerService:
             all_issues.extend(pr.issues)
             total_input_tokens += pr.input_tokens
             total_output_tokens += pr.output_tokens
+            total_describer_input += pr.describer_input_tokens
+            total_describer_output += pr.describer_output_tokens
 
         # Write v1
         result.page_markdowns["v1"] = corrected_mds
@@ -798,7 +1447,9 @@ class PipelineViewerService:
 
         from ..shared.llm_cost import calculate_estimated_cost
 
-        cost_cents = calculate_estimated_cost(total_input_tokens, total_output_tokens)
+        combined_input = total_input_tokens + total_describer_input
+        combined_output = total_output_tokens + total_describer_output
+        cost_cents = calculate_estimated_cost(combined_input, combined_output)
 
         result.steps.append(
             StepResult(
@@ -814,9 +1465,11 @@ class PipelineViewerService:
                     ),
                     "total_changes": len(all_changes),
                     "issues": all_issues,
+                    "describer_input_tokens": total_describer_input,
+                    "describer_output_tokens": total_describer_output,
                 },
-                input_tokens=total_input_tokens,
-                output_tokens=total_output_tokens,
+                input_tokens=combined_input,
+                output_tokens=combined_output,
                 cost_cents=cost_cents,
             )
         )
@@ -827,6 +1480,8 @@ class PipelineViewerService:
         page_markdown: str,
         page_image_b64: str | None,
         structure: StructureResult,
+        context_hints: list[str] | None = None,
+        page_figures: list[FigureData] | None = None,
     ) -> PageCorrectionResult:
         """Run a single page correction agent.
 
@@ -834,6 +1489,9 @@ class PipelineViewerService:
         loads the appropriate procedure based on document type, and runs
         the agent. Failed str_replace calls are reported back to the agent
         for retry.
+
+        When ``page_figures`` is provided and the page has images, a
+        ``describe_image`` tool is registered for WCAG-compliant alt text.
         """
         from pydantic_ai import Agent
         from pydantic_ai.messages import BinaryContent
@@ -862,6 +1520,28 @@ class PipelineViewerService:
         )
         if procedure:
             base_prompt += f"\n{procedure}\n"
+
+        # ------------------------------------------------------------------
+        # describe_image tool: closure state
+        # ------------------------------------------------------------------
+        MAX_DESCRIBE_CALLS = 10
+        figure_lookup: dict[str, FigureData] = {}
+        describer_input_tokens = 0
+        describer_output_tokens = 0
+        describe_call_count = 0
+
+        enable_describe = bool(
+            page_attrs and page_attrs.has_images and page_figures
+        )
+        if enable_describe:
+            figure_lookup = {f.ref_id: f for f in (page_figures or [])}
+            available_refs = sorted(figure_lookup.keys())
+            base_prompt += (
+                f"\n## Available figures for describe_image\n"
+                f"The following figure ref_ids are available: {', '.join(available_refs)}\n"
+                f"Call `describe_image` for each one, then use `str_replace` to "
+                f"update the alt text.\n"
+            )
 
         # Create agent with tools
         model = BedrockConverseModel(MODEL_TIER_MAP[ModelTier.EFFICIENT])
@@ -924,6 +1604,53 @@ class PipelineViewerService:
                 issues.append(f"Page {page_num} ({confidence}): {notes}")
             return "Acknowledged — no changes needed."
 
+        # ------------------------------------------------------------------
+        # Conditionally register describe_image tool
+        # ------------------------------------------------------------------
+        if enable_describe:
+            @agent.tool_plain
+            async def describe_image(ref_id: str) -> str:
+                """Generate WCAG-compliant alt text for a figure.
+
+                Args:
+                    ref_id: The figure reference ID (e.g. "figure-1.png").
+                        Must match one of the available figure ref_ids.
+                """
+                nonlocal describer_input_tokens, describer_output_tokens
+                nonlocal describe_call_count
+
+                if describe_call_count >= MAX_DESCRIBE_CALLS:
+                    return (
+                        f"ERROR: Maximum describe_image calls ({MAX_DESCRIBE_CALLS}) "
+                        f"reached. Skip remaining figures."
+                    )
+
+                describe_call_count += 1
+
+                if ref_id not in figure_lookup:
+                    available = sorted(figure_lookup.keys())
+                    return (
+                        f"ERROR: ref_id '{ref_id}' not found. "
+                        f"Available ref_ids: {', '.join(available)}"
+                    )
+
+                figure = figure_lookup[ref_id]
+                return await self._run_image_describer(
+                    figure=figure,
+                    current_markdown=current_markdown,
+                    page_images={page_num: page_image_b64},
+                    describer_tokens={
+                        "input": describer_input_tokens,
+                        "output": describer_output_tokens,
+                    },
+                    update_tokens=lambda inp, out: _update_page_describer_tokens(inp, out),
+                )
+
+            def _update_page_describer_tokens(inp: int, out: int) -> None:
+                nonlocal describer_input_tokens, describer_output_tokens
+                describer_input_tokens += inp
+                describer_output_tokens += out
+
         # Build user message
         outline_text = "\n".join(
             f"  {'#' * e.level} {e.text} (p{e.page})"
@@ -937,9 +1664,16 @@ class PipelineViewerService:
                     media_type="image/png",
                 )
             )
+        # Build hints section if present
+        hints_block = ""
+        if context_hints:
+            hints_lines = "\n".join(f"- {h}" for h in context_hints)
+            hints_block = f"### Context hints\n{hints_lines}\n\n"
+
         user_parts.append(
             f"## Page {page_num}\n\n"
             f"### Document outline\n{outline_text}\n\n"
+            f"{hints_block}"
             f"### Page markdown\n```\n{page_markdown}\n```\n\n"
             f"Compare the image against the markdown. Make corrections "
             f"with str_replace, or call no_changes if the page is correct."
@@ -956,6 +1690,8 @@ class PipelineViewerService:
             issues=issues,
             input_tokens=usage.request_tokens or 0,
             output_tokens=usage.response_tokens or 0,
+            describer_input_tokens=describer_input_tokens,
+            describer_output_tokens=describer_output_tokens,
         )
 
     # ------------------------------------------------------------------
@@ -1043,64 +1779,80 @@ class PipelineViewerService:
         self,
         result: PipelineViewerResult,
         structure: StructureResult,
+        *,
+        section_map: SectionMap | None = None,
     ) -> None:
         """Fix cross-page issues on the assembled document.
 
-        Assembles all pages into one document, then runs:
-        1. Boundary fixes (split words, duplicated text at page joins)
-        2. Footnote relocation (move footnote bodies to endnotes)
+        1. Deterministic hyphen-join for residual page-join artifacts
+        2. Boundary agent with section-aware hints (running headers/footers,
+           same-section joins, section transitions)
+        3. Footnote relocation (move footnote bodies to endnotes)
 
         Produces v2.
         """
-
-
-        # Determine which version to read from
-        source_version = "v1" if "v1" in result.page_markdowns else "v0"
-        source_pages = result.page_markdowns[source_version]
+        source_version = "v1" if "v1" in result.versions else "v0"
 
         step_start = time.time()
         changes: list[DocumentChange] = []
         issues: list[str] = []
-
-        # Assemble full document
-        assembled_parts: list[str] = []
-        for page_num in range(1, result.total_pages + 1):
-            page_md = source_pages.get(str(page_num), "")
-            assembled_parts.append(page_md)
-
-        current_document = "\n\n".join(assembled_parts)
-
-        # Build boundary snippets for the agent
-        boundary_snippets: list[dict] = []
-        for i in range(len(assembled_parts) - 1):
-            tail_lines = assembled_parts[i].split("\n")
-            head_lines = assembled_parts[i + 1].split("\n")
-            boundary_snippets.append({
-                "page_before": i + 1,
-                "page_after": i + 2,
-                "tail_text": "\n".join(tail_lines[-5:]),
-                "head_text": "\n".join(head_lines[:5]),
-            })
-
-        footnote_numbers = [fn.number for fn in structure.footnotes]
         total_input_tokens = 0
         total_output_tokens = 0
 
-        # --- Agent 1: Boundary fixes ---
-        if boundary_snippets:
-            current_document, boundary_changes, boundary_issues, b_in, b_out = (
+        current_document = result.versions.get(source_version, "")
+
+        # --- Deterministic: hyphen-join for residual page-join artifacts ---
+        hyphen_re = re.compile(r"([a-z])-\n\n([a-z])")
+        before = current_document
+        current_document = hyphen_re.sub(r"\1\2", current_document)
+        if current_document != before:
+            # Count the number of joins made
+            join_count = len(hyphen_re.findall(before))
+            changes.append(
+                DocumentChange(
+                    page=0,
+                    old_text="(hyphenated line breaks)",
+                    new_text="(joined words)",
+                    reasoning=f"Joined {join_count} hyphenated word(s) split across page boundaries",
+                    stage="boundary_fix",
+                )
+            )
+
+        # --- Agent: Boundary fix with section-aware hints ---
+        if result.total_pages > 1:
+            if section_map is not None:
+                boundary_snippets = self._generate_boundary_hints(
+                    result, structure, section_map
+                )
+            else:
+                # Fallback: basic boundary snippets without hints
+                page_mds = result.page_markdowns.get(source_version, {})
+                boundary_snippets = []
+                for p in range(1, result.total_pages):
+                    md_before = page_mds.get(str(p), "")
+                    md_after = page_mds.get(str(p + 1), "")
+                    boundary_snippets.append({
+                        "page_before": p,
+                        "page_after": p + 1,
+                        "tail_text": "\n".join(md_before.split("\n")[-5:]),
+                        "head_text": "\n".join(md_after.split("\n")[:5]),
+                        "hints": [],
+                    })
+
+            footnote_numbers = [fn.number for fn in structure.footnotes]
+            current_document, bd_changes, bd_issues, bd_in, bd_out = (
                 await self._run_boundary_agent(
                     current_document,
                     boundary_snippets,
                     footnote_numbers,
                 )
             )
-            changes.extend(boundary_changes)
-            issues.extend(boundary_issues)
-            total_input_tokens += b_in
-            total_output_tokens += b_out
+            changes.extend(bd_changes)
+            issues.extend(bd_issues)
+            total_input_tokens += bd_in
+            total_output_tokens += bd_out
 
-        # --- Agent 2: Footnote relocation ---
+        # --- Agent: Footnote relocation (kept for orphan footnotes) ---
         if structure.footnotes:
             current_document, fn_changes, fn_issues, fn_in, fn_out = (
                 await self._run_footnote_agent(
@@ -1137,7 +1889,6 @@ class PipelineViewerService:
                     "boundary_fixes": len(
                         [c for c in changes if c.stage == "boundary_fix"]
                     ),
-                    "page_boundaries": result.total_pages - 1,
                     "issues": issues,
                 },
                 input_tokens=total_input_tokens,

@@ -72,6 +72,9 @@ class OutlineEntry(BaseModel):
     page: int
     """Page number where this heading appears."""
 
+    reasoning: str = ""
+    """Why this level was chosen (from per-page analysis)."""
+
 
 class CodeBlockInfo(BaseModel):
     """A code block found on a page."""
@@ -133,7 +136,91 @@ class StructureResult(BaseModel):
 
 
 # ---------------------------------------------------------------------------
-# Phase 2 — Page Content Correction models
+# Phase 1c — Heading Reconciliation models
+# ---------------------------------------------------------------------------
+
+
+class HeadingReconciliationOutput(BaseModel):
+    """Output from heading reconciliation — corrected outline."""
+
+    outline: list[OutlineEntry]
+    """Globally reconciled outline with corrected heading levels."""
+
+    reasoning: str
+    """Global rationale for hierarchy decisions."""
+
+
+# ---------------------------------------------------------------------------
+# Phase 1d — Section Map models
+# ---------------------------------------------------------------------------
+
+
+class SectionEntry(BaseModel):
+    """A single section in the document."""
+
+    index: int
+    """0-based section index (0 = preamble)."""
+
+    heading_text: str
+    """Heading text ('(Preamble)' for index 0)."""
+
+    heading_level: int
+    """1-6 (0 for preamble)."""
+
+    pages: list[int]
+    """Page numbers this section spans."""
+
+    markdown: str
+    """Section markdown (heading through next heading)."""
+
+    outline_position: int
+    """Index in the full outline (-1 for preamble)."""
+
+
+class SectionMap(BaseModel):
+    """Maps the document outline to concrete page ranges and markdown slices."""
+
+    sections: list[SectionEntry] = Field(default_factory=list)
+
+
+# ---------------------------------------------------------------------------
+# Phase 2 — Content Correction models
+# ---------------------------------------------------------------------------
+
+
+class ImageDescriptionResult(BaseModel):
+    """Result from the image description subagent."""
+
+    alt_text: str
+    """WCAG-compliant alt text (empty string for decorative images)."""
+
+    is_decorative: bool = False
+    """True if the image is purely decorative (borders, spacers, logos)."""
+
+    confidence: str = "high"
+    """Confidence level: high, medium, or low."""
+
+    reasoning: str = ""
+    """Why this alt text was chosen."""
+
+
+class SectionCorrectionResult(BaseModel):
+    """What a section correction agent returns."""
+
+    section_index: int
+    heading_text: str
+    corrected_markdown: str
+    changes: list["DocumentChange"] = Field(default_factory=list)
+    issues: list[str] = Field(default_factory=list)
+    pages: list[int] = Field(default_factory=list)
+    input_tokens: int = 0
+    output_tokens: int = 0
+    describer_input_tokens: int = 0
+    describer_output_tokens: int = 0
+
+
+# ---------------------------------------------------------------------------
+# Phase 2 (legacy) — Page Content Correction models
 # ---------------------------------------------------------------------------
 
 
@@ -157,6 +244,12 @@ class PageCorrectionResult(BaseModel):
 
     output_tokens: int = 0
     """LLM output tokens generated for this page."""
+
+    describer_input_tokens: int = 0
+    """Input tokens consumed by image describer subagent calls."""
+
+    describer_output_tokens: int = 0
+    """Output tokens from image describer subagent calls."""
 
 
 # ---------------------------------------------------------------------------
@@ -273,5 +366,6 @@ class PipelineViewerResult(BaseModel):
     stats: dict = Field(default_factory=dict)
 
 
-# Resolve forward reference
+# Resolve forward references
 PageCorrectionResult.model_rebuild()
+SectionCorrectionResult.model_rebuild()

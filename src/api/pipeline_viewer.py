@@ -1,5 +1,6 @@
 """Pipeline endpoint for versioned step-by-step PDF processing."""
 
+import asyncio
 import json
 import logging
 import time
@@ -16,11 +17,25 @@ logger = logging.getLogger(__name__)
 
 router = APIRouter(prefix="/api/v1/pipeline", tags=["Pipeline"])
 
+_HEARTBEAT_INTERVAL_SECONDS = 30
+_SSE_HEARTBEAT = ": heartbeat\n\n"
+
 
 def _sse_event(event_type: str, data: Any) -> str:
     """Format a server-sent event string."""
     payload = json.dumps(data, default=str)
     return f"event: {event_type}\ndata: {payload}\n\n"
+
+
+async def _heartbeats_until_done(task: asyncio.Task) -> AsyncGenerator[str, None]:
+    """Yield SSE heartbeat comments while an asyncio task runs.
+
+    Keeps the connection alive so the ALB does not consider it idle.
+    """
+    while not task.done():
+        done, _ = await asyncio.wait({task}, timeout=_HEARTBEAT_INTERVAL_SECONDS)
+        if not done:
+            yield _SSE_HEARTBEAT
 
 
 @router.post("/process")
@@ -106,7 +121,12 @@ async def process_pdf_stream(
 
         # Step 1: Docling extraction
         try:
-            await service._step_docling(result, content, filename, images_scale, do_table_structure)
+            task = asyncio.create_task(
+                service._step_docling(result, content, filename, images_scale, do_table_structure)
+            )
+            async for hb in _heartbeats_until_done(task):
+                yield hb
+            task.result()
         except Exception as e:
             logger.error(f"Docling extraction failed: {e}")
             yield _sse_event("error", {"step_name": "docling", "message": str(e)})
@@ -120,7 +140,10 @@ async def process_pdf_stream(
         structure = None
         yield _sse_event("processing", {"step_name": "structure", "display_name": "Structure Analysis"})
         try:
-            structure = await service._step_structure(result)
+            task = asyncio.create_task(service._step_structure(result))
+            async for hb in _heartbeats_until_done(task):
+                yield hb
+            structure = task.result()
             total_steps += 1
             step = result.steps[-1]
             yield _sse_event("step", {
@@ -132,11 +155,33 @@ async def process_pdf_stream(
             logger.error(f"Structure analysis failed: {e}")
             yield _sse_event("error", {"step_name": "structure", "message": str(e)})
 
-        # Step 2b: Deterministic heading level fix
+        # Step 2b: Heading reconciliation
+        if structure is not None:
+            yield _sse_event("processing", {"step_name": "heading_reconciliation", "display_name": "Heading Reconciliation"})
+            try:
+                task = asyncio.create_task(service._step_heading_reconciliation(result, structure))
+                async for hb in _heartbeats_until_done(task):
+                    yield hb
+                structure = task.result()
+                total_steps += 1
+                step = result.steps[-1]
+                yield _sse_event("step", {
+                    "step": step.model_dump(),
+                    "new_versions": {},
+                    "new_page_markdowns": {},
+                })
+            except Exception as e:
+                logger.error(f"Heading reconciliation failed: {e}")
+                yield _sse_event("error", {"step_name": "heading_reconciliation", "message": str(e)})
+
+        # Step 2c: Deterministic heading level fix
         if structure is not None:
             yield _sse_event("processing", {"step_name": "heading_levels", "display_name": "Heading Levels"})
             try:
-                await service._step_heading_levels(result, structure)
+                task = asyncio.create_task(service._step_heading_levels(result, structure))
+                async for hb in _heartbeats_until_done(task):
+                    yield hb
+                task.result()
                 total_steps += 1
                 step = result.steps[-1]
                 yield _sse_event("step", {
@@ -148,11 +193,19 @@ async def process_pdf_stream(
                 logger.error(f"Heading level fix failed: {e}")
                 yield _sse_event("error", {"step_name": "heading_levels", "message": str(e)})
 
-        # Step 3: Page content corrections
+        # Step 3: Page content corrections (with programmatic hints)
+        section_map = None
         if structure is not None:
             yield _sse_event("processing", {"step_name": "page_content", "display_name": "Page Content Corrections"})
             try:
-                await service._step_page_content(result, structure)
+                section_map = service._build_section_map(result, structure)
+                page_hints = service._generate_page_hints(result, structure, section_map)
+                task = asyncio.create_task(
+                    service._step_page_content(result, structure, page_hints=page_hints)
+                )
+                async for hb in _heartbeats_until_done(task):
+                    yield hb
+                task.result()
                 total_steps += 1
                 step = result.steps[-1]
                 yield _sse_event("step", {
@@ -168,7 +221,10 @@ async def process_pdf_stream(
         if structure is not None:
             yield _sse_event("processing", {"step_name": "code_blocks", "display_name": "Code Block Languages"})
             try:
-                await service._step_code_blocks(result, structure)
+                task = asyncio.create_task(service._step_code_blocks(result, structure))
+                async for hb in _heartbeats_until_done(task):
+                    yield hb
+                task.result()
                 total_steps += 1
                 step = result.steps[-1]
                 # Code blocks edit v1 (or v0) in-place — send updated version
@@ -186,7 +242,14 @@ async def process_pdf_stream(
         if structure is not None:
             yield _sse_event("processing", {"step_name": "boundaries", "display_name": "Cross-Page Fixes"})
             try:
-                await service._step_boundaries(result, structure)
+                if section_map is None:
+                    section_map = service._build_section_map(result, structure)
+                task = asyncio.create_task(
+                    service._step_boundaries(result, structure, section_map=section_map)
+                )
+                async for hb in _heartbeats_until_done(task):
+                    yield hb
+                task.result()
                 total_steps += 1
                 step = result.steps[-1]
                 yield _sse_event("step", {
@@ -202,7 +265,10 @@ async def process_pdf_stream(
         if "v2" in result.versions:
             yield _sse_event("processing", {"step_name": "cleanup", "display_name": "Final Cleanup"})
             try:
-                await service._step_cleanup(result)
+                task = asyncio.create_task(service._step_cleanup(result))
+                async for hb in _heartbeats_until_done(task):
+                    yield hb
+                task.result()
                 total_steps += 1
 
                 step = result.steps[-1]

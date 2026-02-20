@@ -417,8 +417,8 @@ export function PipelineViewerPage() {
         </div>
       )}
 
-      {/* Error state */}
-      {error && (
+      {/* Error state — only show full overlay when no results have been received */}
+      {error && !result && (
         <div className="flex-1 flex items-center justify-center p-8">
           <div className="max-w-md text-center">
             <p className="text-red-600 font-medium mb-2">Processing Error</p>

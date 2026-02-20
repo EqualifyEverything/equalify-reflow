@@ -12,6 +12,7 @@ from fastapi.responses import StreamingResponse
 
 from ..services.pipeline_viewer import PipelineViewerService
 from ..services.pipeline_viewer_models import PipelineViewerResult
+from ..services.session_store import session_store
 
 logger = logging.getLogger(__name__)
 
@@ -282,12 +283,21 @@ async def process_pdf_stream(
                 yield _sse_event("error", {"step_name": "cleanup", "message": str(e)})
 
         total_elapsed_ms = int((time.time() - pipeline_start) * 1000)
+
+        # Create a feedback session for iterative review
+        session = session_store.create(
+            result=result,
+            structure=structure,
+            section_map=section_map,
+        )
+
         yield _sse_event("done", {
             "total_steps": total_steps,
             "total_elapsed_ms": total_elapsed_ms,
             "total_input_tokens": sum(s.input_tokens for s in result.steps),
             "total_output_tokens": sum(s.output_tokens for s in result.steps),
             "total_cost_cents": sum(s.cost_cents for s in result.steps),
+            "session_id": session.session_id,
         })
 
     return StreamingResponse(

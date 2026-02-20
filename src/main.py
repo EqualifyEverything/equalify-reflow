@@ -156,10 +156,12 @@ app.include_router(documents.router)
 app.include_router(approval.router)
 
 # Pipeline viewer — always available (primary processing API)
-from .api import pipeline_viewer
+from .api import pipeline_feedback, pipeline_viewer  # noqa: E402
 
 app.include_router(pipeline_viewer.router)
+app.include_router(pipeline_feedback.router)
 logger.info("✅ Pipeline endpoint enabled at /api/v1/pipeline/process")
+logger.info("✅ Pipeline feedback endpoint enabled at /api/v1/pipeline/sessions")
 
 # Conditionally import dev-only endpoints (only in development)
 if settings.environment == "dev":

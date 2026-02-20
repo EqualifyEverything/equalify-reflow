@@ -21,8 +21,11 @@ from pathlib import Path
 from typing import Any
 
 from .pipeline_viewer_models import (
+    CandidateChange,
     CodeBlockInfo,
     DocumentChange,
+    FeedbackItem,
+    FeedbackItemType,
     FigureData,
     FootnoteInfo,
     HeadingReconciliationOutput,
@@ -39,6 +42,7 @@ from .pipeline_viewer_models import (
     StructurePageOutput,
     StructureResult,
     TaskDecompositionResult,
+    TextSelector,
 )
 
 logger = logging.getLogger(__name__)
@@ -236,15 +240,15 @@ def _replace_image_placeholders(
     If there are more figures than placeholders (shouldn't happen), extras are
     ignored.
     """
-    PLACEHOLDER = "<!-- image -->"
+    placeholder = "<!-- image -->"
 
     for fig in figures:
-        idx = markdown.find(PLACEHOLDER)
+        idx = markdown.find(placeholder)
         if idx == -1:
             break
         alt = fig.caption.replace("]", "\\]") if fig.caption else ""
         image_ref = f"![{alt}](figures/{fig.ref_id}.png)"
-        markdown = markdown[:idx] + image_ref + markdown[idx + len(PLACEHOLDER) :]
+        markdown = markdown[:idx] + image_ref + markdown[idx + len(placeholder) :]
 
     return markdown
 
@@ -1088,7 +1092,7 @@ class PipelineViewerService:
             page_md = page_mds.get(str(page_num), "")
             page_hints: list[str] = []
             lines = page_md.split("\n")
-            non_blank = [l for l in lines if l.strip()]
+            non_blank = [ln for ln in lines if ln.strip()]
 
             if not non_blank:
                 continue
@@ -1122,7 +1126,7 @@ class PipelineViewerService:
                 elif page_num == section.pages[-1]:
                     position = "end of section"
                 else:
-                    position = f"middle of section"
+                    position = "middle of section"
                 page_hints.append(
                     f"This page is in section '{section.heading_text}' "
                     f"(h{section.heading_level}, pages {section.pages[0]}-"
@@ -1132,9 +1136,9 @@ class PipelineViewerService:
 
             # --- Mid-sentence start ---
             first_content = ""
-            for l in non_blank:
-                if not l.strip().startswith("#"):
-                    first_content = l.strip()
+            for ln in non_blank:
+                if not ln.strip().startswith("#"):
+                    first_content = ln.strip()
                     break
             if first_content and first_content[0].islower():
                 page_hints.append(
@@ -1144,7 +1148,7 @@ class PipelineViewerService:
 
             # --- Mid-sentence end ---
             last_content = non_blank[-1].strip()
-            if last_content and not last_content[-1] in ".!?:":
+            if last_content and last_content[-1] not in ".!?:":
                 # Don't flag headings or list items as mid-sentence
                 if not last_content.startswith("#") and not last_content.startswith("- "):
                     page_hints.append(
@@ -1236,7 +1240,7 @@ class PipelineViewerService:
                         )
 
             # --- Running header at start of page_after ---
-            non_blank_after = [l for l in lines_after if l.strip()]
+            non_blank_after = [ln for ln in lines_after if ln.strip()]
             if non_blank_after:
                 first_line = non_blank_after[0]
                 if _is_running_header(first_line, doc_title, page_after):
@@ -1246,7 +1250,7 @@ class PipelineViewerService:
                     )
 
             # --- Running footer at end of page_before ---
-            non_blank_before = [l for l in lines_before if l.strip()]
+            non_blank_before = [ln for ln in lines_before if ln.strip()]
             if non_blank_before:
                 last_line = non_blank_before[-1]
                 if _is_running_footer(last_line, page_before):
@@ -1524,7 +1528,7 @@ class PipelineViewerService:
         # ------------------------------------------------------------------
         # describe_image tool: closure state
         # ------------------------------------------------------------------
-        MAX_DESCRIBE_CALLS = 10
+        max_describe_calls = 10
         figure_lookup: dict[str, FigureData] = {}
         describer_input_tokens = 0
         describer_output_tokens = 0
@@ -1619,9 +1623,9 @@ class PipelineViewerService:
                 nonlocal describer_input_tokens, describer_output_tokens
                 nonlocal describe_call_count
 
-                if describe_call_count >= MAX_DESCRIBE_CALLS:
+                if describe_call_count >= max_describe_calls:
                     return (
-                        f"ERROR: Maximum describe_image calls ({MAX_DESCRIBE_CALLS}) "
+                        f"ERROR: Maximum describe_image calls ({max_describe_calls}) "
                         f"reached. Skip remaining figures."
                     )
 
@@ -2335,6 +2339,348 @@ class PipelineViewerService:
         )
         result.steps.append(step_result)
         return step_result
+
+    # ------------------------------------------------------------------
+    # Human Feedback — Selector resolution + direct edits
+    # ------------------------------------------------------------------
+
+    def resolve_selector(
+        self,
+        selector: TextSelector,
+        markdown: str,
+        page_markdowns: dict[str, str],
+    ) -> tuple[int, int, int] | None:
+        """Resolve a TextSelector to (page_number, start_offset, end_offset).
+
+        Strategy:
+          1. Try ``prefix + exact + suffix`` match across all pages.
+          2. Fall back to exact-only match.
+          3. Use ``_fuzzy_find_line`` for single-line selectors as last resort.
+
+        Returns None if the selector cannot be resolved.
+        """
+
+        exact = selector.exact
+        if not exact:
+            return None
+
+        # Build the full needle with optional prefix/suffix
+        full_needle = ""
+        if selector.prefix:
+            full_needle += selector.prefix
+        full_needle += exact
+        if selector.suffix:
+            full_needle += selector.suffix
+
+        # Try full needle first, then exact-only
+        for needle in ([full_needle, exact] if full_needle != exact else [exact]):
+            for page_key in sorted(page_markdowns, key=lambda k: int(k)):
+                page_md = page_markdowns[page_key]
+                idx = page_md.find(needle)
+                if idx != -1:
+                    # Compute offset of the *exact* portion within the needle
+                    prefix_len = len(selector.prefix) if selector.prefix and needle != exact else 0
+                    start = idx + prefix_len
+                    end = start + len(exact)
+                    return (int(page_key), start, end)
+
+        # Fuzzy fallback for single-line selectors
+        for page_key in sorted(page_markdowns, key=lambda k: int(k)):
+            page_md = page_markdowns[page_key]
+            lines = page_md.split("\n")
+            line_idx = _fuzzy_find_line(lines, exact)
+            if line_idx >= 0:
+                # Compute character offset
+                offset = sum(len(ln) + 1 for ln in lines[:line_idx])
+                return (int(page_key), offset, offset + len(lines[line_idx]))
+
+        return None
+
+    def apply_direct_edits(
+        self,
+        edits: list[FeedbackItem],
+        result: PipelineViewerResult,
+        section_map: SectionMap | None,
+    ) -> list[CandidateChange]:
+        """Convert EDIT-type FeedbackItems into CandidateChanges.
+
+        Resolves each selector, creates a DocumentChange with the old/new
+        text. Items whose selectors cannot be resolved are skipped with a
+        warning.
+
+        Args:
+            edits: EDIT-type feedback items.
+            result: Current pipeline result (for page markdowns).
+            section_map: Section map (unused currently, reserved).
+
+        Returns:
+            List of CandidateChange objects.
+        """
+        import uuid
+
+        from .pipeline_viewer_models import CandidateChange, DocumentChange
+
+        # Get the latest version's page markdowns
+        page_mds = self._get_latest_page_markdowns(result)
+        full_md = self._get_latest_version(result)
+
+        candidates: list[CandidateChange] = []
+
+        for edit in edits:
+            if edit.selector is None or edit.new_text is None:
+                logger.warning(f"Skipping edit {edit.id}: missing selector or new_text")
+                continue
+
+            resolved = self.resolve_selector(edit.selector, full_md, page_mds)
+            if resolved is None:
+                logger.warning(
+                    f"Skipping edit {edit.id}: could not resolve selector "
+                    f"{edit.selector.exact!r}"
+                )
+                continue
+
+            page_num, start, end = resolved
+
+            candidates.append(
+                CandidateChange(
+                    id=uuid.uuid4().hex[:12],
+                    change=DocumentChange(
+                        page=page_num,
+                        old_text=edit.selector.exact,
+                        new_text=edit.new_text,
+                        reasoning=edit.description or "Direct edit",
+                        stage="revision",
+                    ),
+                    source_type="direct_edit",
+                    source_feedback_id=edit.id,
+                    source_description=edit.description or "Direct text replacement",
+                )
+            )
+
+        return candidates
+
+    def apply_candidate_changes(
+        self,
+        accepted_changes: list[CandidateChange],
+        result: PipelineViewerResult,
+        revision_round: int,
+    ) -> StepResult:
+        """Apply accepted candidate changes to produce a new version.
+
+        Applies str_replace on the latest full-document markdown.  This
+        ensures changes are applied against the most up-to-date content
+        (including cross-page fixes and final cleanup), not against an
+        older per-page version.
+
+        The new version is stored as a full-document version only (no
+        per-page markdowns).
+
+        Args:
+            accepted_changes: CandidateChanges that were accepted.
+            result: Pipeline result (mutated in place).
+            revision_round: 1-based revision round number.
+
+        Returns:
+            The StepResult for this revision.
+        """
+        import time as _time
+
+        step_start = _time.time()
+
+        # Determine version keys
+        version_nums = [
+            int(k[1:]) for k in result.versions if k.startswith("v") and k[1:].isdigit()
+        ]
+        latest_num = max(version_nums) if version_nums else 0
+        source_version = f"v{latest_num}"
+        new_version = f"v{latest_num + 1}"
+
+        # Apply changes against the latest full-document markdown.
+        # This is the version the user was viewing when they submitted
+        # feedback, so text matches are most likely to succeed here.
+        source_md = self._get_latest_version(result)
+
+        all_changes: list[DocumentChange] = []
+        for candidate in accepted_changes:
+            change = candidate.change
+
+            count = source_md.count(change.old_text)
+            if count == 1:
+                source_md = source_md.replace(
+                    change.old_text, change.new_text, 1
+                )
+                all_changes.append(change)
+            elif count == 0:
+                logger.warning(
+                    f"Change {candidate.id}: old_text not found in document"
+                )
+            else:
+                logger.warning(
+                    f"Change {candidate.id}: old_text found {count} times "
+                    f"in document, skipping ambiguous match"
+                )
+
+        # Store as full-document version only (no page_markdowns entry).
+        # The frontend falls back to versions[key] when page_markdowns
+        # doesn't exist for a version, keeping the display consistent
+        # with what the user was seeing before feedback.
+        result.versions[new_version] = source_md
+
+        elapsed_ms = int((_time.time() - step_start) * 1000)
+
+        step_result = StepResult(
+            name=f"feedback_{revision_round}",
+            display_name=f"Feedback Round {revision_round}",
+            version_before=source_version,
+            version_after=new_version,
+            elapsed_ms=elapsed_ms,
+            changes=all_changes,
+            metadata={
+                "revision_round": revision_round,
+                "accepted_count": len(accepted_changes),
+                "applied_count": len(all_changes),
+            },
+        )
+        result.steps.append(step_result)
+        return step_result
+
+    async def process_feedback_batch(
+        self,
+        items: list[FeedbackItem],
+        result: PipelineViewerResult,
+        structure: StructureResult | None,
+        section_map: SectionMap | None,
+        feedback_history: list[list[FeedbackItem]] | None = None,
+    ) -> list[CandidateChange]:
+        """Orchestrate a mixed batch of feedback items.
+
+        1. Separate items by type (EDIT vs COMMENT).
+        2. Direct edits -> apply_direct_edits() -> CandidateChanges.
+        3. Comments -> decompose + revision on a deep copy -> CandidateChanges.
+        4. Return combined list.
+
+        LLM revision runs on a temporary copy. Only accepted changes are
+        committed later via apply_candidate_changes.
+
+        Args:
+            items: Mixed list of FeedbackItem objects.
+            result: Current pipeline result.
+            structure: Structure analysis result.
+            section_map: Section map.
+            feedback_history: Previous feedback rounds.
+
+        Returns:
+            Combined list of CandidateChange objects.
+        """
+        import copy
+        import uuid
+
+        from .pipeline_viewer_models import (
+            CandidateChange,
+        )
+
+        edits = [i for i in items if i.type == FeedbackItemType.EDIT]
+        comments = [i for i in items if i.type == FeedbackItemType.COMMENT]
+
+        candidates: list[CandidateChange] = []
+
+        # 1. Direct edits (no LLM)
+        if edits:
+            candidates.extend(self.apply_direct_edits(edits, result, section_map))
+
+        # 2. Comments -> LLM decomposition + revision on a deep copy
+        if comments:
+            combined_feedback = "\n\n".join(
+                f"- [{c.feedback_type.value if c.feedback_type else 'general'}] "
+                f"{c.description}"
+                + (f" (page {c.page})" if c.page else "")
+                + (f" (section: {c.section})" if c.section else "")
+                + (f' [selected text: "{c.selector.exact}"]' if c.selector else "")
+                for c in comments
+            )
+
+            # Build feedback history as strings for decomposition
+            history_strs: list[str] | None = None
+            if feedback_history:
+                history_strs = [
+                    "\n".join(f"- {fi.description}" for fi in round_items)
+                    for round_items in feedback_history
+                ]
+
+            # Decompose feedback
+            decomposition = await self.decompose_feedback(
+                feedback=combined_feedback,
+                result=result,
+                structure=structure,
+                feedback_history=history_strs,
+            )
+
+            if decomposition.tasks:
+                # Run revision on a deep copy
+                result_copy = copy.deepcopy(result)
+                revision_round = len(feedback_history) + 1 if feedback_history else 1
+
+                step_result = await self.run_revision(
+                    result=result_copy,
+                    structure=structure,
+                    tasks=decomposition.tasks,
+                    feedback=combined_feedback,
+                    revision_round=revision_round,
+                )
+
+                # Extract DocumentChanges as CandidateChanges
+                first_comment_id = comments[0].id if comments else ""
+
+                for change in step_result.changes:
+                    # Try to find the originating comment by page
+                    source_id = first_comment_id
+                    source_desc = combined_feedback[:100]
+                    for c in comments:
+                        if c.page == change.page:
+                            source_id = c.id
+                            source_desc = c.description
+                            break
+
+                    candidates.append(
+                        CandidateChange(
+                            id=uuid.uuid4().hex[:12],
+                            change=change,
+                            source_type="ai_revision",
+                            source_feedback_id=source_id,
+                            source_description=source_desc,
+                        )
+                    )
+
+        return candidates
+
+    # ------------------------------------------------------------------
+    # Helper methods for version access
+    # ------------------------------------------------------------------
+
+    @staticmethod
+    def _get_latest_page_markdowns(
+        result: PipelineViewerResult,
+    ) -> dict[str, str]:
+        """Get page markdowns from the latest version."""
+        version_nums = [
+            int(k[1:]) for k in result.page_markdowns
+            if k.startswith("v") and k[1:].isdigit()
+        ]
+        if not version_nums:
+            return {}
+        latest = f"v{max(version_nums)}"
+        return dict(result.page_markdowns.get(latest, {}))
+
+    @staticmethod
+    def _get_latest_version(result: PipelineViewerResult) -> str:
+        """Get the full markdown of the latest version."""
+        version_nums = [
+            int(k[1:]) for k in result.versions
+            if k.startswith("v") and k[1:].isdigit()
+        ]
+        if not version_nums:
+            return ""
+        return result.versions.get(f"v{max(version_nums)}", "")
 
     async def _decompose_feedback(
         self,

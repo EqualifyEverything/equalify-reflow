@@ -210,7 +210,7 @@ class SectionCorrectionResult(BaseModel):
     section_index: int
     heading_text: str
     corrected_markdown: str
-    changes: list["DocumentChange"] = Field(default_factory=list)
+    changes: list[DocumentChange] = Field(default_factory=list)
     issues: list[str] = Field(default_factory=list)
     pages: list[int] = Field(default_factory=list)
     input_tokens: int = 0
@@ -313,6 +313,111 @@ class TaskDecompositionResult(BaseModel):
 
 
 # ---------------------------------------------------------------------------
+# Human Feedback models
+# ---------------------------------------------------------------------------
+
+
+class TextSelector(BaseModel):
+    """Anchors feedback to a specific text span in the document."""
+
+    exact: str
+    """The selected text."""
+
+    prefix: str | None = None
+    """~20 chars before the selection for disambiguation."""
+
+    suffix: str | None = None
+    """~20 chars after the selection for disambiguation."""
+
+
+class FeedbackItemType(str, Enum):
+    """Type of feedback item."""
+
+    EDIT = "edit"
+    """Direct text replacement — no LLM needed."""
+
+    COMMENT = "comment"
+    """Descriptive feedback — LLM handles the fix."""
+
+
+class FeedbackItem(BaseModel):
+    """A single piece of human feedback (edit or comment)."""
+
+    id: str
+    """UUID for this feedback item."""
+
+    type: FeedbackItemType
+    """Whether this is a direct edit or a comment for the LLM."""
+
+    selector: TextSelector | None = None
+    """Text anchor (most precise)."""
+
+    section: str | None = None
+    """Section heading anchor."""
+
+    page: int | None = None
+    """Page-level anchor."""
+
+    new_text: str | None = None
+    """For edits: the replacement text."""
+
+    description: str = ""
+    """What's wrong / rationale for the change."""
+
+    feedback_type: RevisionTaskCategory | None = None
+    """Optional categorization of this feedback."""
+
+
+class ChangeDecision(str, Enum):
+    """Decision on a candidate change."""
+
+    ACCEPT = "accept"
+    REJECT = "reject"
+
+
+class CandidateChange(BaseModel):
+    """A proposed change awaiting human review."""
+
+    id: str
+    """UUID for this candidate change."""
+
+    change: DocumentChange
+    """The actual text change."""
+
+    source_type: str
+    """Origin: 'direct_edit' or 'ai_revision'."""
+
+    source_feedback_id: str
+    """Links back to the FeedbackItem.id that produced this."""
+
+    source_description: str
+    """Human-readable description of the change origin."""
+
+
+class ChangeReview(BaseModel):
+    """Human decision on a single candidate change."""
+
+    change_id: str
+    """ID of the CandidateChange being reviewed."""
+
+    decision: ChangeDecision
+    """Accept or reject."""
+
+    comment: str | None = None
+    """Optional comment (rejection comments become next-round input)."""
+
+
+class ReviewAction(str, Enum):
+    """Overall review action after reviewing all candidates."""
+
+    APPROVE = "approve"
+    """Finalize current version — no more rounds."""
+
+    REQUEST_CHANGES = "request_changes"
+    """Request another revision round."""
+
+
+# ---------------------------------------------------------------------------
 # Viewer response models (used by API)
 # ---------------------------------------------------------------------------
 
@@ -369,3 +474,4 @@ class PipelineViewerResult(BaseModel):
 # Resolve forward references
 PageCorrectionResult.model_rebuild()
 SectionCorrectionResult.model_rebuild()
+CandidateChange.model_rebuild()

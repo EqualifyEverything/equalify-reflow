@@ -59,6 +59,7 @@ export function usePipelineViewer() {
   const [processing, setProcessing] = useState(false);
   const [currentStepName, setCurrentStepName] = useState<string | null>(null);
   const [error, setError] = useState<string | null>(null);
+  const [sessionId, setSessionId] = useState<string | null>(null);
 
   const abortRef = useRef<AbortController | null>(null);
 
@@ -148,6 +149,10 @@ export function usePipelineViewer() {
             }
 
             case 'done': {
+              const doneData = event.data as { session_id?: string };
+              if (doneData.session_id) {
+                setSessionId(doneData.session_id);
+              }
               setProcessing(false);
               setCurrentStepName(null);
               break;
@@ -175,6 +180,23 @@ export function usePipelineViewer() {
     }
   }, []);
 
+  const updateVersion = useCallback(
+    (key: string, markdown: string, pageMarkdowns?: Record<string, string>) => {
+      setResult((prev) => {
+        if (!prev) return prev;
+        const updated = {
+          ...prev,
+          versions: { ...prev.versions, [key]: markdown },
+        };
+        if (pageMarkdowns) {
+          updated.page_markdowns = { ...prev.page_markdowns, [key]: pageMarkdowns };
+        }
+        return updated;
+      });
+    },
+    [],
+  );
+
   const reset = useCallback(() => {
     abortRef.current?.abort();
     abortRef.current = null;
@@ -182,7 +204,8 @@ export function usePipelineViewer() {
     setError(null);
     setProcessing(false);
     setCurrentStepName(null);
+    setSessionId(null);
   }, []);
 
-  return { result, uploading, error, processing, currentStepName, processFile, reset };
+  return { result, uploading, error, processing, currentStepName, processFile, reset, sessionId, updateVersion };
 }

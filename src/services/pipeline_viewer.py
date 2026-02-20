@@ -2372,17 +2372,35 @@ class PipelineViewerService:
         if selector.suffix:
             full_needle += selector.suffix
 
-        # Try full needle first, then exact-only
+        # Try full needle first, then exact-only.  Search per-page first
+        # (gives accurate page number), fall back to full document for
+        # cross-page or concatenation-only matches.
         for needle in ([full_needle, exact] if full_needle != exact else [exact]):
             for page_key in sorted(page_markdowns, key=lambda k: int(k)):
                 page_md = page_markdowns[page_key]
                 idx = page_md.find(needle)
                 if idx != -1:
-                    # Compute offset of the *exact* portion within the needle
                     prefix_len = len(selector.prefix) if selector.prefix and needle != exact else 0
                     start = idx + prefix_len
                     end = start + len(exact)
                     return (int(page_key), start, end)
+
+            # Fall back to full-document search (handles cross-page text)
+            if markdown:
+                idx = markdown.find(needle)
+                if idx != -1:
+                    # Determine page from offset: walk page_markdowns
+                    offset = 0
+                    for pk in sorted(page_markdowns, key=lambda k: int(k)):
+                        page_len = len(page_markdowns[pk])
+                        if idx < offset + page_len:
+                            prefix_len = len(selector.prefix) if selector.prefix and needle != exact else 0
+                            local_start = idx - offset + prefix_len
+                            return (int(pk), local_start, local_start + len(exact))
+                        offset += page_len + 2  # +2 for "\n\n" join separator
+                    # If we can't map to a page, use page 1
+                    prefix_len = len(selector.prefix) if selector.prefix and needle != exact else 0
+                    return (1, idx + prefix_len, idx + prefix_len + len(exact))
 
         # Fuzzy fallback for single-line selectors
         for page_key in sorted(page_markdowns, key=lambda k: int(k)):
@@ -2418,11 +2436,9 @@ class PipelineViewerService:
         """
         import uuid
 
-        from .pipeline_viewer_models import CandidateChange, DocumentChange
-
         # Get the latest version's page markdowns
         page_mds = self._get_latest_page_markdowns(result)
-        full_md = self._get_latest_version(result)
+        full_md = self.get_latest_version(result)
 
         candidates: list[CandidateChange] = []
 
@@ -2483,9 +2499,7 @@ class PipelineViewerService:
         Returns:
             The StepResult for this revision.
         """
-        import time as _time
-
-        step_start = _time.time()
+        step_start = time.time()
 
         # Determine version keys
         version_nums = [
@@ -2498,18 +2512,19 @@ class PipelineViewerService:
         # Apply changes against the latest full-document markdown.
         # This is the version the user was viewing when they submitted
         # feedback, so text matches are most likely to succeed here.
-        source_md = self._get_latest_version(result)
+        source_md = self.get_latest_version(result)
 
+        # Find positions for all changes first, then apply in reverse
+        # order so that earlier replacements don't shift later offsets.
+        positioned: list[tuple[int, CandidateChange]] = []
         all_changes: list[DocumentChange] = []
+
         for candidate in accepted_changes:
             change = candidate.change
-
             count = source_md.count(change.old_text)
             if count == 1:
-                source_md = source_md.replace(
-                    change.old_text, change.new_text, 1
-                )
-                all_changes.append(change)
+                idx = source_md.find(change.old_text)
+                positioned.append((idx, candidate))
             elif count == 0:
                 logger.warning(
                     f"Change {candidate.id}: old_text not found in document"
@@ -2520,13 +2535,25 @@ class PipelineViewerService:
                     f"in document, skipping ambiguous match"
                 )
 
+        # Sort by position descending — apply from end to start
+        positioned.sort(key=lambda x: x[0], reverse=True)
+
+        for idx, candidate in positioned:
+            change = candidate.change
+            source_md = (
+                source_md[:idx]
+                + change.new_text
+                + source_md[idx + len(change.old_text) :]
+            )
+            all_changes.append(change)
+
         # Store as full-document version only (no page_markdowns entry).
         # The frontend falls back to versions[key] when page_markdowns
         # doesn't exist for a version, keeping the display consistent
         # with what the user was seeing before feedback.
         result.versions[new_version] = source_md
 
-        elapsed_ms = int((_time.time() - step_start) * 1000)
+        elapsed_ms = int((time.time() - step_start) * 1000)
 
         step_result = StepResult(
             name=f"feedback_{revision_round}",
@@ -2574,10 +2601,6 @@ class PipelineViewerService:
         """
         import copy
         import uuid
-
-        from .pipeline_viewer_models import (
-            CandidateChange,
-        )
 
         edits = [i for i in items if i.type == FeedbackItemType.EDIT]
         comments = [i for i in items if i.type == FeedbackItemType.COMMENT]
@@ -2672,7 +2695,7 @@ class PipelineViewerService:
         return dict(result.page_markdowns.get(latest, {}))
 
     @staticmethod
-    def _get_latest_version(result: PipelineViewerResult) -> str:
+    def get_latest_version(result: PipelineViewerResult) -> str:
         """Get the full markdown of the latest version."""
         version_nums = [
             int(k[1:]) for k in result.versions

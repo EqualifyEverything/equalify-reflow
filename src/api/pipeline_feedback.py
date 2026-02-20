@@ -110,20 +110,29 @@ async def submit_feedback(session_id: str, request: FeedbackRequest):
             status_code=409, detail="Session is finalized — no more feedback allowed"
         )
 
-    service = PipelineViewerService()
+    if session.processing:
+        raise HTTPException(
+            status_code=409, detail="Feedback is already being processed"
+        )
 
-    candidates = await service.process_feedback_batch(
-        items=request.items,
-        result=session.result,
-        structure=session.structure,
-        section_map=session.section_map,
-        feedback_history=session.feedback_history,
-    )
+    session.processing = True
+    try:
+        service = PipelineViewerService()
 
-    # Store candidates and feedback round
-    session.candidate_changes = candidates
-    session.feedback_history.append(request.items)
-    session.revision_round += 1
+        candidates = await service.process_feedback_batch(
+            items=request.items,
+            result=session.result,
+            structure=session.structure,
+            section_map=session.section_map,
+            feedback_history=session.feedback_history,
+        )
+
+        # Store candidates and feedback round
+        session.candidate_changes = candidates
+        session.feedback_history.append(request.items)
+        session.revision_round += 1
+    finally:
+        session.processing = False
 
     return FeedbackResponse(
         candidates=candidates,
@@ -225,7 +234,7 @@ async def get_session_state(session_id: str):
     session = _get_session(session_id)
 
     # Get latest markdown
-    latest_md = PipelineViewerService._get_latest_version(session.result)
+    latest_md = PipelineViewerService.get_latest_version(session.result)
 
     # Get sorted version keys
     versions = sorted(

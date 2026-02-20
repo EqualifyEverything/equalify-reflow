@@ -3,9 +3,9 @@ import { motion } from 'framer-motion';
 import { Pencil, MessageSquare } from 'lucide-react';
 
 interface SelectionPopoverProps {
-  /** Bounding rect of the selected text (viewport-relative) */
-  rect: DOMRect;
-  /** Container element to position relative to */
+  /** Container-relative bounding rect of the selected text. */
+  rect: { top: number; left: number; width: number; bottom: number };
+  /** Container element (used only for null check). */
   containerRef: React.RefObject<HTMLElement | null>;
   onEdit: () => void;
   onComment: () => void;
@@ -47,13 +47,11 @@ export function SelectionPopover({
     return () => document.removeEventListener('keydown', handleKey);
   }, [onDismiss]);
 
-  // Position relative to container
-  const container = containerRef.current;
-  if (!container) return null;
+  if (!containerRef.current) return null;
 
-  const containerRect = container.getBoundingClientRect();
-  const top = rect.bottom - containerRect.top + container.scrollTop + 4;
-  const left = rect.left - containerRect.left + rect.width / 2;
+  // Rect is already container-relative (scroll-adjusted at capture time)
+  const top = rect.bottom + 4;
+  const left = rect.left + rect.width / 2;
 
   return (
     <motion.div

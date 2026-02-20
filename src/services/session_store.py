@@ -37,6 +37,7 @@ class PipelineSession:
     candidate_changes: list[CandidateChange] = field(default_factory=list)
     revision_round: int = 0
     finalized: bool = False
+    processing: bool = False
     created_at: float = field(default_factory=time.time)
     last_accessed: float = field(default_factory=time.time)
 
@@ -50,7 +51,11 @@ class PipelineSession:
 
 
 class SessionStore:
-    """Thread-safe in-memory store for pipeline sessions."""
+    """In-memory store for pipeline sessions.
+
+    Safe for single-threaded asyncio usage.  Not thread-safe — do not
+    access from sync background threads without external locking.
+    """
 
     def __init__(self) -> None:
         self._sessions: dict[str, PipelineSession] = {}

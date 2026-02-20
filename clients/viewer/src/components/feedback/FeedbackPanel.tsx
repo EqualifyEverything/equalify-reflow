@@ -31,7 +31,7 @@ export function FeedbackPanel({
           <div className="flex items-center gap-2">
             {revisionRound > 0 && (
               <span className="text-[10px] font-medium px-1.5 py-0.5 rounded bg-amber-50 text-amber-700">
-                Round {revisionRound + 1}
+                Round {revisionRound}
               </span>
             )}
             <span className="text-[10px] font-medium px-1.5 py-0.5 rounded bg-blue-50 text-blue-700">

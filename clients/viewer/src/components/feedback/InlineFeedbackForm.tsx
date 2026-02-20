@@ -15,7 +15,7 @@ interface InlineFeedbackFormProps {
   type: FeedbackItemType;
   selectedText: string;
   selector: TextSelector;
-  rect: DOMRect;
+  rect: { top: number; left: number; width: number; bottom: number };
   containerRef: React.RefObject<HTMLElement | null>;
   page: number;
   onSubmit: (data: {
@@ -56,17 +56,17 @@ export function InlineFeedbackForm({
     });
   };
 
-  // Position relative to container
+  // Position using container-relative rect (already scroll-adjusted)
   const container = containerRef.current;
   if (!container) return null;
 
-  const containerRect = container.getBoundingClientRect();
-  const top = rect.bottom - containerRect.top + container.scrollTop + 8;
+  const formWidth = 240; // matches w-60 (15rem)
+  const top = rect.bottom + 8;
   const left = Math.max(
     8,
     Math.min(
-      rect.left - containerRect.left,
-      containerRect.width - 256,
+      rect.left,
+      container.clientWidth - formWidth - 8,
     ),
   );
 

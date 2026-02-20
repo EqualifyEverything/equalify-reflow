@@ -2,7 +2,8 @@ import { useState, useEffect, useCallback, type RefObject } from 'react';
 
 export interface TextSelectionState {
   text: string;
-  rect: DOMRect;
+  /** Container-relative position (accounts for scroll at capture time). */
+  rect: { top: number; left: number; width: number; height: number; bottom: number };
   prefix: string;
   suffix: string;
 }
@@ -39,12 +40,21 @@ export function useTextSelection(containerRef: RefObject<HTMLElement | null>) {
       const text = sel.toString().trim();
       if (!text) return;
 
-      // Get bounding rect relative to viewport
-      const rect = range.getBoundingClientRect();
+      // Convert viewport-relative rect to container-relative coordinates
+      // at capture time so it stays correct after scroll.
+      const viewportRect = range.getBoundingClientRect();
+      const containerRect = container.getBoundingClientRect();
+      const rect = {
+        top: viewportRect.top - containerRect.top + container.scrollTop,
+        left: viewportRect.left - containerRect.left + container.scrollLeft,
+        width: viewportRect.width,
+        height: viewportRect.height,
+        bottom: viewportRect.bottom - containerRect.top + container.scrollTop,
+      };
 
-      // Compute prefix/suffix from surrounding text
-      const prefix = getContext(range, 'before', 20);
-      const suffix = getContext(range, 'after', 20);
+      // Compute prefix/suffix using Range character offsets
+      const prefix = getContextFromRange(range, 'before', 20);
+      const suffix = getContextFromRange(range, 'after', 20);
 
       setSelection({ text, rect, prefix, suffix });
     };
@@ -76,32 +86,36 @@ export function useTextSelection(containerRef: RefObject<HTMLElement | null>) {
 }
 
 /**
- * Extract ~charCount characters of text before or after a Range.
+ * Extract ~charCount characters of text before or after a Range,
+ * using the Range's actual character offset within the block element.
  */
-function getContext(range: Range, direction: 'before' | 'after', charCount: number): string {
+function getContextFromRange(range: Range, direction: 'before' | 'after', charCount: number): string {
   try {
     const container = range.commonAncestorContainer;
-    // Walk up to a block-level element to get text context
     let block = container.nodeType === Node.ELEMENT_NODE
       ? container as HTMLElement
       : container.parentElement;
-    // Walk up until we find a reasonable block container
     while (block && !isBlockElement(block) && block.parentElement) {
       block = block.parentElement;
     }
     if (!block) return '';
 
     const fullText = block.textContent ?? '';
-    const selectedText = range.toString();
-    const idx = fullText.indexOf(selectedText);
-    if (idx === -1) return '';
+
+    // Compute the character offset of the selection start/end within
+    // the block element's textContent by creating temporary ranges.
+    const preRange = document.createRange();
+    preRange.selectNodeContents(block);
+    preRange.setEnd(range.startContainer, range.startOffset);
+    const startOffset = preRange.toString().length;
+
+    const endOffset = startOffset + range.toString().length;
 
     if (direction === 'before') {
-      const start = Math.max(0, idx - charCount);
-      return fullText.slice(start, idx);
+      const start = Math.max(0, startOffset - charCount);
+      return fullText.slice(start, startOffset);
     } else {
-      const end = idx + selectedText.length;
-      return fullText.slice(end, end + charCount);
+      return fullText.slice(endOffset, endOffset + charCount);
     }
   } catch {
     return '';

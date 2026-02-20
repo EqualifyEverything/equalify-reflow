@@ -1,4 +1,4 @@
-import { useState, useCallback } from 'react';
+import { useState, useCallback, useRef } from 'react';
 import type {
   FeedbackPhase,
   FeedbackItem,
@@ -28,6 +28,11 @@ export function useFeedbackSession(
   const [error, setError] = useState<string | null>(null);
   const [feedbackVersion, setFeedbackVersion] = useState<string | null>(null);
 
+  // Use a ref for the callback to avoid re-creating memoized functions
+  // when the caller passes a new options object each render.
+  const onVersionUpdateRef = useRef(options.onVersionUpdate);
+  onVersionUpdateRef.current = options.onVersionUpdate;
+
   const enterFeedbackMode = useCallback(() => {
     setPhase('collecting');
     setPendingItems([]);
@@ -42,6 +47,7 @@ export function useFeedbackSession(
     setCandidates([]);
     setReviews(new Map());
     setError(null);
+    setFeedbackVersion(null);
   }, []);
 
   const backToCollecting = useCallback(() => {
@@ -106,7 +112,7 @@ export function useFeedbackSession(
 
   const submitReviews = useCallback(
     async (action: ReviewAction) => {
-      if (!sessionId) return;
+      if (!sessionId || reviews.size === 0) return;
 
       setPhase('applying');
       setError(null);
@@ -127,7 +133,7 @@ export function useFeedbackSession(
         const data: ReviewResponse = await res.json();
 
         // If a new version was produced, notify the parent
-        if (data.new_version && options.onVersionUpdate) {
+        if (data.new_version && onVersionUpdateRef.current) {
           setFeedbackVersion(data.new_version);
 
           // Fetch the updated state to get the new markdown
@@ -136,7 +142,7 @@ export function useFeedbackSession(
           );
           if (stateRes.ok) {
             const state = await stateRes.json();
-            options.onVersionUpdate(data.new_version, state.latest_markdown);
+            onVersionUpdateRef.current(data.new_version, state.latest_markdown);
           }
         }
 
@@ -154,7 +160,7 @@ export function useFeedbackSession(
         setPhase('reviewing');
       }
     },
-    [sessionId, reviews, options],
+    [sessionId, reviews],
   );
 
   const approveSession = useCallback(async () => {

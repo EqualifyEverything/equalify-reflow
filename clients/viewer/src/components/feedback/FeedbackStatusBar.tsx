@@ -29,7 +29,7 @@ export function FeedbackStatusBar({ phase, revisionRound, itemCount }: FeedbackS
       </span>
       {revisionRound > 0 && (
         <span className="text-[10px] font-medium px-1.5 py-0.5 rounded bg-gray-100 text-gray-600">
-          Round {revisionRound + 1}
+          Round {revisionRound}
         </span>
       )}
       {phase === 'collecting' && itemCount > 0 && (

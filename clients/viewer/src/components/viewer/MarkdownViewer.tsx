@@ -161,7 +161,7 @@ export function MarkdownViewer({
     type: FeedbackItemType;
     text: string;
     selector: TextSelector;
-    rect: DOMRect;
+    rect: { top: number; left: number; width: number; height: number; bottom: number };
   } | null>(null);
 
   const contentRef = useRef<HTMLDivElement>(null);

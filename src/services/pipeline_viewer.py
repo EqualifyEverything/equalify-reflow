@@ -757,8 +757,8 @@ class PipelineViewerService:
             agent_result = await agent.run(user_msg)
             reconciled = agent_result.output
             usage = agent_result.usage()
-            total_input_tokens = usage.request_tokens or 0
-            total_output_tokens = usage.response_tokens or 0
+            total_input_tokens += usage.request_tokens or 0
+            total_output_tokens += usage.response_tokens or 0
 
             # Compare old and new outlines, record changes
             old_by_key = {

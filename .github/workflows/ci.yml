@@ -22,7 +22,7 @@ jobs:
   unit-tests:
     name: Unit Tests
     runs-on: ubuntu-latest
-    timeout-minutes: 5
+    timeout-minutes: 10
 
     steps:
       - name: Free disk space
@@ -30,7 +30,6 @@ jobs:
           sudo rm -rf /opt/hostedtoolcache/CodeQL /opt/hostedtoolcache/go \
             /opt/hostedtoolcache/Ruby /usr/share/dotnet /usr/local/lib/android \
             /usr/local/share/boost /usr/local/.ghcup /opt/ghc /usr/share/swift &
-          wait
 
       - name: Checkout
         uses: actions/checkout@v4
@@ -116,7 +115,6 @@ jobs:
           sudo rm -rf /opt/hostedtoolcache/CodeQL /opt/hostedtoolcache/go \
             /opt/hostedtoolcache/Ruby /usr/share/dotnet /usr/local/lib/android \
             /usr/local/share/boost /usr/local/.ghcup /opt/ghc /usr/share/swift &
-          wait
 
       - name: Checkout
         uses: actions/checkout@v4

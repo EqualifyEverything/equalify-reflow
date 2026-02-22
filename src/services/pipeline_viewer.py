@@ -157,7 +157,10 @@ def _apply_code_block_fence(
 
     # --- Case 1: already fenced (bare ```) -----------------------------------
     fence_pattern = re.compile(r"^```\s*$")
+    skip_to = -1
     for i, line in enumerate(lines):
+        if i <= skip_to:
+            continue
         if not fence_pattern.match(line):
             continue
         # Find matching close fence
@@ -183,6 +186,7 @@ def _apply_code_block_fence(
                         ),
                         stage="code_block",
                     )
+                skip_to = j  # skip past this fenced block
                 break  # close fence found but didn't match, keep looking
 
     # --- Case 2: unfenced code ------------------------------------------------

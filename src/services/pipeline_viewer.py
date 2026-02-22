@@ -48,7 +48,6 @@ from .pipeline_viewer_models import (
 logger = logging.getLogger(__name__)
 
 PROCEDURES_DIR = Path(__file__).parent.parent / "agents" / "prompts" / "procedures"
-MAX_STR_REPLACE_RETRIES = 3
 PAGE_AGENT_SEMAPHORE_LIMIT = 3
 
 # Fuzzy match thresholds — named for clarity and consistent tuning
@@ -1392,9 +1391,8 @@ class PipelineViewerService:
         document outline, and a procedure file based on the page's
         document type.
 
-        Uses str_replace tool calls for surgical edits. Failed edits are
-        retried up to MAX_STR_REPLACE_RETRIES times with the current
-        markdown state reported back to the agent.
+        Uses str_replace tool calls for surgical edits. Failed edits
+        report the current markdown state back to the agent for retry.
 
         Produces v1: corrected per-page markdowns.
         """

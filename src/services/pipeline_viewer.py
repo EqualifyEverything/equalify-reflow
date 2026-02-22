@@ -51,6 +51,12 @@ PROCEDURES_DIR = Path(__file__).parent.parent / "agents" / "prompts" / "procedur
 MAX_STR_REPLACE_RETRIES = 3
 PAGE_AGENT_SEMAPHORE_LIMIT = 3
 
+# Fuzzy match thresholds — named for clarity and consistent tuning
+HEADING_MATCH_THRESHOLD = 0.8  # Heading level correction (strict)
+SECTION_MAP_MATCH_THRESHOLD = 0.6  # Section map building (lenient)
+CODE_BLOCK_MATCH_THRESHOLD = 0.6  # Code block first-line matching
+FUZZY_LINE_MATCH_THRESHOLD = 0.6  # General fuzzy line finding (default)
+
 
 def _pil_to_base64(image: object) -> str:
     """Convert a PIL Image to base64-encoded PNG string."""
@@ -117,7 +123,7 @@ def _compose_page_prompt(attrs: PageAttributes) -> str:
     return "\n\n".join(fragments)
 
 
-def _fuzzy_find_line(lines: list[str], target: str, threshold: float = 0.6) -> int:
+def _fuzzy_find_line(lines: list[str], target: str, threshold: float = FUZZY_LINE_MATCH_THRESHOLD) -> int:
     """Find the line index best matching *target* via fuzzy match.
 
     Returns the index of the best match, or -1 if nothing exceeds *threshold*.
@@ -172,7 +178,7 @@ def _apply_code_block_fence(
                     cb.first_line.strip().lower(),
                     lines[i + 1].strip().lower() if i + 1 < len(lines) else "",
                 ).ratio()
-                if first_line_ratio >= 0.6:
+                if first_line_ratio >= CODE_BLOCK_MATCH_THRESHOLD:
                     # Tag the opening fence
                     old_fence = lines[i]
                     lines[i] = f"```{cb.language}"
@@ -867,7 +873,7 @@ class PipelineViewerService:
                         best_ratio = ratio
                         best_entry = entry
 
-                if best_entry is None or best_ratio < 0.8:
+                if best_entry is None or best_ratio < HEADING_MATCH_THRESHOLD:
                     continue
 
                 correct_hashes = "#" * best_entry.level
@@ -988,7 +994,7 @@ class PipelineViewerService:
                     best_ratio = ratio
                     best_idx = oi
 
-            if best_idx >= 0 and best_ratio >= 0.6:
+            if best_idx >= 0 and best_ratio >= SECTION_MAP_MATCH_THRESHOLD:
                 used_outline_indices.add(best_idx)
                 matched_outline.append((char_pos, line_idx, text, level, best_idx))
 

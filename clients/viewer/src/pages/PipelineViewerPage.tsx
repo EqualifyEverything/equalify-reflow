@@ -5,7 +5,12 @@ import { Button } from '@/components/ui/button';
 import { MarkdownViewer } from '@/components/viewer/MarkdownViewer';
 import { StepTabs } from '@/components/pipeline-viewer/StepTabs';
 import { ChangesSidebar } from '@/components/pipeline-viewer/ChangesSidebar';
+import { FeedbackPanel } from '@/components/feedback/FeedbackPanel';
+import { ReviewPanel } from '@/components/feedback/ReviewPanel';
+import { FeedbackStatusBar } from '@/components/feedback/FeedbackStatusBar';
 import { usePipelineViewer } from '@/hooks/usePipelineViewer';
+import { useFeedbackSession } from '@/hooks/useFeedbackSession';
+import type { FeedbackItemType, FeedbackCategory, TextSelector } from '@/types/feedback';
 import {
   Upload,
   Loader2,
@@ -17,6 +22,7 @@ import {
   Copy,
   Check,
   DollarSign,
+  MessageSquare,
 } from 'lucide-react';
 
 const FLAG_STYLES: Record<string, { bg: string; text: string; label: string }> = {
@@ -269,7 +275,23 @@ function StructureMetadataPanel({ metadata }: { metadata: Record<string, unknown
 }
 
 export function PipelineViewerPage() {
-  const { result, uploading, error, processing, currentStepName, processFile, reset } = usePipelineViewer();
+  const {
+    result,
+    uploading,
+    error,
+    processing,
+    currentStepName,
+    processFile,
+    reset,
+    sessionId,
+    updateVersion,
+  } = usePipelineViewer();
+
+  const feedback = useFeedbackSession(sessionId, {
+    onVersionUpdate: (key, markdown) => {
+      updateVersion(key, markdown);
+    },
+  });
 
   const [currentPage, setCurrentPage] = useState(1);
   const [activeStepIdx, setActiveStepIdx] = useState(0);
@@ -288,7 +310,10 @@ export function PipelineViewerPage() {
 
   const totalPages = result?.total_pages ?? 0;
   const activeStep = result?.steps[activeStepIdx] ?? null;
-  const activeVersion = activeStep?.version_after ?? 'v0';
+  const stepVersion = activeStep?.version_after ?? 'v0';
+
+  // When feedback has produced a new version, show it instead of the step version
+  const activeVersion = feedback.feedbackVersion ?? stepVersion;
 
   // Whether this version has per-page markdowns (v0, v1) vs full-document only (v2, v3)
   const hasPerPageMarkdown = !!result?.page_markdowns[activeVersion];
@@ -363,6 +388,37 @@ export function PipelineViewerPage() {
     },
     [handleProcess],
   );
+
+  // Feedback: create a feedback item from the MarkdownViewer selection
+  const handleFeedbackCreate = useCallback(
+    (data: {
+      type: FeedbackItemType;
+      selector: TextSelector;
+      newText: string | null;
+      description: string;
+      category: FeedbackCategory | null;
+      page: number;
+    }) => {
+      feedback.addFeedbackItem({
+        id: crypto.randomUUID(),
+        type: data.type,
+        selector: data.selector,
+        section: null,
+        page: data.page,
+        new_text: data.newText,
+        description: data.description,
+        feedback_type: data.category,
+      });
+    },
+    [feedback],
+  );
+
+  // Determine if feedback mode is active
+  const isFeedbackActive = feedback.phase != null;
+  const isFeedbackCollecting = feedback.phase === 'collecting' || feedback.phase === 'submitting';
+  const isFeedbackReviewing = feedback.phase === 'reviewing' || feedback.phase === 'applying';
+  const canShowFeedbackButton =
+    sessionId != null && !processing && !isFeedbackActive && result != null;
 
   return (
     <div className="flex flex-col h-screen bg-gray-50">
@@ -472,9 +528,35 @@ export function PipelineViewerPage() {
                   </span>
                 );
               })()}
+              {/* Feedback status */}
+              {feedback.phase && (
+                <FeedbackStatusBar
+                  phase={feedback.phase}
+                  revisionRound={feedback.revisionRound}
+                  itemCount={feedback.pendingItems.length}
+                />
+              )}
             </div>
 
             <div className="flex-1" />
+
+            {/* Feedback button */}
+            {canShowFeedbackButton && (
+              <Button
+                variant="outline"
+                size="sm"
+                className="h-7 text-xs gap-1.5 text-purple-700 border-purple-200 hover:bg-purple-50"
+                onClick={feedback.enterFeedbackMode}
+              >
+                <MessageSquare className="w-3.5 h-3.5" />
+                Give Feedback
+              </Button>
+            )}
+            {feedback.phase === 'finalized' && (
+              <span className="text-[10px] font-medium px-2 py-1 rounded bg-green-50 text-green-700">
+                Session Finalized
+              </span>
+            )}
 
             {/* New upload */}
             <Button
@@ -487,6 +569,13 @@ export function PipelineViewerPage() {
               New PDF
             </Button>
           </div>
+
+          {/* Feedback error */}
+          {feedback.error && (
+            <div className="px-6 py-1.5 bg-red-50 border-b text-xs text-red-700">
+              {feedback.error}
+            </div>
+          )}
 
           {/* Main content area */}
           <div className="flex-1 flex min-h-0 overflow-hidden">
@@ -563,6 +652,9 @@ export function PipelineViewerPage() {
                   content={pageMarkdown}
                   figureMap={figureMap}
                   isComplete={true}
+                  feedbackEnabled={isFeedbackCollecting}
+                  currentPage={currentPage}
+                  onFeedbackCreate={handleFeedbackCreate}
                   onCopy={() => {
                     navigator.clipboard.writeText(pageMarkdown);
                   }}
@@ -570,8 +662,27 @@ export function PipelineViewerPage() {
               </Panel>
             </PanelGroup>
 
-            {/* Changes sidebar / metadata panel */}
-            {activeStep?.name === 'structure' && activeStep.metadata ? (
+            {/* Right sidebar: feedback panels override the default sidebar */}
+            {isFeedbackCollecting ? (
+              <FeedbackPanel
+                items={feedback.pendingItems}
+                phase={feedback.phase!}
+                revisionRound={feedback.revisionRound}
+                onRemoveItem={feedback.removeFeedbackItem}
+                onSubmit={feedback.submitFeedback}
+                onExit={feedback.exitFeedbackMode}
+              />
+            ) : isFeedbackReviewing ? (
+              <ReviewPanel
+                candidates={feedback.candidates}
+                reviews={feedback.reviews}
+                isApplying={feedback.phase === 'applying'}
+                onSetDecision={feedback.setReviewDecision}
+                onApplyChanges={() => feedback.submitReviews('request_changes')}
+                onApproveFinalize={feedback.approveSession}
+                onBackToCollecting={feedback.backToCollecting}
+              />
+            ) : activeStep?.name === 'structure' && activeStep.metadata ? (
               <StructureMetadataPanel metadata={activeStep.metadata} />
             ) : (
               <ChangesSidebar

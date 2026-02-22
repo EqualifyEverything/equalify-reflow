@@ -25,6 +25,13 @@ jobs:
     timeout-minutes: 5
 
     steps:
+      - name: Free disk space
+        run: |
+          sudo rm -rf /opt/hostedtoolcache/CodeQL /opt/hostedtoolcache/go \
+            /opt/hostedtoolcache/Ruby /usr/share/dotnet /usr/local/lib/android \
+            /usr/local/share/boost /usr/local/.ghcup /opt/ghc /usr/share/swift &
+          wait
+
       - name: Checkout
         uses: actions/checkout@v4
 
@@ -104,6 +111,13 @@ jobs:
           - 4566:4566
 
     steps:
+      - name: Free disk space
+        run: |
+          sudo rm -rf /opt/hostedtoolcache/CodeQL /opt/hostedtoolcache/go \
+            /opt/hostedtoolcache/Ruby /usr/share/dotnet /usr/local/lib/android \
+            /usr/local/share/boost /usr/local/.ghcup /opt/ghc /usr/share/swift &
+          wait
+
       - name: Checkout
         uses: actions/checkout@v4
 

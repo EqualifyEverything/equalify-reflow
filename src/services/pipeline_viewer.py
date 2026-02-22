@@ -1411,6 +1411,12 @@ class PipelineViewerService:
         for fig in result.figures:
             page_figures_map.setdefault(fig.page_number, []).append(fig)
 
+        # Pre-compute outline text once (identical for every page)
+        outline_text = "\n".join(
+            f"  {'#' * e.level} {e.text} (p{e.page})"
+            for e in structure.outline
+        )
+
         async def _process_page(page_num: int) -> PageCorrectionResult:
             pf = page_figures_map.get(page_num) or None
             async with semaphore:
@@ -1421,6 +1427,7 @@ class PipelineViewerService:
                     structure=structure,
                     context_hints=page_hints.get(page_num) if page_hints else None,
                     page_figures=pf,
+                    outline_text=outline_text,
                 )
 
         # Fan out all pages
@@ -1495,6 +1502,7 @@ class PipelineViewerService:
         page_image_b64: str | None,
         structure: StructureResult,
         context_hints: list[str] | None = None,
+        outline_text: str = "",
         page_figures: list[FigureData] | None = None,
     ) -> PageCorrectionResult:
         """Run a single page correction agent.
@@ -1666,10 +1674,11 @@ class PipelineViewerService:
                 describer_output_tokens += out
 
         # Build user message
-        outline_text = "\n".join(
-            f"  {'#' * e.level} {e.text} (p{e.page})"
-            for e in structure.outline
-        )
+        if not outline_text:
+            outline_text = "\n".join(
+                f"  {'#' * e.level} {e.text} (p{e.page})"
+                for e in structure.outline
+            )
         user_parts: list[Any] = []
         if page_image_b64:
             user_parts.append(

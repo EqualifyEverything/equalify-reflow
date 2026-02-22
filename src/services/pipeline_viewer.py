@@ -48,8 +48,13 @@ from .pipeline_viewer_models import (
 logger = logging.getLogger(__name__)
 
 PROCEDURES_DIR = Path(__file__).parent.parent / "agents" / "prompts" / "procedures"
-MAX_STR_REPLACE_RETRIES = 3
 PAGE_AGENT_SEMAPHORE_LIMIT = 3
+
+# Fuzzy match thresholds — named for clarity and consistent tuning
+HEADING_MATCH_THRESHOLD = 0.8  # Heading level correction (strict)
+SECTION_MAP_MATCH_THRESHOLD = 0.6  # Section map building (lenient)
+CODE_BLOCK_MATCH_THRESHOLD = 0.6  # Code block first-line matching
+FUZZY_LINE_MATCH_THRESHOLD = 0.6  # General fuzzy line finding (default)
 
 
 def _pil_to_base64(image: object) -> str:
@@ -117,7 +122,7 @@ def _compose_page_prompt(attrs: PageAttributes) -> str:
     return "\n\n".join(fragments)
 
 
-def _fuzzy_find_line(lines: list[str], target: str, threshold: float = 0.6) -> int:
+def _fuzzy_find_line(lines: list[str], target: str, threshold: float = FUZZY_LINE_MATCH_THRESHOLD) -> int:
     """Find the line index best matching *target* via fuzzy match.
 
     Returns the index of the best match, or -1 if nothing exceeds *threshold*.
@@ -157,7 +162,10 @@ def _apply_code_block_fence(
 
     # --- Case 1: already fenced (bare ```) -----------------------------------
     fence_pattern = re.compile(r"^```\s*$")
+    skip_to = -1
     for i, line in enumerate(lines):
+        if i <= skip_to:
+            continue
         if not fence_pattern.match(line):
             continue
         # Find matching close fence
@@ -169,7 +177,7 @@ def _apply_code_block_fence(
                     cb.first_line.strip().lower(),
                     lines[i + 1].strip().lower() if i + 1 < len(lines) else "",
                 ).ratio()
-                if first_line_ratio >= 0.6:
+                if first_line_ratio >= CODE_BLOCK_MATCH_THRESHOLD:
                     # Tag the opening fence
                     old_fence = lines[i]
                     lines[i] = f"```{cb.language}"
@@ -183,6 +191,7 @@ def _apply_code_block_fence(
                         ),
                         stage="code_block",
                     )
+                skip_to = j  # skip past this fenced block
                 break  # close fence found but didn't match, keep looking
 
     # --- Case 2: unfenced code ------------------------------------------------
@@ -757,8 +766,8 @@ class PipelineViewerService:
             agent_result = await agent.run(user_msg)
             reconciled = agent_result.output
             usage = agent_result.usage()
-            total_input_tokens = usage.request_tokens or 0
-            total_output_tokens = usage.response_tokens or 0
+            total_input_tokens += usage.request_tokens or 0
+            total_output_tokens += usage.response_tokens or 0
 
             # Compare old and new outlines, record changes
             old_by_key = {
@@ -863,7 +872,7 @@ class PipelineViewerService:
                         best_ratio = ratio
                         best_entry = entry
 
-                if best_entry is None or best_ratio < 0.8:
+                if best_entry is None or best_ratio < HEADING_MATCH_THRESHOLD:
                     continue
 
                 correct_hashes = "#" * best_entry.level
@@ -984,7 +993,7 @@ class PipelineViewerService:
                     best_ratio = ratio
                     best_idx = oi
 
-            if best_idx >= 0 and best_ratio >= 0.6:
+            if best_idx >= 0 and best_ratio >= SECTION_MAP_MATCH_THRESHOLD:
                 used_outline_indices.add(best_idx)
                 matched_outline.append((char_pos, line_idx, text, level, best_idx))
 
@@ -1382,9 +1391,8 @@ class PipelineViewerService:
         document outline, and a procedure file based on the page's
         document type.
 
-        Uses str_replace tool calls for surgical edits. Failed edits are
-        retried up to MAX_STR_REPLACE_RETRIES times with the current
-        markdown state reported back to the agent.
+        Uses str_replace tool calls for surgical edits. Failed edits
+        report the current markdown state back to the agent for retry.
 
         Produces v1: corrected per-page markdowns.
         """
@@ -1401,6 +1409,12 @@ class PipelineViewerService:
         for fig in result.figures:
             page_figures_map.setdefault(fig.page_number, []).append(fig)
 
+        # Pre-compute outline text once (identical for every page)
+        outline_text = "\n".join(
+            f"  {'#' * e.level} {e.text} (p{e.page})"
+            for e in structure.outline
+        )
+
         async def _process_page(page_num: int) -> PageCorrectionResult:
             pf = page_figures_map.get(page_num) or None
             async with semaphore:
@@ -1411,6 +1425,7 @@ class PipelineViewerService:
                     structure=structure,
                     context_hints=page_hints.get(page_num) if page_hints else None,
                     page_figures=pf,
+                    outline_text=outline_text,
                 )
 
         # Fan out all pages
@@ -1485,6 +1500,7 @@ class PipelineViewerService:
         page_image_b64: str | None,
         structure: StructureResult,
         context_hints: list[str] | None = None,
+        outline_text: str = "",
         page_figures: list[FigureData] | None = None,
     ) -> PageCorrectionResult:
         """Run a single page correction agent.
@@ -1656,10 +1672,11 @@ class PipelineViewerService:
                 describer_output_tokens += out
 
         # Build user message
-        outline_text = "\n".join(
-            f"  {'#' * e.level} {e.text} (p{e.page})"
-            for e in structure.outline
-        )
+        if not outline_text:
+            outline_text = "\n".join(
+                f"  {'#' * e.level} {e.text} (p{e.page})"
+                for e in structure.outline
+            )
         user_parts: list[Any] = []
         if page_image_b64:
             user_parts.append(

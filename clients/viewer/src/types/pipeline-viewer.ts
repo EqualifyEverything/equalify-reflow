@@ -39,4 +39,5 @@ export interface PipelineViewerResult {
   figures: FigureData[];
   steps: StepResult[];
   stats: Record<string, unknown>;
+  warnings: string[];
 }

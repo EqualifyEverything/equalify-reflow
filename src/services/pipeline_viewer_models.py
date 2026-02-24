@@ -469,6 +469,8 @@ class PipelineViewerResult(BaseModel):
     figures: list[FigureData] = Field(default_factory=list)
     steps: list[StepResult] = Field(default_factory=list)
     stats: dict = Field(default_factory=dict)
+    warnings: list[str] = Field(default_factory=list)
+    """Human-readable warnings from PDF classification."""
 
 
 # Resolve forward references

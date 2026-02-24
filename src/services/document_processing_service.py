@@ -103,6 +103,24 @@ class DocumentProcessingService:
                 enable_boundaries=True,
             )
 
+            # 2a. Check for classification errors (unsupported document type)
+            if not result.versions:
+                # Classification blocked processing — no versions were produced
+                classification_step = next(
+                    (s for s in result.steps if s.name == "classification" and s.error),
+                    None,
+                )
+                error_msg = (
+                    classification_step.error
+                    if classification_step
+                    else "PDF classification rejected this document"
+                )
+                await self._update_job_state(
+                    job_id, status="failed", error=error_msg
+                )
+                jobs_completed_total.labels(status="failed").inc()
+                return result
+
             # 3. Extract final markdown (latest version available)
             final_markdown = (
                 result.versions.get("v3")
@@ -125,8 +143,7 @@ class DocumentProcessingService:
             total_edits = sum(len(s.changes) for s in result.steps)
 
             # 6. Update final job state
-            await self._update_job_state(
-                job_id,
+            update_fields: dict[str, Any] = dict(
                 status="completed",
                 processing_phase="complete",
                 result_url=markdown_s3_key,
@@ -139,6 +156,9 @@ class DocumentProcessingService:
                 llm_cost_cents=cost_cents,
                 stored_figures=stored_figures,
             )
+            if result.warnings:
+                update_fields["warnings"] = result.warnings
+            await self._update_job_state(job_id, **update_fields)
 
             # 7. Record Prometheus metrics
             processing_duration = time.time() - processing_start_time

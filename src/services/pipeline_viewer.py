@@ -160,14 +160,16 @@ def _apply_code_block_fence(
     """
     lines = page_md.split("\n")
 
-    # --- Case 1: already fenced (bare ```) -----------------------------------
-    fence_pattern = re.compile(r"^```\s*$")
+    # --- Case 1: already fenced (bare ``` or ```lang) --------------------------
+    fence_pattern = re.compile(r"^```(\w*)\s*$")
     skip_to = -1
     for i, line in enumerate(lines):
         if i <= skip_to:
             continue
-        if not fence_pattern.match(line):
+        m = fence_pattern.match(line)
+        if not m:
             continue
+        existing_lang = m.group(1)
         # Find matching close fence
         for j in range(i + 1, len(lines)):
             if lines[j].strip() == "```":
@@ -178,6 +180,9 @@ def _apply_code_block_fence(
                     lines[i + 1].strip().lower() if i + 1 < len(lines) else "",
                 ).ratio()
                 if first_line_ratio >= CODE_BLOCK_MATCH_THRESHOLD:
+                    if existing_lang:
+                        # Already fenced with a language tag — nothing to do
+                        return page_md, None
                     # Tag the opening fence
                     old_fence = lines[i]
                     lines[i] = f"```{cb.language}"
@@ -197,6 +202,14 @@ def _apply_code_block_fence(
     # --- Case 2: unfenced code ------------------------------------------------
     start_idx = _fuzzy_find_line(lines, cb.first_line)
     if start_idx < 0:
+        return page_md, None
+
+    # Guard: skip if the matched line sits inside an existing fenced block
+    fence_depth = 0
+    for k in range(start_idx):
+        if re.match(r"^```", lines[k]):
+            fence_depth = 1 - fence_depth  # toggle open/close
+    if fence_depth:
         return page_md, None
 
     end_idx = _fuzzy_find_line(lines[start_idx:], cb.last_line)
@@ -390,9 +403,50 @@ class PipelineViewerService:
         Returns:
             PipelineViewerResult with versioned markdowns, images, figures, and stats.
         """
+        from .pdf_classifier import classify_pdf, enrich_classification
+
         result = PipelineViewerResult(filename=filename, total_pages=0)
 
+        # Pre-flight PDF classification
+        classification = classify_pdf(file_content)
+
+        if classification.has_errors:
+            error_msg = "; ".join(classification.error_messages)
+            result.warnings = classification.warning_messages
+            result.steps.append(
+                StepResult(
+                    name="classification",
+                    display_name="PDF Classification",
+                    version_after="v0",
+                    elapsed_ms=classification.elapsed_ms,
+                    error=error_msg,
+                    metadata={
+                        "document_type": classification.document_type.value,
+                        "findings": [f.model_dump() for f in classification.findings],
+                        "pdf_metadata": classification.metadata.model_dump(),
+                    },
+                )
+            )
+            return result
+
+        result.warnings = classification.warning_messages
+
         await self._step_docling(result, file_content, filename, images_scale, do_table_structure)
+
+        # Enrich classification with post-extraction signals
+        enrich_classification(
+            classification,
+            total_pages=result.total_pages,
+            total_chars=result.stats.get("total_chars", 0),
+            figure_count=result.stats.get("figure_count", 0),
+            layout_hints=result.stats.get("layout_hints", {}),
+        )
+        result.warnings = classification.warning_messages
+        result.stats["classification"] = {
+            "document_type": classification.document_type.value,
+            "findings_count": len(classification.findings),
+            "elapsed_ms": classification.elapsed_ms,
+        }
 
         structure: StructureResult | None = None
 

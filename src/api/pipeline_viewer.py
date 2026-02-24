@@ -10,8 +10,9 @@ from typing import Any
 from fastapi import APIRouter, File, Form, HTTPException, UploadFile
 from fastapi.responses import StreamingResponse
 
+from ..services.pdf_classifier import classify_pdf, enrich_classification
 from ..services.pipeline_viewer import PipelineViewerService
-from ..services.pipeline_viewer_models import PipelineViewerResult
+from ..services.pipeline_viewer_models import PipelineViewerResult, StepResult
 from ..services.session_store import session_store
 
 logger = logging.getLogger(__name__)
@@ -120,6 +121,32 @@ async def process_pdf_stream(
         service = PipelineViewerService()
         result = PipelineViewerResult(filename=filename, total_pages=0)
 
+        # Step 0: Pre-flight PDF classification
+        classification = classify_pdf(content)
+
+        if classification.has_errors:
+            error_msg = "; ".join(classification.error_messages)
+            result.warnings = classification.warning_messages
+            result.steps.append(
+                StepResult(
+                    name="classification",
+                    display_name="PDF Classification",
+                    version_after="v0",
+                    elapsed_ms=classification.elapsed_ms,
+                    error=error_msg,
+                    metadata={
+                        "document_type": classification.document_type.value,
+                        "findings": [f.model_dump() for f in classification.findings],
+                        "pdf_metadata": classification.metadata.model_dump(),
+                    },
+                )
+            )
+            yield _sse_event("init", result.model_dump())
+            yield _sse_event("done", {"total_steps": 0, "total_elapsed_ms": classification.elapsed_ms})
+            return
+
+        result.warnings = classification.warning_messages
+
         # Step 1: Docling extraction
         try:
             task = asyncio.create_task(
@@ -134,7 +161,22 @@ async def process_pdf_stream(
             yield _sse_event("done", {"total_steps": 0, "total_elapsed_ms": 0})
             return
 
-        # Send full result after Docling (includes page_images, figures)
+        # Enrich classification with post-extraction signals
+        enrich_classification(
+            classification,
+            total_pages=result.total_pages,
+            total_chars=result.stats.get("total_chars", 0),
+            figure_count=result.stats.get("figure_count", 0),
+            layout_hints=result.stats.get("layout_hints", {}),
+        )
+        result.warnings = classification.warning_messages
+        result.stats["classification"] = {
+            "document_type": classification.document_type.value,
+            "findings_count": len(classification.findings),
+            "elapsed_ms": classification.elapsed_ms,
+        }
+
+        # Send full result after Docling (includes page_images, figures, warnings)
         yield _sse_event("init", result.model_dump())
 
         # Step 2: Structure analysis

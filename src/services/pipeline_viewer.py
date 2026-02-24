@@ -403,9 +403,50 @@ class PipelineViewerService:
         Returns:
             PipelineViewerResult with versioned markdowns, images, figures, and stats.
         """
+        from .pdf_classifier import classify_pdf, enrich_classification
+
         result = PipelineViewerResult(filename=filename, total_pages=0)
 
+        # Pre-flight PDF classification
+        classification = classify_pdf(file_content)
+
+        if classification.has_errors:
+            error_msg = "; ".join(classification.error_messages)
+            result.warnings = classification.warning_messages
+            result.steps.append(
+                StepResult(
+                    name="classification",
+                    display_name="PDF Classification",
+                    version_after="v0",
+                    elapsed_ms=classification.elapsed_ms,
+                    error=error_msg,
+                    metadata={
+                        "document_type": classification.document_type.value,
+                        "findings": [f.model_dump() for f in classification.findings],
+                        "pdf_metadata": classification.metadata.model_dump(),
+                    },
+                )
+            )
+            return result
+
+        result.warnings = classification.warning_messages
+
         await self._step_docling(result, file_content, filename, images_scale, do_table_structure)
+
+        # Enrich classification with post-extraction signals
+        enrich_classification(
+            classification,
+            total_pages=result.total_pages,
+            total_chars=result.stats.get("total_chars", 0),
+            figure_count=result.stats.get("figure_count", 0),
+            layout_hints=result.stats.get("layout_hints", {}),
+        )
+        result.warnings = classification.warning_messages
+        result.stats["classification"] = {
+            "document_type": classification.document_type.value,
+            "findings_count": len(classification.findings),
+            "elapsed_ms": classification.elapsed_ms,
+        }
 
         structure: StructureResult | None = None
 

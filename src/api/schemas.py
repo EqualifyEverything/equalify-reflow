@@ -144,6 +144,7 @@ class CompletedResponse(JobStatusBase):
     confidence_score: float = Field(..., description="Overall confidence score")
     correction_decision: CorrectionDecision = Field(..., description="How corrections were handled")
     llm_cost: LLMCostInfo = Field(..., description="LLM usage and cost")
+    warnings: list[str] = Field(default_factory=list, description="Classification warnings about the document")
 
 
 class FailedResponse(JobStatusBase):
@@ -151,6 +152,7 @@ class FailedResponse(JobStatusBase):
 
     status: Literal["failed"] = "failed"
     error: str = Field(..., description="Error message")
+    warnings: list[str] = Field(default_factory=list, description="Classification warnings about the document")
 
 
 class DeniedResponse(JobStatusBase):
@@ -218,6 +220,7 @@ class AgenticCompletedResponse(JobStatusBase):
         None,
         description="URL to download ZIP bundle with markdown and images"
     )
+    warnings: list[str] = Field(default_factory=list, description="Classification warnings about the document")
 
 
 class LedgerEntryResponse(BaseModel):

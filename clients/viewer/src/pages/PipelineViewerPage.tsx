@@ -5,6 +5,8 @@ import { Button } from '@/components/ui/button';
 import { MarkdownViewer } from '@/components/viewer/MarkdownViewer';
 import { StepTabs } from '@/components/pipeline-viewer/StepTabs';
 import { ChangesSidebar } from '@/components/pipeline-viewer/ChangesSidebar';
+import { WarningsBanner } from '@/components/pipeline-viewer/WarningsBanner';
+import { ClassificationError } from '@/components/pipeline-viewer/ClassificationError';
 import { FeedbackPanel } from '@/components/feedback/FeedbackPanel';
 import { ReviewPanel } from '@/components/feedback/ReviewPanel';
 import { FeedbackStatusBar } from '@/components/feedback/FeedbackStatusBar';
@@ -486,8 +488,16 @@ export function PipelineViewerPage() {
         </div>
       )}
 
+      {/* Classification error — document was rejected before processing */}
+      {result && Object.keys(result.versions).length === 0 && (() => {
+        const classStep = result.steps.find((s) => s.name === 'classification' && s.error);
+        return classStep ? (
+          <ClassificationError step={classStep} onReset={reset} />
+        ) : null;
+      })()}
+
       {/* Results — shown as soon as init event arrives (while processing continues) */}
-      {result && (
+      {result && Object.keys(result.versions).length > 0 && (
         <div className="flex-1 flex flex-col min-h-0">
           {/* Step tabs */}
           <StepTabs
@@ -496,6 +506,11 @@ export function PipelineViewerPage() {
             onSelect={setActiveStepIdx}
             processingStepName={processing ? currentStepName : null}
           />
+
+          {/* Warnings banner */}
+          {result.warnings?.length > 0 && (
+            <WarningsBanner warnings={result.warnings} />
+          )}
 
           {/* Stats bar */}
           <div className="flex items-center gap-6 px-6 py-2 bg-white border-b text-sm">

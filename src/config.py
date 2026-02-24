@@ -84,6 +84,16 @@ class Settings(BaseSettings):
         ge=1, le=5, default=2, description="Maximum retry attempts per page on validation failure"
     )
 
+    # PDF Classification Configuration
+    pdf_max_pages: int = Field(
+        ge=1,
+        le=500,
+        default=50,
+        description="Maximum pages allowed per PDF. Documents exceeding this are rejected.",
+    )
+    pdf_block_forms: bool = Field(default=True, description="Block PDFs with interactive form fields")
+    pdf_block_encrypted: bool = Field(default=True, description="Block password-protected PDFs")
+
     # PDF Processing Configuration
     pdf_images_scale: float = Field(
         ge=1.0,

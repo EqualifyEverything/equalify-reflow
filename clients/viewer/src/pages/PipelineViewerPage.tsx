@@ -359,6 +359,43 @@ export function PipelineViewerPage() {
     }
   }, [pageImage, currentPage, base64ToBlob]);
 
+  /** Trigger a browser download for a markdown string. */
+  const downloadMarkdown = useCallback((markdown: string, filename: string) => {
+    const blob = new Blob([markdown], { type: 'text/markdown;charset=utf-8' });
+    const url = URL.createObjectURL(blob);
+    const a = document.createElement('a');
+    a.href = url;
+    a.download = filename;
+    document.body.appendChild(a);
+    a.click();
+    document.body.removeChild(a);
+    URL.revokeObjectURL(url);
+  }, []);
+
+  /** Download the markdown version for a given step index. */
+  const handleDownloadVersion = useCallback(
+    (stepIndex: number) => {
+      if (!result) return;
+      const step = result.steps[stepIndex];
+      if (!step?.version_after) return;
+      const version = step.version_after;
+      const markdown = result.versions[version];
+      if (!markdown) return;
+      const baseName = result.filename.replace(/\.pdf$/i, '');
+      downloadMarkdown(markdown, `${baseName}-${version}.md`);
+    },
+    [result, downloadMarkdown],
+  );
+
+  /** Download the currently active version's markdown. */
+  const handleDownloadCurrentMarkdown = useCallback(() => {
+    if (!result) return;
+    const markdown = result.versions[activeVersion];
+    if (!markdown) return;
+    const baseName = result.filename.replace(/\.pdf$/i, '');
+    downloadMarkdown(markdown, `${baseName}-${activeVersion}.md`);
+  }, [result, activeVersion, downloadMarkdown]);
+
   const handleProcess = useCallback(
     async (file: File) => {
       setCurrentPage(1);
@@ -505,6 +542,7 @@ export function PipelineViewerPage() {
             activeIndex={activeStepIdx}
             onSelect={setActiveStepIdx}
             processingStepName={processing ? currentStepName : null}
+            onDownloadVersion={handleDownloadVersion}
           />
 
           {/* Warnings banner */}
@@ -670,6 +708,7 @@ export function PipelineViewerPage() {
                   feedbackEnabled={isFeedbackCollecting}
                   currentPage={currentPage}
                   onFeedbackCreate={handleFeedbackCreate}
+                  onDownloadMarkdown={handleDownloadCurrentMarkdown}
                   onCopy={() => {
                     navigator.clipboard.writeText(pageMarkdown);
                   }}

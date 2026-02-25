@@ -389,6 +389,7 @@ class PipelineViewerService:
         enable_structure: bool = False,
         enable_page_content: bool = False,
         enable_boundaries: bool = False,
+        ocr_languages: list[str] | None = None,
     ) -> PipelineViewerResult:
         """Run the pipeline on a PDF.
 
@@ -400,6 +401,7 @@ class PipelineViewerService:
             enable_structure: Run Phase 1 structure analysis.
             enable_page_content: Run Phase 2 per-page corrections.
             enable_boundaries: Run Phase 3 cross-page fixes.
+            ocr_languages: Tesseract OCR language codes for scanned documents.
 
         Returns:
             PipelineViewerResult with versioned markdowns, images, figures, and stats.

@@ -2174,44 +2174,32 @@ class PipelineViewerService:
     async def _step_cleanup(self, result: PipelineViewerResult) -> None:
         """Deterministic cleanup on the assembled document.
 
-        - Collapse 3+ blank lines to 2
-        - Strip trailing whitespace
-        - Remove orphan page numbers
+        Applies the full text_cleanup pipeline (PUA stripping, quote
+        normalisation, NFKC unicode, letter-spacing collapse, whitespace
+        cleanup, URL formatting) then records what changed in the ledger.
 
         Produces v3.
         """
-        import re
+        from src.utils.text_cleanup import cleanup_markdown as _cleanup_markdown
 
         step_start = time.time()
         source = result.versions.get("v2", "")
         changes: list[DocumentChange] = []
 
-        cleaned = source
+        cleaned = _cleanup_markdown(source, log_warnings=True)
 
-        # Collapse 3+ consecutive blank lines to 2
-        before = cleaned
-        cleaned = re.sub(r"\n{3,}", "\n\n", cleaned)
-        if cleaned != before:
+        if cleaned != source:
             changes.append(
                 DocumentChange(
                     page=0,
                     old_text="(multiple locations)",
-                    new_text="(collapsed)",
-                    reasoning="Collapsed 3+ consecutive blank lines to standard paragraph breaks",
-                    stage="deterministic",
-                )
-            )
-
-        # Strip trailing whitespace from each line
-        before = cleaned
-        cleaned = "\n".join(line.rstrip() for line in cleaned.split("\n"))
-        if cleaned != before:
-            changes.append(
-                DocumentChange(
-                    page=0,
-                    old_text="(multiple locations)",
-                    new_text="(stripped)",
-                    reasoning="Removed trailing whitespace from lines",
+                    new_text="(cleaned)",
+                    reasoning=(
+                        "Applied deterministic text cleanup: "
+                        "PUA character removal, quote normalisation, "
+                        "unicode NFKC, letter-spacing collapse, "
+                        "whitespace cleanup, URL formatting"
+                    ),
                     stage="deterministic",
                 )
             )

@@ -11,6 +11,28 @@ from urllib.parse import urlparse
 logger = logging.getLogger(__name__)
 
 
+def strip_private_use_chars(text: str) -> str:
+    """Remove Unicode Private Use Area (PUA) characters.
+
+    PDF fonts with custom encoding map glyphs to PUA codepoints
+    (U+E000-U+F8FF, U+F0000-U+FFFFD, U+100000-U+10FFFD). These render
+    as invisible boxes or replacement glyphs and break screen readers.
+
+    Args:
+        text: Input text potentially containing PUA characters
+
+    Returns:
+        Text with PUA characters removed
+
+    Examples:
+        >>> strip_private_use_chars("Content Management System \\ue081(CMS)")
+        'Content Management System (CMS)'
+    """
+    # Remove BMP Private Use Area (U+E000-U+F8FF) and
+    # Supplementary Private Use Areas (U+F0000-U+10FFFD)
+    return re.sub(r'[\uE000-\uF8FF\U000F0000-\U000FFFFD\U00100000-\U0010FFFD]', '', text)
+
+
 def normalize_unicode(text: str) -> str:
     """Normalize unicode characters to their canonical forms.
 
@@ -209,6 +231,7 @@ def cleanup_markdown(text: str, log_warnings: bool = True) -> str:
     original_length = len(text)
 
     # Apply ONLY safe fixes that cannot introduce errors
+    text = strip_private_use_chars(text)  # SAFE: Remove PUA codepoints from PDF fonts
     text = normalize_quotes(text)         # SAFE: Always correct
     text = normalize_unicode(text)        # SAFE: Canonical forms
     text = collapse_letter_spacing(text)  # SAFE: Fix OCR letter-spacing

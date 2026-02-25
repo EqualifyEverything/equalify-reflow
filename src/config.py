@@ -94,6 +94,16 @@ class Settings(BaseSettings):
     pdf_block_forms: bool = Field(default=True, description="Block PDFs with interactive form fields")
     pdf_block_encrypted: bool = Field(default=True, description="Block password-protected PDFs")
 
+    # OCR Configuration
+    ocr_default_languages: list[str] = Field(
+        default=["eng"],
+        description="Default Tesseract OCR language codes when none specified by caller",
+    )
+    tessdata_prefix: str = Field(
+        default="/usr/share/tesseract-ocr/5/tessdata",
+        description="Path to Tesseract tessdata directory for language validation",
+    )
+
     # PDF Processing Configuration
     pdf_images_scale: float = Field(
         ge=1.0,

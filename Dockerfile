@@ -38,7 +38,10 @@ FROM base AS dependencies
 RUN apt-get update && apt-get install -y --no-install-recommends \
     poppler-utils \
     tesseract-ocr \
+    tesseract-ocr-all \
     && rm -rf /var/lib/apt/lists/*
+
+ENV TESSDATA_PREFIX=/usr/share/tesseract-ocr/5/tessdata
 
 # Copy dependency files
 COPY pyproject.toml uv.lock* ./

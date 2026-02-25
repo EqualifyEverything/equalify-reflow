@@ -233,6 +233,8 @@ class PIIDetectionService:
         filename = job_data.get("original_filename", "document.pdf")
         review_mode = job_data.get("review_mode", "auto")
         max_rounds = int(job_data.get("max_rounds", "1"))
+        ocr_languages_raw = job_data.get("ocr_languages", "")
+        ocr_languages = ocr_languages_raw.split(",") if ocr_languages_raw else None
 
         # Import here to avoid circular imports
         from .document_processing_service import DocumentProcessingService
@@ -261,6 +263,7 @@ class PIIDetectionService:
                 filename=filename,
                 review_mode=review_mode,
                 max_rounds=max_rounds,
+                ocr_languages=ocr_languages,
             )
         )
 

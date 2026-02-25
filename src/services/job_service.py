@@ -136,6 +136,7 @@ class JobService:
         debug_bundle_requested: bool = False,
         review_mode: str | None = None,
         max_rounds: int = 1,
+        ocr_languages: list[str] | None = None,
     ) -> None:
         """
         Create a new job in Redis with automatic TTL.
@@ -153,6 +154,7 @@ class JobService:
             debug_bundle_requested: Whether to generate debug bundle artifacts
             review_mode: Review mode ('auto' | 'human') for agentic pipeline
             max_rounds: Maximum number of iterative refinement rounds (1-5, default: 1)
+            ocr_languages: Tesseract OCR language codes for scanned documents
         """
         created_at = datetime.now(UTC).isoformat()
 
@@ -180,6 +182,10 @@ class JobService:
         # Add review mode for agentic pipeline
         if review_mode:
             mapping["review_mode"] = review_mode
+
+        # Add OCR languages for scanned document processing
+        if ocr_languages:
+            mapping["ocr_languages"] = ",".join(ocr_languages)
 
         ttl = self._get_ttl_for_status(status)
         key = f"{self.status_prefix}{job_id}"

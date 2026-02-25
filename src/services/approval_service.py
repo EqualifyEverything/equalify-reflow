@@ -251,6 +251,8 @@ class ApprovalService:
                 filename = current_job.get("original_filename", "document.pdf")
                 review_mode = current_job.get("review_mode", "auto")
                 max_rounds = int(current_job.get("max_rounds", "1"))
+                ocr_languages_raw = current_job.get("ocr_languages", "")
+                ocr_languages = ocr_languages_raw.split(",") if ocr_languages_raw else None
 
                 # Import here to avoid circular imports
                 from .document_processing_service import DocumentProcessingService
@@ -279,6 +281,7 @@ class ApprovalService:
                         filename=filename,
                         review_mode=review_mode,
                         max_rounds=max_rounds,
+                        ocr_languages=ocr_languages,
                     )
                 )
                 logger.info(f"Job {job_id} approved - processing started (max_rounds={max_rounds})")
@@ -424,6 +427,8 @@ class ApprovalService:
                 filename = current_job.get("original_filename", "document.pdf")
                 review_mode = current_job.get("review_mode", "auto")
                 max_rounds = int(current_job.get("max_rounds", "1"))
+                ocr_languages_raw = current_job.get("ocr_languages", "")
+                ocr_languages = ocr_languages_raw.split(",") if ocr_languages_raw else None
 
                 # Import here to avoid circular imports
                 from .document_processing_service import DocumentProcessingService
@@ -452,6 +457,7 @@ class ApprovalService:
                         filename=filename,
                         review_mode=review_mode,
                         max_rounds=max_rounds,
+                        ocr_languages=ocr_languages,
                     )
                 )
                 logger.info(f"Job {job_id} background approval complete - processing started (max_rounds={max_rounds})")

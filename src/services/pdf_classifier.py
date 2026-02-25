@@ -493,8 +493,7 @@ def enrich_classification(
             severity=ClassificationSeverity.WARNING,
             message=(
                 "Document appears to be scanned or image-only "
-                f"(average {chars_per_page:.0f} characters per page). "
-                "Text extraction may be incomplete."
+                f"(average {chars_per_page:.0f} characters per page)."
             ),
             details={"chars_per_page": round(chars_per_page, 1)},
         ))

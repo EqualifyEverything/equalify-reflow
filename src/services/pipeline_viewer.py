@@ -389,6 +389,7 @@ class PipelineViewerService:
         enable_structure: bool = False,
         enable_page_content: bool = False,
         enable_boundaries: bool = False,
+        ocr_languages: list[str] | None = None,
     ) -> PipelineViewerResult:
         """Run the pipeline on a PDF.
 
@@ -400,6 +401,7 @@ class PipelineViewerService:
             enable_structure: Run Phase 1 structure analysis.
             enable_page_content: Run Phase 2 per-page corrections.
             enable_boundaries: Run Phase 3 cross-page fixes.
+            ocr_languages: Tesseract OCR language codes for scanned documents.
 
         Returns:
             PipelineViewerResult with versioned markdowns, images, figures, and stats.
@@ -450,9 +452,10 @@ class PipelineViewerService:
         }
 
         # ── Tesseract OCR re-run for scanned documents ──────────
-        # If initial extraction produced zero text and the classifier
-        # flagged a scanned document, re-run Docling with OCR enabled.
-        if result.stats.get("total_chars", 0) == 0:
+        # If the classifier flagged a scanned document (< 50 chars/page),
+        # re-run Docling with OCR enabled.  Documents with a few chars from
+        # image captions still need OCR for their actual text content.
+        if result.stats.get("is_likely_scanned", False):
             from .pdf_classifier import FINDING_SCAN_PRODUCER, FINDING_SCANNED
 
             scanned_codes = {FINDING_SCANNED, FINDING_SCAN_PRODUCER}

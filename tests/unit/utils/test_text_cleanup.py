@@ -11,6 +11,7 @@ from src.utils.text_cleanup import (
     fix_url_formatting,
     normalize_quotes,
     normalize_unicode,
+    sanitize_extracted_text,
     strip_private_use_chars,
     validate_urls,
 )
@@ -182,9 +183,13 @@ class TestFixExcessiveWhitespace:
 class TestFixUrlFormatting:
     """Tests for URL protocol insertion."""
 
-    def test_adds_protocol_to_bare_url(self):
+    def test_adds_protocol_to_bare_domain(self):
         text = "[site](example.com)"
         assert fix_url_formatting(text) == "[site](http://example.com)"
+
+    def test_adds_protocol_to_bare_domain_with_path(self):
+        text = "[site](example.com/page)"
+        assert fix_url_formatting(text) == "[site](http://example.com/page)"
 
     def test_preserves_existing_protocol(self):
         text = "[site](https://example.com)"
@@ -192,6 +197,31 @@ class TestFixUrlFormatting:
 
     def test_preserves_mailto(self):
         text = "[email](mailto:a@b.com)"
+        assert fix_url_formatting(text) == text
+
+    def test_preserves_relative_image_path(self):
+        """Relative image paths like figures/file.png must NOT get http://."""
+        text = "![alt text](figures/figure-2.png)"
+        assert fix_url_formatting(text) == text
+
+    def test_preserves_relative_path_no_extension(self):
+        text = "[link](section/page)"
+        assert fix_url_formatting(text) == text
+
+    def test_preserves_dot_slash_path(self):
+        text = "[link](./local-file.md)"
+        assert fix_url_formatting(text) == text
+
+    def test_preserves_parent_relative_path(self):
+        text = "[link](../other/file.md)"
+        assert fix_url_formatting(text) == text
+
+    def test_preserves_anchor_link(self):
+        text = "[link](#section-id)"
+        assert fix_url_formatting(text) == text
+
+    def test_preserves_absolute_path(self):
+        text = "[link](/root/path/file)"
         assert fix_url_formatting(text) == text
 
 
@@ -211,6 +241,40 @@ class TestValidateUrls:
     def test_passes_valid_url(self):
         broken = validate_urls("http://example.com/page")
         assert broken == []
+
+
+# ============================================================================
+# sanitize_extracted_text Tests
+# ============================================================================
+
+
+class TestSanitizeExtractedText:
+    """Tests for the lightweight v0 sanitization."""
+
+    def test_strips_pua_and_normalizes(self):
+        """PUA chars removed and NFKC applied."""
+        text = "AI\ue088Leaders cafe\u0301"
+        result = sanitize_extracted_text(text)
+        assert result == "AI-Leaders café"
+
+    def test_preserves_whitespace_for_llm(self):
+        """Does NOT collapse whitespace — LLM agents need original layout."""
+        text = "hello    world\n\n\n\nparagraph"
+        assert sanitize_extracted_text(text) == text
+
+    def test_preserves_quotes(self):
+        """Does NOT normalize quotes — that's for v3 cleanup."""
+        text = "\u201cHello\u201d"
+        assert sanitize_extracted_text(text) == text
+
+    def test_real_wordpress_v0(self):
+        """Simulates Docling v0 output from the WordPress PDF."""
+        text = (
+            "Content Management System \ue081(CMS)\ue082 which\n"
+            "AI\ue088Leaders.org"
+        )
+        result = sanitize_extracted_text(text)
+        assert result == "Content Management System (CMS) which\nAI-Leaders.org"
 
 
 # ============================================================================

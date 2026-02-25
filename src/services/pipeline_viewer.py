@@ -505,9 +505,11 @@ class PipelineViewerService:
 
         result.total_pages = len(doc.pages)
 
+        from src.utils.text_cleanup import sanitize_extracted_text
+
         # Full document markdown -> v0
         try:
-            full_md = doc.export_to_markdown()
+            full_md = sanitize_extracted_text(doc.export_to_markdown())
         except Exception as e:
             logger.warning(f"Failed to export full markdown: {e}")
             full_md = ""
@@ -518,7 +520,7 @@ class PipelineViewerService:
         total_chars = 0
         page_mds: dict[str, str] = {}
         for page_no in sorted(doc.pages.keys()):
-            page_md = doc.export_to_markdown(page_no=page_no)
+            page_md = sanitize_extracted_text(doc.export_to_markdown(page_no=page_no))
             total_chars += len(page_md)
             page_key = str(page_no)
             page_mds[page_key] = page_md

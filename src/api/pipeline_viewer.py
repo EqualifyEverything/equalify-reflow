@@ -189,7 +189,7 @@ async def process_pdf_stream(
         }
 
         # OCR re-run for scanned documents
-        if result.stats.get("total_chars", 0) == 0:
+        if result.stats.get("is_likely_scanned", False):
             from src.services.pdf_classifier import FINDING_SCANNED, FINDING_SCAN_PRODUCER
 
             scanned_codes = {FINDING_SCANNED, FINDING_SCAN_PRODUCER}

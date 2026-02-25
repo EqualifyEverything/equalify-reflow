@@ -450,9 +450,10 @@ class PipelineViewerService:
         }
 
         # ── Tesseract OCR re-run for scanned documents ──────────
-        # If initial extraction produced zero text and the classifier
-        # flagged a scanned document, re-run Docling with OCR enabled.
-        if result.stats.get("total_chars", 0) == 0:
+        # If the classifier flagged a scanned document (< 50 chars/page),
+        # re-run Docling with OCR enabled.  Documents with a few chars from
+        # image captions still need OCR for their actual text content.
+        if result.stats.get("is_likely_scanned", False):
             from .pdf_classifier import FINDING_SCAN_PRODUCER, FINDING_SCANNED
 
             scanned_codes = {FINDING_SCANNED, FINDING_SCAN_PRODUCER}

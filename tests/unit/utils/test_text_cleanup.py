@@ -11,8 +11,9 @@ from src.utils.text_cleanup import (
     fix_url_formatting,
     normalize_quotes,
     normalize_unicode,
+    replace_pua_hyphens,
     sanitize_extracted_text,
-    strip_private_use_chars,
+    strip_remaining_pua,
     validate_urls,
 )
 
@@ -20,68 +21,76 @@ pytestmark = pytest.mark.unit
 
 
 # ============================================================================
-# strip_private_use_chars Tests
+# replace_pua_hyphens Tests (v0 — only between alphanumerics)
 # ============================================================================
 
 
-class TestStripPrivateUseChars:
-    """Tests for PUA character replacement/removal."""
-
-    def test_removes_pua_adjacent_to_space(self):
-        """PUA chars next to whitespace are removed (decorative)."""
-        text = "Content Management System \ue081(CMS)\ue082 which"
-        assert strip_private_use_chars(text) == "Content Management System (CMS) which"
+class TestReplacePuaHyphens:
+    """Tests for PUA-to-hyphen replacement (v0 safe)."""
 
     def test_replaces_pua_between_alpha_with_hyphen(self):
-        """PUA between alphanumerics becomes a hyphen (likely encoded dash)."""
         text = "AI\ue088Leaders.org"
-        assert strip_private_use_chars(text) == "AI-Leaders.org"
+        assert replace_pua_hyphens(text) == "AI-Leaders.org"
 
-    def test_replaces_consecutive_pua_between_alpha_with_single_hyphen(self):
-        """Multiple consecutive PUA chars between alphanumerics → one hyphen."""
+    def test_replaces_consecutive_pua_with_single_hyphen(self):
         text = "foo\ue001\ue002bar"
-        assert strip_private_use_chars(text) == "foo-bar"
+        assert replace_pua_hyphens(text) == "foo-bar"
 
-    def test_mixed_contexts(self):
-        """Mix of decorative and hyphen PUA chars in one string."""
-        text = "\ue081Hello\ue082 AI\ue088Leaders"
-        assert strip_private_use_chars(text) == "Hello AI-Leaders"
+    def test_replaces_pua_between_digit_and_letter(self):
+        text = "v2\ue000beta"
+        assert replace_pua_hyphens(text) == "v2-beta"
+
+    def test_leaves_pua_adjacent_to_space_untouched(self):
+        """PUA next to whitespace is NOT replaced — left for LLM."""
+        text = "System \ue081CMS\ue082 which"
+        # Only between-alpha PUA is replaced; others are preserved
+        assert "\ue081" in replace_pua_hyphens(text)
+        assert "\ue082" in replace_pua_hyphens(text)
+
+    def test_leaves_pua_at_boundaries_untouched(self):
+        """PUA at start/end of string is NOT replaced — left for LLM."""
+        text = "\ue000Hello\uf8ff"
+        assert "\ue000" in replace_pua_hyphens(text)
+        assert "\uf8ff" in replace_pua_hyphens(text)
 
     def test_preserves_normal_text(self):
-        """Normal ASCII and common Unicode text is untouched."""
-        text = "Hello, world! café résumé 你好"
-        assert strip_private_use_chars(text) == text
-
-    def test_preserves_emoji(self):
-        """Emoji (outside PUA) are preserved."""
-        text = "Hello 👋 world 🌍"
-        assert strip_private_use_chars(text) == text
+        text = "Hello, world! café résumé"
+        assert replace_pua_hyphens(text) == text
 
     def test_empty_string(self):
-        assert strip_private_use_chars("") == ""
+        assert replace_pua_hyphens("") == ""
 
-    def test_only_pua_chars(self):
-        """String of only PUA characters becomes empty."""
-        assert strip_private_use_chars("\ue000\ue001\ue002") == ""
 
-    def test_pua_at_start_and_end(self):
+# ============================================================================
+# strip_remaining_pua Tests (v3 — remove all leftover PUA)
+# ============================================================================
+
+
+class TestStripRemainingPua:
+    """Tests for v3 PUA stripping safety net."""
+
+    def test_strips_all_pua(self):
+        text = "System \ue081(CMS)\ue082 which"
+        assert strip_remaining_pua(text) == "System (CMS) which"
+
+    def test_strips_pua_at_boundaries(self):
         text = "\ue000Hello\uf8ff"
-        assert strip_private_use_chars(text) == "Hello"
+        assert strip_remaining_pua(text) == "Hello"
 
-    def test_pua_between_digit_and_letter(self):
-        """PUA between digit and letter → hyphen."""
-        text = "v2\ue000beta"
-        assert strip_private_use_chars(text) == "v2-beta"
+    def test_strips_only_pua(self):
+        assert strip_remaining_pua("\ue000\ue001\ue002") == ""
 
-    def test_supplementary_pua_a_between_alpha(self):
-        """Supplementary PUA-A between alphanumerics → hyphen."""
-        text = "test\U000F0001text"
-        assert strip_private_use_chars(text) == "test-text"
+    def test_preserves_normal_text(self):
+        text = "Hello, world! café résumé 你好"
+        assert strip_remaining_pua(text) == text
 
-    def test_supplementary_pua_b_removed_at_boundary(self):
-        """Supplementary PUA-B at start is removed."""
-        text = "\U00100001test"
-        assert strip_private_use_chars(text) == "test"
+    def test_preserves_emoji(self):
+        text = "Hello 👋 world 🌍"
+        assert strip_remaining_pua(text) == text
+
+    def test_strips_supplementary_pua(self):
+        text = "test\U000F0001more\U00100001end"
+        assert strip_remaining_pua(text) == "testmoreend"
 
 
 # ============================================================================
@@ -251,11 +260,19 @@ class TestValidateUrls:
 class TestSanitizeExtractedText:
     """Tests for the lightweight v0 sanitization."""
 
-    def test_strips_pua_and_normalizes(self):
-        """PUA chars removed and NFKC applied."""
+    def test_replaces_pua_hyphens_and_normalizes(self):
+        """PUA between alpha → hyphen, NFKC applied."""
         text = "AI\ue088Leaders cafe\u0301"
         result = sanitize_extracted_text(text)
         assert result == "AI-Leaders café"
+
+    def test_preserves_non_hyphen_pua_for_llm(self):
+        """PUA chars that might be parens/brackets are LEFT for LLM to fix."""
+        text = "System \ue081CMS\ue082 which"
+        result = sanitize_extracted_text(text)
+        # PUA chars adjacent to space are preserved — LLM compares to image
+        assert "\ue081" in result
+        assert "\ue082" in result
 
     def test_preserves_whitespace_for_llm(self):
         """Does NOT collapse whitespace — LLM agents need original layout."""
@@ -268,13 +285,21 @@ class TestSanitizeExtractedText:
         assert sanitize_extracted_text(text) == text
 
     def test_real_wordpress_v0(self):
-        """Simulates Docling v0 output from the WordPress PDF."""
+        """Simulates Docling v0 from the WordPress PDF.
+
+        PUA between alpha (AI-Leaders) → hyphen.
+        PUA adjacent to space (around CMS) → preserved for LLM.
+        """
         text = (
-            "Content Management System \ue081(CMS)\ue082 which\n"
+            "Content Management System \ue081CMS\ue082 which\n"
             "AI\ue088Leaders.org"
         )
         result = sanitize_extracted_text(text)
-        assert result == "Content Management System (CMS) which\nAI-Leaders.org"
+        # Hyphen case fixed
+        assert "AI-Leaders.org" in result
+        # Non-hyphen PUA preserved for LLM
+        assert "\ue081" in result
+        assert "\ue082" in result
 
 
 # ============================================================================

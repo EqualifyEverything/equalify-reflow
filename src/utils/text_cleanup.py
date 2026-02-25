@@ -16,39 +16,35 @@ _PUA_CHAR_CLASS = (
 )
 
 
-def strip_private_use_chars(text: str) -> str:
-    """Replace or remove Unicode Private Use Area (PUA) characters.
+def replace_pua_hyphens(text: str) -> str:
+    """Replace PUA characters between alphanumerics with a hyphen.
 
-    PDF fonts with custom encoding map glyphs to PUA codepoints
-    (U+E000-U+F8FF, U+F0000-U+FFFFD, U+100000-U+10FFFD). These render
-    as invisible boxes or replacement glyphs and break screen readers.
+    PDF fonts sometimes encode hyphens/dashes as PUA codepoints.
+    When a PUA char sits between two alphanumeric characters, it is
+    almost certainly a hyphen (e.g. "AI\\ue088Leaders" → "AI-Leaders").
 
-    Context-aware replacement:
-    - Between two alphanumeric characters → hyphen (the PDF font likely
-      encoded a dash/hyphen as a PUA glyph, e.g. "AI-Leaders")
-    - Otherwise → removed (decorative or meaningless)
+    Only handles the unambiguous case. Other PUA chars (which may
+    represent parentheses, bullets, etc.) are left for the LLM to
+    resolve by comparing against the page image.
 
-    Args:
-        text: Input text potentially containing PUA characters
-
-    Returns:
-        Text with PUA characters replaced or removed
-
-    Examples:
-        >>> strip_private_use_chars("Content Management System \\ue081(CMS)")
-        'Content Management System (CMS)'
-        >>> strip_private_use_chars("AI\\ue088Leaders.org")
-        'AI-Leaders.org'
+    Safe to run at v0 before LLM processing.
     """
-    # First pass: PUA between alphanumeric chars → hyphen
-    text = re.sub(
+    return re.sub(
         r'(?<=[A-Za-z0-9])' + _PUA_CHAR_CLASS + r'+(?=[A-Za-z0-9])',
         '-',
         text,
     )
-    # Second pass: remaining PUA chars (adjacent to whitespace/punctuation) → remove
-    text = re.sub(_PUA_CHAR_CLASS + r'+', '', text)
-    return text
+
+
+def strip_remaining_pua(text: str) -> str:
+    """Remove any PUA characters still present after LLM processing.
+
+    Runs at v3 as a safety net. By this point the LLM agents have had a
+    chance to compare the markdown against page images and replace PUA
+    chars with real characters (e.g. parentheses). Any PUA chars still
+    remaining are artifacts that should be stripped.
+    """
+    return re.sub(_PUA_CHAR_CLASS + r'+', '', text)
 
 
 def normalize_unicode(text: str) -> str:
@@ -232,13 +228,18 @@ def fix_url_formatting(text: str) -> str:
 def sanitize_extracted_text(text: str) -> str:
     """Lightweight sanitization for raw Docling-extracted markdown.
 
-    Runs BEFORE any LLM processing so agents see clean text. Only applies
-    fixes that address encoding artifacts without altering whitespace or
-    formatting that the LLM agents rely on for layout analysis.
+    Runs at v0, right after Docling extraction and BEFORE LLM processing.
 
-    Applied at v0 (right after Docling extraction).
+    Only applies safe, unambiguous fixes:
+    - PUA chars between alphanumerics → hyphen (e.g. AI-Leaders)
+    - NFKC unicode normalization (composed diacritics, ligatures)
+
+    Crucially, does NOT strip other PUA chars. Those may represent
+    parentheses, brackets, or other meaningful characters that the LLM
+    agents can fix by comparing the markdown against page images at v1.
+    Remaining PUA chars are stripped at v3 by cleanup_markdown().
     """
-    text = strip_private_use_chars(text)
+    text = replace_pua_hyphens(text)
     text = normalize_unicode(text)
     return text
 
@@ -267,7 +268,8 @@ def cleanup_markdown(text: str, log_warnings: bool = True) -> str:
     original_length = len(text)
 
     # Apply ONLY safe fixes that cannot introduce errors
-    text = strip_private_use_chars(text)  # SAFE: Remove PUA codepoints from PDF fonts
+    text = replace_pua_hyphens(text)      # SAFE: PUA between alpha → hyphen
+    text = strip_remaining_pua(text)      # SAFE: Remove leftover PUA after LLM had its chance
     text = normalize_quotes(text)         # SAFE: Always correct
     text = normalize_unicode(text)        # SAFE: Canonical forms
     text = collapse_letter_spacing(text)  # SAFE: Fix OCR letter-spacing

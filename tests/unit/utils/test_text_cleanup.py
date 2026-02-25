@@ -1,6 +1,6 @@
 """Unit tests for text cleanup utilities.
 
-Tests deterministic text normalization functions used in the v3 cleanup step.
+Tests deterministic text normalization functions used in the v0 and v3 steps.
 """
 
 import pytest
@@ -11,9 +11,9 @@ from src.utils.text_cleanup import (
     fix_url_formatting,
     normalize_quotes,
     normalize_unicode,
-    replace_pua_hyphens,
+    replace_pua_chars,
     sanitize_extracted_text,
-    strip_remaining_pua,
+    strip_replacement_chars,
     validate_urls,
 )
 
@@ -21,76 +21,84 @@ pytestmark = pytest.mark.unit
 
 
 # ============================================================================
-# replace_pua_hyphens Tests (v0 — only between alphanumerics)
+# replace_pua_chars Tests (v0)
 # ============================================================================
 
 
-class TestReplacePuaHyphens:
-    """Tests for PUA-to-hyphen replacement (v0 safe)."""
+class TestReplacePuaChars:
+    """Tests for context-aware PUA replacement at v0."""
 
-    def test_replaces_pua_between_alpha_with_hyphen(self):
+    def test_pua_between_alpha_becomes_hyphen(self):
         text = "AI\ue088Leaders.org"
-        assert replace_pua_hyphens(text) == "AI-Leaders.org"
+        assert replace_pua_chars(text) == "AI-Leaders.org"
 
-    def test_replaces_consecutive_pua_with_single_hyphen(self):
+    def test_consecutive_pua_between_alpha_single_hyphen(self):
         text = "foo\ue001\ue002bar"
-        assert replace_pua_hyphens(text) == "foo-bar"
+        assert replace_pua_chars(text) == "foo-bar"
 
-    def test_replaces_pua_between_digit_and_letter(self):
+    def test_pua_between_digit_and_letter_becomes_hyphen(self):
         text = "v2\ue000beta"
-        assert replace_pua_hyphens(text) == "v2-beta"
+        assert replace_pua_chars(text) == "v2-beta"
 
-    def test_leaves_pua_adjacent_to_space_untouched(self):
-        """PUA next to whitespace is NOT replaced — left for LLM."""
+    def test_pua_adjacent_to_space_becomes_fffd(self):
+        """PUA next to whitespace → U+FFFD so LLM can see the problem."""
         text = "System \ue081CMS\ue082 which"
-        # Only between-alpha PUA is replaced; others are preserved
-        assert "\ue081" in replace_pua_hyphens(text)
-        assert "\ue082" in replace_pua_hyphens(text)
+        result = replace_pua_chars(text)
+        assert result == "System \ufffdCMS\ufffd which"
 
-    def test_leaves_pua_at_boundaries_untouched(self):
-        """PUA at start/end of string is NOT replaced — left for LLM."""
-        text = "\ue000Hello\uf8ff"
-        assert "\ue000" in replace_pua_hyphens(text)
-        assert "\uf8ff" in replace_pua_hyphens(text)
+    def test_pua_at_start_becomes_fffd(self):
+        text = "\ue000Hello"
+        assert replace_pua_chars(text) == "\ufffdHello"
+
+    def test_pua_at_end_becomes_fffd(self):
+        text = "Hello\uf8ff"
+        assert replace_pua_chars(text) == "Hello\ufffd"
+
+    def test_mixed_hyphen_and_fffd(self):
+        """Mix of inter-alpha and non-inter-alpha PUA."""
+        text = "\ue081Hello\ue082 AI\ue088Leaders"
+        result = replace_pua_chars(text)
+        assert result == "\ufffdHello\ufffd AI-Leaders"
 
     def test_preserves_normal_text(self):
         text = "Hello, world! café résumé"
-        assert replace_pua_hyphens(text) == text
-
-    def test_empty_string(self):
-        assert replace_pua_hyphens("") == ""
-
-
-# ============================================================================
-# strip_remaining_pua Tests (v3 — remove all leftover PUA)
-# ============================================================================
-
-
-class TestStripRemainingPua:
-    """Tests for v3 PUA stripping safety net."""
-
-    def test_strips_all_pua(self):
-        text = "System \ue081(CMS)\ue082 which"
-        assert strip_remaining_pua(text) == "System (CMS) which"
-
-    def test_strips_pua_at_boundaries(self):
-        text = "\ue000Hello\uf8ff"
-        assert strip_remaining_pua(text) == "Hello"
-
-    def test_strips_only_pua(self):
-        assert strip_remaining_pua("\ue000\ue001\ue002") == ""
-
-    def test_preserves_normal_text(self):
-        text = "Hello, world! café résumé 你好"
-        assert strip_remaining_pua(text) == text
+        assert replace_pua_chars(text) == text
 
     def test_preserves_emoji(self):
         text = "Hello 👋 world 🌍"
-        assert strip_remaining_pua(text) == text
+        assert replace_pua_chars(text) == text
 
-    def test_strips_supplementary_pua(self):
-        text = "test\U000F0001more\U00100001end"
-        assert strip_remaining_pua(text) == "testmoreend"
+    def test_empty_string(self):
+        assert replace_pua_chars("") == ""
+
+
+# ============================================================================
+# strip_replacement_chars Tests (v3)
+# ============================================================================
+
+
+class TestStripReplacementChars:
+    """Tests for v3 safety-net stripping of U+FFFD and leftover PUA."""
+
+    def test_strips_fffd(self):
+        text = "System \ufffd(CMS)\ufffd which"
+        assert strip_replacement_chars(text) == "System (CMS) which"
+
+    def test_strips_leftover_pua(self):
+        text = "System \ue081(CMS)\ue082 which"
+        assert strip_replacement_chars(text) == "System (CMS) which"
+
+    def test_strips_both_fffd_and_pua(self):
+        text = "\ufffdHello\ue082 world"
+        assert strip_replacement_chars(text) == "Hello world"
+
+    def test_preserves_normal_text(self):
+        text = "Hello, world! café résumé 你好"
+        assert strip_replacement_chars(text) == text
+
+    def test_preserves_emoji(self):
+        text = "Hello 👋 world 🌍"
+        assert strip_replacement_chars(text) == text
 
 
 # ============================================================================
@@ -102,14 +110,10 @@ class TestNormalizeUnicode:
     """Tests for NFKC unicode normalization."""
 
     def test_normalizes_composed_diacritics(self):
-        """Combining diacritics are composed into single codepoints."""
-        # e + combining acute accent → é
         text = "cafe\u0301"
         assert normalize_unicode(text) == "café"
 
     def test_normalizes_compatibility_chars(self):
-        """NFKC normalizes compatibility characters."""
-        # ﬁ ligature → fi
         text = "ﬁnd"
         assert normalize_unicode(text) == "find"
 
@@ -131,7 +135,6 @@ class TestCollapseLetterSpacing:
         assert collapse_letter_spacing(text) == "the requirements are met"
 
     def test_ignores_short_sequences(self):
-        """Sequences of 3 or fewer letters are not collapsed (safety)."""
         text = "a b c stays"
         assert collapse_letter_spacing(text) == "a b c stays"
 
@@ -209,7 +212,6 @@ class TestFixUrlFormatting:
         assert fix_url_formatting(text) == text
 
     def test_preserves_relative_image_path(self):
-        """Relative image paths like figures/file.png must NOT get http://."""
         text = "![alt text](figures/figure-2.png)"
         assert fix_url_formatting(text) == text
 
@@ -243,7 +245,6 @@ class TestValidateUrls:
     """Tests for URL validation (logging only)."""
 
     def test_finds_broken_url(self):
-        """URL without netloc is flagged as broken."""
         broken = validate_urls("Visit http:///path here")
         assert "http:///path" in broken
 
@@ -253,99 +254,92 @@ class TestValidateUrls:
 
 
 # ============================================================================
-# sanitize_extracted_text Tests
+# sanitize_extracted_text Tests (v0)
 # ============================================================================
 
 
 class TestSanitizeExtractedText:
     """Tests for the lightweight v0 sanitization."""
 
-    def test_replaces_pua_hyphens_and_normalizes(self):
-        """PUA between alpha → hyphen, NFKC applied."""
+    def test_pua_hyphen_and_nfkc(self):
         text = "AI\ue088Leaders cafe\u0301"
         result = sanitize_extracted_text(text)
         assert result == "AI-Leaders café"
 
-    def test_preserves_non_hyphen_pua_for_llm(self):
-        """PUA chars that might be parens/brackets are LEFT for LLM to fix."""
+    def test_non_hyphen_pua_becomes_fffd(self):
+        """PUA chars that might be parens → U+FFFD for LLM visibility."""
         text = "System \ue081CMS\ue082 which"
         result = sanitize_extracted_text(text)
-        # PUA chars adjacent to space are preserved — LLM compares to image
-        assert "\ue081" in result
-        assert "\ue082" in result
+        assert "\ue081" not in result
+        assert "\ue082" not in result
+        assert "\ufffd" in result
+        assert "System \ufffdCMS\ufffd which" == result
 
     def test_preserves_whitespace_for_llm(self):
-        """Does NOT collapse whitespace — LLM agents need original layout."""
         text = "hello    world\n\n\n\nparagraph"
         assert sanitize_extracted_text(text) == text
 
     def test_preserves_quotes(self):
-        """Does NOT normalize quotes — that's for v3 cleanup."""
         text = "\u201cHello\u201d"
         assert sanitize_extracted_text(text) == text
 
     def test_real_wordpress_v0(self):
-        """Simulates Docling v0 from the WordPress PDF.
-
-        PUA between alpha (AI-Leaders) → hyphen.
-        PUA adjacent to space (around CMS) → preserved for LLM.
-        """
+        """Simulates Docling v0 from the WordPress PDF."""
         text = (
             "Content Management System \ue081CMS\ue082 which\n"
             "AI\ue088Leaders.org"
         )
         result = sanitize_extracted_text(text)
-        # Hyphen case fixed
         assert "AI-Leaders.org" in result
-        # Non-hyphen PUA preserved for LLM
-        assert "\ue081" in result
-        assert "\ue082" in result
+        assert "\ufffdCMS\ufffd" in result
+        assert "\ue081" not in result
 
 
 # ============================================================================
-# cleanup_markdown Integration Tests
+# cleanup_markdown Integration Tests (v3)
 # ============================================================================
 
 
 class TestCleanupMarkdown:
-    """Tests for the full cleanup pipeline."""
+    """Tests for the full v3 cleanup pipeline."""
 
-    def test_strips_pua_and_normalizes(self):
-        """Full pipeline removes PUA chars and normalizes text."""
-        text = "System \ue081(CMS)\ue082 which"
+    def test_strips_fffd_and_pua(self):
+        """Full pipeline removes U+FFFD and any leftover PUA."""
+        text = "System \ufffd(CMS)\ufffd which"
         result = cleanup_markdown(text, log_warnings=False)
-        assert "\ue081" not in result
-        assert "\ue082" not in result
+        assert "\ufffd" not in result
         assert "(CMS)" in result
 
-    def test_real_world_pdf_artifacts(self):
-        """Simulates the WordPress PDF output with PUA chars."""
+    def test_real_world_after_llm_fixed_parens(self):
+        """Simulates v2 where LLM replaced U+FFFD with real parens."""
         text = (
-            "Content Management System \ue081(CMS)\ue082 which "
+            "Content Management System (CMS) which "
             "\u201csimplifies managing dynamic\u201d sites.\n\n\n\n"
-            "AI\ue088Leaders.org - Workforce"
+            "AI-Leaders.org - Workforce"
         )
         result = cleanup_markdown(text, log_warnings=False)
-        # PUA stripped/replaced
-        assert "\ue081" not in result
-        assert "\ue082" not in result
-        assert "\ue088" not in result
-        # Quotes normalised
-        assert "\u201c" not in result
-        assert "\u201d" not in result
+        assert "(CMS)" in result
         assert '"simplifies managing dynamic"' in result
-        # Whitespace collapsed
         assert "\n\n\n" not in result
-        # PUA between alpha → hyphen preserves domain
+        assert "AI-Leaders.org" in result
+
+    def test_real_world_llm_didnt_fix(self):
+        """Simulates v2 where LLM left U+FFFD — v3 strips them."""
+        text = (
+            "Content Management System \ufffdCMS\ufffd which "
+            "\u201csimplifies managing dynamic\u201d sites.\n\n\n\n"
+            "AI-Leaders.org - Workforce"
+        )
+        result = cleanup_markdown(text, log_warnings=False)
+        assert "\ufffd" not in result
+        assert "System CMS which" in result
         assert "AI-Leaders.org" in result
 
     def test_idempotent_on_clean_text(self):
-        """Running cleanup on already-clean text is a no-op."""
         text = "# Heading\n\nClean paragraph with normal text."
         assert cleanup_markdown(text, log_warnings=False) == text
 
     def test_all_fixes_applied_together(self):
-        """Verify ordering: PUA strip → quotes → NFKC → spacing → whitespace → URLs."""
         text = (
             "\ue000\u201cHello\u201d  world\n\n\n"
             "[link](example.com)"

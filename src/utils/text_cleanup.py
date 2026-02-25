@@ -16,35 +16,43 @@ _PUA_CHAR_CLASS = (
 )
 
 
-def replace_pua_hyphens(text: str) -> str:
-    """Replace PUA characters between alphanumerics with a hyphen.
+def replace_pua_chars(text: str) -> str:
+    """Replace PUA characters with best-guess substitutions.
 
-    PDF fonts sometimes encode hyphens/dashes as PUA codepoints.
-    When a PUA char sits between two alphanumeric characters, it is
-    almost certainly a hyphen (e.g. "AI\\ue088Leaders" → "AI-Leaders").
+    PDF fonts with custom encoding map glyphs to PUA codepoints
+    (U+E000-U+F8FF). These are invisible to LLMs and screen readers.
 
-    Only handles the unambiguous case. Other PUA chars (which may
-    represent parentheses, bullets, etc.) are left for the LLM to
-    resolve by comparing against the page image.
+    Context-aware replacement:
+    - Between two alphanumeric characters → hyphen (the PDF font likely
+      encoded a dash, e.g. "AI\\ue088Leaders" → "AI-Leaders")
+    - All other positions → U+FFFD (replacement character). Unlike PUA
+      chars which are invisible to LLMs, U+FFFD is a standard character
+      the LLM can see, signalling "something is missing here" so it can
+      compare against the page image and insert the correct character.
 
     Safe to run at v0 before LLM processing.
     """
-    return re.sub(
+    # First pass: PUA between alphanumeric chars → hyphen
+    text = re.sub(
         r'(?<=[A-Za-z0-9])' + _PUA_CHAR_CLASS + r'+(?=[A-Za-z0-9])',
         '-',
         text,
     )
+    # Second pass: remaining PUA → U+FFFD (visible to LLM)
+    text = re.sub(_PUA_CHAR_CLASS + r'+', '\ufffd', text)
+    return text
 
 
-def strip_remaining_pua(text: str) -> str:
-    """Remove any PUA characters still present after LLM processing.
+def strip_replacement_chars(text: str) -> str:
+    """Remove U+FFFD replacement characters and any leftover PUA.
 
-    Runs at v3 as a safety net. By this point the LLM agents have had a
-    chance to compare the markdown against page images and replace PUA
-    chars with real characters (e.g. parentheses). Any PUA chars still
-    remaining are artifacts that should be stripped.
+    Runs at v3 as a safety net after LLM processing. By this point the
+    LLM agents should have replaced U+FFFD markers with real characters
+    by comparing against page images. Any still remaining are stripped.
     """
-    return re.sub(_PUA_CHAR_CLASS + r'+', '', text)
+    text = re.sub(_PUA_CHAR_CLASS + r'+', '', text)
+    text = text.replace('\ufffd', '')
+    return text
 
 
 def normalize_unicode(text: str) -> str:
@@ -239,7 +247,7 @@ def sanitize_extracted_text(text: str) -> str:
     agents can fix by comparing the markdown against page images at v1.
     Remaining PUA chars are stripped at v3 by cleanup_markdown().
     """
-    text = replace_pua_hyphens(text)
+    text = replace_pua_chars(text)
     text = normalize_unicode(text)
     return text
 
@@ -268,8 +276,7 @@ def cleanup_markdown(text: str, log_warnings: bool = True) -> str:
     original_length = len(text)
 
     # Apply ONLY safe fixes that cannot introduce errors
-    text = replace_pua_hyphens(text)      # SAFE: PUA between alpha → hyphen
-    text = strip_remaining_pua(text)      # SAFE: Remove leftover PUA after LLM had its chance
+    text = strip_replacement_chars(text)  # SAFE: Remove U+FFFD and leftover PUA
     text = normalize_quotes(text)         # SAFE: Always correct
     text = normalize_unicode(text)        # SAFE: Canonical forms
     text = collapse_letter_spacing(text)  # SAFE: Fix OCR letter-spacing

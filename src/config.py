@@ -299,5 +299,10 @@ class Settings(BaseSettings):
         ge=60, le=3600, default=600, description="TTL for LTI OIDC state in Redis (10 minutes default)"
     )
 
+    # Feedback service (optional)
+    feedback_enabled: bool = False
+    feedback_service_url: str | None = None
+    feedback_service_api_key: SecretStr | None = None
+
 
 settings = Settings()

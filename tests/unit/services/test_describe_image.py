@@ -215,6 +215,7 @@ class TestImageDescriberSubagent:
     async def test_successful_description(self, service, sample_figure):
         """Should return formatted alt text instruction."""
         mock_result = ImageDescriptionResult(
+            image_category="informative",
             alt_text="Flowchart showing data processing steps",
             is_decorative=False,
             confidence="high",
@@ -253,6 +254,7 @@ class TestImageDescriberSubagent:
     async def test_decorative_image(self, service, sample_figure):
         """Decorative images should return instruction for empty alt."""
         mock_result = ImageDescriptionResult(
+            image_category="decorative",
             alt_text="",
             is_decorative=True,
             confidence="high",
@@ -305,6 +307,7 @@ class TestImageDescriberSubagent:
         captured_user_parts = []
 
         mock_result = ImageDescriptionResult(
+            image_category="informative",
             alt_text="Test alt",
             is_decorative=False,
             confidence="high",
@@ -434,10 +437,13 @@ class TestDescribeImageModelDefaults:
 
     def test_image_description_result_defaults(self):
         """ImageDescriptionResult should have sensible defaults."""
-        result = ImageDescriptionResult(alt_text="A chart")
+        result = ImageDescriptionResult(
+            image_category="informative", alt_text="A chart"
+        )
         assert result.is_decorative is False
         assert result.confidence == "high"
         assert result.reasoning == ""
+        assert result.image_category == "informative"
 
 
 class TestPageFigureFiltering:
@@ -531,3 +537,254 @@ class TestPageFigureFiltering:
         await service._step_page_content(result, structure)
 
         assert captured_figures[1] is None
+
+
+class TestImageIsolation:
+    """Test that the describer only receives the cropped figure, not the full page."""
+
+    @pytest.mark.asyncio
+    async def test_only_cropped_figure_sent_when_available(
+        self, service, sample_figure
+    ):
+        """When image_base64 is present, only the cropped figure is sent (no page image)."""
+        from pydantic_ai.messages import BinaryContent
+
+        captured_user_parts = []
+
+        mock_result = ImageDescriptionResult(
+            image_category="informative",
+            alt_text="Test",
+            is_decorative=False,
+            confidence="high",
+        )
+        mock_agent_result = MagicMock()
+        mock_agent_result.output = mock_result
+        mock_usage = MagicMock()
+        mock_usage.request_tokens = 100
+        mock_usage.response_tokens = 50
+        mock_agent_result.usage.return_value = mock_usage
+
+        mock_agent = MagicMock()
+
+        async def capture_run(user_parts, **kwargs):
+            captured_user_parts.extend(user_parts)
+            return mock_agent_result
+
+        mock_agent.run = AsyncMock(side_effect=capture_run)
+
+        with patch(_BEDROCK_PATCH), patch(_AGENT_PATCH, return_value=mock_agent):
+            await service._run_image_describer(
+                figure=sample_figure,
+                current_markdown="![](figures/figure-1.png)",
+                page_images={1: "PAGE_IMAGE_B64"},
+                describer_tokens={"input": 0, "output": 0},
+                update_tokens=lambda i, o: None,
+            )
+
+        # Should have exactly 1 BinaryContent (the cropped figure) + 1 text message
+        binary_parts = [
+            p for p in captured_user_parts if isinstance(p, BinaryContent)
+        ]
+        assert len(binary_parts) == 1
+
+        # Text should NOT contain fallback mode guidance
+        text_parts = [p for p in captured_user_parts if isinstance(p, str)]
+        assert not any("full page image" in p for p in text_parts)
+
+    @pytest.mark.asyncio
+    async def test_page_image_fallback_when_no_crop(self, service):
+        """When image_base64 is empty, falls back to full page image with guidance."""
+        from pydantic_ai.messages import BinaryContent
+
+        figure_no_crop = FigureData(
+            ref_id="figure-3.png",
+            caption="Figure 3: No crop available",
+            page_number=1,
+            image_base64="",  # Empty — Docling failed to extract
+        )
+
+        captured_user_parts = []
+
+        mock_result = ImageDescriptionResult(
+            image_category="informative",
+            alt_text="Fallback test",
+            is_decorative=False,
+            confidence="medium",
+        )
+        mock_agent_result = MagicMock()
+        mock_agent_result.output = mock_result
+        mock_usage = MagicMock()
+        mock_usage.request_tokens = 100
+        mock_usage.response_tokens = 50
+        mock_agent_result.usage.return_value = mock_usage
+
+        mock_agent = MagicMock()
+
+        async def capture_run(user_parts, **kwargs):
+            captured_user_parts.extend(user_parts)
+            return mock_agent_result
+
+        mock_agent.run = AsyncMock(side_effect=capture_run)
+
+        page_b64 = base64.b64encode(b"page-image-data").decode()
+
+        with patch(_BEDROCK_PATCH), patch(_AGENT_PATCH, return_value=mock_agent):
+            await service._run_image_describer(
+                figure=figure_no_crop,
+                current_markdown="![](figures/figure-3.png)",
+                page_images={1: page_b64},
+                describer_tokens={"input": 0, "output": 0},
+                update_tokens=lambda i, o: None,
+            )
+
+        # Should have 1 BinaryContent (the page image fallback) + 1 text message
+        binary_parts = [
+            p for p in captured_user_parts if isinstance(p, BinaryContent)
+        ]
+        assert len(binary_parts) == 1
+
+        # Text SHOULD contain fallback mode guidance
+        text_parts = [p for p in captured_user_parts if isinstance(p, str)]
+        assert any("full page image" in p for p in text_parts)
+        assert any("figure-3.png" in p for p in text_parts)
+
+    @pytest.mark.asyncio
+    async def test_no_images_sent_when_neither_available(self, service):
+        """When both crop and page image are missing, only text is sent."""
+        from pydantic_ai.messages import BinaryContent
+
+        figure_no_crop = FigureData(
+            ref_id="figure-4.png",
+            caption="Figure 4: Ghost figure",
+            page_number=5,
+            image_base64="",
+        )
+
+        captured_user_parts = []
+
+        mock_result = ImageDescriptionResult(
+            image_category="informative",
+            alt_text="No image available",
+            is_decorative=False,
+            confidence="low",
+        )
+        mock_agent_result = MagicMock()
+        mock_agent_result.output = mock_result
+        mock_usage = MagicMock()
+        mock_usage.request_tokens = 50
+        mock_usage.response_tokens = 30
+        mock_agent_result.usage.return_value = mock_usage
+
+        mock_agent = MagicMock()
+
+        async def capture_run(user_parts, **kwargs):
+            captured_user_parts.extend(user_parts)
+            return mock_agent_result
+
+        mock_agent.run = AsyncMock(side_effect=capture_run)
+
+        with patch(_BEDROCK_PATCH), patch(_AGENT_PATCH, return_value=mock_agent):
+            await service._run_image_describer(
+                figure=figure_no_crop,
+                current_markdown="![](figures/figure-4.png)",
+                page_images={},  # No page images at all
+                describer_tokens={"input": 0, "output": 0},
+                update_tokens=lambda i, o: None,
+            )
+
+        binary_parts = [
+            p for p in captured_user_parts if isinstance(p, BinaryContent)
+        ]
+        assert len(binary_parts) == 0
+
+
+class TestImageClassification:
+    """Test the image_category field on ImageDescriptionResult."""
+
+    def test_decorative_category(self):
+        result = ImageDescriptionResult(
+            image_category="decorative",
+            alt_text="",
+            is_decorative=True,
+            confidence="high",
+            reasoning="University logo in page header",
+        )
+        assert result.image_category == "decorative"
+        assert result.is_decorative is True
+        assert result.alt_text == ""
+
+    def test_informative_category(self):
+        result = ImageDescriptionResult(
+            image_category="informative",
+            alt_text="Eastern box turtle on forest floor",
+            is_decorative=False,
+            confidence="high",
+        )
+        assert result.image_category == "informative"
+        assert result.is_decorative is False
+
+    def test_complex_informative_category(self):
+        result = ImageDescriptionResult(
+            image_category="complex_informative",
+            alt_text="Bar chart showing enrollment growth from 450 to 680 students",
+            is_decorative=False,
+            confidence="high",
+            reasoning="Data visualization with multiple data points — long description recommended",
+        )
+        assert result.image_category == "complex_informative"
+
+    def test_invalid_category_rejected(self):
+        """Invalid image_category values should be rejected by Pydantic."""
+        with pytest.raises(Exception):
+            ImageDescriptionResult(
+                image_category="unknown",
+                alt_text="Test",
+            )
+
+
+class TestDescriberUserMessage:
+    """Test the build_describer_user_message helper."""
+
+    def test_standard_mode(self):
+        from src.agents.prompts.image_description import (
+            build_describer_user_message,
+        )
+
+        msg = build_describer_user_message(
+            caption="Figure 1: Test",
+            surrounding_text="some context",
+            ref_id="figure-1.png",
+        )
+        assert "figure-1.png" in msg
+        assert "Figure 1: Test" in msg
+        assert "full page image" not in msg
+        assert "classify" in msg.lower()
+
+    def test_fallback_mode(self):
+        from src.agents.prompts.image_description import (
+            build_describer_user_message,
+        )
+
+        msg = build_describer_user_message(
+            caption="Figure 2: Chart",
+            surrounding_text="nearby text",
+            ref_id="figure-2.png",
+            fallback_mode=True,
+        )
+        assert "full page image" in msg
+        assert "figure-2.png" in msg
+        assert "ONLY that figure" in msg
+
+    def test_no_caption_or_context(self):
+        from src.agents.prompts.image_description import (
+            build_describer_user_message,
+        )
+
+        msg = build_describer_user_message(
+            caption="",
+            surrounding_text="",
+            ref_id="figure-5.png",
+        )
+        assert "figure-5.png" in msg
+        assert "Caption" not in msg
+        assert "Surrounding text" not in msg

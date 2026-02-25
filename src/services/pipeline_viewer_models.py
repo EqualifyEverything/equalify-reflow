@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 from enum import Enum
+from typing import Literal
 
 from pydantic import BaseModel, Field
 
@@ -191,6 +192,9 @@ class SectionMap(BaseModel):
 
 class ImageDescriptionResult(BaseModel):
     """Result from the image description subagent."""
+
+    image_category: Literal["decorative", "informative", "complex_informative"]
+    """Classification of the image's accessibility role."""
 
     alt_text: str
     """WCAG-compliant alt text (empty string for decorative images)."""

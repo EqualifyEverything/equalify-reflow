@@ -1647,34 +1647,37 @@ class PipelineViewerService:
         else:
             surrounding_text = ""
 
-        user_message = build_describer_user_message(
-            caption=figure.caption,
-            surrounding_text=surrounding_text,
-            ref_id=figure.ref_id,
-        )
-
-        # Build multimodal user message: figure image + optional page image + text
+        # Build multimodal user message: prefer cropped figure only,
+        # fall back to full page image when the crop is unavailable.
         user_parts: list[Any] = []
+        fallback_mode = False
 
-        # Attach the extracted figure image
         if figure.image_base64:
+            # Ideal: send only the isolated cropped figure
             user_parts.append(
                 BinaryContent(
                     data=base64.b64decode(figure.image_base64),
                     media_type="image/png",
                 )
             )
-
-        # Attach the full page image for broader context
-        page_img = page_images.get(figure.page_number)
-        if page_img:
-            user_parts.append(
-                BinaryContent(
-                    data=base64.b64decode(page_img),
-                    media_type="image/png",
+        else:
+            # Fallback: Docling didn't extract a crop — send the full page
+            fallback_mode = True
+            page_img = page_images.get(figure.page_number)
+            if page_img:
+                user_parts.append(
+                    BinaryContent(
+                        data=base64.b64decode(page_img),
+                        media_type="image/png",
+                    )
                 )
-            )
 
+        user_message = build_describer_user_message(
+            caption=figure.caption,
+            surrounding_text=surrounding_text,
+            ref_id=figure.ref_id,
+            fallback_mode=fallback_mode,
+        )
         user_parts.append(user_message)
 
         model = BedrockConverseModel(MODEL_TIER_MAP[ModelTier.EFFICIENT])

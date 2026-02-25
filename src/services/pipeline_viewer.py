@@ -31,6 +31,7 @@ from .pipeline_viewer_models import (
     FootnoteInfo,
     HeadingReconciliationOutput,
     ImageDescriptionResult,
+    LayoutType,
     OutlineEntry,
     PageAttributes,
     PageCorrectionResult,
@@ -84,10 +85,18 @@ def _compose_page_prompt(attrs: PageAttributes) -> str:
 
     Always includes the base fragment. Layout fragment is selected by
     attrs.layout. Boolean flags toggle content and quality fragments.
+
+    For poster layouts, the ``base_create`` fragment is used instead of
+    ``base`` to switch the agent into "creation mode" — composing
+    markdown from the page image rather than correcting existing text.
     """
     fragments = []
 
-    base = _load_fragment("base")
+    # Select base prompt by mode
+    if attrs.layout == LayoutType.POSTER:
+        base = _load_fragment("base_create")
+    else:
+        base = _load_fragment("base")
     if base:
         fragments.append(base)
 
@@ -1852,18 +1861,13 @@ class PipelineViewerService:
         changes: list[DocumentChange] = []
         issues: list[str] = []
 
-        # Build system prompt
-        base_prompt = (
-            "You are a document correction agent. Compare the page image "
-            "(visual ground truth) against the markdown and fix discrepancies.\n\n"
-            "Use the str_replace tool for each correction. Use no_changes if "
-            "the page is already correct.\n\n"
-            "Do NOT fix word fragments at the very start or end of the page — "
-            "a later step handles cross-page joins.\n"
-            "Do NOT relocate footnote bodies — a later step handles that.\n"
+        # Build system prompt from composed procedure
+        base_prompt = procedure if procedure else ""
+
+        # Determine mode from page attributes
+        is_create_mode = bool(
+            page_attrs and page_attrs.layout == LayoutType.POSTER
         )
-        if procedure:
-            base_prompt += f"\n{procedure}\n"
 
         # ------------------------------------------------------------------
         # describe_image tool: closure state
@@ -1892,7 +1896,7 @@ class PipelineViewerService:
         agent: Agent[None, None] = Agent(
             model=model,
             output_type=None,  # output comes through tool calls
-            system_prompt=base_prompt,
+            instructions=base_prompt,
         )
 
         @agent.tool_plain
@@ -1995,6 +1999,45 @@ class PipelineViewerService:
                 describer_input_tokens += inp
                 describer_output_tokens += out
 
+        # ------------------------------------------------------------------
+        # Conditionally register rewrite_page tool (create mode only)
+        # ------------------------------------------------------------------
+        if is_create_mode:
+            @agent.tool_plain
+            def rewrite_page(new_markdown: str, reasoning: str) -> str:
+                """Replace the ENTIRE page markdown with composed content.
+
+                Use this when the page markdown is empty or stub-only and you
+                need to compose content from the page image. After rewrite_page,
+                you can use str_replace for small refinements.
+
+                Args:
+                    new_markdown: The complete new markdown for this page.
+                        Must include all visible text from the page image.
+                    reasoning: Why the rewrite is needed and what content
+                        was composed from the image.
+                """
+                nonlocal current_markdown
+
+                if not new_markdown.strip():
+                    return (
+                        "ERROR: new_markdown is empty. Read the page image "
+                        "and compose markdown that captures all visible text."
+                    )
+
+                old_content = current_markdown
+                current_markdown = new_markdown
+                changes.append(
+                    DocumentChange(
+                        page=page_num,
+                        old_text=old_content[:200] + ("..." if len(old_content) > 200 else ""),
+                        new_text=new_markdown[:200] + ("..." if len(new_markdown) > 200 else ""),
+                        reasoning=reasoning,
+                        stage="create_mode_rewrite",
+                    )
+                )
+                return f"OK — page {page_num} markdown replaced ({len(new_markdown)} chars)."
+
         # Build user message
         if not outline_text:
             outline_text = "\n".join(
@@ -2015,13 +2058,24 @@ class PipelineViewerService:
             hints_lines = "\n".join(f"- {h}" for h in context_hints)
             hints_block = f"### Context hints\n{hints_lines}\n\n"
 
+        if is_create_mode:
+            instruction_tail = (
+                "Read the page image and compose markdown that captures all "
+                "visible text content. Use rewrite_page to set the page "
+                "markdown, then describe_image for any figure references."
+            )
+        else:
+            instruction_tail = (
+                "Compare the image against the markdown. Make corrections "
+                "with str_replace, or call no_changes if the page is correct."
+            )
+
         user_parts.append(
             f"## Page {page_num}\n\n"
             f"### Document outline\n{outline_text}\n\n"
             f"{hints_block}"
             f"### Page markdown\n```\n{page_markdown}\n```\n\n"
-            f"Compare the image against the markdown. Make corrections "
-            f"with str_replace, or call no_changes if the page is correct."
+            f"{instruction_tail}"
         )
 
         # Run agent

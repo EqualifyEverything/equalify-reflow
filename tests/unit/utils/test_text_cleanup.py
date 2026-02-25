@@ -24,17 +24,27 @@ pytestmark = pytest.mark.unit
 
 
 class TestStripPrivateUseChars:
-    """Tests for PUA character removal."""
+    """Tests for PUA character replacement/removal."""
 
-    def test_removes_bmp_pua_chars(self):
-        """PUA chars from BMP range (U+E000-U+F8FF) are stripped."""
+    def test_removes_pua_adjacent_to_space(self):
+        """PUA chars next to whitespace are removed (decorative)."""
         text = "Content Management System \ue081(CMS)\ue082 which"
         assert strip_private_use_chars(text) == "Content Management System (CMS) which"
 
-    def test_removes_multiple_pua_chars(self):
-        """Multiple different PUA chars are all removed."""
-        text = "\ue081Hello\ue082 \ue088World"
-        assert strip_private_use_chars(text) == "Hello World"
+    def test_replaces_pua_between_alpha_with_hyphen(self):
+        """PUA between alphanumerics becomes a hyphen (likely encoded dash)."""
+        text = "AI\ue088Leaders.org"
+        assert strip_private_use_chars(text) == "AI-Leaders.org"
+
+    def test_replaces_consecutive_pua_between_alpha_with_single_hyphen(self):
+        """Multiple consecutive PUA chars between alphanumerics → one hyphen."""
+        text = "foo\ue001\ue002bar"
+        assert strip_private_use_chars(text) == "foo-bar"
+
+    def test_mixed_contexts(self):
+        """Mix of decorative and hyphen PUA chars in one string."""
+        text = "\ue081Hello\ue082 AI\ue088Leaders"
+        assert strip_private_use_chars(text) == "Hello AI-Leaders"
 
     def test_preserves_normal_text(self):
         """Normal ASCII and common Unicode text is untouched."""
@@ -57,20 +67,20 @@ class TestStripPrivateUseChars:
         text = "\ue000Hello\uf8ff"
         assert strip_private_use_chars(text) == "Hello"
 
-    def test_pua_adjacent_to_punctuation(self):
-        """PUA chars next to punctuation don't leave artifacts."""
-        text = "AILeaders\ue088.org"
-        assert strip_private_use_chars(text) == "AILeaders.org"
+    def test_pua_between_digit_and_letter(self):
+        """PUA between digit and letter → hyphen."""
+        text = "v2\ue000beta"
+        assert strip_private_use_chars(text) == "v2-beta"
 
-    def test_supplementary_pua_a(self):
-        """Supplementary PUA-A chars (U+F0000-U+FFFFD) are stripped."""
+    def test_supplementary_pua_a_between_alpha(self):
+        """Supplementary PUA-A between alphanumerics → hyphen."""
         text = "test\U000F0001text"
-        assert strip_private_use_chars(text) == "testtext"
+        assert strip_private_use_chars(text) == "test-text"
 
-    def test_supplementary_pua_b(self):
-        """Supplementary PUA-B chars (U+100000-U+10FFFD) are stripped."""
-        text = "test\U00100001text"
-        assert strip_private_use_chars(text) == "testtext"
+    def test_supplementary_pua_b_removed_at_boundary(self):
+        """Supplementary PUA-B at start is removed."""
+        text = "\U00100001test"
+        assert strip_private_use_chars(text) == "test"
 
 
 # ============================================================================
@@ -224,10 +234,10 @@ class TestCleanupMarkdown:
         text = (
             "Content Management System \ue081(CMS)\ue082 which "
             "\u201csimplifies managing dynamic\u201d sites.\n\n\n\n"
-            "AILeaders\ue088.org - Workforce"
+            "AI\ue088Leaders.org - Workforce"
         )
         result = cleanup_markdown(text, log_warnings=False)
-        # PUA stripped
+        # PUA stripped/replaced
         assert "\ue081" not in result
         assert "\ue082" not in result
         assert "\ue088" not in result
@@ -237,8 +247,8 @@ class TestCleanupMarkdown:
         assert '"simplifies managing dynamic"' in result
         # Whitespace collapsed
         assert "\n\n\n" not in result
-        # Content preserved
-        assert "AILeaders.org" in result
+        # PUA between alpha → hyphen preserves domain
+        assert "AI-Leaders.org" in result
 
     def test_idempotent_on_clean_text(self):
         """Running cleanup on already-clean text is a no-op."""

@@ -11,26 +11,44 @@ from urllib.parse import urlparse
 logger = logging.getLogger(__name__)
 
 
+_PUA_CHAR_CLASS = (
+    r'[\uE000-\uF8FF\U000F0000-\U000FFFFD\U00100000-\U0010FFFD]'
+)
+
+
 def strip_private_use_chars(text: str) -> str:
-    """Remove Unicode Private Use Area (PUA) characters.
+    """Replace or remove Unicode Private Use Area (PUA) characters.
 
     PDF fonts with custom encoding map glyphs to PUA codepoints
     (U+E000-U+F8FF, U+F0000-U+FFFFD, U+100000-U+10FFFD). These render
     as invisible boxes or replacement glyphs and break screen readers.
 
+    Context-aware replacement:
+    - Between two alphanumeric characters → hyphen (the PDF font likely
+      encoded a dash/hyphen as a PUA glyph, e.g. "AI-Leaders")
+    - Otherwise → removed (decorative or meaningless)
+
     Args:
         text: Input text potentially containing PUA characters
 
     Returns:
-        Text with PUA characters removed
+        Text with PUA characters replaced or removed
 
     Examples:
         >>> strip_private_use_chars("Content Management System \\ue081(CMS)")
         'Content Management System (CMS)'
+        >>> strip_private_use_chars("AI\\ue088Leaders.org")
+        'AI-Leaders.org'
     """
-    # Remove BMP Private Use Area (U+E000-U+F8FF) and
-    # Supplementary Private Use Areas (U+F0000-U+10FFFD)
-    return re.sub(r'[\uE000-\uF8FF\U000F0000-\U000FFFFD\U00100000-\U0010FFFD]', '', text)
+    # First pass: PUA between alphanumeric chars → hyphen
+    text = re.sub(
+        r'(?<=[A-Za-z0-9])' + _PUA_CHAR_CLASS + r'+(?=[A-Za-z0-9])',
+        '-',
+        text,
+    )
+    # Second pass: remaining PUA chars (adjacent to whitespace/punctuation) → remove
+    text = re.sub(_PUA_CHAR_CLASS + r'+', '', text)
+    return text
 
 
 def normalize_unicode(text: str) -> str:

@@ -29,6 +29,12 @@ top-to-bottom, then right column top-to-bottom.
 - **presentation** — Slide-like layout with discrete text boxes positioned \
 freely on the page rather than flowing paragraphs. High image-to-text ratio, \
 often landscape format.
+- **poster** — A complex visual page (event flyers, infographics, academic \
+poster sessions) where significant readable text in the page image is NOT \
+present in the extracted markdown. The markdown is dominated by image \
+references (``![](figures/...)`` or ``<!-- image -->``) while the page image \
+clearly shows substantial text content (titles, descriptions, dates, contact \
+info, etc.) that Docling failed to extract.
 
 **How to decide** — look at the body paragraphs (not titles or abstracts, \
 which may span the full width even in double-column documents):
@@ -38,6 +44,9 @@ them → **double_column**.
 2. If body text spans the full page width → **single_column**.
 3. If content is arranged in discrete boxes rather than flowing text → \
 **presentation**.
+4. If the markdown is dominated by image references while the page image \
+clearly shows substantial readable text that is absent from the markdown → \
+**poster**.
 
 A layout hint from bounding-box analysis may be provided in the user message. \
 It is usually correct, but always verify against the image.

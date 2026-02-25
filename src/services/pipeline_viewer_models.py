@@ -17,6 +17,7 @@ class LayoutType(str, Enum):
     SINGLE_COLUMN = "single_column"
     DOUBLE_COLUMN = "double_column"
     PRESENTATION = "presentation"
+    POSTER = "poster"
 
 
 class PageAttributes(BaseModel):

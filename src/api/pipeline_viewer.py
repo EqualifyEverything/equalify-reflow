@@ -48,6 +48,10 @@ async def process_pdf(
     enable_structure: bool = Form(default=False),
     enable_page_content: bool = Form(default=False),
     enable_boundaries: bool = Form(default=False),
+    ocr_languages: str = Form(
+        default="eng",
+        description="Comma-separated Tesseract OCR language codes (e.g. 'eng,deu')",
+    ),
 ) -> dict[str, Any]:
     """Process a PDF through the versioned pipeline viewer.
 
@@ -65,6 +69,8 @@ async def process_pdf(
 
     images_scale = max(1.0, min(3.0, images_scale))
 
+    ocr_lang_list = [lang.strip() for lang in ocr_languages.split(",")]
+
     logger.info(f"Pipeline Viewer: processing {file.filename} ({len(content)} bytes)")
 
     service = PipelineViewerService()
@@ -76,6 +82,7 @@ async def process_pdf(
         enable_structure=enable_structure,
         enable_page_content=enable_page_content,
         enable_boundaries=enable_boundaries,
+        ocr_languages=ocr_lang_list,
     )
 
     return result.model_dump()
@@ -86,6 +93,10 @@ async def process_pdf_stream(
     file: UploadFile = File(...),
     images_scale: float = Form(default=2.0),
     do_table_structure: bool = Form(default=True),
+    ocr_languages: str = Form(
+        default="eng",
+        description="Comma-separated Tesseract OCR language codes (e.g. 'eng,deu')",
+    ),
 ) -> StreamingResponse:
     """Stream pipeline processing results via SSE.
 
@@ -111,6 +122,7 @@ async def process_pdf_stream(
 
     images_scale = max(1.0, min(3.0, images_scale))
     filename = file.filename
+    ocr_lang_list = [lang.strip() for lang in ocr_languages.split(",")]
 
     logger.info(f"Pipeline Viewer (stream): processing {filename} ({len(content)} bytes)")
 
@@ -175,6 +187,46 @@ async def process_pdf_stream(
             "findings_count": len(classification.findings),
             "elapsed_ms": classification.elapsed_ms,
         }
+
+        # OCR re-run for scanned documents
+        if result.stats.get("total_chars", 0) == 0:
+            from src.services.pdf_classifier import FINDING_SCANNED, FINDING_SCAN_PRODUCER
+
+            scanned_codes = {FINDING_SCANNED, FINDING_SCAN_PRODUCER}
+            finding_codes = {f.code for f in classification.findings}
+            if finding_codes & scanned_codes:
+                from src.config import settings as app_settings
+
+                effective_langs = ocr_lang_list
+                yield _sse_event("processing", {
+                    "step_name": "docling_ocr",
+                    "display_name": "Tesseract OCR Re-extraction",
+                })
+                task = asyncio.create_task(
+                    service._step_docling_ocr(
+                        result, content, filename, images_scale, do_table_structure,
+                        languages=effective_langs,
+                    )
+                )
+                async for hb in _heartbeats_until_done(task):
+                    yield hb
+                task.result()
+                # Update scanned finding to reflect that OCR was applied
+                for finding in classification.findings:
+                    if finding.code in scanned_codes:
+                        finding.message = (
+                            "Document appears to be scanned. Tesseract OCR has been "
+                            "applied, which may increase processing time and introduce "
+                            "character recognition errors."
+                        )
+                enrich_classification(
+                    classification,
+                    total_pages=result.total_pages,
+                    total_chars=result.stats.get("total_chars", 0),
+                    figure_count=result.stats.get("figure_count", 0),
+                    layout_hints=result.stats.get("layout_hints", {}),
+                )
+                result.warnings = classification.warning_messages
 
         # Send full result after Docling (includes page_images, figures, warnings)
         yield _sse_event("init", result.model_dump())

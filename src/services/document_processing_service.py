@@ -57,6 +57,7 @@ class DocumentProcessingService:
         filename: str,
         review_mode: Literal["auto", "human"] = "auto",
         max_rounds: int = 1,
+        ocr_languages: list[str] | None = None,
     ) -> PipelineViewerResult:
         """Process a document through the versioned pipeline.
 
@@ -71,6 +72,7 @@ class DocumentProcessingService:
             filename: Original filename
             review_mode: 'auto' or 'human' (preserved for future use)
             max_rounds: Unused (kept for interface compatibility)
+            ocr_languages: Tesseract OCR language codes for scanned documents
 
         Returns:
             PipelineViewerResult with versioned markdowns and step data
@@ -101,6 +103,7 @@ class DocumentProcessingService:
                 enable_structure=True,
                 enable_page_content=True,
                 enable_boundaries=True,
+                ocr_languages=ocr_languages,
             )
 
             # 2a. Check for classification errors (unsupported document type)

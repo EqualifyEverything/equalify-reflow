@@ -132,6 +132,10 @@ async def submit_document(
         default=False, description="Generate debug bundle with all agent prompts and responses"
     ),
     max_rounds: int = Form(default=1, ge=1, le=5, description="Max processing rounds for iterative refinement (1-5)"),
+    ocr_languages: str | None = Form(
+        default=None,
+        description="Comma-separated Tesseract OCR language codes for scanned documents (e.g. 'eng,deu'). Defaults to 'eng'.",
+    ),
     storage: StorageService = Depends(get_storage_service),
     queue: QueueService = Depends(get_queue_service),
     job_service: JobService = Depends(get_job_service),
@@ -148,6 +152,18 @@ async def submit_document(
         generate_debug_bundle: If True, save all agent prompts/responses for debugging
         max_rounds: Maximum number of iterative refinement rounds (1-5, default: 1)
     """
+    # Parse and validate OCR languages
+    ocr_lang_list = [lang.strip() for lang in ocr_languages.split(",")] if ocr_languages else None
+    if ocr_lang_list:
+        from ..utils.ocr_languages import validate_ocr_languages
+
+        invalid = validate_ocr_languages(ocr_lang_list)
+        if invalid:
+            raise HTTPException(
+                status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
+                detail=f"Invalid OCR language code(s): {', '.join(invalid)}. Use Tesseract language codes (e.g. 'eng', 'deu', 'fra').",
+            )
+
     job_id, s3_key = await storage.store_document(file)
 
     if skip_pii_scan:
@@ -162,6 +178,7 @@ async def submit_document(
             debug_bundle_requested=generate_debug_bundle,
             review_mode=review_mode,
             max_rounds=max_rounds,
+            ocr_languages=ocr_lang_list,
         )
 
         # Record job submission metric
@@ -182,6 +199,7 @@ async def submit_document(
             filename=file.filename or "document.pdf",
             review_mode=review_mode,
             max_rounds=max_rounds,
+            ocr_languages=ocr_lang_list,
         )
 
         return JobSubmissionResponse(
@@ -201,6 +219,7 @@ async def submit_document(
             debug_bundle_requested=generate_debug_bundle,
             review_mode=review_mode,
             max_rounds=max_rounds,
+            ocr_languages=ocr_lang_list,
         )
         await queue.queue_pii_job(job_id, s3_key)
 

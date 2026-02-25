@@ -20,6 +20,7 @@ from io import BytesIO
 from pathlib import Path
 from typing import Any
 
+from ..config import settings
 from .pipeline_viewer_models import (
     CandidateChange,
     CodeBlockInfo,
@@ -448,6 +449,118 @@ class PipelineViewerService:
             "elapsed_ms": classification.elapsed_ms,
         }
 
+        # ── Tesseract OCR re-run for scanned documents ──────────
+        # If initial extraction produced zero text and the classifier
+        # flagged a scanned document, re-run Docling with OCR enabled.
+        if result.stats.get("total_chars", 0) == 0:
+            from .pdf_classifier import FINDING_SCAN_PRODUCER, FINDING_SCANNED
+
+            scanned_codes = {FINDING_SCANNED, FINDING_SCAN_PRODUCER}
+            finding_codes = {f.code for f in classification.findings}
+            if finding_codes & scanned_codes:
+                effective_langs = ocr_languages or settings.ocr_default_languages
+                await self._step_docling_ocr(
+                    result,
+                    file_content,
+                    filename,
+                    images_scale,
+                    do_table_structure,
+                    languages=effective_langs,
+                )
+                # Update scanned finding to reflect that OCR was applied
+                for finding in classification.findings:
+                    if finding.code in scanned_codes:
+                        finding.message = (
+                            "Document appears to be scanned. Tesseract OCR has been "
+                            "applied, which may increase processing time and introduce "
+                            "character recognition errors."
+                        )
+                # Re-enrich classification with post-OCR stats
+                enrich_classification(
+                    classification,
+                    total_pages=result.total_pages,
+                    total_chars=result.stats.get("total_chars", 0),
+                    figure_count=result.stats.get("figure_count", 0),
+                    layout_hints=result.stats.get("layout_hints", {}),
+                )
+                result.warnings = classification.warning_messages
+                result.stats["classification"] = {
+                    "document_type": classification.document_type.value,
+                    "findings_count": len(classification.findings),
+                    "elapsed_ms": classification.elapsed_ms,
+                }
+        # ── End Tesseract OCR re-run ────────────────────────────
+
+        # ── Empty-content guard ─────────────────────────────────
+        # Scanned / image-only PDFs that produce zero extractable text
+        # cannot benefit from LLM phases.  Skip them to save tokens.
+        if result.stats.get("total_chars", 0) == 0:
+            skipped_meta = {"reason": "empty_content", "total_chars": 0}
+
+            if enable_structure:
+                for name, display in (
+                    ("structure", "Structure Analysis"),
+                    ("heading_reconciliation", "Heading Reconciliation"),
+                    ("heading_levels", "Heading Levels"),
+                ):
+                    result.steps.append(
+                        StepResult(
+                            name=name,
+                            display_name=display,
+                            version_before="v0",
+                            version_after="v0",
+                            elapsed_ms=0,
+                            changes=[],
+                            metadata=skipped_meta,
+                            skipped=True,
+                        )
+                    )
+
+            if enable_page_content:
+                for name, display in (
+                    ("page_content", "Page Content Corrections"),
+                    ("code_blocks", "Code Block Languages"),
+                ):
+                    result.steps.append(
+                        StepResult(
+                            name=name,
+                            display_name=display,
+                            version_before="v0",
+                            version_after="v0",
+                            elapsed_ms=0,
+                            changes=[],
+                            metadata=skipped_meta,
+                            skipped=True,
+                        )
+                    )
+
+            if enable_boundaries:
+                for name, display in (
+                    ("boundaries", "Cross-Page Fixes"),
+                    ("cleanup", "Final Cleanup"),
+                ):
+                    result.steps.append(
+                        StepResult(
+                            name=name,
+                            display_name=display,
+                            version_before="v0",
+                            version_after="v0",
+                            elapsed_ms=0,
+                            changes=[],
+                            metadata=skipped_meta,
+                            skipped=True,
+                        )
+                    )
+
+            if not result.warnings:
+                result.warnings = []
+            result.warnings.append(
+                "Document produced zero extractable text. "
+                "LLM processing phases were skipped."
+            )
+            return result
+        # ── End empty-content guard ─────────────────────────────
+
         structure: StructureResult | None = None
 
         if enable_structure:
@@ -595,6 +708,158 @@ class PipelineViewerService:
             "total_elapsed_ms": elapsed_ms,
             "layout_hints": layout_hints,
         }
+
+    # ------------------------------------------------------------------
+    # Phase 0b — Tesseract OCR re-extraction (scanned documents only)
+    # ------------------------------------------------------------------
+
+    async def _step_docling_ocr(
+        self,
+        result: PipelineViewerResult,
+        file_content: bytes,
+        filename: str,
+        images_scale: float,
+        do_table_structure: bool,
+        *,
+        languages: list[str],
+    ) -> None:
+        """Re-run Docling with Tesseract OCR for scanned documents.
+
+        Called when the initial ``_step_docling()`` produced zero extractable
+        text and the classifier flagged the document as scanned.  Overwrites
+        v0 content with OCR results.
+
+        Args:
+            result: Pipeline result to update (v0 overwritten).
+            file_content: Raw PDF bytes.
+            filename: Original filename.
+            images_scale: Scale factor for page images.
+            do_table_structure: Whether to run table structure recognition.
+            languages: Tesseract language codes (e.g. ``["eng", "deu"]``).
+        """
+        from docling.datamodel.base_models import InputFormat
+        from docling.datamodel.document import DocumentStream  # type: ignore[attr-defined]
+        from docling.datamodel.pipeline_options import (
+            PdfPipelineOptions,
+            TesseractCliOcrOptions,
+        )
+        from docling.document_converter import DocumentConverter, PdfFormatOption
+
+        step_start = time.time()
+        logger.info(
+            "Running Tesseract OCR re-extraction for %s with languages: %s",
+            filename,
+            languages,
+        )
+
+        ocr_options = TesseractCliOcrOptions(
+            lang=languages,
+            force_full_page_ocr=True,
+        )
+
+        pipeline_options = PdfPipelineOptions(
+            do_ocr=True,
+            ocr_options=ocr_options,
+            do_table_structure=do_table_structure,
+            generate_page_images=True,
+            generate_picture_images=True,
+            images_scale=images_scale,
+        )
+
+        converter = DocumentConverter(
+            format_options={InputFormat.PDF: PdfFormatOption(pipeline_options=pipeline_options)}
+        )
+
+        pdf_stream = BytesIO(file_content)
+        doc_stream = DocumentStream(name=filename, stream=pdf_stream)
+        conv_result = await asyncio.to_thread(converter.convert, source=doc_stream)
+        doc = conv_result.document
+
+        result.total_pages = len(doc.pages)
+
+        # Overwrite v0 with OCR content
+        try:
+            full_md = doc.export_to_markdown()
+        except Exception as e:
+            logger.warning(f"Failed to export OCR markdown: {e}")
+            full_md = ""
+
+        result.versions["v0"] = full_md
+
+        # Per-page markdown and images (overwrite)
+        total_chars = 0
+        page_mds: dict[str, str] = {}
+        for page_no in sorted(doc.pages.keys()):
+            page_md = doc.export_to_markdown(page_no=page_no)
+            total_chars += len(page_md)
+            page_key = str(page_no)
+            page_mds[page_key] = page_md
+
+            page = doc.pages[page_no]
+            if page.image and hasattr(page.image, "pil_image") and page.image.pil_image:
+                result.page_images[page_key] = _pil_to_base64(page.image.pil_image)
+
+        result.page_markdowns["v0"] = page_mds
+
+        # Re-extract figures
+        result.figures.clear()
+        for i, pic in enumerate(doc.pictures):
+            if pic.image and hasattr(pic.image, "pil_image") and pic.image.pil_image:
+                result.figures.append(
+                    FigureData(
+                        ref_id=f"figure-{i + 1}",
+                        caption=pic.caption_text(doc=doc) or "",
+                        page_number=pic.prov[0].page_no if pic.prov else 1,
+                        image_base64=_pil_to_base64(pic.image.pil_image),
+                    )
+                )
+
+        # Replace <!-- image --> placeholders with inline image refs
+        if result.figures:
+            for page_key, page_md in page_mds.items():
+                page_figures = [f for f in result.figures if str(f.page_number) == page_key]
+                if page_figures:
+                    page_mds[page_key] = _replace_image_placeholders(page_md, page_figures)
+            result.page_markdowns["v0"] = page_mds
+            result.versions["v0"] = _replace_image_placeholders(
+                result.versions["v0"], result.figures
+            )
+
+        # Detect column layout per page
+        layout_hints: dict[str, str] = {}
+        for page_no in sorted(doc.pages.keys()):
+            layout_hints[str(page_no)] = _detect_page_columns(doc, page_no)
+
+        elapsed_ms = int((time.time() - step_start) * 1000)
+
+        result.steps.append(
+            StepResult(
+                name="docling_ocr",
+                display_name="Tesseract OCR Re-extraction",
+                version_before="v0",
+                version_after="v0",
+                elapsed_ms=elapsed_ms,
+                changes=[],
+                metadata={
+                    "ocr_engine": "tesseract_cli",
+                    "languages": languages,
+                    "total_chars_after_ocr": total_chars,
+                    "force_full_page_ocr": True,
+                },
+            )
+        )
+
+        # Update stats with OCR results
+        chars_per_page = total_chars / result.total_pages if result.total_pages > 0 else 0
+        result.stats.update({
+            "total_chars": total_chars,
+            "chars_per_page": round(chars_per_page, 1),
+            "is_likely_scanned": True,
+            "ocr_applied": True,
+            "ocr_languages": languages,
+            "ocr_elapsed_ms": elapsed_ms,
+            "layout_hints": layout_hints,
+        })
 
     # ------------------------------------------------------------------
     # Phase 1 — Structure Analysis (sequential, analysis-only)

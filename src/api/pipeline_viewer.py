@@ -10,6 +10,7 @@ from typing import Any
 from fastapi import APIRouter, File, Form, HTTPException, UploadFile
 from fastapi.responses import StreamingResponse
 
+from ..services.feedback_client import feedback_client
 from ..services.pdf_classifier import classify_pdf, enrich_classification
 from ..services.pipeline_viewer import PipelineViewerService
 from ..services.pipeline_viewer_models import PipelineViewerResult, StepResult
@@ -125,6 +126,11 @@ async def process_pdf_stream(
     ocr_lang_list = [lang.strip() for lang in ocr_languages.split(",")]
 
     logger.info(f"Pipeline Viewer (stream): processing {filename} ({len(content)} bytes)")
+
+    # Fire-and-forget document upload to feedback service (zero added latency)
+    doc_upload_task = asyncio.create_task(
+        feedback_client.upload_document(content, filename)
+    )
 
     async def event_generator() -> AsyncGenerator[str, None]:
         pipeline_start = time.time()
@@ -378,12 +384,20 @@ async def process_pdf_stream(
 
         total_elapsed_ms = int((time.time() - pipeline_start) * 1000)
 
+        # Await document upload (should be done by now — ran concurrently)
+        document_ref: str | None = None
+        try:
+            document_ref = await doc_upload_task
+        except Exception:
+            logger.warning("Document upload task failed", exc_info=True)
+
         # Create a feedback session for iterative review
         session = session_store.create(
             result=result,
             structure=structure,
             section_map=section_map,
         )
+        session.document_ref = document_ref
 
         yield _sse_event("done", {
             "total_steps": total_steps,
@@ -392,6 +406,7 @@ async def process_pdf_stream(
             "total_output_tokens": sum(s.output_tokens for s in result.steps),
             "total_cost_cents": sum(s.cost_cents for s in result.steps),
             "session_id": session.session_id,
+            "document_ref": document_ref,
         })
 
     return StreamingResponse(

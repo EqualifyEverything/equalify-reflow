@@ -33,6 +33,7 @@ class PipelineSession:
     result: PipelineViewerResult
     structure: StructureResult | None = None
     section_map: SectionMap | None = None
+    document_ref: str | None = None
     feedback_history: list[list[FeedbackItem]] = field(default_factory=list)
     candidate_changes: list[CandidateChange] = field(default_factory=list)
     revision_round: int = 0

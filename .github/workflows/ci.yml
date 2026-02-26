@@ -180,10 +180,13 @@ jobs:
 
       - name: Free disk space
         run: |
-          sudo rm -rf /opt/hostedtoolcache /usr/share/dotnet /usr/local/lib/android &
-          sudo rm -rf /usr/local/share/boost /usr/local/.ghcup /opt/ghc /usr/share/swift &
-          wait
+          sudo rm -rf /opt/hostedtoolcache /usr/share/dotnet /usr/local/lib/android \
+            /usr/local/share/boost /usr/local/.ghcup /opt/ghc /usr/share/swift \
+            /usr/local/share/chromium /usr/local/share/powershell /usr/local/graalvm \
+            /usr/local/julia* /usr/local/sqlpackage /opt/pipx
+          sudo apt-get clean || true
           docker system prune -af --volumes || true
+          df -h /
 
       - name: Set up Docker Buildx
         uses: docker/setup-buildx-action@v3

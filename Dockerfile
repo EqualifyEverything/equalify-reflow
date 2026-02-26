@@ -68,7 +68,8 @@ RUN (uv sync --frozen || uv sync) \
     && uv pip uninstall nvidia-cublas-cu12 nvidia-cuda-cupti-cu12 nvidia-cuda-nvrtc-cu12 \
         nvidia-cuda-runtime-cu12 nvidia-cudnn-cu12 nvidia-cufft-cu12 nvidia-cufile-cu12 \
         nvidia-curand-cu12 nvidia-cusolver-cu12 nvidia-cusparse-cu12 nvidia-cusparselt-cu12 \
-        nvidia-nccl-cu12 nvidia-nvjitlink-cu12 nvidia-nvtx-cu12 triton 2>/dev/null || true
+        nvidia-nccl-cu12 nvidia-nvjitlink-cu12 nvidia-nvtx-cu12 triton 2>/dev/null || true \
+    && rm -rf /root/.cache/uv
 
 # Pre-download spaCy model for Presidio PII detection
 # This avoids cold start delays when the PII worker processes its first request

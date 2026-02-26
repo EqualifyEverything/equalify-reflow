@@ -100,6 +100,90 @@ class TestFeedbackClient:
                 await client.track_edit(original_text="a", corrected_text="b")
 
     @pytest.mark.asyncio
+    async def test_upload_document_sends_multipart(self):
+        """When enabled, upload_document sends a multipart POST."""
+        with patch("src.services.feedback_client.settings") as mock_settings:
+            mock_settings.feedback_enabled = True
+            mock_settings.feedback_service_url = "http://feedback:8090"
+            mock_settings.feedback_service_api_key = type("S", (), {"get_secret_value": lambda self: "test-key"})()
+            mock_settings.api_key_header_name = "X-API-Key"
+
+            from src.services.feedback_client import FeedbackClient
+            client = FeedbackClient()
+
+            mock_response = AsyncMock()
+            mock_response.status_code = 200
+            mock_response.json = lambda: {"ref": "abcdef012345"}
+            mock_client_instance = AsyncMock()
+            mock_client_instance.post = AsyncMock(return_value=mock_response)
+            mock_client_instance.__aenter__ = AsyncMock(return_value=mock_client_instance)
+            mock_client_instance.__aexit__ = AsyncMock(return_value=False)
+
+            with patch("httpx.AsyncClient", return_value=mock_client_instance):
+                ref = await client.upload_document(b"%PDF-1.4 test", "test.pdf")
+                assert ref == "abcdef012345"
+                mock_client_instance.post.assert_called_once()
+                call_args = mock_client_instance.post.call_args
+                assert call_args[0][0] == "http://feedback:8090/api/v1/documents"
+
+    @pytest.mark.asyncio
+    async def test_upload_document_disabled_returns_none(self):
+        """When feedback is disabled, upload_document returns None without HTTP call."""
+        with patch("src.services.feedback_client.settings") as mock_settings:
+            mock_settings.feedback_enabled = False
+            mock_settings.feedback_service_url = None
+
+            from src.services.feedback_client import FeedbackClient
+            client = FeedbackClient()
+
+            with patch("httpx.AsyncClient") as mock_httpx:
+                ref = await client.upload_document(b"%PDF-1.4 test", "test.pdf")
+                assert ref is None
+                mock_httpx.assert_not_called()
+
+    @pytest.mark.asyncio
+    async def test_upload_document_error_returns_none(self):
+        """Upload errors should be swallowed and return None."""
+        with patch("src.services.feedback_client.settings") as mock_settings:
+            mock_settings.feedback_enabled = True
+            mock_settings.feedback_service_url = "http://feedback:8090"
+            mock_settings.feedback_service_api_key = type("S", (), {"get_secret_value": lambda self: "test-key"})()
+            mock_settings.api_key_header_name = "X-API-Key"
+
+            from src.services.feedback_client import FeedbackClient
+            client = FeedbackClient()
+
+            with patch("httpx.AsyncClient", side_effect=Exception("connection refused")):
+                ref = await client.upload_document(b"%PDF-1.4 test", "test.pdf")
+                assert ref is None
+
+    @pytest.mark.asyncio
+    async def test_track_edit_with_document_ref(self):
+        """track_edit should include document_ref in payload."""
+        with patch("src.services.feedback_client.settings") as mock_settings:
+            mock_settings.feedback_enabled = True
+            mock_settings.feedback_service_url = "http://feedback:8090"
+            mock_settings.feedback_service_api_key = type("S", (), {"get_secret_value": lambda self: "test-key"})()
+            mock_settings.api_key_header_name = "X-API-Key"
+
+            from src.services.feedback_client import FeedbackClient
+            client = FeedbackClient()
+
+            mock_client_instance = AsyncMock()
+            mock_client_instance.post = AsyncMock(return_value=AsyncMock())
+            mock_client_instance.__aenter__ = AsyncMock(return_value=mock_client_instance)
+            mock_client_instance.__aexit__ = AsyncMock(return_value=False)
+
+            with patch("httpx.AsyncClient", return_value=mock_client_instance):
+                await client.track_edit(
+                    original_text="old",
+                    corrected_text="new",
+                    document_ref="abcdef012345",
+                )
+                call_args = mock_client_instance.post.call_args
+                assert call_args[1]["json"]["document_ref"] == "abcdef012345"
+
+    @pytest.mark.asyncio
     async def test_batch_sends_items_array(self):
         """Batch edits should send as items array."""
         with patch("src.services.feedback_client.settings") as mock_settings:

@@ -1,0 +1,55 @@
+# CI-specific override - minimal services for E2E testing
+# Usage: docker compose -f docker-compose.yml -f docker-compose.ci.yml up -d --no-build
+
+services:
+  api-gateway:
+    image: equalify-pdf-converter:ci
+    build:
+      target: development
+    volumes:
+      - ./tests:/app/tests:ro
+      - ./pytest.ini:/app/pytest.ini:ro
+      - ./pyproject.toml:/app/pyproject.toml:ro
+    environment:
+      - AWS_ENDPOINT_URL_S3=http://localstack:4566
+      - AWS_ENDPOINT_URL_CLOUDWATCH=http://localstack:4566
+      - AWS_ACCESS_KEY_ID=test
+      - AWS_SECRET_ACCESS_KEY=test
+      - AWS_PROFILE=
+      - AWS_DEFAULT_REGION=us-east-1
+      - AWS_EC2_METADATA_DISABLED=true
+      - S3_TEMP_BUCKET=equalify-pdf-temp
+      - S3_RESULTS_BUCKET=equalify-pdf-results
+      - S3_PUBLIC_URL=http://localhost:4566
+      - REDIS_URL=redis://redis:6379
+      - LOG_LEVEL=INFO
+      - ENVIRONMENT=ci
+      - ENABLE_METRICS=false
+      - TELEMETRY_ENABLED=false
+    depends_on:
+      redis:
+        condition: service_healthy
+      localstack:
+        condition: service_healthy
+
+  localstack:
+    image: localstack/localstack:latest
+    container_name: equalify-pdf-localstack
+    ports:
+      - "4566:4566"
+    environment:
+      - SERVICES=s3,cloudwatch
+      - DEBUG=0
+      - AWS_ACCESS_KEY_ID=test
+      - AWS_SECRET_ACCESS_KEY=test
+      - AWS_DEFAULT_REGION=us-east-1
+      - SKIP_SSL_CERT_DOWNLOAD=1
+    volumes:
+      - ./infrastructure/localstack/init-aws.sh:/etc/localstack/init/ready.d/init-aws.sh:ro
+    healthcheck:
+      test: ["CMD", "curl", "-f", "http://localhost:4566/_localstack/health"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+    networks:
+      - equalify-network

@@ -171,7 +171,7 @@ jobs:
   e2e-tests:
     name: E2E Tests (Docker)
     runs-on: ubuntu-latest
-    timeout-minutes: 15
+    timeout-minutes: 25
     needs: integration-tests
 
     steps:
@@ -192,28 +192,40 @@ jobs:
         uses: actions/cache@v4
         with:
           path: /tmp/.buildx-cache
-          key: docker-${{ runner.os }}-${{ hashFiles('Dockerfile', 'pyproject.toml') }}
+          key: docker-${{ runner.os }}-${{ hashFiles('Dockerfile', 'pyproject.toml', 'uv.lock') }}
           restore-keys: docker-${{ runner.os }}-
 
       - name: Create .env file
         run: cp .env.example .env
 
-      - name: Build and start services
-        env:
-          DOCKER_BUILDKIT: 1
-          COMPOSE_DOCKER_CLI_BUILD: 1
+      - name: Build Docker image with cache
         run: |
-          docker compose -f docker-compose.yml -f docker-compose.dev.yml build
-          docker compose -f docker-compose.yml -f docker-compose.dev.yml up -d
+          docker buildx build \
+            --file Dockerfile \
+            --target development \
+            --cache-from type=local,src=/tmp/.buildx-cache \
+            --cache-to type=local,dest=/tmp/.buildx-cache-new,mode=max \
+            --load \
+            -t equalify-pdf-converter:ci \
+            .
+
+      - name: Rotate buildx cache
+        run: |
+          rm -rf /tmp/.buildx-cache
+          mv /tmp/.buildx-cache-new /tmp/.buildx-cache
+
+      - name: Start services
+        run: |
+          docker compose -f docker-compose.yml -f docker-compose.ci.yml up -d --no-build
 
       - name: Wait for services
         run: |
           echo "Waiting for API Gateway..."
-          timeout 90 bash -c 'until docker compose -f docker-compose.yml -f docker-compose.dev.yml exec -T api-gateway echo "ready" 2>/dev/null; do sleep 3; done'
+          timeout 90 bash -c 'until docker compose -f docker-compose.yml -f docker-compose.ci.yml exec -T api-gateway echo "ready" 2>/dev/null; do sleep 3; done'
 
       - name: Run E2E tests
         run: |
-          docker compose -f docker-compose.yml -f docker-compose.dev.yml exec -T \
+          docker compose -f docker-compose.yml -f docker-compose.ci.yml exec -T \
             -e SKIP_BEDROCK_TESTS=1 \
             api-gateway \
             uv run pytest tests/e2e \
@@ -226,7 +238,7 @@ jobs:
       - name: Collect logs on failure
         if: failure()
         run: |
-          docker compose -f docker-compose.yml -f docker-compose.dev.yml logs > docker-logs.txt 2>&1
+          docker compose -f docker-compose.yml -f docker-compose.ci.yml logs > docker-logs.txt 2>&1
 
       - name: Upload logs on failure
         if: failure()
@@ -238,7 +250,7 @@ jobs:
 
       - name: Stop services
         if: always()
-        run: docker compose -f docker-compose.yml -f docker-compose.dev.yml down -v
+        run: docker compose -f docker-compose.yml -f docker-compose.ci.yml down -v
 
   # ============================================================================
   # Final status check for branch protection

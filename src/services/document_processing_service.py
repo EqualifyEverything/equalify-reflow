@@ -8,6 +8,7 @@ Integrates PipelineViewerService (versioned step-by-step processing) with:
 
 from __future__ import annotations
 
+import asyncio
 import base64
 import json
 import logging
@@ -16,6 +17,14 @@ from typing import Any, Literal
 
 from redis.asyncio import Redis
 
+from ..agents.events import (
+    EventBus,
+    PipelinePhaseEvent,
+    ProcessingCompleteEvent,
+    ProcessingErrorEvent,
+    register_event_bus,
+    unregister_event_bus,
+)
 from ..config import settings
 from .metrics_service import job_duration_seconds, jobs_completed_total
 from .pipeline_viewer import PipelineViewerService
@@ -84,6 +93,10 @@ class DocumentProcessingService:
             review_mode=review_mode,
         )
 
+        # Set up event bus for SSE streaming
+        event_bus = EventBus()
+        register_event_bus(job_id, event_bus)
+
         try:
             processing_start_time = time.time()
 
@@ -93,6 +106,14 @@ class DocumentProcessingService:
 
             # 2. Run pipeline processing
             await self._update_job_state(job_id, processing_phase="pipeline")
+
+            def _on_phase(phase: str, display_name: str, step: int, total: int) -> None:
+                event_bus.publish(PipelinePhaseEvent(
+                    phase=phase,
+                    display_name=display_name,
+                    step_number=step,
+                    total_steps=total,
+                ))
 
             service = PipelineViewerService()
             result = await service.process(
@@ -104,6 +125,7 @@ class DocumentProcessingService:
                 enable_page_content=True,
                 enable_boundaries=True,
                 ocr_languages=ocr_languages,
+                on_phase=_on_phase,
             )
 
             # 2a. Check for classification errors (unsupported document type)
@@ -172,6 +194,8 @@ class DocumentProcessingService:
                 f"Job {job_id} complete: {total_edits} edits, "
                 f"{total_tokens} tokens, ${cost_cents / 100:.4f}"
             )
+
+            event_bus.publish(ProcessingCompleteEvent())
             return result
 
         except Exception as e:
@@ -182,7 +206,13 @@ class DocumentProcessingService:
                 error=str(e),
             )
             jobs_completed_total.labels(status="failed").inc()
+            event_bus.publish(ProcessingErrorEvent(error=str(e)))
             raise
+
+        finally:
+            # Let SSE subscribers flush before unregistering
+            await asyncio.sleep(0.5)
+            unregister_event_bus(job_id)
 
     async def _update_job_state(self, job_id: str, **fields: Any) -> None:
         """Update job state in Redis."""

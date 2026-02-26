@@ -18,6 +18,7 @@ import re
 import time
 from io import BytesIO
 from pathlib import Path
+from collections.abc import Callable
 from typing import Any
 
 from ..config import settings
@@ -399,6 +400,7 @@ class PipelineViewerService:
         enable_page_content: bool = False,
         enable_boundaries: bool = False,
         ocr_languages: list[str] | None = None,
+        on_phase: Callable[[str, str, int, int], None] | None = None,
     ) -> PipelineViewerResult:
         """Run the pipeline on a PDF.
 
@@ -411,6 +413,8 @@ class PipelineViewerService:
             enable_page_content: Run Phase 2 per-page corrections.
             enable_boundaries: Run Phase 3 cross-page fixes.
             ocr_languages: Tesseract OCR language codes for scanned documents.
+            on_phase: Optional callback invoked before each pipeline step.
+                Signature: (phase_name, display_name, step_number, total_steps).
 
         Returns:
             PipelineViewerResult with versioned markdowns, images, figures, and stats.
@@ -418,6 +422,22 @@ class PipelineViewerService:
         from .pdf_classifier import classify_pdf, enrich_classification
 
         result = PipelineViewerResult(filename=filename, total_pages=0)
+
+        # ── Compute total steps for progress reporting ──────────
+        phase_total = 1  # docling is always step 1
+        if enable_structure:
+            phase_total += 3  # structure, heading_reconciliation, heading_levels
+        if enable_page_content and enable_structure:
+            phase_total += 2  # page_content, code_blocks
+        if enable_boundaries and enable_structure:
+            phase_total += 2  # boundaries, cleanup
+        phase_step = 0
+
+        def _emit_phase(name: str, display_name: str) -> None:
+            nonlocal phase_step
+            phase_step += 1
+            if on_phase:
+                on_phase(name, display_name, phase_step, phase_total)
 
         # Pre-flight PDF classification
         classification = classify_pdf(file_content)
@@ -443,6 +463,7 @@ class PipelineViewerService:
 
         result.warnings = classification.warning_messages
 
+        _emit_phase("docling", "Docling Extraction")
         await self._step_docling(result, file_content, filename, images_scale, do_table_structure)
 
         # Enrich classification with post-extraction signals
@@ -470,6 +491,9 @@ class PipelineViewerService:
             scanned_codes = {FINDING_SCANNED, FINDING_SCAN_PRODUCER}
             finding_codes = {f.code for f in classification.findings}
             if finding_codes & scanned_codes:
+                # OCR wasn't known upfront — adjust the total and emit phase
+                phase_total += 1
+                _emit_phase("docling_ocr", "OCR Re-extraction")
                 effective_langs = ocr_languages or settings.ocr_default_languages
                 await self._step_docling_ocr(
                     result,
@@ -576,21 +600,28 @@ class PipelineViewerService:
         structure: StructureResult | None = None
 
         if enable_structure:
+            _emit_phase("structure", "Structure Analysis")
             structure = await self._step_structure(result)
+            _emit_phase("heading_reconciliation", "Heading Reconciliation")
             structure = await self._step_heading_reconciliation(result, structure)
+            _emit_phase("heading_levels", "Heading Levels")
             await self._step_heading_levels(result, structure)
 
         section_map: SectionMap | None = None
         if enable_page_content and structure is not None:
             section_map = self._build_section_map(result, structure)
             page_hints = self._generate_page_hints(result, structure, section_map)
+            _emit_phase("page_content", "Page Content Corrections")
             await self._step_page_content(result, structure, page_hints=page_hints)
+            _emit_phase("code_blocks", "Code Block Languages")
             await self._step_code_blocks(result, structure)
 
         if enable_boundaries and structure is not None:
             if section_map is None and structure is not None:
                 section_map = self._build_section_map(result, structure)
+            _emit_phase("boundaries", "Cross-Page Fixes")
             await self._step_boundaries(result, structure, section_map=section_map)
+            _emit_phase("cleanup", "Final Cleanup")
             await self._step_cleanup(result)
 
         return result

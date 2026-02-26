@@ -57,14 +57,18 @@ ENV TESSDATA_PREFIX=/usr/share/tesseract-ocr/5/tessdata
 # Copy dependency files
 COPY pyproject.toml uv.lock* ./
 
-# Install CPU-only PyTorch first (avoids 4GB of CUDA dependencies)
+# Sync dependencies, then replace CUDA PyTorch with CPU-only version in a SINGLE layer
+# This is critical: separate RUN commands create separate layers, and Docker layers are
+# additive. If uv sync installs CUDA torch (~4GB) in one layer and we uninstall in
+# another, the 4GB layer persists in the image. Collapsing into one RUN ensures CUDA
+# packages never get committed to a layer.
 # GPU not supported on ECS Fargate, and document processing doesn't benefit from GPU
-RUN uv pip install --system torch torchvision --index-url https://download.pytorch.org/whl/cpu
-
-# Sync dependencies with uv (will skip torch/torchvision since already installed)
-# --frozen: Use exact versions from lock file
-# Fallback to regular sync if no lock file exists
-RUN uv sync --frozen || uv sync
+RUN (uv sync --frozen || uv sync) \
+    && uv pip install torch torchvision --index-url https://download.pytorch.org/whl/cpu \
+    && uv pip uninstall nvidia-cublas-cu12 nvidia-cuda-cupti-cu12 nvidia-cuda-nvrtc-cu12 \
+        nvidia-cuda-runtime-cu12 nvidia-cudnn-cu12 nvidia-cufft-cu12 nvidia-cufile-cu12 \
+        nvidia-curand-cu12 nvidia-cusolver-cu12 nvidia-cusparse-cu12 nvidia-cusparselt-cu12 \
+        nvidia-nccl-cu12 nvidia-nvjitlink-cu12 nvidia-nvtx-cu12 triton 2>/dev/null || true
 
 # Pre-download spaCy model for Presidio PII detection
 # This avoids cold start delays when the PII worker processes its first request
@@ -84,8 +88,10 @@ RUN uv run docling-tools models download layout tableformer code_formula picture
 # ==============================================================================
 FROM dependencies AS development
 
-# Install development dependencies (for testing)
-RUN uv sync --frozen --all-extras || uv sync --all-extras
+# Install dev dependencies and re-apply CPU-only PyTorch in a single layer
+# (uv sync --all-extras may reinstall CUDA torch from the lockfile)
+RUN (uv sync --frozen --all-extras || uv sync --all-extras) \
+    && uv pip install torch torchvision --index-url https://download.pytorch.org/whl/cpu
 
 # Copy source code and configuration
 # Note: In dev, src will be overridden by volume mount in docker-compose.dev.yml

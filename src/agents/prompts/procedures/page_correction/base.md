@@ -20,6 +20,11 @@ When reviewing a page, work through these in order:
 3. **Inline formatting**: Are italic, bold, and monospace applied where the image shows them?
 4. **Minor formatting**: Spacing, punctuation, special characters.
 
+## Common extraction artifacts
+
+- **Letter-spaced headings**: Decorative headings in the PDF with spaces between every letter (e.g., `C O U R S E   E X P E C T A T I O N S`) must be collapsed to normal text (e.g., `COURSE EXPECTATIONS`). Look at the image — if the heading reads as a single word/phrase, remove the extra spaces.
+- **HTML entities**: Replace escaped HTML entities with their plain characters: `&amp;` → `&`, `&lt;` → `<`, `&gt;` → `>`, `&nbsp;` → a space.
+
 ## Basic formatting conventions
 
 ### Italic (`*text*`)

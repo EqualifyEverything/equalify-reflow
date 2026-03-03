@@ -1,6 +1,7 @@
 import { useState, useRef, useCallback } from 'react';
 import ReactMarkdown from 'react-markdown';
 import remarkGfm from 'remark-gfm';
+import rehypeRaw from 'rehype-raw';
 import { motion, AnimatePresence } from 'framer-motion';
 import { cn } from '@/lib/utils';
 import { Button } from '@/components/ui/button';
@@ -321,6 +322,7 @@ export function MarkdownViewer({
             >
               <ReactMarkdown
                 remarkPlugins={[remarkGfm]}
+                rehypePlugins={[rehypeRaw]}
                 components={{
                   // Custom heading styles with UIC colors
                   h1: ({ children }) => (
@@ -383,10 +385,15 @@ export function MarkdownViewer({
                       </table>
                     </div>
                   ),
-                  th: ({ children }) => (
-                    <th className="bg-uic-blue text-white px-4 py-2 text-left font-semibold border border-slate-200">
+                  th: ({ children, scope, ...props }) => (
+                    <th scope={scope || 'col'} className="bg-uic-blue text-white px-4 py-2 text-left font-semibold border border-slate-200" {...props}>
                       {children}
                     </th>
+                  ),
+                  caption: ({ children }) => (
+                    <caption className="caption-top font-semibold text-left px-4 py-2 text-[0.95em] text-slate-900">
+                      {children}
+                    </caption>
                   ),
                   td: ({ children }) => (
                     <td className="px-4 py-2 border border-slate-200">{children}</td>
@@ -409,6 +416,10 @@ export function MarkdownViewer({
                   },
                   // Horizontal rule
                   hr: () => <hr className="my-8 border-t-2 border-slate-200" />,
+                  // Definition list styling
+                  dl: ({ children }) => <dl className="my-4">{children}</dl>,
+                  dt: ({ children }) => <dt className="font-semibold text-slate-900 mt-3">{children}</dt>,
+                  dd: ({ children }) => <dd className="ml-6 mt-1 text-slate-700">{children}</dd>,
                   // Strong/emphasis
                   strong: ({ children }) => <strong className="font-bold text-slate-900">{children}</strong>,
                   em: ({ children }) => <em className="italic">{children}</em>,

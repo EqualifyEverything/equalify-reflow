@@ -41,6 +41,24 @@ Context hints may identify running page headers (repeated document title at top 
 or page number footers. When a hint identifies one, verify against surrounding context \
 and remove it with str_replace.
 
+### 5. Split tables
+
+A table that spans two pages may appear as two separate tables in the assembled \
+document. Context hints will flag these with "SPLIT TABLE". When you find a split table:
+
+- **Markdown tables**: The first half has a header row + data rows. The second half \
+may have a duplicate header row or start directly with data rows. \
+Merge them into one table: keep the first half's header, append the second half's \
+data rows, and remove any duplicate header/separator row from the second half.
+- **HTML tables**: The first half has `<thead>` + partial `<tbody>`. The second half \
+may have just `<tbody>` rows or a duplicate `<thead>`. Merge into one `<table>`: \
+keep the first `<thead>` and `<caption>`, combine all `<tbody>` rows, remove \
+duplicate headers.
+- **Mixed format**: If one half is markdown and the other is HTML, leave them as-is — \
+a human reviewer will need to reconcile the format difference.
+- **Consistency**: If both halves are markdown but one should have been HTML (e.g., \
+the second half has `<br>` tags inside cells), this is acceptable — do not convert formats.
+
 ## What you do NOT fix
 
 - **Footnote bodies**: Do not move or modify footnote bodies. A separate \

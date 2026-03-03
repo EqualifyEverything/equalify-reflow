@@ -65,6 +65,9 @@ syllabi, homework assignments, handouts, letters, general reports.
 or illustrations. Not decorative lines or borders.
 - **has_tables** — True if the page contains tabular data (rows and columns \
 of data).
+- **has_lists** — True if the page contains bulleted lists, numbered lists, \
+or definition-style term/description pairs. Not single items that happen to \
+start with a dash.
 - **has_equations** — True if the page contains mathematical equations, \
 either display (centered) or complex inline equations.
 - **is_scanned** — True if the page appears to be a scan of a physical \

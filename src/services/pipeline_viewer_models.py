@@ -32,6 +32,7 @@ class PageAttributes(BaseModel):
     is_academic: bool = False
     has_images: bool = False
     has_tables: bool = False
+    has_lists: bool = False
     has_equations: bool = False
     is_scanned: bool = False
 
@@ -209,6 +210,47 @@ class ImageDescriptionResult(BaseModel):
     """Why this alt text was chosen."""
 
 
+class TableReconstructionResult(BaseModel):
+    """Result from the table reconstruction subagent."""
+
+    table_format: Literal["markdown", "html"]
+    """Whether the output is markdown or HTML."""
+
+    reconstructed_content: str
+    """The corrected table content (markdown or HTML)."""
+
+    caption: str
+    """WCAG table caption describing the table's purpose."""
+
+    has_row_headers: bool = False
+    """True if the table has row headers (leftmost column)."""
+
+    has_merged_cells: bool = False
+    """True if the table has merged cells (colspan/rowspan)."""
+
+    confidence: str = "high"
+    """Confidence level: high, medium, or low."""
+
+    reasoning: str = ""
+    """Why this reconstruction was chosen."""
+
+
+class ListReconstructionResult(BaseModel):
+    """Result from the list reconstruction subagent."""
+
+    list_type: Literal["unordered", "ordered", "definition"]
+    """Classification of the list type."""
+
+    reconstructed_content: str
+    """The corrected list content (markdown or HTML for definition lists)."""
+
+    confidence: str = "high"
+    """Confidence level: high, medium, or low."""
+
+    reasoning: str = ""
+    """Why this reconstruction was chosen."""
+
+
 class SectionCorrectionResult(BaseModel):
     """What a section correction agent returns."""
 
@@ -255,6 +297,18 @@ class PageCorrectionResult(BaseModel):
 
     describer_output_tokens: int = 0
     """Output tokens from image describer subagent calls."""
+
+    table_reconstructor_input_tokens: int = 0
+    """Input tokens consumed by table reconstructor subagent calls."""
+
+    table_reconstructor_output_tokens: int = 0
+    """Output tokens from table reconstructor subagent calls."""
+
+    list_reconstructor_input_tokens: int = 0
+    """Input tokens consumed by list reconstructor subagent calls."""
+
+    list_reconstructor_output_tokens: int = 0
+    """Output tokens from list reconstructor subagent calls."""
 
 
 # ---------------------------------------------------------------------------
@@ -444,6 +498,19 @@ class FigureData(BaseModel):
     caption: str
     page_number: int
     image_base64: str
+
+
+class TableData(BaseModel):
+    """A markdown table extracted from a page."""
+
+    ref_id: str
+    """Table reference ID (e.g. "table-1")."""
+
+    page_number: int
+    """Page where this table appears."""
+
+    markdown_content: str
+    """The extracted markdown table text."""
 
 
 class StepResult(BaseModel):

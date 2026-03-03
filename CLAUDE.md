@@ -117,7 +117,7 @@ src/
 
 ## Technology Stack
 
-**Backend:** Python 3.11+, FastAPI, PydanticAI, IBM Docling, Microsoft Presidio, AWS Bedrock (Claude Haiku)
+**Backend:** Python 3.11+, FastAPI, PydanticAI, docling-serve (sidecar), pypdfium2, Microsoft Presidio, AWS Bedrock (Claude Haiku)
 **Infrastructure:** Docker, Redis, AWS S3, AWS ECS, LocalStack, Prometheus + Grafana
 **Testing:** pytest, pytest-asyncio, pytest-xdist, pytest-cov, testcontainers
 

@@ -33,6 +33,7 @@ from .pipeline_viewer_models import (
     HeadingReconciliationOutput,
     ImageDescriptionResult,
     LayoutType,
+    ListReconstructionResult,
     OutlineEntry,
     PageAttributes,
     PageCorrectionResult,
@@ -120,6 +121,11 @@ def _compose_page_prompt(attrs: PageAttributes) -> str:
         if tbl:
             fragments.append(tbl)
 
+    if attrs.has_lists:
+        lst = _load_fragment("content/has_lists")
+        if lst:
+            fragments.append(lst)
+
     if attrs.has_equations:
         eq = _load_fragment("content/has_equations")
         if eq:
@@ -131,6 +137,33 @@ def _compose_page_prompt(attrs: PageAttributes) -> str:
             fragments.append(scan)
 
     return "\n\n".join(fragments)
+
+
+_MARKDOWN_TABLE_PATTERN = re.compile(
+    r"((?:^\|.+\|[ \t]*\n)(?:^\|[-:| ]+\|[ \t]*\n)(?:^\|.+\|[ \t]*\n?)+)",
+    re.MULTILINE,
+)
+
+
+def _extract_tables_from_markdown(
+    page_markdown: str, page_number: int
+) -> list:
+    """Extract markdown tables from page text and assign ref_ids.
+
+    Returns a list of TableData objects, one per table found.
+    """
+    from .pipeline_viewer_models import TableData
+
+    tables = []
+    for i, match in enumerate(_MARKDOWN_TABLE_PATTERN.finditer(page_markdown)):
+        tables.append(
+            TableData(
+                ref_id=f"table-{i + 1}",
+                page_number=page_number,
+                markdown_content=match.group(0).rstrip("\n"),
+            )
+        )
+    return tables
 
 
 def _fuzzy_find_line(lines: list[str], target: str, threshold: float = FUZZY_LINE_MATCH_THRESHOLD) -> int:
@@ -1632,6 +1665,41 @@ class PipelineViewerService:
                         f"page {page_before}. Remove this line."
                     )
 
+            # --- Split table detection ---
+            # Check if page_before ends with table rows and page_after
+            # starts with table rows (markdown pipe tables or HTML tables)
+            tail_has_table = any(
+                ln.strip().startswith("|") and ln.strip().endswith("|")
+                for ln in lines_before[-3:]
+                if ln.strip()
+            )
+            head_has_table = any(
+                ln.strip().startswith("|") and ln.strip().endswith("|")
+                for ln in lines_after[:3]
+                if ln.strip()
+            )
+            # Also check for HTML table continuation
+            tail_has_html_table = any(
+                "</tbody>" in ln or "</table>" in ln or "<tr>" in ln
+                for ln in lines_before[-5:]
+            )
+            head_has_html_table = any(
+                "<table" in ln or "<tbody>" in ln or "<tr>" in ln
+                for ln in lines_after[:5]
+            )
+
+            if (tail_has_table and head_has_table) or (
+                tail_has_html_table and head_has_html_table
+            ):
+                # Expand context to capture full table tails/heads
+                tail_text = "\n".join(lines_before[-15:])
+                head_text = "\n".join(lines_after[:15])
+                boundary_hints.append(
+                    "SPLIT TABLE: A table appears to span this page "
+                    "boundary. Merge the two halves into one table — "
+                    "remove any duplicate header row from the second half."
+                )
+
             snippets.append({
                 "page_before": page_before,
                 "page_after": page_after,
@@ -1741,6 +1809,190 @@ class PipelineViewerService:
             return f"ERROR: Image describer failed for '{figure.ref_id}': {e}"
 
     # ------------------------------------------------------------------
+    # Table reconstruction subagent
+    # ------------------------------------------------------------------
+
+    async def _run_table_reconstructor(
+        self,
+        table: Any,
+        current_markdown: str,
+        page_image_b64: str | None,
+        update_tokens: Any,
+    ) -> str:
+        """Run the table reconstruction vision subagent.
+
+        Mirrors _run_image_describer pattern: creates a one-shot PydanticAI
+        agent with structured output, passes the page image and table context,
+        returns an instruction string for the page agent.
+        """
+        from pydantic_ai import Agent
+        from pydantic_ai.messages import BinaryContent
+        from pydantic_ai.models.bedrock import BedrockConverseModel
+
+        from ..agents.model_tiers import MODEL_TIER_MAP, ModelTier
+        from ..agents.prompts.table_reconstruction import (
+            TABLE_RECONSTRUCTOR_SYSTEM_PROMPT,
+            build_table_user_message,
+        )
+        from .pipeline_viewer_models import TableReconstructionResult
+
+        # Extract surrounding context
+        idx = current_markdown.find(table.markdown_content[:60])
+        if idx >= 0:
+            start = max(0, idx - 200)
+            end = min(
+                len(current_markdown),
+                idx + len(table.markdown_content) + 200,
+            )
+            surrounding_text = current_markdown[start:end]
+        else:
+            surrounding_text = ""
+
+        # Build user message parts
+        user_parts: list[Any] = []
+
+        # Always use full page image (no table crop available)
+        if page_image_b64:
+            user_parts.append(
+                BinaryContent(
+                    data=base64.b64decode(page_image_b64),
+                    media_type="image/png",
+                )
+            )
+
+        user_parts.append(
+            build_table_user_message(
+                table_markdown=table.markdown_content,
+                surrounding_text=surrounding_text,
+                ref_id=table.ref_id,
+            )
+        )
+
+        # Create and run subagent
+        model = BedrockConverseModel(MODEL_TIER_MAP[ModelTier.EFFICIENT])
+        reconstructor_agent: Agent[None, TableReconstructionResult] = Agent(
+            model=model,
+            output_type=TableReconstructionResult,
+            system_prompt=TABLE_RECONSTRUCTOR_SYSTEM_PROMPT,
+        )
+
+        try:
+            agent_result = await reconstructor_agent.run(user_parts)
+            usage = agent_result.usage()
+            update_tokens(
+                usage.request_tokens or 0,
+                usage.response_tokens or 0,
+            )
+        except Exception as e:
+            logger.warning(f"Table reconstructor failed for {table.ref_id}: {e}")
+            return (
+                f"Table reconstruction failed for '{table.ref_id}': {e}. "
+                f"Use str_replace to fix the table manually if needed."
+            )
+
+        result = agent_result.output
+
+        if result.table_format == "html":
+            return (
+                f"Reconstructed table '{table.ref_id}' as HTML (complex table with "
+                f"{'merged cells, ' if result.has_merged_cells else ''}"
+                f"{'row headers, ' if result.has_row_headers else ''}"
+                f"caption: \"{result.caption}\").\n"
+                f"Use str_replace to replace the entire markdown table with this HTML:\n\n"
+                f"{result.reconstructed_content}"
+            )
+        return (
+            f"Reconstructed table '{table.ref_id}' as corrected markdown"
+            f"{f' (caption: {result.caption!r})' if result.caption else ''}.\n"
+            f"Use str_replace to replace the markdown table with this corrected version:\n\n"
+            f"{result.reconstructed_content}"
+        )
+
+    # ------------------------------------------------------------------
+    # List reconstruction subagent
+    # ------------------------------------------------------------------
+
+    async def _run_list_reconstructor(
+        self,
+        list_text: str,
+        surrounding_text: str,
+        page_image_b64: str | None,
+        page_number: int,
+        update_tokens: Any,
+    ) -> str:
+        """Run the list reconstruction vision subagent.
+
+        Mirrors _run_image_describer pattern: creates a one-shot PydanticAI
+        agent with structured output, passes the page image and list context,
+        returns an instruction string for the page agent.
+        """
+        from pydantic_ai import Agent
+        from pydantic_ai.messages import BinaryContent
+        from pydantic_ai.models.bedrock import BedrockConverseModel
+
+        from ..agents.model_tiers import MODEL_TIER_MAP, ModelTier
+        from ..agents.prompts.list_reconstruction import (
+            LIST_RECONSTRUCTOR_SYSTEM_PROMPT,
+            build_list_user_message,
+        )
+
+        # Build user message parts
+        user_parts: list[Any] = []
+
+        # Pass page image for visual comparison
+        if page_image_b64:
+            user_parts.append(
+                BinaryContent(
+                    data=base64.b64decode(page_image_b64),
+                    media_type="image/png",
+                )
+            )
+
+        user_parts.append(
+            build_list_user_message(
+                list_text=list_text,
+                surrounding_text=surrounding_text,
+                page_number=page_number,
+            )
+        )
+
+        # Create and run subagent
+        model = BedrockConverseModel(MODEL_TIER_MAP[ModelTier.EFFICIENT])
+        reconstructor_agent: Agent[None, ListReconstructionResult] = Agent(
+            model=model,
+            output_type=ListReconstructionResult,
+            system_prompt=LIST_RECONSTRUCTOR_SYSTEM_PROMPT,
+        )
+
+        try:
+            agent_result = await reconstructor_agent.run(user_parts)
+            usage = agent_result.usage()
+            update_tokens(
+                usage.request_tokens or 0,
+                usage.response_tokens or 0,
+            )
+        except Exception as e:
+            logger.warning(f"List reconstructor failed on page {page_number}: {e}")
+            return (
+                f"List reconstruction failed: {e}. "
+                f"Use str_replace to fix the list manually if needed."
+            )
+
+        result = agent_result.output
+
+        format_note = (
+            "HTML definition list"
+            if result.list_type == "definition"
+            else f"{result.list_type} markdown list"
+        )
+
+        return (
+            f"Reconstructed as {format_note}.\n"
+            f"Use str_replace to replace the original list with this "
+            f"corrected version:\n\n{result.reconstructed_content}"
+        )
+
+    # ------------------------------------------------------------------
     # Phase 2 — Page Content Corrections (parallel, semaphore-limited)
     # ------------------------------------------------------------------
 
@@ -1776,6 +2028,14 @@ class PipelineViewerService:
         for fig in result.figures:
             page_figures_map.setdefault(fig.page_number, []).append(fig)
 
+        # Build per-page table lookup
+        page_tables_map: dict[int, list] = {}
+        for page_num_key in page_mds:
+            p = int(page_num_key)
+            tables = _extract_tables_from_markdown(page_mds[page_num_key], p)
+            if tables:
+                page_tables_map[p] = tables
+
         # Pre-compute outline text once (identical for every page)
         outline_text = "\n".join(
             f"  {'#' * e.level} {e.text} (p{e.page})"
@@ -1784,6 +2044,7 @@ class PipelineViewerService:
 
         async def _process_page(page_num: int) -> PageCorrectionResult:
             pf = page_figures_map.get(page_num) or None
+            pt = page_tables_map.get(page_num) or None
             async with semaphore:
                 return await self._run_page_agent(
                     page_num=page_num,
@@ -1793,6 +2054,7 @@ class PipelineViewerService:
                     context_hints=page_hints.get(page_num) if page_hints else None,
                     page_figures=pf,
                     outline_text=outline_text,
+                    page_tables=pt,
                 )
 
         # Fan out all pages
@@ -1805,6 +2067,10 @@ class PipelineViewerService:
         total_output_tokens = 0
         total_describer_input = 0
         total_describer_output = 0
+        total_table_reconstructor_input = 0
+        total_table_reconstructor_output = 0
+        total_list_reconstructor_input = 0
+        total_list_reconstructor_output = 0
         for i, pr in enumerate(page_results):
             page_num = i + 1
             page_key = str(page_num)
@@ -1822,6 +2088,10 @@ class PipelineViewerService:
             total_output_tokens += pr.output_tokens
             total_describer_input += pr.describer_input_tokens
             total_describer_output += pr.describer_output_tokens
+            total_table_reconstructor_input += pr.table_reconstructor_input_tokens
+            total_table_reconstructor_output += pr.table_reconstructor_output_tokens
+            total_list_reconstructor_input += pr.list_reconstructor_input_tokens
+            total_list_reconstructor_output += pr.list_reconstructor_output_tokens
 
         # Write v1
         result.page_markdowns["v1"] = corrected_mds
@@ -1833,8 +2103,18 @@ class PipelineViewerService:
 
         from ..shared.llm_cost import calculate_estimated_cost
 
-        combined_input = total_input_tokens + total_describer_input
-        combined_output = total_output_tokens + total_describer_output
+        combined_input = (
+            total_input_tokens
+            + total_describer_input
+            + total_table_reconstructor_input
+            + total_list_reconstructor_input
+        )
+        combined_output = (
+            total_output_tokens
+            + total_describer_output
+            + total_table_reconstructor_output
+            + total_list_reconstructor_output
+        )
         cost_cents = calculate_estimated_cost(combined_input, combined_output)
 
         result.steps.append(
@@ -1853,6 +2133,10 @@ class PipelineViewerService:
                     "issues": all_issues,
                     "describer_input_tokens": total_describer_input,
                     "describer_output_tokens": total_describer_output,
+                    "table_reconstructor_input_tokens": total_table_reconstructor_input,
+                    "table_reconstructor_output_tokens": total_table_reconstructor_output,
+                    "list_reconstructor_input_tokens": total_list_reconstructor_input,
+                    "list_reconstructor_output_tokens": total_list_reconstructor_output,
                 },
                 input_tokens=combined_input,
                 output_tokens=combined_output,
@@ -1869,6 +2153,7 @@ class PipelineViewerService:
         context_hints: list[str] | None = None,
         outline_text: str = "",
         page_figures: list[FigureData] | None = None,
+        page_tables: list | None = None,
     ) -> PageCorrectionResult:
         """Run a single page correction agent.
 
@@ -1879,6 +2164,9 @@ class PipelineViewerService:
 
         When ``page_figures`` is provided and the page has images, a
         ``describe_image`` tool is registered for WCAG-compliant alt text.
+
+        When ``page_tables`` is provided and the page has tables, a
+        ``reconstruct_table`` tool is registered for table reconstruction.
         """
         from pydantic_ai import Agent
         from pydantic_ai.messages import BinaryContent
@@ -1924,6 +2212,41 @@ class PipelineViewerService:
                 f"Call `describe_image` for each one, then use `str_replace` to "
                 f"update the alt text.\n"
             )
+
+        # ------------------------------------------------------------------
+        # reconstruct_table tool: closure state
+        # ------------------------------------------------------------------
+        max_table_reconstruct_calls = 10
+        table_lookup: dict[str, Any] = {}
+        table_reconstructor_input_tokens = 0
+        table_reconstructor_output_tokens = 0
+        table_reconstruct_call_count = 0
+
+        enable_table_reconstruct = bool(
+            page_attrs and page_attrs.has_tables and page_tables
+        )
+        if enable_table_reconstruct:
+            table_lookup = {t.ref_id: t for t in (page_tables or [])}
+            available_table_refs = sorted(table_lookup.keys())
+            base_prompt += (
+                f"\n## Available tables for reconstruct_table\n"
+                f"The following table ref_ids are available: {', '.join(available_table_refs)}\n"
+                f"Call `reconstruct_table` for tables with structural issues "
+                f"(wrong columns, misaligned cells, merged cells), then use "
+                f"`str_replace` to apply the corrected table.\n"
+            )
+
+        # ------------------------------------------------------------------
+        # reconstruct_list tool: closure state
+        # ------------------------------------------------------------------
+        max_list_reconstruct_calls = 5
+        list_reconstructor_input_tokens = 0
+        list_reconstructor_output_tokens = 0
+        list_reconstruct_call_count = 0
+
+        enable_list_reconstruct = bool(
+            page_attrs and page_attrs.has_lists
+        )
 
         # Create agent with tools
         model = BedrockConverseModel(MODEL_TIER_MAP[ModelTier.EFFICIENT])
@@ -2034,6 +2357,109 @@ class PipelineViewerService:
                 describer_output_tokens += out
 
         # ------------------------------------------------------------------
+        # Conditionally register reconstruct_table tool
+        # ------------------------------------------------------------------
+        if enable_table_reconstruct:
+            @agent.tool_plain
+            async def reconstruct_table(ref_id: str) -> str:
+                """Reconstruct a table by comparing against the page image.
+
+                Args:
+                    ref_id: The table reference ID (e.g. "table-1").
+                        Must match one of the available table ref_ids.
+                """
+                nonlocal table_reconstructor_input_tokens
+                nonlocal table_reconstructor_output_tokens
+                nonlocal table_reconstruct_call_count
+
+                if table_reconstruct_call_count >= max_table_reconstruct_calls:
+                    return (
+                        f"ERROR: Maximum reconstruct_table calls "
+                        f"({max_table_reconstruct_calls}) reached. "
+                        f"Fix remaining tables with str_replace."
+                    )
+
+                table_reconstruct_call_count += 1
+
+                if ref_id not in table_lookup:
+                    available = sorted(table_lookup.keys())
+                    return (
+                        f"ERROR: ref_id '{ref_id}' not found. "
+                        f"Available ref_ids: {', '.join(available)}"
+                    )
+
+                table = table_lookup[ref_id]
+                return await self._run_table_reconstructor(
+                    table=table,
+                    current_markdown=current_markdown,
+                    page_image_b64=page_image_b64,
+                    update_tokens=lambda inp, out: _update_table_tokens(inp, out),
+                )
+
+            def _update_table_tokens(inp: int, out: int) -> None:
+                nonlocal table_reconstructor_input_tokens
+                nonlocal table_reconstructor_output_tokens
+                table_reconstructor_input_tokens += inp
+                table_reconstructor_output_tokens += out
+
+        # ------------------------------------------------------------------
+        # Conditionally register reconstruct_list tool
+        # ------------------------------------------------------------------
+        if enable_list_reconstruct:
+            @agent.tool_plain
+            async def reconstruct_list(list_text: str, reasoning: str) -> str:
+                """Reconstruct a list by comparing against the page image.
+
+                Args:
+                    list_text: The markdown list text to reconstruct.
+                        Include enough surrounding context to uniquely
+                        identify the list in the page markdown.
+                    reasoning: Why reconstruction is needed (e.g. "items
+                        appear merged" or "nesting doesn't match image").
+                """
+                nonlocal list_reconstructor_input_tokens
+                nonlocal list_reconstructor_output_tokens
+                nonlocal list_reconstruct_call_count
+
+                if list_reconstruct_call_count >= max_list_reconstruct_calls:
+                    return (
+                        f"ERROR: Maximum reconstruct_list calls "
+                        f"({max_list_reconstruct_calls}) reached. "
+                        f"Fix remaining lists with str_replace."
+                    )
+
+                list_reconstruct_call_count += 1
+
+                # Verify the list text exists in the markdown
+                if list_text not in current_markdown:
+                    return (
+                        f"ERROR: list_text not found in page markdown. "
+                        f"Make sure you pass the exact text from the "
+                        f"current markdown. Current markdown:\n"
+                        f"---\n{current_markdown}\n---"
+                    )
+
+                # Extract surrounding context
+                idx = current_markdown.find(list_text)
+                start = max(0, idx - 200)
+                end = min(len(current_markdown), idx + len(list_text) + 200)
+                surrounding = current_markdown[start:end]
+
+                return await self._run_list_reconstructor(
+                    list_text=list_text,
+                    surrounding_text=surrounding,
+                    page_image_b64=page_image_b64,
+                    page_number=page_num,
+                    update_tokens=lambda inp, out: _update_list_tokens(inp, out),
+                )
+
+            def _update_list_tokens(inp: int, out: int) -> None:
+                nonlocal list_reconstructor_input_tokens
+                nonlocal list_reconstructor_output_tokens
+                list_reconstructor_input_tokens += inp
+                list_reconstructor_output_tokens += out
+
+        # ------------------------------------------------------------------
         # Conditionally register rewrite_page tool (create mode only)
         # ------------------------------------------------------------------
         if is_create_mode:
@@ -2125,6 +2551,10 @@ class PipelineViewerService:
             output_tokens=usage.response_tokens or 0,
             describer_input_tokens=describer_input_tokens,
             describer_output_tokens=describer_output_tokens,
+            table_reconstructor_input_tokens=table_reconstructor_input_tokens,
+            table_reconstructor_output_tokens=table_reconstructor_output_tokens,
+            list_reconstructor_input_tokens=list_reconstructor_input_tokens,
+            list_reconstructor_output_tokens=list_reconstructor_output_tokens,
         )
 
     # ------------------------------------------------------------------

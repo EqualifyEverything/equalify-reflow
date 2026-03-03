@@ -177,11 +177,14 @@ aws sso login --profile uic
    - Downloads PDF from S3
    - `PipelineViewerService` runs 7-step versioned pipeline:
      1. Docling extraction (v0) — PDF → markdown + page images
-     2. Structure analysis — AI identifies headings, footnotes, page types
+     2. Structure analysis — AI identifies headings, footnotes, page types, `has_tables`/`has_lists`/`has_images` flags
      3. Heading level fix — normalize heading hierarchy
      4. Page content corrections (v1) — AI fixes OCR errors per-page (parallel, semaphore-limited)
+        - `describe_image` subagent — vision-based WCAG alt text (conditional on `has_images`)
+        - `reconstruct_table` subagent — vision-based table reconstruction, outputs markdown or accessible HTML with `<caption>`/`scope` (conditional on `has_tables`)
+        - `reconstruct_list` subagent — vision-based list reconstruction, outputs markdown or HTML `<dl>` for definition lists (conditional on `has_lists`)
      5. Code block tagging — identify programming languages
-     6. Cross-page boundary fixes (v2) — rejoin split content, relocate footnotes
+     6. Cross-page boundary fixes (v2) — rejoin split content, merge split tables, relocate footnotes
      7. Final cleanup (v3) — normalize whitespace and formatting
    - Stores final markdown + figures to S3 results bucket
    - Updates job state to "completed" with cost/token metadata

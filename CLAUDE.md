@@ -59,7 +59,7 @@ The Equalify PDF Converter transforms PDF documents into accessible, semantic ma
 │   └── Timeout Worker     → Approval timeout checks
 │
 ├── Services (Business logic)
-│   ├── PipelineViewerService → 7-step versioned document processing
+│   ├── PipelineViewerService → 7-step versioned pipeline (table/list/image subagents)
 │   ├── DocumentProcessingService → Pipeline orchestration + S3/Redis
 │   ├── StorageService     → S3 upload/download (circuit breakers)
 │   ├── S3URLService       → URL generation (LocalStack vs AWS)
@@ -79,7 +79,7 @@ The Equalify PDF Converter transforms PDF documents into accessible, semantic ma
 
 1. PDF uploaded → S3 temp bucket
 2. PII scan (Presidio) → Pass: queue processing | Fail: await approval
-3. Processing (PipelineViewerService) → 7-step versioned pipeline → markdown + figures
+3. Processing (PipelineViewerService) → 7-step versioned pipeline → markdown + figures + accessible tables/lists
 4. Results stored in S3 results bucket, job marked completed
 
 ## Detailed Documentation

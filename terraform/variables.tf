@@ -190,6 +190,13 @@ variable "monthly_budget_limit" {
   default     = "250" # Based on actual usage: ~$213/mo (ECS, ElastiCache, ALB, VPC, Bedrock, CloudWatch)
 }
 
+# Docling Configuration
+variable "docling_serve_image" {
+  description = "Docker image for docling-serve sidecar"
+  type        = string
+  default     = "quay.io/docling-project/docling-serve-cpu:latest"
+}
+
 # Tags
 variable "additional_tags" {
   description = "Additional tags to apply to all resources"

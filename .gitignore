@@ -126,13 +126,8 @@ credentials/
 *.cer
 *.der
 
-# Terraform
+# Terraform (see terraform/.gitignore for detailed rules)
 terraform/.terraform/
-terraform/*.tfstate
-terraform/*.tfstate.*
-terraform/terraform.tfvars
-terraform/.terraform.lock.hcl
-!terraform/terraform.tfvars.example
 
 # Node.js (for future frontend)
 node_modules/

@@ -97,6 +97,14 @@ restart: down dev
 logs:
 	docker compose -f docker-compose.yml -f docker-compose.dev.yml logs -f
 
+# View docling-serve logs
+docling-logs:
+	docker compose -f docker-compose.yml -f docker-compose.dev.yml logs -f docling-serve
+
+# Check docling-serve health
+docling-health:
+	@curl -sf http://localhost:5001/health && echo " ✅ docling-serve healthy" || echo " ❌ docling-serve unhealthy"
+
 # Health check
 health:
 	./scripts/health-check.sh

@@ -94,14 +94,22 @@ class Settings(BaseSettings):
     pdf_block_forms: bool = Field(default=True, description="Block PDFs with interactive form fields")
     pdf_block_encrypted: bool = Field(default=True, description="Block password-protected PDFs")
 
+    # Docling-serve sidecar configuration
+    docling_serve_url: str = Field(
+        default="http://docling-serve:5001",
+        description="Base URL of the docling-serve sidecar",
+    )
+    docling_serve_timeout: float = Field(
+        ge=10.0,
+        le=600.0,
+        default=120.0,
+        description="HTTP timeout in seconds for docling-serve requests",
+    )
+
     # OCR Configuration
     ocr_default_languages: list[str] = Field(
         default=["eng"],
-        description="Default Tesseract OCR language codes when none specified by caller",
-    )
-    tessdata_prefix: str = Field(
-        default="/usr/share/tesseract-ocr/5/tessdata",
-        description="Path to Tesseract tessdata directory for language validation",
+        description="Default OCR language codes (Tesseract format, mapped to EasyOCR for docling-serve)",
     )
 
     # PDF Processing Configuration

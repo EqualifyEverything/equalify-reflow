@@ -34,41 +34,18 @@ WORKDIR /app
 # ==============================================================================
 FROM base AS dependencies
 
-# Install system dependencies for Docling (PDF processing) and Presidio (PII detection)
+# Install minimal system dependencies (Presidio PII detection, poppler for PDF utils)
+# NOTE: Tesseract and Docling model downloads are no longer needed — OCR and document
+# conversion are handled by the docling-serve sidecar container.
 RUN apt-get update && apt-get install -y --no-install-recommends \
     poppler-utils \
-    tesseract-ocr \
-    tesseract-ocr-eng \
-    tesseract-ocr-spa \
-    tesseract-ocr-fra \
-    tesseract-ocr-deu \
-    tesseract-ocr-chi-sim \
-    tesseract-ocr-jpn \
-    tesseract-ocr-kor \
-    tesseract-ocr-ara \
-    tesseract-ocr-hin \
-    tesseract-ocr-por \
-    tesseract-ocr-ita \
-    tesseract-ocr-rus \
     && rm -rf /var/lib/apt/lists/*
-
-ENV TESSDATA_PREFIX=/usr/share/tesseract-ocr/5/tessdata
 
 # Copy dependency files
 COPY pyproject.toml uv.lock* ./
 
-# Sync dependencies, then replace CUDA PyTorch with CPU-only version in a SINGLE layer
-# This is critical: separate RUN commands create separate layers, and Docker layers are
-# additive. If uv sync installs CUDA torch (~4GB) in one layer and we uninstall in
-# another, the 4GB layer persists in the image. Collapsing into one RUN ensures CUDA
-# packages never get committed to a layer.
-# GPU not supported on ECS Fargate, and document processing doesn't benefit from GPU
+# Sync dependencies (no more PyTorch or CUDA — Docling runs in sidecar)
 RUN (uv sync --frozen || uv sync) \
-    && uv pip install torch torchvision --index-url https://download.pytorch.org/whl/cpu \
-    && uv pip uninstall nvidia-cublas-cu12 nvidia-cuda-cupti-cu12 nvidia-cuda-nvrtc-cu12 \
-        nvidia-cuda-runtime-cu12 nvidia-cudnn-cu12 nvidia-cufft-cu12 nvidia-cufile-cu12 \
-        nvidia-curand-cu12 nvidia-cusolver-cu12 nvidia-cusparse-cu12 nvidia-cusparselt-cu12 \
-        nvidia-nccl-cu12 nvidia-nvjitlink-cu12 nvidia-nvtx-cu12 triton 2>/dev/null || true \
     && rm -rf /root/.cache/uv
 
 # Pre-download spaCy model for Presidio PII detection
@@ -78,21 +55,14 @@ RUN (uv sync --frozen || uv sync) \
 # Model version should match spacy version - check https://github.com/explosion/spacy-models/releases
 RUN uv pip install https://github.com/explosion/spacy-models/releases/download/en_core_web_sm-3.7.1/en_core_web_sm-3.7.1-py3-none-any.whl
 
-# Pre-download Docling models for PDF processing
-# This avoids runtime model downloads that can timeout (504 errors) and adds 2-5 minutes to cold starts
-# Models are cached to ~/.cache/docling/models (or DOCLING_ARTIFACTS_PATH)
-# Download only essential models (skip easyocr which often fails to download; we use tesseract instead)
-RUN uv run docling-tools models download layout tableformer code_formula picture_classifier --quiet
-
 # ==============================================================================
 # Stage 4: Development - Hot-reload for fast iteration
 # ==============================================================================
 FROM dependencies AS development
 
-# Install dev dependencies and re-apply CPU-only PyTorch in a single layer
-# (uv sync --all-extras may reinstall CUDA torch from the lockfile)
+# Install dev dependencies
 RUN (uv sync --frozen --all-extras || uv sync --all-extras) \
-    && uv pip install torch torchvision --index-url https://download.pytorch.org/whl/cpu
+    && rm -rf /root/.cache/uv
 
 # Copy source code and configuration
 # Note: In dev, src will be overridden by volume mount in docker-compose.dev.yml

@@ -28,16 +28,28 @@ async def health_check(
         Health status with detailed checks
     """
 
+    # Check docling-serve health
+    try:
+        from ..services.docling_serve_client import get_docling_client
+        docling_client = get_docling_client()
+        docling_healthy = await docling_client.check_health()
+    except RuntimeError:
+        docling_healthy = False
+
     checks = {
         "redis": await queue.check_redis_connection(),
         "s3": await storage.check_s3_access(),
-        "queue_depth": await queue.check_queue_depth()
+        "queue_depth": await queue.check_queue_depth(),
+        "docling_serve": docling_healthy,
     }
 
-    # All checks must pass
-    if checks["redis"] and checks["s3"] and checks["queue_depth"] >= 0:
+    # Core checks: Redis, S3, queue must pass
+    # docling_serve is non-fatal — circuit breaker handles it at request level,
+    # and it takes ~2min to load models at boot (would cause ECS restart loops)
+    core_healthy = checks["redis"] and checks["s3"] and checks["queue_depth"] >= 0
+    if core_healthy:
         return {
-            "status": "healthy",
+            "status": "healthy" if docling_healthy else "degraded",
             "checks": checks
         }
     else:

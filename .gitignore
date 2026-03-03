@@ -173,3 +173,6 @@ static/viewer/
 # AI tooling
 .ralphy/
 docs/prd/
+CLAUDE.local.md
+.claude/worktrees/
+clients/docs/

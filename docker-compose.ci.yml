@@ -26,11 +26,29 @@ services:
       - ENVIRONMENT=ci
       - ENABLE_METRICS=false
       - TELEMETRY_ENABLED=false
+      - DOCLING_SERVE_URL=http://docling-serve:5001
     depends_on:
       redis:
         condition: service_healthy
       localstack:
         condition: service_healthy
+      docling-serve:
+        condition: service_healthy
+
+  docling-serve:
+    image: quay.io/docling-project/docling-serve-cpu:latest
+    container_name: equalify-pdf-docling-serve
+    environment:
+      - DOCLING_SERVE_LOAD_MODELS_AT_BOOT=true
+      - DOCLING_SERVE_ENG_LOC_SHARE_MODELS=true
+    healthcheck:
+      test: ["CMD", "curl", "-f", "http://localhost:5001/health"]
+      interval: 30s
+      timeout: 10s
+      retries: 5
+      start_period: 120s
+    networks:
+      - equalify-network
 
   localstack:
     image: localstack/localstack:latest

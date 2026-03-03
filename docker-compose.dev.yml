@@ -33,6 +33,29 @@ services:
     networks:
       - equalify-network
 
+  # Docling-serve - PDF document conversion sidecar (CPU mode for dev)
+  docling-serve:
+    image: quay.io/docling-project/docling-serve-cpu:latest
+    container_name: equalify-pdf-docling-serve
+    restart: unless-stopped
+    ports:
+      - "5001:5001"
+    environment:
+      - DOCLING_SERVE_LOAD_MODELS_AT_BOOT=true
+      - DOCLING_SERVE_ENG_LOC_SHARE_MODELS=true
+    healthcheck:
+      test: [ "CMD", "curl", "-f", "http://localhost:5001/health" ]
+      interval: 30s
+      timeout: 10s
+      retries: 5
+      start_period: 120s
+    deploy:
+      resources:
+        limits:
+          memory: 6G
+    networks:
+      - equalify-network
+
   # Development overrides for API Gateway
   api-gateway:
     build:
@@ -91,6 +114,8 @@ services:
       # Logfire Configuration (PydanticAI agent tracing)
       - LOGFIRE_ENABLED=${LOGFIRE_ENABLED:-false}
       - LOGFIRE_TOKEN=${LOGFIRE_TOKEN:-}
+      # Docling-serve sidecar
+      - DOCLING_SERVE_URL=http://docling-serve:5001
     command: [ "uv", "run", "uvicorn", "src.main:app", "--reload", "--host", "0.0.0.0", "--port", "8080", "--proxy-headers", "--forwarded-allow-ips", "*" ]
     networks:
       equalify-network:
@@ -99,6 +124,8 @@ services:
       redis:
         condition: service_healthy
       localstack:
+        condition: service_healthy
+      docling-serve:
         condition: service_healthy
 
   # NOTE: Viewer is bundled into the API container

@@ -43,10 +43,13 @@ async def health_check(
         "docling_serve": docling_healthy,
     }
 
-    # All checks must pass
-    if checks["redis"] and checks["s3"] and checks["queue_depth"] >= 0 and checks["docling_serve"]:
+    # Core checks: Redis, S3, queue must pass
+    # docling_serve is non-fatal — circuit breaker handles it at request level,
+    # and it takes ~2min to load models at boot (would cause ECS restart loops)
+    core_healthy = checks["redis"] and checks["s3"] and checks["queue_depth"] >= 0
+    if core_healthy:
         return {
-            "status": "healthy",
+            "status": "healthy" if docling_healthy else "degraded",
             "checks": checks
         }
     else:

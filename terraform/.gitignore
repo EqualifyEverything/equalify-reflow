@@ -9,9 +9,9 @@
 .terraform/
 .terraform.lock.hcl
 
-# Variable files with secrets
-terraform.tfvars
-*.auto.tfvars
+# Secret variable files (non-secret terraform.tfvars is tracked)
+secrets.auto.tfvars
+!secrets.auto.tfvars.example
 
 # Plan files
 *.tfplan

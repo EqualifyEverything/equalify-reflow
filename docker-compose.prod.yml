@@ -22,6 +22,31 @@ services:
           cpus: '0.5'
           memory: 1G
 
+  # Docling-serve - PDF document conversion sidecar (CPU mode for production)
+  docling-serve:
+    image: quay.io/docling-project/docling-serve-cpu:latest
+    container_name: equalify-pdf-docling-serve-prod
+    restart: unless-stopped
+    environment:
+      - DOCLING_SERVE_LOAD_MODELS_AT_BOOT=true
+      - DOCLING_SERVE_ENG_LOC_SHARE_MODELS=true
+    healthcheck:
+      test: [ "CMD", "curl", "-f", "http://localhost:5001/health" ]
+      interval: 30s
+      timeout: 10s
+      retries: 5
+      start_period: 180s
+    deploy:
+      resources:
+        limits:
+          cpus: '1'
+          memory: 5G
+        reservations:
+          cpus: '0.5'
+          memory: 4G
+    networks:
+      - equalify-network
+
   # Production overrides for API Gateway
   # NOTE: This container runs ALL workers as background tasks (monolith)
   # Resource limits account for API + PII worker + Processing worker + Timeout worker
@@ -34,6 +59,11 @@ services:
       - S3_RESULTS_BUCKET=equalify-pdf-results
       - LOG_LEVEL=INFO
       - ENVIRONMENT=production
+      # Docling-serve sidecar
+      - DOCLING_SERVE_URL=http://docling-serve:5001
+    depends_on:
+      docling-serve:
+        condition: service_healthy
     deploy:
       resources:
         limits:

@@ -77,10 +77,10 @@ def _patch_classify():
 
     return (
         patch(
-            "src.services.pipeline_viewer.classify_pdf",
+            "src.services.pdf_classifier.classify_pdf",
             return_value=mock_classification,
         ),
-        patch("src.services.pipeline_viewer.enrich_classification"),
+        patch("src.services.pdf_classifier.enrich_classification"),
     )
 
 

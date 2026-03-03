@@ -331,7 +331,9 @@ export function PipelineViewerPage() {
     if (!result?.figures.length) return {};
     const map: Record<string, string> = {};
     for (const fig of result.figures) {
-      map[`figures/${fig.ref_id}.png`] = `data:image/png;base64,${fig.image_base64}`;
+      if (fig.image_base64) {
+        map[`figures/${fig.ref_id}.png`] = `data:image/png;base64,${fig.image_base64}`;
+      }
     }
     return map;
   }, [result?.figures]);
@@ -507,8 +509,8 @@ export function PipelineViewerPage() {
       {uploading && (
         <div className="flex-1 flex flex-col items-center justify-center gap-4">
           <Loader2 className="w-10 h-10 animate-spin text-uic-blue" />
-          <p className="text-muted-foreground">Running Docling extraction...</p>
-          <p className="text-xs text-muted-foreground">This typically takes 10-30 seconds</p>
+          <p className="text-muted-foreground">Extracting document content...</p>
+          <p className="text-xs text-muted-foreground">Processing time depends on document length and complexity</p>
         </div>
       )}
 
@@ -689,6 +691,11 @@ export function PipelineViewerPage() {
                         alt={`Page ${currentPage}`}
                         className="max-w-full shadow-lg rounded"
                       />
+                    ) : processing || uploading ? (
+                      <div className="flex flex-col items-center gap-2 mt-20 text-muted-foreground">
+                        <Loader2 className="w-6 h-6 animate-spin" />
+                        <span className="text-sm">Loading page image...</span>
+                      </div>
                     ) : (
                       <div className="text-muted-foreground text-sm mt-20">
                         No image available

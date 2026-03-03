@@ -30,6 +30,20 @@ def _sse_event(event_type: str, data: Any) -> str:
     return f"event: {event_type}\ndata: {payload}\n\n"
 
 
+def _slim_init_payload(result: PipelineViewerResult) -> dict[str, Any]:
+    """Build an init payload with binary images stripped out.
+
+    Removes page_images and figure image_base64 so the init event stays small.
+    Images are streamed individually via page_image / figure_image events.
+    """
+    data = result.model_dump()
+    data["page_images"] = {}
+    data["figures"] = [
+        {**fig, "image_base64": ""} for fig in data["figures"]
+    ]
+    return data
+
+
 async def _heartbeats_until_done(task: asyncio.Task) -> AsyncGenerator[str, None]:
     """Yield SSE heartbeat comments while an asyncio task runs.
 
@@ -106,7 +120,9 @@ async def process_pdf_stream(
     incrementally.
 
     SSE event types:
-        init — After Docling extraction. Full result with page_images, figures.
+        init — After Docling extraction. Metadata + markdown (no binary images).
+        page_image — Individual page image (one per page, streamed after init).
+        figure_image — Individual figure image (one per figure, streamed after init).
         processing — Before each subsequent step starts.
         step — After each subsequent step completes (incremental data).
         error — If a step fails (non-fatal).
@@ -159,7 +175,7 @@ async def process_pdf_stream(
                     },
                 )
             )
-            yield _sse_event("init", result.model_dump())
+            yield _sse_event("init", _slim_init_payload(result))
             yield _sse_event("done", {"total_steps": 0, "total_elapsed_ms": classification.elapsed_ms})
             return
 
@@ -234,8 +250,17 @@ async def process_pdf_stream(
                 )
                 result.warnings = classification.warning_messages
 
-        # Send full result after Docling (includes page_images, figures, warnings)
-        yield _sse_event("init", result.model_dump())
+        # Send slim init (metadata + markdown, no binary images)
+        yield _sse_event("init", _slim_init_payload(result))
+
+        # Stream page images individually (~200-500KB each, not 5-20MB at once)
+        for page_key, page_b64 in result.page_images.items():
+            yield _sse_event("page_image", {"page": page_key, "image_base64": page_b64})
+
+        # Stream figure images individually
+        for fig in result.figures:
+            if fig.image_base64:
+                yield _sse_event("figure_image", {"ref_id": fig.ref_id, "image_base64": fig.image_base64})
 
         # Step 2: Structure analysis
         structure = None

@@ -118,6 +118,26 @@ export function usePipelineViewer() {
               break;
             }
 
+            case 'page_image': {
+              const { page, image_base64 } = event.data as { page: string; image_base64: string };
+              setResult((prev) =>
+                prev ? { ...prev, page_images: { ...prev.page_images, [page]: image_base64 } } : prev
+              );
+              break;
+            }
+
+            case 'figure_image': {
+              const { ref_id, image_base64 } = event.data as { ref_id: string; image_base64: string };
+              setResult((prev) => {
+                if (!prev) return prev;
+                return {
+                  ...prev,
+                  figures: prev.figures.map((f) => (f.ref_id === ref_id ? { ...f, image_base64 } : f)),
+                };
+              });
+              break;
+            }
+
             case 'processing': {
               const { display_name } = event.data as { step_name: string; display_name: string };
               setCurrentStepName(display_name);

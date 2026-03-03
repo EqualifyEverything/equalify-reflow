@@ -272,8 +272,8 @@ export function MinimalPage() {
       {uploading && (
         <div className="flex-1 flex flex-col items-center justify-center gap-4">
           <Loader2 className="w-10 h-10 animate-spin text-uic-blue" />
-          <p className="text-muted-foreground">Running Docling extraction...</p>
-          <p className="text-xs text-muted-foreground">This typically takes 10-30 seconds</p>
+          <p className="text-muted-foreground">Extracting document content...</p>
+          <p className="text-xs text-muted-foreground">Processing time depends on document length and complexity</p>
         </div>
       )}
 

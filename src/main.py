@@ -66,6 +66,12 @@ async def lifespan(app: FastAPI) -> AsyncIterator[None]:
 
     # Startup: Initialize shared services
     logger.info("Initializing shared services...")
+
+    # Initialize docling-serve client
+    from .services.docling_serve_client import init_docling_client
+    init_docling_client(settings.docling_serve_url, settings.docling_serve_timeout)
+    logger.info("✅ Docling-serve client initialized")
+
     redis_gen = get_redis_client()
     redis_client = await anext(redis_gen)
     app.state.rate_limiter = RateLimitService(redis=redis_client)
@@ -113,6 +119,11 @@ async def lifespan(app: FastAPI) -> AsyncIterator[None]:
                 await asyncio.gather(*worker_tasks, return_exceptions=True)
             except Exception as e:
                 logger.error(f"Error during forced shutdown: {e}")
+
+    # Shutdown docling-serve client
+    from .services.docling_serve_client import close_docling_client
+    await close_docling_client()
+    logger.info("✅ Docling-serve client closed")
 
     # Shutdown OpenTelemetry (if enabled)
     if settings.telemetry_enabled:

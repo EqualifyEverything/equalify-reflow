@@ -11,11 +11,9 @@ Usage:
 from __future__ import annotations
 
 import asyncio
-import base64
 import logging
 import time
 from dataclasses import dataclass, field
-from io import BytesIO
 
 logger = logging.getLogger(__name__)
 
@@ -59,13 +57,6 @@ class MinimalPipelineResult:
     full_markdown: str = ""
     steps_run: list[PipelineStep] = field(default_factory=list)
     stats: dict = field(default_factory=dict)
-
-
-def _pil_to_base64(image: object) -> str:
-    """Convert a PIL Image to base64-encoded PNG string."""
-    buf = BytesIO()
-    image.save(buf, format="PNG")  # type: ignore[union-attr]
-    return base64.b64encode(buf.getvalue()).decode("utf-8")
 
 
 class MinimalPipelineService:
@@ -113,78 +104,88 @@ class MinimalPipelineService:
         images_scale: float,
         do_table_structure: bool,
     ) -> None:
-        """Run Docling PDF extraction."""
-        from docling.datamodel.base_models import InputFormat
-        from docling.datamodel.document import DocumentStream  # type: ignore[attr-defined]
-        from docling.datamodel.pipeline_options import PdfPipelineOptions
-        from docling.document_converter import DocumentConverter, PdfFormatOption
+        """Run docling-serve extraction + pypdfium2 page rendering."""
+        from .docling_response_parser import (
+            extract_figures_from_json,
+            get_page_info,
+            split_markdown_by_page,
+        )
+        from .docling_serve_client import get_docling_client
+        from .page_image_renderer import crop_figure_from_page_image, render_page_images
 
         step_start = time.time()
+        client = get_docling_client()
 
-        pipeline_options = PdfPipelineOptions(
+        # Run docling-serve and page image rendering in parallel
+        # Use placeholder mode — no embedded base64, keeps JSON response small
+        docling_task = client.convert(
+            file_content,
+            filename,
             do_ocr=False,
             do_table_structure=do_table_structure,
-            generate_page_images=True,
-            generate_picture_images=True,
+            include_images=True,
             images_scale=images_scale,
+            image_export_mode="placeholder",
+            md_page_break_placeholder="<!-- PAGE_BREAK -->",
         )
+        images_task = render_page_images(file_content, scale=images_scale)
+        response, page_images = await asyncio.gather(docling_task, images_task)
 
-        converter = DocumentConverter(
-            format_options={InputFormat.PDF: PdfFormatOption(pipeline_options=pipeline_options)}
-        )
-
-        pdf_stream = BytesIO(file_content)
-        doc_stream = DocumentStream(name=filename, stream=pdf_stream)
-        conv_result = await asyncio.to_thread(converter.convert, source=doc_stream)
-        doc = conv_result.document
-
-        result.total_pages = len(doc.pages)
+        # Page count from JSON
+        page_info = get_page_info(response.json_content)
+        result.total_pages = page_info["page_count"]
 
         # Full document markdown
-        try:
-            result.full_markdown = doc.export_to_markdown()
-        except Exception as e:
-            logger.warning(f"Failed to export full markdown: {e}")
-            result.full_markdown = ""
+        result.full_markdown = response.md_content
 
         # Per-page markdown and images
         total_chars = 0
-        for page_no in sorted(doc.pages.keys()):
-            page_md = doc.export_to_markdown(page_no=page_no)
+        page_mds = split_markdown_by_page(response.md_content)
+        for page_key, page_md in sorted(page_mds.items(), key=lambda x: int(x[0])):
             total_chars += len(page_md)
-
-            # Extract page image
-            page_image_b64 = None
-            page = doc.pages[page_no]
-            if page.image and hasattr(page.image, "pil_image") and page.image.pil_image:
-                page_image_b64 = _pil_to_base64(page.image.pil_image)
-
             result.pages.append(
                 PageResult(
-                    page_number=page_no,
+                    page_number=int(page_key),
                     markdown=page_md,
-                    image_base64=page_image_b64,
+                    image_base64=page_images.get(page_key),
                 )
             )
 
-        # Extract figures
-        for pic in doc.pictures:
-            if pic.image and hasattr(pic.image, "pil_image") and pic.image.pil_image:
-                result.figures.append(
-                    FigureResult(
-                        ref_id=str(pic.self_ref) if pic.self_ref else "",
-                        caption=pic.caption_text(doc=doc) or "",
-                        page_number=pic.prov[0].page_no if pic.prov else 1,
-                        image_base64=_pil_to_base64(pic.image.pil_image),
-                    )
+        # Extract figures (crop from page renders using bbox)
+        figure_dicts = extract_figures_from_json(response.json_content)
+        for fig_dict in figure_dicts:
+            page_key = str(fig_dict["page_number"])
+            page_b64 = page_images.get(page_key)
+            if not page_b64:
+                continue
+            try:
+                cropped_b64 = crop_figure_from_page_image(
+                    page_b64,
+                    fig_dict["bbox"],
+                    fig_dict["page_width"],
+                    fig_dict["page_height"],
                 )
+            except Exception as e:
+                logger.warning("Failed to crop figure %s: %s", fig_dict["ref_id"], e)
+                continue
+            result.figures.append(
+                FigureResult(
+                    ref_id=fig_dict["ref_id"],
+                    caption=fig_dict["caption"],
+                    page_number=fig_dict["page_number"],
+                    image_base64=cropped_b64,
+                )
+            )
 
         elapsed_ms = int((time.time() - step_start) * 1000)
 
         result.steps_run.append(
             PipelineStep(
                 name="docling",
-                description="PDF extraction with Docling (page images, table structure, figure extraction)",
+                description=(
+                    "PDF extraction with docling-serve"
+                    " (page images via pypdfium2, table structure, figure extraction)"
+                ),
                 elapsed_ms=elapsed_ms,
             )
         )

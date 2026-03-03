@@ -16,9 +16,8 @@ import difflib
 import logging
 import re
 import time
-from io import BytesIO
-from pathlib import Path
 from collections.abc import Callable
+from pathlib import Path
 from typing import Any
 
 from ..config import settings
@@ -59,13 +58,6 @@ HEADING_MATCH_THRESHOLD = 0.8  # Heading level correction (strict)
 SECTION_MAP_MATCH_THRESHOLD = 0.6  # Section map building (lenient)
 CODE_BLOCK_MATCH_THRESHOLD = 0.6  # Code block first-line matching
 FUZZY_LINE_MATCH_THRESHOLD = 0.6  # General fuzzy line finding (default)
-
-
-def _pil_to_base64(image: object) -> str:
-    """Convert a PIL Image to base64-encoded PNG string."""
-    buf = BytesIO()
-    image.save(buf, format="PNG")  # type: ignore[union-attr]
-    return base64.b64encode(buf.getvalue()).decode("utf-8")
 
 
 def _load_fragment(name: str) -> str:
@@ -667,91 +659,117 @@ class PipelineViewerService:
         images_scale: float,
         do_table_structure: bool,
     ) -> None:
-        """Run Docling PDF extraction, producing v0."""
-        from docling.datamodel.base_models import InputFormat
-        from docling.datamodel.document import DocumentStream  # type: ignore[attr-defined]
-        from docling.datamodel.pipeline_options import PdfPipelineOptions
-        from docling.document_converter import DocumentConverter, PdfFormatOption
+        """Run docling-serve extraction + pypdfium2 page rendering, producing v0.
+
+        Docling-serve conversion and page image rendering run in parallel via
+        ``asyncio.gather()`` — the HTTP call and CPU rendering overlap.
+        """
+        from .docling_response_parser import (
+            detect_columns_from_json,
+            extract_figures_from_json,
+            get_page_info,
+            split_markdown_by_page,
+        )
+        from .docling_serve_client import get_docling_client
+        from .page_image_renderer import crop_figure_from_page_image, render_page_images
 
         step_start = time.time()
+        client = get_docling_client()
 
-        pipeline_options = PdfPipelineOptions(
+        # Run docling-serve conversion and page image rendering in parallel
+        # Use placeholder mode — no embedded base64, keeps JSON response small
+        docling_task = client.convert(
+            file_content,
+            filename,
             do_ocr=False,
             do_table_structure=do_table_structure,
-            generate_page_images=True,
-            generate_picture_images=True,
+            include_images=True,
             images_scale=images_scale,
+            image_export_mode="placeholder",
+            md_page_break_placeholder="<!-- PAGE_BREAK -->",
         )
+        images_task = render_page_images(file_content, scale=images_scale)
+        response, page_images = await asyncio.gather(docling_task, images_task)
 
-        converter = DocumentConverter(
-            format_options={InputFormat.PDF: PdfFormatOption(pipeline_options=pipeline_options)}
-        )
+        # Page images from pypdfium2
+        result.page_images = page_images
 
-        pdf_stream = BytesIO(file_content)
-        doc_stream = DocumentStream(name=filename, stream=pdf_stream)
-        conv_result = await asyncio.to_thread(converter.convert, source=doc_stream)
-        doc = conv_result.document
-
-        result.total_pages = len(doc.pages)
+        # Page count from JSON
+        page_info = get_page_info(response.json_content)
+        result.total_pages = page_info["page_count"]
 
         from src.utils.text_cleanup import sanitize_extracted_text
 
         # Full document markdown -> v0
         try:
-            full_md = sanitize_extracted_text(doc.export_to_markdown())
+            full_md = sanitize_extracted_text(response.md_content)
         except Exception as e:
-            logger.warning(f"Failed to export full markdown: {e}")
-            full_md = ""
+            logger.warning(f"Failed to sanitize markdown: {e}")
+            full_md = response.md_content
 
         result.versions["v0"] = full_md
 
-        # Per-page markdown and images
+        # Per-page markdown
         total_chars = 0
-        page_mds: dict[str, str] = {}
-        for page_no in sorted(doc.pages.keys()):
-            page_md = sanitize_extracted_text(doc.export_to_markdown(page_no=page_no))
+        page_mds = split_markdown_by_page(full_md)
+        for page_md in page_mds.values():
             total_chars += len(page_md)
-            page_key = str(page_no)
-            page_mds[page_key] = page_md
 
-            # Extract page image
-            page = doc.pages[page_no]
-            if page.image and hasattr(page.image, "pil_image") and page.image.pil_image:
-                result.page_images[page_key] = _pil_to_base64(page.image.pil_image)
+        # Sanitize per-page markdown
+        for page_key, page_md in page_mds.items():
+            try:
+                page_mds[page_key] = sanitize_extracted_text(page_md)
+            except Exception:
+                pass
 
         result.page_markdowns["v0"] = page_mds
 
-        # Extract figures
-        for i, pic in enumerate(doc.pictures):
-            if pic.image and hasattr(pic.image, "pil_image") and pic.image.pil_image:
-                result.figures.append(
-                    FigureData(
-                        ref_id=f"figure-{i + 1}",
-                        caption=pic.caption_text(doc=doc) or "",
-                        page_number=pic.prov[0].page_no if pic.prov else 1,
-                        image_base64=_pil_to_base64(pic.image.pil_image),
-                    )
+        # Extract figures from JSON (bbox metadata) and crop from page renders
+        figure_dicts = extract_figures_from_json(response.json_content)
+        for fig_dict in figure_dicts:
+            page_key = str(fig_dict["page_number"])
+            page_b64 = page_images.get(page_key)
+            if not page_b64:
+                continue
+            try:
+                cropped_b64 = crop_figure_from_page_image(
+                    page_b64,
+                    fig_dict["bbox"],
+                    fig_dict["page_width"],
+                    fig_dict["page_height"],
                 )
+            except Exception as e:
+                logger.warning("Failed to crop figure %s: %s", fig_dict["ref_id"], e)
+                continue
+            result.figures.append(
+                FigureData(
+                    ref_id=fig_dict["ref_id"],
+                    caption=fig_dict["caption"],
+                    page_number=fig_dict["page_number"],
+                    image_base64=cropped_b64,
+                )
+            )
 
-        # Replace <!-- image --> placeholders with inline image refs in v0.
-        # Done immediately so all downstream steps see image syntax.
+        # Replace <!-- image --> placeholders with inline image refs in v0
         if result.figures:
-            # Per-page replacement: filter figures by page_number
             for page_key, page_md in page_mds.items():
                 page_figures = [f for f in result.figures if str(f.page_number) == page_key]
                 if page_figures:
                     page_mds[page_key] = _replace_image_placeholders(page_md, page_figures)
             result.page_markdowns["v0"] = page_mds
 
-            # Full document replacement
             result.versions["v0"] = _replace_image_placeholders(
                 result.versions["v0"], result.figures
             )
 
-        # Detect column layout per page from Docling bounding boxes
+        # Detect column layout per page from JSON provenance
         layout_hints: dict[str, str] = {}
-        for page_no in sorted(doc.pages.keys()):
-            layout_hints[str(page_no)] = _detect_page_columns(doc, page_no)
+        for page_key in page_mds:
+            try:
+                page_no = int(page_key)
+                layout_hints[page_key] = detect_columns_from_json(response.json_content, page_no)
+            except (ValueError, TypeError):
+                layout_hints[page_key] = "unknown"
 
         elapsed_ms = int((time.time() - step_start) * 1000)
 
@@ -766,6 +784,7 @@ class PipelineViewerService:
                 metadata={
                     "do_table_structure": do_table_structure,
                     "images_scale": images_scale,
+                    "engine": "docling-serve",
                 },
             )
         )
@@ -799,11 +818,12 @@ class PipelineViewerService:
         *,
         languages: list[str],
     ) -> None:
-        """Re-run Docling with Tesseract OCR for scanned documents.
+        """Re-run docling-serve with OCR for scanned documents.
 
         Called when the initial ``_step_docling()`` produced zero extractable
         text and the classifier flagged the document as scanned.  Overwrites
-        v0 content with OCR results.
+        v0 content with OCR results.  Page images are NOT re-rendered
+        (already available from the initial extraction).
 
         Args:
             result: Pipeline result to update (v0 overwritten).
@@ -813,82 +833,86 @@ class PipelineViewerService:
             do_table_structure: Whether to run table structure recognition.
             languages: Tesseract language codes (e.g. ``["eng", "deu"]``).
         """
-        from docling.datamodel.base_models import InputFormat
-        from docling.datamodel.document import DocumentStream  # type: ignore[attr-defined]
-        from docling.datamodel.pipeline_options import (
-            PdfPipelineOptions,
-            TesseractCliOcrOptions,
+        from src.utils.ocr_languages import tesseract_to_easyocr
+
+        from .docling_response_parser import (
+            detect_columns_from_json,
+            extract_figures_from_json,
+            get_page_info,
+            split_markdown_by_page,
         )
-        from docling.document_converter import DocumentConverter, PdfFormatOption
+        from .docling_serve_client import get_docling_client
 
         step_start = time.time()
+
+        # Map Tesseract codes to EasyOCR codes for docling-serve
+        easyocr_langs = tesseract_to_easyocr(languages)
         logger.info(
-            "Running Tesseract OCR re-extraction for %s with languages: %s",
+            "Running OCR re-extraction for %s: languages=%s (EasyOCR: %s)",
             filename,
             languages,
+            easyocr_langs,
         )
 
-        ocr_options = TesseractCliOcrOptions(
-            lang=languages,
-            force_full_page_ocr=True,
-        )
+        from .page_image_renderer import crop_figure_from_page_image
 
-        pipeline_options = PdfPipelineOptions(
+        client = get_docling_client()
+        response = await client.convert(
+            file_content,
+            filename,
             do_ocr=True,
-            ocr_options=ocr_options,
+            force_ocr=True,
+            ocr_engine="easyocr",
+            ocr_lang=easyocr_langs,
             do_table_structure=do_table_structure,
-            generate_page_images=True,
-            generate_picture_images=True,
+            include_images=True,
             images_scale=images_scale,
+            image_export_mode="placeholder",
+            md_page_break_placeholder="<!-- PAGE_BREAK -->",
         )
 
-        converter = DocumentConverter(
-            format_options={InputFormat.PDF: PdfFormatOption(pipeline_options=pipeline_options)}
-        )
-
-        pdf_stream = BytesIO(file_content)
-        doc_stream = DocumentStream(name=filename, stream=pdf_stream)
-        conv_result = await asyncio.to_thread(converter.convert, source=doc_stream)
-        doc = conv_result.document
-
-        result.total_pages = len(doc.pages)
+        # Page count from JSON
+        page_info = get_page_info(response.json_content)
+        result.total_pages = page_info["page_count"]
 
         # Overwrite v0 with OCR content
-        try:
-            full_md = doc.export_to_markdown()
-        except Exception as e:
-            logger.warning(f"Failed to export OCR markdown: {e}")
-            full_md = ""
+        result.versions["v0"] = response.md_content
 
-        result.versions["v0"] = full_md
-
-        # Per-page markdown and images (overwrite)
+        # Per-page markdown (overwrite)
         total_chars = 0
-        page_mds: dict[str, str] = {}
-        for page_no in sorted(doc.pages.keys()):
-            page_md = doc.export_to_markdown(page_no=page_no)
+        page_mds = split_markdown_by_page(response.md_content)
+        for page_md in page_mds.values():
             total_chars += len(page_md)
-            page_key = str(page_no)
-            page_mds[page_key] = page_md
-
-            page = doc.pages[page_no]
-            if page.image and hasattr(page.image, "pil_image") and page.image.pil_image:
-                result.page_images[page_key] = _pil_to_base64(page.image.pil_image)
 
         result.page_markdowns["v0"] = page_mds
+        # Page images already set by _step_docling — no re-render needed
 
-        # Re-extract figures
+        # Re-extract figures (crop from page renders)
         result.figures.clear()
-        for i, pic in enumerate(doc.pictures):
-            if pic.image and hasattr(pic.image, "pil_image") and pic.image.pil_image:
-                result.figures.append(
-                    FigureData(
-                        ref_id=f"figure-{i + 1}",
-                        caption=pic.caption_text(doc=doc) or "",
-                        page_number=pic.prov[0].page_no if pic.prov else 1,
-                        image_base64=_pil_to_base64(pic.image.pil_image),
-                    )
+        figure_dicts = extract_figures_from_json(response.json_content)
+        for fig_dict in figure_dicts:
+            page_key = str(fig_dict["page_number"])
+            page_b64 = result.page_images.get(page_key)
+            if not page_b64:
+                continue
+            try:
+                cropped_b64 = crop_figure_from_page_image(
+                    page_b64,
+                    fig_dict["bbox"],
+                    fig_dict["page_width"],
+                    fig_dict["page_height"],
                 )
+            except Exception as e:
+                logger.warning("Failed to crop figure %s: %s", fig_dict["ref_id"], e)
+                continue
+            result.figures.append(
+                FigureData(
+                    ref_id=fig_dict["ref_id"],
+                    caption=fig_dict["caption"],
+                    page_number=fig_dict["page_number"],
+                    image_base64=cropped_b64,
+                )
+            )
 
         # Replace <!-- image --> placeholders with inline image refs
         if result.figures:
@@ -901,26 +925,31 @@ class PipelineViewerService:
                 result.versions["v0"], result.figures
             )
 
-        # Detect column layout per page
+        # Detect column layout per page from JSON provenance
         layout_hints: dict[str, str] = {}
-        for page_no in sorted(doc.pages.keys()):
-            layout_hints[str(page_no)] = _detect_page_columns(doc, page_no)
+        for page_key in page_mds:
+            try:
+                page_no = int(page_key)
+                layout_hints[page_key] = detect_columns_from_json(response.json_content, page_no)
+            except (ValueError, TypeError):
+                layout_hints[page_key] = "unknown"
 
         elapsed_ms = int((time.time() - step_start) * 1000)
 
         result.steps.append(
             StepResult(
                 name="docling_ocr",
-                display_name="Tesseract OCR Re-extraction",
+                display_name="OCR Re-extraction",
                 version_before="v0",
                 version_after="v0",
                 elapsed_ms=elapsed_ms,
                 changes=[],
                 metadata={
-                    "ocr_engine": "tesseract_cli",
+                    "ocr_engine": "easyocr",
                     "languages": languages,
+                    "easyocr_languages": easyocr_langs,
                     "total_chars_after_ocr": total_chars,
-                    "force_full_page_ocr": True,
+                    "force_ocr": True,
                 },
             )
         )

@@ -200,7 +200,7 @@ variable "docling_serve_image" {
 variable "docling_serve_image_tag" {
   description = "Tag for docling-serve CUDA image in ECR"
   type        = string
-  default     = "cu128-1.12.0"
+  default     = "cu128-v1.14.2"
 }
 
 variable "docling_instance_type" {

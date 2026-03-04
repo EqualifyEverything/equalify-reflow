@@ -79,6 +79,8 @@ resource "aws_launch_template" "docling" {
     arn = aws_iam_instance_profile.docling.arn
   }
 
+  vpc_security_group_ids = [aws_security_group.docling_ec2.id]
+
   block_device_mappings {
     device_name = "/dev/xvda"
     ebs {
@@ -117,12 +119,13 @@ resource "aws_launch_template" "docling" {
 # ---------------------------------------------------------------------------
 
 resource "aws_autoscaling_group" "docling" {
-  name_prefix         = "${var.project_name}-docling-"
-  min_size            = 0
-  max_size            = var.docling_max_capacity
-  desired_capacity    = var.docling_min_capacity
-  vpc_zone_identifier = module.vpc.private_subnets
-  capacity_rebalance  = true
+  name_prefix               = "${var.project_name}-docling-"
+  min_size                  = 0
+  max_size                  = var.docling_max_capacity
+  desired_capacity          = var.docling_min_capacity
+  vpc_zone_identifier       = module.vpc.private_subnets
+  capacity_rebalance        = true
+  protect_from_scale_in     = true  # Required for ECS managed termination protection
 
   launch_template {
     id      = aws_launch_template.docling.id
@@ -229,15 +232,14 @@ resource "aws_security_group" "docling_ec2" {
     from_port   = 5001
     to_port     = 5001
     protocol    = "tcp"
-    # Self-reference resolved via separate rule below
     cidr_blocks = [var.vpc_cidr]
   }
 
   egress {
-    description = "HTTPS outbound (ECR, CloudWatch)"
-    from_port   = 443
-    to_port     = 443
-    protocol    = "tcp"
+    description = "All outbound (ECR pulls, ECS agent, CloudWatch)"
+    from_port   = 0
+    to_port     = 0
+    protocol    = "-1"
     cidr_blocks = ["0.0.0.0/0"]
   }
 

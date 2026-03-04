@@ -20,7 +20,7 @@ logger = logging.getLogger(__name__)
 
 router = APIRouter(prefix="/api/v1/pipeline", tags=["Pipeline"])
 
-_HEARTBEAT_INTERVAL_SECONDS = 30
+_HEARTBEAT_INTERVAL_SECONDS = 10
 _SSE_HEARTBEAT = ": heartbeat\n\n"
 
 
@@ -324,16 +324,19 @@ async def process_pdf_stream(
         if structure is not None:
             yield _sse_event("processing", {"step_name": "page_content", "display_name": "Page Content Corrections"})
             try:
-                # Run sync section map + hints in thread to avoid blocking heartbeats
-                section_map = await asyncio.to_thread(
-                    service._build_section_map, result, structure
-                )
-                page_hints = await asyncio.to_thread(
-                    service._generate_page_hints, result, structure, section_map
-                )
-                task = asyncio.create_task(
-                    service._step_page_content(result, structure, page_hints=page_hints)
-                )
+                # Wrap section map + hints + LLM call in one task so heartbeats
+                # flow the entire time (section map building can be slow).
+                async def _page_content_with_prep():
+                    nonlocal section_map
+                    section_map = await asyncio.to_thread(
+                        service._build_section_map, result, structure
+                    )
+                    page_hints = await asyncio.to_thread(
+                        service._generate_page_hints, result, structure, section_map
+                    )
+                    await service._step_page_content(result, structure, page_hints=page_hints)
+
+                task = asyncio.create_task(_page_content_with_prep())
                 async for hb in _heartbeats_until_done(task):
                     yield hb
                 task.result()
@@ -373,13 +376,15 @@ async def process_pdf_stream(
         if structure is not None:
             yield _sse_event("processing", {"step_name": "boundaries", "display_name": "Cross-Page Fixes"})
             try:
-                if section_map is None:
-                    section_map = await asyncio.to_thread(
-                        service._build_section_map, result, structure
-                    )
-                task = asyncio.create_task(
-                    service._step_boundaries(result, structure, section_map=section_map)
-                )
+                async def _boundaries_with_prep():
+                    nonlocal section_map
+                    if section_map is None:
+                        section_map = await asyncio.to_thread(
+                            service._build_section_map, result, structure
+                        )
+                    await service._step_boundaries(result, structure, section_map=section_map)
+
+                task = asyncio.create_task(_boundaries_with_prep())
                 async for hb in _heartbeats_until_done(task):
                     yield hb
                 task.result()

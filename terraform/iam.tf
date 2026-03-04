@@ -145,9 +145,9 @@ resource "aws_iam_policy" "ecs_exec_access" {
       {
         Effect = "Allow"
         Action = [
-          "ecs:ExecuteCommand",    # Permission to run exec command
-          "ecs:DescribeTasks",     # Permission to see task details
-          "ecs:DescribeServices"   # Permission to see service info
+          "ecs:ExecuteCommand",  # Permission to run exec command
+          "ecs:DescribeTasks",   # Permission to see task details
+          "ecs:DescribeServices" # Permission to see service info
         ]
         Resource = [
           "arn:aws:ecs:${var.aws_region}:${data.aws_caller_identity.current.account_id}:task/${aws_ecs_cluster.main.name}/*",

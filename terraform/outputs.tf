@@ -96,6 +96,11 @@ output "docling_asg_name" {
   value       = aws_autoscaling_group.docling.name
 }
 
+output "docling_ecr_repository_url" {
+  description = "URL of the docling ECR repository"
+  value       = aws_ecr_repository.docling.repository_url
+}
+
 # AI Provider Configuration
 output "ai_provider" {
   description = "Configured AI provider (bedrock only)"

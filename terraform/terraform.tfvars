@@ -23,7 +23,7 @@ redis_num_cache_nodes = 1
 s3_temp_lifecycle_days = 7
 
 # Domain Configuration (HTTPS)
-domain_name           = "pdf.equalify.uic.edu"
+domain_name = "pdf.equalify.uic.edu"
 # staging_domain_name = "staging-pdf.equalify.uic.edu"  # Uncomment later for staging
 create_route53_record = false # Using UIC DNS, not Route 53
 

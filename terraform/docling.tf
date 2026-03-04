@@ -1,20 +1,20 @@
-# Docling-serve — Decoupled ECS Service on EC2 ARM Spot (PRD-1)
+# Docling-serve — Decoupled ECS Service on EC2 GPU Spot (PRD-2/3/4)
 #
-# Runs docling-serve as its own ECS service on c6g.xlarge (ARM, Spot) behind
-# an internal ALB. Decoupled from the API Fargate task to allow independent
-# scaling and prevent OOM crashes at >2 concurrent PDFs.
+# Runs docling-serve CUDA on g4dn.xlarge (GPU, Spot) behind an internal ALB.
+# Scale-to-zero when idle, scale-out on job submission. Decoupled from the API
+# Fargate task to allow independent scaling.
 
 # ---------------------------------------------------------------------------
-# AMI — ECS-optimized Amazon Linux 2023 ARM
+# AMI — ECS GPU-optimized Amazon Linux 2 x86_64
 # ---------------------------------------------------------------------------
 
-data "aws_ami" "ecs_optimized_arm" {
+data "aws_ami" "ecs_gpu_optimized" {
   most_recent = true
   owners      = ["amazon"]
 
   filter {
     name   = "name"
-    values = ["al2023-ami-ecs-hvm-*-arm64"]
+    values = ["al2-ami-ecs-gpu-hvm-*-x86_64-ebs"]
   }
 }
 
@@ -67,13 +67,12 @@ resource "aws_cloudwatch_log_group" "docling" {
 }
 
 # ---------------------------------------------------------------------------
-# Launch Template — c6g.xlarge ARM Spot
+# Launch Template — GPU (instance type managed by ASG mixed policy)
 # ---------------------------------------------------------------------------
 
 resource "aws_launch_template" "docling" {
-  name_prefix   = "${var.project_name}-docling-"
-  image_id      = data.aws_ami.ecs_optimized_arm.id
-  instance_type = var.docling_instance_type
+  name_prefix = "${var.project_name}-docling-"
+  image_id    = data.aws_ami.ecs_gpu_optimized.id
 
   iam_instance_profile {
     arn = aws_iam_instance_profile.docling.arn
@@ -84,21 +83,15 @@ resource "aws_launch_template" "docling" {
   block_device_mappings {
     device_name = "/dev/xvda"
     ebs {
-      volume_size = 30
+      volume_size = 50 # CUDA image ~8-10 GB + models
       volume_type = "gp3"
-    }
-  }
-
-  instance_market_options {
-    market_type = "spot"
-    spot_options {
-      spot_instance_type = "one-time"
     }
   }
 
   user_data = base64encode(<<-EOF
     #!/bin/bash
     echo "ECS_CLUSTER=${aws_ecs_cluster.main.name}" >> /etc/ecs/ecs.config
+    echo "ECS_ENABLE_SPOT_INSTANCE_DRAINING=true" >> /etc/ecs/ecs.config
   EOF
   )
 
@@ -119,17 +112,35 @@ resource "aws_launch_template" "docling" {
 # ---------------------------------------------------------------------------
 
 resource "aws_autoscaling_group" "docling" {
-  name_prefix               = "${var.project_name}-docling-"
-  min_size                  = 0
-  max_size                  = var.docling_max_capacity
-  desired_capacity          = var.docling_min_capacity
-  vpc_zone_identifier       = module.vpc.private_subnets
-  capacity_rebalance        = true
-  protect_from_scale_in     = true  # Required for ECS managed termination protection
+  name_prefix           = "${var.project_name}-docling-"
+  min_size              = 0
+  max_size              = var.docling_max_capacity
+  desired_capacity      = var.docling_min_capacity
+  vpc_zone_identifier   = module.vpc.private_subnets
+  capacity_rebalance    = true
+  protect_from_scale_in = true # Required for ECS managed termination protection
 
-  launch_template {
-    id      = aws_launch_template.docling.id
-    version = "$Latest"
+  mixed_instances_policy {
+    launch_template {
+      launch_template_specification {
+        launch_template_id = aws_launch_template.docling.id
+        version            = "$Latest"
+      }
+
+      override {
+        instance_type = var.docling_instance_type # g4dn.xlarge (primary)
+      }
+
+      override {
+        instance_type = "g4dn.2xlarge" # fallback
+      }
+    }
+
+    instances_distribution {
+      on_demand_base_capacity                  = 0
+      on_demand_percentage_above_base_capacity = 0 # 100% Spot
+      spot_allocation_strategy                 = "capacity-optimized"
+    }
   }
 
   tag {
@@ -318,10 +329,17 @@ resource "aws_ecs_task_definition" "docling" {
   container_definitions = jsonencode([
     {
       name      = "docling-serve"
-      image     = var.docling_serve_image
+      image     = var.docling_serve_image != "" ? var.docling_serve_image : "${aws_ecr_repository.docling.repository_url}:${var.docling_serve_image_tag}"
       essential = true
       cpu       = 4096
-      memory    = 3584
+      memory    = 14336 # g4dn.xlarge has 16 GB, leave headroom
+
+      resourceRequirements = [
+        {
+          type  = "GPU"
+          value = "1"
+        }
+      ]
 
       portMappings = [
         {
@@ -391,7 +409,7 @@ resource "aws_ecs_service" "docling" {
   }
 
   deployment_maximum_percent         = 200
-  deployment_minimum_healthy_percent = 100
+  deployment_minimum_healthy_percent = 0 # Required for scale-from-zero
 
   deployment_circuit_breaker {
     enable   = true
@@ -454,6 +472,7 @@ resource "aws_cloudwatch_metric_alarm" "docling_jobs" {
   statistic           = "Maximum"
   threshold           = 1
   alarm_description   = "Scale out docling when jobs are being processed"
+  treat_missing_data  = "notBreaching" # Silence = no jobs = don't alarm
 
   alarm_actions = [aws_appautoscaling_policy.docling_scale_out.arn]
 

@@ -9,7 +9,7 @@ resource "aws_lb" "main" {
 
   idle_timeout               = 300 # 5 min — SSE streams during PDF processing
   enable_deletion_protection = var.environment == "production"
-  enable_http2              = true
+  enable_http2               = true
 
   tags = {
     Name = "${var.project_name}-alb"

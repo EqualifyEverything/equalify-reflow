@@ -192,21 +192,27 @@ variable "monthly_budget_limit" {
 
 # Docling Configuration
 variable "docling_serve_image" {
-  description = "Docker image for docling-serve"
+  description = "Docker image for docling-serve (empty = use ECR with docling_serve_image_tag)"
   type        = string
-  default     = "quay.io/docling-project/docling-serve-cpu:latest"
+  default     = ""
+}
+
+variable "docling_serve_image_tag" {
+  description = "Tag for docling-serve CUDA image in ECR"
+  type        = string
+  default     = "cu128-1.12.0"
 }
 
 variable "docling_instance_type" {
-  description = "EC2 instance type for docling service (ARM recommended)"
+  description = "EC2 instance type for docling service (GPU recommended)"
   type        = string
-  default     = "c6g.xlarge"
+  default     = "g4dn.xlarge"
 }
 
 variable "docling_min_capacity" {
-  description = "Minimum docling tasks (set to 0 for scale-to-zero in PRD-3)"
+  description = "Minimum docling tasks (0 = scale-to-zero)"
   type        = number
-  default     = 1
+  default     = 0
 }
 
 variable "docling_max_capacity" {

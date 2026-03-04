@@ -78,7 +78,7 @@ resource "aws_iam_role_policy" "ecs_task_s3" {
   })
 }
 
-# CloudWatch Logs Policy for Task Role
+# CloudWatch Logs + Metrics Policy for Task Role
 resource "aws_iam_role_policy" "ecs_task_cloudwatch" {
   name = "${var.project_name}-ecs-task-cloudwatch"
   role = aws_iam_role.ecs_task_role.id
@@ -93,6 +93,18 @@ resource "aws_iam_role_policy" "ecs_task_cloudwatch" {
           "logs:PutLogEvents"
         ]
         Resource = "${aws_cloudwatch_log_group.app.arn}:*"
+      },
+      {
+        Effect = "Allow"
+        Action = [
+          "cloudwatch:PutMetricData"
+        ]
+        Resource = "*"
+        Condition = {
+          StringEquals = {
+            "cloudwatch:namespace" = "EqualifyPDF"
+          }
+        }
       }
     ]
   })

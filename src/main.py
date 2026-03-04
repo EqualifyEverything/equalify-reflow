@@ -33,6 +33,10 @@ from .workers.timeout_worker import start_timeout_worker
 # Configure logging
 logging.basicConfig(level=settings.log_level, format="%(asctime)s - %(name)s - %(levelname)s - %(message)s")
 
+# Silence noisy third-party loggers (they flood DEBUG with base64 payloads, auth signatures, etc.)
+for _noisy_logger in ("botocore", "boto3", "urllib3", "httpcore", "httpx", "s3transfer", "python_multipart"):
+    logging.getLogger(_noisy_logger).setLevel(logging.WARNING)
+
 logger = logging.getLogger(__name__)
 
 

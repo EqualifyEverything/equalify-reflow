@@ -1,8 +1,12 @@
-"""HTTP client for docling-serve sidecar.
+"""HTTP client for docling-serve.
 
 Wraps docling-serve's ``/v1/convert/file`` endpoint with connection pooling,
 circuit breaker, and retry logic.  The client is created at app startup and
 closed at shutdown via the module-level lifecycle helpers.
+
+When docling runs behind an internal ALB (PRD-1), cold starts produce 503s
+and ConnectErrors while EC2 instances spin up.  The circuit breaker is tuned
+with a high threshold (10) and long timeout (360s) to tolerate this.
 
 Usage::
 
@@ -44,17 +48,23 @@ class DoclingServeResponse(BaseModel):
 # Client
 # ---------------------------------------------------------------------------
 
+# Circuit breaker tuned for decoupled docling behind ALB:
+# - threshold=10: tolerate cold-start 503s before tripping
+# - timeout=360s: EC2 Spot + model loading can take ~3-5 min
 _CIRCUIT_BREAKER = CircuitBreaker(
     "docling-serve",
-    failure_threshold=3,
-    timeout=30.0,
+    failure_threshold=10,
+    timeout=360.0,
 )
+
+# Limit concurrent docling-serve calls to prevent OOM (~1-2GB per PDF)
+_DOCLING_SEMAPHORE = asyncio.Semaphore(int(__import__("os").environ.get("DOCLING_MAX_CONCURRENT", "2")))
 
 
 class DoclingServeClient:
-    """Async HTTP client for the docling-serve sidecar."""
+    """Async HTTP client for docling-serve."""
 
-    def __init__(self, base_url: str, timeout: float = 120.0) -> None:
+    def __init__(self, base_url: str, timeout: float = 300.0) -> None:
         self._base_url = base_url.rstrip("/")
         self._client = httpx.AsyncClient(
             base_url=self._base_url,
@@ -104,8 +114,42 @@ class DoclingServeClient:
             httpx.HTTPStatusError: On non-retryable HTTP errors.
             RuntimeError: If all retries are exhausted.
         """
+        # Fail fast if circuit breaker is open (before acquiring semaphore)
         _CIRCUIT_BREAKER.check_state()
 
+        async with _DOCLING_SEMAPHORE:
+            return await self._convert_with_retry(
+                file_content,
+                filename,
+                do_ocr=do_ocr,
+                force_ocr=force_ocr,
+                ocr_engine=ocr_engine,
+                ocr_lang=ocr_lang or [],
+                do_table_structure=do_table_structure,
+                include_images=include_images,
+                images_scale=images_scale,
+                md_page_break_placeholder=md_page_break_placeholder,
+                image_export_mode=image_export_mode,
+                max_retries=max_retries,
+            )
+
+    async def _convert_with_retry(
+        self,
+        file_content: bytes,
+        filename: str,
+        *,
+        do_ocr: bool,
+        force_ocr: bool,
+        ocr_engine: str,
+        ocr_lang: list[str],
+        do_table_structure: bool,
+        include_images: bool,
+        images_scale: float,
+        md_page_break_placeholder: str,
+        image_export_mode: str,
+        max_retries: int,
+    ) -> DoclingServeResponse:
+        """Inner retry loop (runs inside the concurrency semaphore)."""
         last_exc: Exception | None = None
         for attempt in range(1, max_retries + 2):  # +2 because first attempt is not a retry
             try:
@@ -115,7 +159,7 @@ class DoclingServeClient:
                     do_ocr=do_ocr,
                     force_ocr=force_ocr,
                     ocr_engine=ocr_engine,
-                    ocr_lang=ocr_lang or [],
+                    ocr_lang=ocr_lang,
                     do_table_structure=do_table_structure,
                     include_images=include_images,
                     images_scale=images_scale,
@@ -124,13 +168,27 @@ class DoclingServeClient:
                 )
                 _CIRCUIT_BREAKER.record_success()
                 return response
-            except (httpx.TimeoutException, httpx.ConnectError, TimeoutError) as exc:
+            except (httpx.RemoteProtocolError, httpx.ConnectError) as exc:
+                # Server crashed (OOM) or unreachable (cold start / ALB no targets)
+                last_exc = exc
+                _CIRCUIT_BREAKER.record_failure()
+                if attempt <= max_retries:
+                    logger.warning(
+                        "docling-serve unreachable (attempt %d/%d): %s. Waiting for healthy...",
+                        attempt,
+                        max_retries + 1,
+                        type(exc).__name__,
+                    )
+                    await self._wait_for_healthy(timeout=300.0)
+                    continue
+                raise
+            except (httpx.TimeoutException, TimeoutError) as exc:
                 last_exc = exc
                 _CIRCUIT_BREAKER.record_failure()
                 if attempt <= max_retries:
                     delay = min(2.0 ** (attempt - 1), 8.0)
                     logger.warning(
-                        "docling-serve transient error (attempt %d/%d): %s. Retrying in %.1fs",
+                        "docling-serve timeout (attempt %d/%d): %s. Retrying in %.1fs",
                         attempt,
                         max_retries + 1,
                         exc,
@@ -140,28 +198,58 @@ class DoclingServeClient:
                     continue
                 raise
             except httpx.HTTPStatusError as exc:
-                if exc.response.status_code >= 500:
-                    last_exc = exc
+                last_exc = exc
+                status_code = exc.response.status_code
+
+                if status_code == 503:
+                    # ALB has no healthy targets — cold start
+                    _CIRCUIT_BREAKER.record_failure()
+                    if attempt <= max_retries:
+                        logger.warning(
+                            "docling-serve 503 (cold start?), waiting for healthy...",
+                        )
+                        await self._wait_for_healthy(timeout=300.0)
+                        continue
+                    raise
+                elif status_code == 504:
+                    # Document too slow — not a service failure, no retry
+                    logger.warning(
+                        "docling-serve 504 timeout for '%s' — document too large/complex",
+                        filename,
+                    )
+                    raise
+                elif status_code >= 500:
                     _CIRCUIT_BREAKER.record_failure()
                     if attempt <= max_retries:
                         delay = min(2.0 ** (attempt - 1), 8.0)
                         logger.warning(
-                            "docling-serve 5xx error (attempt %d/%d): %d. Retrying in %.1fs",
+                            "docling-serve %d error (attempt %d/%d). Retrying in %.1fs",
+                            status_code,
                             attempt,
                             max_retries + 1,
-                            exc.response.status_code,
                             delay,
                         )
                         await asyncio.sleep(delay)
                         continue
+                    raise
                 # Non-retryable (4xx, etc.)
-                _CIRCUIT_BREAKER.record_failure()
                 raise
 
         # Should not reach here, but for type safety
         if last_exc:
             raise last_exc
         raise RuntimeError("docling-serve: unexpected retry loop exit")
+
+    async def _wait_for_healthy(self, timeout: float = 300.0) -> None:
+        """Poll docling-serve health endpoint until it responds or timeout."""
+        deadline = asyncio.get_event_loop().time() + timeout
+        interval = 3.0
+        while asyncio.get_event_loop().time() < deadline:
+            await asyncio.sleep(interval)
+            if await self.check_health():
+                logger.info("docling-serve is healthy again")
+                return
+        logger.warning("docling-serve did not recover within %.0fs", timeout)
 
     async def _do_convert(
         self,

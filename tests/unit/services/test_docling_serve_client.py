@@ -1,17 +1,15 @@
-"""Tests for docling_serve_client — HTTP client for docling-serve sidecar."""
+"""Tests for docling_serve_client — HTTP client for docling-serve."""
 
 from __future__ import annotations
 
-import asyncio
-from unittest.mock import AsyncMock, MagicMock, patch
+from unittest.mock import AsyncMock, patch
 
 import httpx
 import pytest
-
 from src.services.docling_serve_client import (
+    _CIRCUIT_BREAKER,
     DoclingServeClient,
     DoclingServeResponse,
-    _CIRCUIT_BREAKER,
     close_docling_client,
     get_docling_client,
     init_docling_client,
@@ -216,19 +214,54 @@ class TestDoclingServeClientConvert:
 
     @pytest.mark.asyncio
     async def test_convert_circuit_breaker_opens(self, client: DoclingServeClient):
-        """Circuit breaker opens after repeated failures."""
+        """Circuit breaker opens after repeated failures (threshold=10)."""
         async def side_effect(*args, **kwargs):
             raise httpx.ConnectError("refused")
 
+        # Need to accumulate 10 failures to trip the breaker
         with patch.object(client._client, "post", side_effect=side_effect):
             with patch("src.services.docling_serve_client.asyncio.sleep", new_callable=AsyncMock):
-                # Exhaust retries (3 attempts = 1 initial + 2 retries = 3 failures recorded)
-                with pytest.raises(httpx.ConnectError):
-                    await client.convert(b"%PDF-test", "test.pdf", max_retries=2)
+                with patch.object(client, "_wait_for_healthy", new_callable=AsyncMock):
+                    # Each convert call with max_retries=2 records 3 failures
+                    # Need 4 calls (12 failures > threshold of 10) to trip breaker
+                    for _ in range(4):
+                        with pytest.raises(httpx.ConnectError):
+                            await client.convert(b"%PDF-test", "test.pdf", max_retries=2)
 
-        # Circuit breaker should now be open (3 failures >= threshold of 3)
+        # Circuit breaker should now be open
         assert _CIRCUIT_BREAKER.is_open
 
+        with pytest.raises(CircuitBreakerOpenError):
+            await client.convert(b"%PDF-test", "test.pdf")
+
+    @pytest.mark.asyncio
+    async def test_504_not_retried(self, client: DoclingServeClient):
+        """504 (gateway timeout) is not retried — document is too complex."""
+        error_response = httpx.Response(504, request=httpx.Request("POST", "http://test:5001/v1/convert/file"))
+
+        call_count = 0
+
+        async def side_effect(*args, **kwargs):
+            nonlocal call_count
+            call_count += 1
+            raise httpx.HTTPStatusError("504", request=error_response.request, response=error_response)
+
+        with patch.object(client._client, "post", side_effect=side_effect):
+            with pytest.raises(httpx.HTTPStatusError):
+                await client.convert(b"%PDF-test", "test.pdf", max_retries=2)
+
+        assert call_count == 1  # No retries on 504
+
+    @pytest.mark.asyncio
+    async def test_circuit_breaker_checked_before_semaphore(self, client: DoclingServeClient):
+        """Circuit breaker check happens before semaphore acquisition."""
+        # Trip the circuit breaker
+        for _ in range(10):
+            _CIRCUIT_BREAKER.record_failure()
+
+        assert _CIRCUIT_BREAKER.is_open
+
+        # Should fail immediately without touching the semaphore
         with pytest.raises(CircuitBreakerOpenError):
             await client.convert(b"%PDF-test", "test.pdf")
 

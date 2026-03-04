@@ -122,10 +122,10 @@ resource "aws_cloudwatch_dashboard" "bedrock_monitoring" {
     widgets = [
       # Header
       {
-        type = "text"
-        x    = 0
-        y    = 0
-        width = 24
+        type   = "text"
+        x      = 0
+        y      = 0
+        width  = 24
         height = 1
         properties = {
           markdown = "# Equalify PDF Converter - Bedrock & Infrastructure Monitoring\nReal-time monitoring of AWS Bedrock AI processing, ECS compute resources, and application performance."
@@ -134,10 +134,10 @@ resource "aws_cloudwatch_dashboard" "bedrock_monitoring" {
 
       # Bedrock API Invocations
       {
-        type = "metric"
-        x    = 0
-        y    = 1
-        width = 8
+        type   = "metric"
+        x      = 0
+        y      = 1
+        width  = 8
         height = 6
         properties = {
           metrics = [
@@ -151,7 +151,7 @@ resource "aws_cloudwatch_dashboard" "bedrock_monitoring" {
           period  = 300
           yAxis = {
             left = {
-              label = "Count"
+              label     = "Count"
               showUnits = false
             }
           }
@@ -160,10 +160,10 @@ resource "aws_cloudwatch_dashboard" "bedrock_monitoring" {
 
       # Bedrock Latency
       {
-        type = "metric"
-        x    = 8
-        y    = 1
-        width = 8
+        type   = "metric"
+        x      = 8
+        y      = 1
+        width  = 8
         height = 6
         properties = {
           metrics = [
@@ -179,7 +179,7 @@ resource "aws_cloudwatch_dashboard" "bedrock_monitoring" {
           period  = 300
           yAxis = {
             left = {
-              label = "Milliseconds"
+              label     = "Milliseconds"
               showUnits = false
             }
           }
@@ -188,10 +188,10 @@ resource "aws_cloudwatch_dashboard" "bedrock_monitoring" {
 
       # Bedrock Errors
       {
-        type = "metric"
-        x    = 16
-        y    = 1
-        width = 8
+        type   = "metric"
+        x      = 16
+        y      = 1
+        width  = 8
         height = 6
         properties = {
           metrics = [
@@ -206,7 +206,7 @@ resource "aws_cloudwatch_dashboard" "bedrock_monitoring" {
           period  = 300
           yAxis = {
             left = {
-              label = "Count"
+              label     = "Count"
               showUnits = false
             }
           }
@@ -215,10 +215,10 @@ resource "aws_cloudwatch_dashboard" "bedrock_monitoring" {
 
       # Input Token Usage
       {
-        type = "metric"
-        x    = 0
-        y    = 7
-        width = 12
+        type   = "metric"
+        x      = 0
+        y      = 7
+        width  = 12
         height = 6
         properties = {
           metrics = [
@@ -232,7 +232,7 @@ resource "aws_cloudwatch_dashboard" "bedrock_monitoring" {
           period  = 300
           yAxis = {
             left = {
-              label = "Tokens"
+              label     = "Tokens"
               showUnits = false
             }
           }
@@ -241,10 +241,10 @@ resource "aws_cloudwatch_dashboard" "bedrock_monitoring" {
 
       # Output Token Usage
       {
-        type = "metric"
-        x    = 12
-        y    = 7
-        width = 12
+        type   = "metric"
+        x      = 12
+        y      = 7
+        width  = 12
         height = 6
         properties = {
           metrics = [
@@ -258,7 +258,7 @@ resource "aws_cloudwatch_dashboard" "bedrock_monitoring" {
           period  = 300
           yAxis = {
             left = {
-              label = "Tokens"
+              label     = "Tokens"
               showUnits = false
             }
           }
@@ -267,10 +267,10 @@ resource "aws_cloudwatch_dashboard" "bedrock_monitoring" {
 
       # Cost Estimation Widget
       {
-        type = "metric"
-        x    = 0
-        y    = 13
-        width = 24
+        type   = "metric"
+        x      = 0
+        y      = 13
+        width  = 24
         height = 1
         properties = {
           markdown = "## Cost Estimation\n**Claude 3.5 Haiku Pricing:** $0.80/MTok input, $4.00/MTok output | **Target:** ~$0.20 per document | Monitor token usage above to estimate costs"
@@ -279,10 +279,10 @@ resource "aws_cloudwatch_dashboard" "bedrock_monitoring" {
 
       # Combined Token Usage (for cost estimation)
       {
-        type = "metric"
-        x    = 0
-        y    = 14
-        width = 12
+        type   = "metric"
+        x      = 0
+        y      = 14
+        width  = 12
         height = 6
         properties = {
           metrics = [
@@ -297,11 +297,11 @@ resource "aws_cloudwatch_dashboard" "bedrock_monitoring" {
           period  = 3600
           yAxis = {
             left = {
-              label = "Tokens"
+              label     = "Tokens"
               showUnits = false
             }
             right = {
-              label = "Cost (USD)"
+              label     = "Cost (USD)"
               showUnits = false
             }
           }
@@ -310,10 +310,10 @@ resource "aws_cloudwatch_dashboard" "bedrock_monitoring" {
 
       # Hourly Cost Estimation
       {
-        type = "metric"
-        x    = 12
-        y    = 14
-        width = 12
+        type   = "metric"
+        x      = 12
+        y      = 14
+        width  = 12
         height = 6
         properties = {
           metrics = [
@@ -321,19 +321,19 @@ resource "aws_cloudwatch_dashboard" "bedrock_monitoring" {
             ["AWS/Bedrock", "InputTokenCount", { stat = "Sum", visible = false, id = "m1" }],
             [".", "OutputTokenCount", { stat = "Sum", visible = false, id = "m2" }]
           ]
-          view    = "singleValue"
-          region  = var.aws_region
-          title   = "Estimated Hourly Bedrock Cost"
-          period  = 3600
+          view   = "singleValue"
+          region = var.aws_region
+          title  = "Estimated Hourly Bedrock Cost"
+          period = 3600
         }
       },
 
       # ECS Infrastructure Section Header
       {
-        type = "text"
-        x    = 0
-        y    = 20
-        width = 24
+        type   = "text"
+        x      = 0
+        y      = 20
+        width  = 24
         height = 1
         properties = {
           markdown = "## ECS Infrastructure Metrics\nMonitoring compute resources, task health, and application performance."
@@ -342,15 +342,15 @@ resource "aws_cloudwatch_dashboard" "bedrock_monitoring" {
 
       # ECS CPU Utilization
       {
-        type = "metric"
-        x    = 0
-        y    = 21
-        width = 8
+        type   = "metric"
+        x      = 0
+        y      = 21
+        width  = 8
         height = 6
         properties = {
           metrics = [
             ["AWS/ECS", "CPUUtilization", {
-              stat       = "Average"
+              stat = "Average"
               dimensions = {
                 ClusterName = aws_ecs_cluster.main.name
                 ServiceName = aws_ecs_service.app.name
@@ -364,8 +364,8 @@ resource "aws_cloudwatch_dashboard" "bedrock_monitoring" {
           period  = 300
           yAxis = {
             left = {
-              min = 0
-              max = 100
+              min   = 0
+              max   = 100
               label = "Percent"
             }
           }
@@ -382,15 +382,15 @@ resource "aws_cloudwatch_dashboard" "bedrock_monitoring" {
 
       # ECS Memory Utilization
       {
-        type = "metric"
-        x    = 8
-        y    = 21
-        width = 8
+        type   = "metric"
+        x      = 8
+        y      = 21
+        width  = 8
         height = 6
         properties = {
           metrics = [
             ["AWS/ECS", "MemoryUtilization", {
-              stat       = "Average"
+              stat = "Average"
               dimensions = {
                 ClusterName = aws_ecs_cluster.main.name
                 ServiceName = aws_ecs_service.app.name
@@ -404,8 +404,8 @@ resource "aws_cloudwatch_dashboard" "bedrock_monitoring" {
           period  = 300
           yAxis = {
             left = {
-              min = 0
-              max = 100
+              min   = 0
+              max   = 100
               label = "Percent"
             }
           }
@@ -422,15 +422,15 @@ resource "aws_cloudwatch_dashboard" "bedrock_monitoring" {
 
       # Task Count
       {
-        type = "metric"
-        x    = 16
-        y    = 21
-        width = 8
+        type   = "metric"
+        x      = 16
+        y      = 21
+        width  = 8
         height = 6
         properties = {
           metrics = [
             ["AWS/ECS", "RunningTaskCount", {
-              stat       = "Average"
+              stat = "Average"
               dimensions = {
                 ClusterName = aws_ecs_cluster.main.name
                 ServiceName = aws_ecs_service.app.name
@@ -444,7 +444,7 @@ resource "aws_cloudwatch_dashboard" "bedrock_monitoring" {
           period  = 300
           yAxis = {
             left = {
-              min = 0
+              min   = 0
               label = "Count"
             }
           }
@@ -453,15 +453,15 @@ resource "aws_cloudwatch_dashboard" "bedrock_monitoring" {
 
       # ALB Request Count
       {
-        type = "metric"
-        x    = 0
-        y    = 27
-        width = 8
+        type   = "metric"
+        x      = 0
+        y      = 27
+        width  = 8
         height = 6
         properties = {
           metrics = [
             ["AWS/ApplicationELB", "RequestCount", {
-              stat       = "Sum"
+              stat = "Sum"
               dimensions = {
                 LoadBalancer = aws_lb.main.arn_suffix
               }
@@ -474,7 +474,7 @@ resource "aws_cloudwatch_dashboard" "bedrock_monitoring" {
           period  = 300
           yAxis = {
             left = {
-              label = "Requests"
+              label     = "Requests"
               showUnits = false
             }
           }
@@ -483,29 +483,29 @@ resource "aws_cloudwatch_dashboard" "bedrock_monitoring" {
 
       # ALB Response Times
       {
-        type = "metric"
-        x    = 8
-        y    = 27
-        width = 8
+        type   = "metric"
+        x      = 8
+        y      = 27
+        width  = 8
         height = 6
         properties = {
           metrics = [
             ["AWS/ApplicationELB", "TargetResponseTime", {
-              stat       = "Average"
+              stat = "Average"
               dimensions = {
                 LoadBalancer = aws_lb.main.arn_suffix
               }
               label = "Avg Response Time"
             }],
             ["...", {
-              stat       = "p90"
+              stat = "p90"
               dimensions = {
                 LoadBalancer = aws_lb.main.arn_suffix
               }
               label = "p90"
             }],
             ["...", {
-              stat       = "p99"
+              stat = "p99"
               dimensions = {
                 LoadBalancer = aws_lb.main.arn_suffix
               }
@@ -519,7 +519,7 @@ resource "aws_cloudwatch_dashboard" "bedrock_monitoring" {
           period  = 300
           yAxis = {
             left = {
-              label = "Seconds"
+              label     = "Seconds"
               showUnits = false
             }
           }
@@ -528,29 +528,29 @@ resource "aws_cloudwatch_dashboard" "bedrock_monitoring" {
 
       # ALB HTTP Status Codes
       {
-        type = "metric"
-        x    = 16
-        y    = 27
-        width = 8
+        type   = "metric"
+        x      = 16
+        y      = 27
+        width  = 8
         height = 6
         properties = {
           metrics = [
             ["AWS/ApplicationELB", "HTTPCode_Target_2XX_Count", {
-              stat       = "Sum"
+              stat = "Sum"
               dimensions = {
                 LoadBalancer = aws_lb.main.arn_suffix
               }
               label = "2xx Success"
             }],
             [".", "HTTPCode_Target_4XX_Count", {
-              stat       = "Sum"
+              stat = "Sum"
               dimensions = {
                 LoadBalancer = aws_lb.main.arn_suffix
               }
               label = "4xx Client Errors"
             }],
             [".", "HTTPCode_Target_5XX_Count", {
-              stat       = "Sum"
+              stat = "Sum"
               dimensions = {
                 LoadBalancer = aws_lb.main.arn_suffix
               }
@@ -564,7 +564,7 @@ resource "aws_cloudwatch_dashboard" "bedrock_monitoring" {
           period  = 300
           yAxis = {
             left = {
-              label = "Count"
+              label     = "Count"
               showUnits = false
             }
           }
@@ -573,15 +573,15 @@ resource "aws_cloudwatch_dashboard" "bedrock_monitoring" {
 
       # Healthy Target Count
       {
-        type = "metric"
-        x    = 0
-        y    = 33
-        width = 12
+        type   = "metric"
+        x      = 0
+        y      = 33
+        width  = 12
         height = 6
         properties = {
           metrics = [
             ["AWS/ApplicationELB", "HealthyHostCount", {
-              stat       = "Average"
+              stat = "Average"
               dimensions = {
                 TargetGroup  = aws_lb_target_group.app.arn_suffix
                 LoadBalancer = aws_lb.main.arn_suffix
@@ -589,7 +589,7 @@ resource "aws_cloudwatch_dashboard" "bedrock_monitoring" {
               label = "Healthy Hosts"
             }],
             [".", "UnHealthyHostCount", {
-              stat       = "Average"
+              stat = "Average"
               dimensions = {
                 TargetGroup  = aws_lb_target_group.app.arn_suffix
                 LoadBalancer = aws_lb.main.arn_suffix
@@ -604,7 +604,7 @@ resource "aws_cloudwatch_dashboard" "bedrock_monitoring" {
           period  = 60
           yAxis = {
             left = {
-              min = 0
+              min   = 0
               label = "Count"
             }
           }
@@ -613,15 +613,15 @@ resource "aws_cloudwatch_dashboard" "bedrock_monitoring" {
 
       # Correlation: CPU vs Bedrock Invocations
       {
-        type = "metric"
-        x    = 12
-        y    = 33
-        width = 12
+        type   = "metric"
+        x      = 12
+        y      = 33
+        width  = 12
         height = 6
         properties = {
           metrics = [
             ["AWS/ECS", "CPUUtilization", {
-              stat       = "Average"
+              stat = "Average"
               dimensions = {
                 ClusterName = aws_ecs_cluster.main.name
                 ServiceName = aws_ecs_service.app.name
@@ -642,11 +642,11 @@ resource "aws_cloudwatch_dashboard" "bedrock_monitoring" {
           period  = 300
           yAxis = {
             left = {
-              label = "CPU %"
+              label     = "CPU %"
               showUnits = false
             }
             right = {
-              label = "Invocations"
+              label     = "Invocations"
               showUnits = false
             }
           }
@@ -659,7 +659,7 @@ resource "aws_cloudwatch_dashboard" "bedrock_monitoring" {
 # Dashboard Output
 output "bedrock_dashboard_url" {
   description = "URL to CloudWatch Dashboard for Bedrock monitoring"
-  value = length(aws_cloudwatch_dashboard.bedrock_monitoring) > 0 ? "https://console.aws.amazon.com/cloudwatch/home?region=${var.aws_region}#dashboards:name=${aws_cloudwatch_dashboard.bedrock_monitoring[0].dashboard_name}" : "Dashboard temporarily disabled (will be re-enabled after fixing metric configurations)"
+  value       = length(aws_cloudwatch_dashboard.bedrock_monitoring) > 0 ? "https://console.aws.amazon.com/cloudwatch/home?region=${var.aws_region}#dashboards:name=${aws_cloudwatch_dashboard.bedrock_monitoring[0].dashboard_name}" : "Dashboard temporarily disabled (will be re-enabled after fixing metric configurations)"
 }
 
 # CloudWatch Log Group for ECS Exec Session Logging

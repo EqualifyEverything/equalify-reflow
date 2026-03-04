@@ -26,8 +26,8 @@ module "vpc" {
   ]
 
   # Enable NAT Gateway for private subnet internet access
-  enable_nat_gateway = true
-  single_nat_gateway = var.environment == "production" ? false : true # Single NAT for non-prod
+  enable_nat_gateway   = true
+  single_nat_gateway   = var.environment == "production" ? false : true # Single NAT for non-prod
   enable_dns_hostnames = true
   enable_dns_support   = true
 

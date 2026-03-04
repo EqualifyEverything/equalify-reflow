@@ -324,8 +324,13 @@ async def process_pdf_stream(
         if structure is not None:
             yield _sse_event("processing", {"step_name": "page_content", "display_name": "Page Content Corrections"})
             try:
-                section_map = service._build_section_map(result, structure)
-                page_hints = service._generate_page_hints(result, structure, section_map)
+                # Run sync section map + hints in thread to avoid blocking heartbeats
+                section_map = await asyncio.to_thread(
+                    service._build_section_map, result, structure
+                )
+                page_hints = await asyncio.to_thread(
+                    service._generate_page_hints, result, structure, section_map
+                )
                 task = asyncio.create_task(
                     service._step_page_content(result, structure, page_hints=page_hints)
                 )
@@ -369,7 +374,9 @@ async def process_pdf_stream(
             yield _sse_event("processing", {"step_name": "boundaries", "display_name": "Cross-Page Fixes"})
             try:
                 if section_map is None:
-                    section_map = service._build_section_map(result, structure)
+                    section_map = await asyncio.to_thread(
+                        service._build_section_map, result, structure
+                    )
                 task = asyncio.create_task(
                     service._step_boundaries(result, structure, section_map=section_map)
                 )

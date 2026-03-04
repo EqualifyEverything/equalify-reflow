@@ -1394,13 +1394,14 @@ class PipelineViewerService:
 
         # Find all headings in the full text with their positions
         heading_positions: list[tuple[int, int, str, int]] = []  # (char_pos, line_idx, text, level)
+        running_char_pos = 0
         for line_idx, line in enumerate(all_lines):
             m = heading_re.match(line)
             if m:
                 level = len(m.group(1))
                 text = m.group(2).strip()
-                char_pos = sum(len(all_lines[j]) + 1 for j in range(line_idx))
-                heading_positions.append((char_pos, line_idx, text, level))
+                heading_positions.append((running_char_pos, line_idx, text, level))
+            running_char_pos += len(line) + 1  # +1 for newline
 
         # Match headings to outline entries via fuzzy match
         matched_outline: list[tuple[int, int, str, int, int]] = []  # (char_pos, line_idx, text, level, outline_idx)

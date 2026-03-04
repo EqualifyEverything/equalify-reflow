@@ -72,6 +72,7 @@ class TimeoutWorker:
         self.last_orphan_cleanup: datetime | None = None
         self.last_metrics_cleanup: datetime | None = None
         self.last_course_config_cleanup: datetime | None = None
+        self.last_scaling_metrics_publish: datetime | None = None
 
         # Worker state
         self.running = False
@@ -125,6 +126,13 @@ class TimeoutWorker:
                     ):
                         await self._run_course_config_cleanup()
                         self.last_course_config_cleanup = current_time
+
+                    # Task 7: Publish scaling metrics to CloudWatch (every 60s, production only)
+                    if settings.environment == "production" and self._should_run_task(
+                        self.last_scaling_metrics_publish, 60
+                    ):
+                        await self._publish_scaling_metrics()
+                        self.last_scaling_metrics_publish = current_time
 
                     # Sleep before next iteration
                     await asyncio.sleep(settings.timeout_worker_check_interval_seconds)
@@ -253,6 +261,28 @@ class TimeoutWorker:
         except Exception as e:
             logger.error(f"Error in course config cleanup: {e}", exc_info=True)
             await self.metrics_service.increment_metric("worker_task_errors", 1)
+
+    async def _publish_scaling_metrics(self) -> None:
+        """Publish jobs-in-processing count to CloudWatch for docling auto-scaling."""
+        try:
+            redis = self.job_service._redis
+            raw = await redis.get("eq-pdf:metrics:jobs_in_processing")
+            count = max(0, int(raw or 0))
+
+            import boto3
+
+            cw = boto3.client("cloudwatch", region_name=settings.aws_region)
+            cw.put_metric_data(
+                Namespace="EqualifyPDF",
+                MetricData=[{
+                    "MetricName": "JobsInProcessing",
+                    "Value": count,
+                    "Unit": "Count",
+                }],
+            )
+            logger.debug("Published scaling metric: JobsInProcessing=%d", count)
+        except Exception as e:
+            logger.warning("Failed to publish scaling metrics: %s", e)
 
     def stop(self) -> None:
         """Signal worker to stop gracefully."""

@@ -181,6 +181,19 @@ async def submit_document(
             ocr_languages=ocr_lang_list,
         )
 
+        # Pre-warm docling (best-effort, production only)
+        if settings.environment == "production":
+            try:
+                import boto3
+
+                cw = boto3.client("cloudwatch", region_name=settings.aws_region)
+                cw.put_metric_data(
+                    Namespace="EqualifyPDF",
+                    MetricData=[{"MetricName": "JobsAwaitingProcessing", "Value": 1, "Unit": "Count"}],
+                )
+            except Exception:
+                pass
+
         # Record job submission metric
         jobs_submitted_total.labels(source="api").inc()
 
@@ -222,6 +235,19 @@ async def submit_document(
             ocr_languages=ocr_lang_list,
         )
         await queue.queue_pii_job(job_id, s3_key)
+
+        # Pre-warm docling (best-effort, production only)
+        if settings.environment == "production":
+            try:
+                import boto3
+
+                cw = boto3.client("cloudwatch", region_name=settings.aws_region)
+                cw.put_metric_data(
+                    Namespace="EqualifyPDF",
+                    MetricData=[{"MetricName": "JobsAwaitingProcessing", "Value": 1, "Unit": "Count"}],
+                )
+            except Exception:
+                pass
 
         # Record job submission metric
         jobs_submitted_total.labels(source="api").inc()

@@ -93,6 +93,13 @@ class DocumentProcessingService:
             review_mode=review_mode,
         )
 
+        # Track jobs in processing for CloudWatch scaling metrics
+        try:
+            if self.redis is not None:
+                await self.redis.incr("eq-pdf:metrics:jobs_in_processing")
+        except Exception:
+            logger.warning("Failed to increment jobs_in_processing counter")
+
         # Set up event bus for SSE streaming
         event_bus = EventBus()
         register_event_bus(job_id, event_bus)
@@ -210,6 +217,13 @@ class DocumentProcessingService:
             raise
 
         finally:
+            # Decrement jobs-in-processing counter
+            try:
+                if self.redis is not None:
+                    await self.redis.decr("eq-pdf:metrics:jobs_in_processing")
+            except Exception:
+                logger.warning("Failed to decrement jobs_in_processing counter")
+
             # Let SSE subscribers flush before unregistering
             await asyncio.sleep(0.5)
             unregister_event_bus(job_id)

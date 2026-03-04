@@ -14,7 +14,7 @@ data "aws_ami" "ecs_gpu_optimized" {
 
   filter {
     name   = "name"
-    values = ["al2-ami-ecs-gpu-hvm-*-x86_64-ebs"]
+    values = ["amzn2-ami-ecs-kernel-5.10-gpu-hvm-*-x86_64-ebs"]
   }
 }
 

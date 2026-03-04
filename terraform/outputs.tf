@@ -80,6 +80,22 @@ output "execution_role_arn" {
   value       = aws_iam_role.ecs_execution_role.arn
 }
 
+# Docling Service
+output "docling_alb_dns" {
+  description = "Internal ALB DNS name for docling-serve"
+  value       = aws_lb.docling_internal.dns_name
+}
+
+output "docling_service_name" {
+  description = "Name of the docling ECS service"
+  value       = aws_ecs_service.docling.name
+}
+
+output "docling_asg_name" {
+  description = "Name of the docling Auto Scaling Group"
+  value       = aws_autoscaling_group.docling.name
+}
+
 # AI Provider Configuration
 output "ai_provider" {
   description = "Configured AI provider (bedrock only)"

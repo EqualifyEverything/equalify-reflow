@@ -3,6 +3,9 @@ import type { PipelineViewerResult, StepResult } from '@/types/pipeline-viewer';
 
 const API_URL = import.meta.env.VITE_API_URL ?? '';
 
+const MAX_RECONNECT_ATTEMPTS = 3;
+const RECONNECT_BASE_DELAY_MS = 1000;
+
 interface ProcessOptions {
   imagesScale: number;
   doTableStructure: boolean;
@@ -11,11 +14,12 @@ interface ProcessOptions {
 interface SSEEvent {
   type: string;
   data: unknown;
+  id?: number;
 }
 
 /**
  * Parse an SSE buffer into events + remainder.
- * Splits on double-newline boundaries and extracts event: / data: lines.
+ * Splits on double-newline boundaries and extracts id: / event: / data: lines.
  */
 function parseSSEBuffer(buffer: string): { events: SSEEvent[]; remainder: string } {
   const events: SSEEvent[] = [];
@@ -28,10 +32,14 @@ function parseSSEBuffer(buffer: string): { events: SSEEvent[]; remainder: string
     if (!block.trim()) continue;
 
     let eventType = 'message';
+    let eventId: number | undefined;
     let dataLines: string[] = [];
 
     for (const line of block.split('\n')) {
-      if (line.startsWith('event: ')) {
+      if (line.startsWith('id: ')) {
+        const parsed = parseInt(line.slice(4).trim(), 10);
+        if (!isNaN(parsed)) eventId = parsed;
+      } else if (line.startsWith('event: ')) {
         eventType = line.slice(7).trim();
       } else if (line.startsWith('data: ')) {
         dataLines.push(line.slice(6));
@@ -43,7 +51,7 @@ function parseSSEBuffer(buffer: string): { events: SSEEvent[]; remainder: string
     if (dataLines.length > 0) {
       try {
         const data = JSON.parse(dataLines.join('\n'));
-        events.push({ type: eventType, data });
+        events.push({ type: eventType, data, id: eventId });
       } catch {
         // Skip malformed JSON
       }
@@ -62,12 +70,177 @@ export function usePipelineViewer() {
   const [sessionId, setSessionId] = useState<string | null>(null);
 
   const abortRef = useRef<AbortController | null>(null);
+  // Reconnect state — refs to survive across renders without re-triggering effects
+  const sessionIdRef = useRef<string | null>(null);
+  const lastEventIdRef = useRef<number>(-1);
+
+  /**
+   * Shared event handler used by both the initial stream and reconnect streams.
+   * Returns true if the stream should be considered complete (done event received).
+   */
+  function handleSSEEvent(event: SSEEvent): boolean {
+    // Track event ID for reconnect
+    if (event.id !== undefined) {
+      lastEventIdRef.current = event.id;
+    }
+
+    switch (event.type) {
+      case 'session': {
+        const { session_id } = event.data as { session_id: string };
+        sessionIdRef.current = session_id;
+        break;
+      }
+
+      case 'init': {
+        const initData = event.data as PipelineViewerResult;
+        setResult(initData);
+        setUploading(false);
+        setProcessing(true);
+        break;
+      }
+
+      case 'page_image': {
+        const { page, image_base64 } = event.data as { page: string; image_base64: string };
+        setResult((prev) =>
+          prev ? { ...prev, page_images: { ...prev.page_images, [page]: image_base64 } } : prev
+        );
+        break;
+      }
+
+      case 'figure_image': {
+        const { ref_id, image_base64 } = event.data as { ref_id: string; image_base64: string };
+        setResult((prev) => {
+          if (!prev) return prev;
+          return {
+            ...prev,
+            figures: prev.figures.map((f) => (f.ref_id === ref_id ? { ...f, image_base64 } : f)),
+          };
+        });
+        break;
+      }
+
+      case 'processing': {
+        const { display_name } = event.data as { step_name: string; display_name: string };
+        setCurrentStepName(display_name);
+        break;
+      }
+
+      case 'step': {
+        const stepData = event.data as {
+          step: StepResult;
+          new_versions: Record<string, string>;
+          new_page_markdowns: Record<string, Record<string, string>>;
+        };
+        setResult((prev) => {
+          if (!prev) return prev;
+          return {
+            ...prev,
+            steps: [...prev.steps, stepData.step],
+            versions: { ...prev.versions, ...stepData.new_versions },
+            page_markdowns: { ...prev.page_markdowns, ...stepData.new_page_markdowns },
+          };
+        });
+        break;
+      }
+
+      case 'error': {
+        const { step_name, message } = event.data as { step_name: string; message: string };
+        console.error(`Pipeline step "${step_name}" failed: ${message}`);
+        break;
+      }
+
+      case 'done': {
+        const doneData = event.data as { session_id?: string };
+        if (doneData.session_id) {
+          setSessionId(doneData.session_id);
+        }
+        setProcessing(false);
+        setCurrentStepName(null);
+        return true;
+      }
+    }
+    return false;
+  }
+
+  /**
+   * Read an SSE stream from a fetch Response and process events with the shared handler.
+   * Returns true if the stream completed normally (done event), false if interrupted.
+   */
+  async function consumeSSEStream(response: Response, signal: AbortSignal): Promise<boolean> {
+    const reader = response.body?.getReader();
+    if (!reader) throw new Error('No response body');
+
+    const decoder = new TextDecoder();
+    let sseBuffer = '';
+
+    try {
+      while (true) {
+        const { done, value } = await reader.read();
+        if (done) break;
+        if (signal.aborted) break;
+
+        sseBuffer += decoder.decode(value, { stream: true });
+        const { events, remainder } = parseSSEBuffer(sseBuffer);
+        sseBuffer = remainder;
+
+        for (const event of events) {
+          if (handleSSEEvent(event)) return true;
+        }
+      }
+    } catch {
+      // Stream interrupted
+    }
+    return false;
+  }
+
+  /**
+   * Attempt to reconnect to an in-progress session.
+   */
+  async function reconnect(signal: AbortSignal, attempt: number = 0): Promise<void> {
+    const sid = sessionIdRef.current;
+    const lastId = lastEventIdRef.current;
+    if (!sid || signal.aborted) return;
+
+    if (attempt >= MAX_RECONNECT_ATTEMPTS) {
+      console.warn(`SSE reconnect: gave up after ${MAX_RECONNECT_ATTEMPTS} attempts`);
+      return;
+    }
+
+    // Exponential backoff
+    const delay = RECONNECT_BASE_DELAY_MS * Math.pow(2, attempt);
+    console.log(`SSE reconnect: attempt ${attempt + 1}/${MAX_RECONNECT_ATTEMPTS} in ${delay}ms (last_event_id=${lastId})`);
+    await new Promise((r) => setTimeout(r, delay));
+    if (signal.aborted) return;
+
+    try {
+      const url = `${API_URL}/api/v1/pipeline/sessions/${sid}/stream?last_event_id=${lastId}`;
+      const response = await fetch(url, { signal });
+
+      if (!response.ok) {
+        console.warn(`SSE reconnect: server returned ${response.status}`);
+        return await reconnect(signal, attempt + 1);
+      }
+
+      const completed = await consumeSSEStream(response, signal);
+      if (!completed && !signal.aborted) {
+        // Stream broke again — retry
+        return await reconnect(signal, attempt + 1);
+      }
+    } catch (err) {
+      if (err instanceof DOMException && err.name === 'AbortError') return;
+      return await reconnect(signal, attempt + 1);
+    }
+  }
 
   const processFile = useCallback(async (file: File, options: ProcessOptions) => {
     // Abort any in-flight stream
     abortRef.current?.abort();
     const controller = new AbortController();
     abortRef.current = controller;
+
+    // Reset reconnect refs for new upload
+    sessionIdRef.current = null;
+    lastEventIdRef.current = -1;
 
     setUploading(true);
     setProcessing(false);
@@ -92,99 +265,30 @@ export function usePipelineViewer() {
         throw new Error(`Processing failed (${response.status}): ${detail}`);
       }
 
-      const reader = response.body?.getReader();
-      if (!reader) {
-        throw new Error('No response body');
-      }
+      const completed = await consumeSSEStream(response, controller.signal);
 
-      const decoder = new TextDecoder();
-      let sseBuffer = '';
-
-      while (true) {
-        const { done, value } = await reader.read();
-        if (done) break;
-
-        sseBuffer += decoder.decode(value, { stream: true });
-        const { events, remainder } = parseSSEBuffer(sseBuffer);
-        sseBuffer = remainder;
-
-        for (const event of events) {
-          switch (event.type) {
-            case 'init': {
-              const initData = event.data as PipelineViewerResult;
-              setResult(initData);
-              setUploading(false);
-              setProcessing(true);
-              break;
-            }
-
-            case 'page_image': {
-              const { page, image_base64 } = event.data as { page: string; image_base64: string };
-              setResult((prev) =>
-                prev ? { ...prev, page_images: { ...prev.page_images, [page]: image_base64 } } : prev
-              );
-              break;
-            }
-
-            case 'figure_image': {
-              const { ref_id, image_base64 } = event.data as { ref_id: string; image_base64: string };
-              setResult((prev) => {
-                if (!prev) return prev;
-                return {
-                  ...prev,
-                  figures: prev.figures.map((f) => (f.ref_id === ref_id ? { ...f, image_base64 } : f)),
-                };
-              });
-              break;
-            }
-
-            case 'processing': {
-              const { display_name } = event.data as { step_name: string; display_name: string };
-              setCurrentStepName(display_name);
-              break;
-            }
-
-            case 'step': {
-              const stepData = event.data as {
-                step: StepResult;
-                new_versions: Record<string, string>;
-                new_page_markdowns: Record<string, Record<string, string>>;
-              };
-              setResult((prev) => {
-                if (!prev) return prev;
-                return {
-                  ...prev,
-                  steps: [...prev.steps, stepData.step],
-                  versions: { ...prev.versions, ...stepData.new_versions },
-                  page_markdowns: { ...prev.page_markdowns, ...stepData.new_page_markdowns },
-                };
-              });
-              break;
-            }
-
-            case 'error': {
-              const { step_name, message } = event.data as { step_name: string; message: string };
-              console.error(`Pipeline step "${step_name}" failed: ${message}`);
-              break;
-            }
-
-            case 'done': {
-              const doneData = event.data as { session_id?: string };
-              if (doneData.session_id) {
-                setSessionId(doneData.session_id);
-              }
-              setProcessing(false);
-              setCurrentStepName(null);
-              break;
-            }
-          }
-        }
+      // If stream didn't complete and we have a session, try to reconnect
+      if (!completed && sessionIdRef.current && !controller.signal.aborted) {
+        console.log('SSE stream interrupted, attempting reconnect...');
+        await reconnect(controller.signal);
       }
     } catch (err) {
       if (err instanceof DOMException && err.name === 'AbortError') {
         // User cancelled — not an error
         return;
       }
+
+      // Try reconnect if we have a session
+      if (sessionIdRef.current && !controller.signal.aborted) {
+        console.log('SSE stream error, attempting reconnect...');
+        try {
+          await reconnect(controller.signal);
+          return;
+        } catch {
+          // Reconnect also failed — fall through to error handling
+        }
+      }
+
       // Only set error if we have no results yet.
       // Late-stage disconnects are non-fatal when steps have already been received.
       setResult((prev) => {
@@ -220,6 +324,8 @@ export function usePipelineViewer() {
   const reset = useCallback(() => {
     abortRef.current?.abort();
     abortRef.current = null;
+    sessionIdRef.current = null;
+    lastEventIdRef.current = -1;
     setResult(null);
     setError(null);
     setProcessing(false);

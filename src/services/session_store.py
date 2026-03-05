@@ -41,6 +41,9 @@ class PipelineSession:
     processing: bool = False
     created_at: float = field(default_factory=time.time)
     last_accessed: float = field(default_factory=time.time)
+    # SSE reconnect support
+    event_buffer: list[str] = field(default_factory=list)
+    status: str = "processing"  # "processing" | "completed" | "error"
 
     def touch(self) -> None:
         """Update the last-accessed timestamp."""
@@ -60,6 +63,22 @@ class SessionStore:
 
     def __init__(self) -> None:
         self._sessions: dict[str, PipelineSession] = {}
+
+    def create_for_stream(self, filename: str) -> PipelineSession:
+        """Create a session early for SSE reconnect support.
+
+        The session starts with an empty result and status="processing".
+        The caller populates result/structure/section_map as processing completes.
+        """
+        self._evict_expired()
+        session_id = uuid.uuid4().hex[:12]
+        session = PipelineSession(
+            session_id=session_id,
+            result=PipelineViewerResult(filename=filename, total_pages=0),
+            status="processing",
+        )
+        self._sessions[session_id] = session
+        return session
 
     def create(
         self,

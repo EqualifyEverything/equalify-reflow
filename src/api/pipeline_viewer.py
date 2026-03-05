@@ -7,7 +7,7 @@ import time
 from collections.abc import AsyncGenerator
 from typing import Any
 
-from fastapi import APIRouter, File, Form, HTTPException, UploadFile
+from fastapi import APIRouter, File, Form, HTTPException, Query, UploadFile
 from fastapi.responses import StreamingResponse
 
 from ..services.feedback_client import feedback_client
@@ -24,10 +24,14 @@ _HEARTBEAT_INTERVAL_SECONDS = 10
 _SSE_HEARTBEAT = ": heartbeat\n\n"
 
 
-def _sse_event(event_type: str, data: Any) -> str:
-    """Format a server-sent event string."""
-    payload = json.dumps(data, default=str)
-    return f"event: {event_type}\ndata: {payload}\n\n"
+def _sse_event(event_type: str, data: Any, event_id: int | None = None) -> str:
+    """Format a server-sent event string with optional ``id:`` field."""
+    parts: list[str] = []
+    if event_id is not None:
+        parts.append(f"id: {event_id}")
+    parts.append(f"event: {event_type}")
+    parts.append(f"data: {json.dumps(data, default=str)}")
+    return "\n".join(parts) + "\n\n"
 
 
 def _slim_init_payload(result: PipelineViewerResult) -> dict[str, Any]:
@@ -155,6 +159,22 @@ async def process_pdf_stream(
         service = PipelineViewerService()
         result = PipelineViewerResult(filename=filename, total_pages=0)
 
+        # Create session early for SSE reconnect support
+        session = session_store.create_for_stream(filename)
+        event_counter = 0
+
+        def emit(event_type: str, data: Any) -> str:
+            """Build an SSE string, auto-increment event ID, buffer for reconnect."""
+            nonlocal event_counter
+            eid = event_counter
+            event_counter += 1
+            sse_text = _sse_event(event_type, data, event_id=eid)
+            session.event_buffer.append(sse_text)
+            return sse_text
+
+        # First event: tell the client which session to reconnect to
+        yield emit("session", {"session_id": session.session_id})
+
         # Step 0: Pre-flight PDF classification
         classification = classify_pdf(content)
 
@@ -175,8 +195,10 @@ async def process_pdf_stream(
                     },
                 )
             )
-            yield _sse_event("init", _slim_init_payload(result))
-            yield _sse_event("done", {"total_steps": 0, "total_elapsed_ms": classification.elapsed_ms})
+            yield emit("init", _slim_init_payload(result))
+            session.result = result
+            session.status = "completed"
+            yield emit("done", {"total_steps": 0, "total_elapsed_ms": classification.elapsed_ms})
             return
 
         result.warnings = classification.warning_messages
@@ -191,8 +213,10 @@ async def process_pdf_stream(
             task.result()
         except Exception as e:
             logger.error(f"Docling extraction failed: {e}")
-            yield _sse_event("error", {"step_name": "docling", "message": str(e)})
-            yield _sse_event("done", {"total_steps": 0, "total_elapsed_ms": 0})
+            yield emit("error", {"step_name": "docling", "message": str(e)})
+            session.result = result
+            session.status = "error"
+            yield emit("done", {"total_steps": 0, "total_elapsed_ms": 0})
             return
 
         # Enrich classification with post-extraction signals
@@ -220,7 +244,7 @@ async def process_pdf_stream(
                 from src.config import settings as app_settings
 
                 effective_langs = ocr_lang_list
-                yield _sse_event("processing", {
+                yield emit("processing", {
                     "step_name": "docling_ocr",
                     "display_name": "Tesseract OCR Re-extraction",
                 })
@@ -251,20 +275,20 @@ async def process_pdf_stream(
                 result.warnings = classification.warning_messages
 
         # Send slim init (metadata + markdown, no binary images)
-        yield _sse_event("init", _slim_init_payload(result))
+        yield emit("init", _slim_init_payload(result))
 
         # Stream page images individually (~200-500KB each, not 5-20MB at once)
         for page_key, page_b64 in result.page_images.items():
-            yield _sse_event("page_image", {"page": page_key, "image_base64": page_b64})
+            yield emit("page_image", {"page": page_key, "image_base64": page_b64})
 
         # Stream figure images individually
         for fig in result.figures:
             if fig.image_base64:
-                yield _sse_event("figure_image", {"ref_id": fig.ref_id, "image_base64": fig.image_base64})
+                yield emit("figure_image", {"ref_id": fig.ref_id, "image_base64": fig.image_base64})
 
         # Step 2: Structure analysis
         structure = None
-        yield _sse_event("processing", {"step_name": "structure", "display_name": "Structure Analysis"})
+        yield emit("processing", {"step_name": "structure", "display_name": "Structure Analysis"})
         try:
             task = asyncio.create_task(service._step_structure(result))
             async for hb in _heartbeats_until_done(task):
@@ -272,18 +296,18 @@ async def process_pdf_stream(
             structure = task.result()
             total_steps += 1
             step = result.steps[-1]
-            yield _sse_event("step", {
+            yield emit("step", {
                 "step": step.model_dump(),
                 "new_versions": {},
                 "new_page_markdowns": {},
             })
         except Exception as e:
             logger.error(f"Structure analysis failed: {e}")
-            yield _sse_event("error", {"step_name": "structure", "message": str(e)})
+            yield emit("error", {"step_name": "structure", "message": str(e)})
 
         # Step 2b: Heading reconciliation
         if structure is not None:
-            yield _sse_event("processing", {"step_name": "heading_reconciliation", "display_name": "Heading Reconciliation"})
+            yield emit("processing", {"step_name": "heading_reconciliation", "display_name": "Heading Reconciliation"})
             try:
                 task = asyncio.create_task(service._step_heading_reconciliation(result, structure))
                 async for hb in _heartbeats_until_done(task):
@@ -291,18 +315,18 @@ async def process_pdf_stream(
                 structure = task.result()
                 total_steps += 1
                 step = result.steps[-1]
-                yield _sse_event("step", {
+                yield emit("step", {
                     "step": step.model_dump(),
                     "new_versions": {},
                     "new_page_markdowns": {},
                 })
             except Exception as e:
                 logger.error(f"Heading reconciliation failed: {e}")
-                yield _sse_event("error", {"step_name": "heading_reconciliation", "message": str(e)})
+                yield emit("error", {"step_name": "heading_reconciliation", "message": str(e)})
 
         # Step 2c: Deterministic heading level fix
         if structure is not None:
-            yield _sse_event("processing", {"step_name": "heading_levels", "display_name": "Heading Levels"})
+            yield emit("processing", {"step_name": "heading_levels", "display_name": "Heading Levels"})
             try:
                 task = asyncio.create_task(service._step_heading_levels(result, structure))
                 async for hb in _heartbeats_until_done(task):
@@ -310,19 +334,19 @@ async def process_pdf_stream(
                 task.result()
                 total_steps += 1
                 step = result.steps[-1]
-                yield _sse_event("step", {
+                yield emit("step", {
                     "step": step.model_dump(),
                     "new_versions": {"v0": result.versions.get("v0", "")},
                     "new_page_markdowns": {"v0": result.page_markdowns.get("v0", {})},
                 })
             except Exception as e:
                 logger.error(f"Heading level fix failed: {e}")
-                yield _sse_event("error", {"step_name": "heading_levels", "message": str(e)})
+                yield emit("error", {"step_name": "heading_levels", "message": str(e)})
 
         # Step 3: Page content corrections (with programmatic hints)
         section_map = None
         if structure is not None:
-            yield _sse_event("processing", {"step_name": "page_content", "display_name": "Page Content Corrections"})
+            yield emit("processing", {"step_name": "page_content", "display_name": "Page Content Corrections"})
             try:
                 # Wrap section map + hints + LLM call in one task so heartbeats
                 # flow the entire time (section map building can be slow).
@@ -342,18 +366,18 @@ async def process_pdf_stream(
                 task.result()
                 total_steps += 1
                 step = result.steps[-1]
-                yield _sse_event("step", {
+                yield emit("step", {
                     "step": step.model_dump(),
                     "new_versions": {"v1": result.versions.get("v1", "")},
                     "new_page_markdowns": {"v1": result.page_markdowns.get("v1", {})},
                 })
             except Exception as e:
                 logger.error(f"Page content corrections failed: {e}")
-                yield _sse_event("error", {"step_name": "page_content", "message": str(e)})
+                yield emit("error", {"step_name": "page_content", "message": str(e)})
 
         # Step 3b: Deterministic code block language tagging
         if structure is not None:
-            yield _sse_event("processing", {"step_name": "code_blocks", "display_name": "Code Block Languages"})
+            yield emit("processing", {"step_name": "code_blocks", "display_name": "Code Block Languages"})
             try:
                 task = asyncio.create_task(service._step_code_blocks(result, structure))
                 async for hb in _heartbeats_until_done(task):
@@ -363,18 +387,18 @@ async def process_pdf_stream(
                 step = result.steps[-1]
                 # Code blocks edit v1 (or v0) in-place — send updated version
                 source_ver = "v1" if "v1" in result.page_markdowns else "v0"
-                yield _sse_event("step", {
+                yield emit("step", {
                     "step": step.model_dump(),
                     "new_versions": {source_ver: result.versions.get(source_ver, "")},
                     "new_page_markdowns": {source_ver: result.page_markdowns.get(source_ver, {})},
                 })
             except Exception as e:
                 logger.error(f"Code block language tagging failed: {e}")
-                yield _sse_event("error", {"step_name": "code_blocks", "message": str(e)})
+                yield emit("error", {"step_name": "code_blocks", "message": str(e)})
 
         # Step 4: Cross-page fixes (boundaries + footnotes)
         if structure is not None:
-            yield _sse_event("processing", {"step_name": "boundaries", "display_name": "Cross-Page Fixes"})
+            yield emit("processing", {"step_name": "boundaries", "display_name": "Cross-Page Fixes"})
             try:
                 async def _boundaries_with_prep():
                     nonlocal section_map
@@ -390,18 +414,18 @@ async def process_pdf_stream(
                 task.result()
                 total_steps += 1
                 step = result.steps[-1]
-                yield _sse_event("step", {
+                yield emit("step", {
                     "step": step.model_dump(),
                     "new_versions": {"v2": result.versions.get("v2", "")},
                     "new_page_markdowns": {},
                 })
             except Exception as e:
                 logger.error(f"Cross-page fixes failed: {e}")
-                yield _sse_event("error", {"step_name": "boundaries", "message": str(e)})
+                yield emit("error", {"step_name": "boundaries", "message": str(e)})
 
         # Step 5: Cleanup
         if "v2" in result.versions:
-            yield _sse_event("processing", {"step_name": "cleanup", "display_name": "Final Cleanup"})
+            yield emit("processing", {"step_name": "cleanup", "display_name": "Final Cleanup"})
             try:
                 task = asyncio.create_task(service._step_cleanup(result))
                 async for hb in _heartbeats_until_done(task):
@@ -410,14 +434,14 @@ async def process_pdf_stream(
                 total_steps += 1
 
                 step = result.steps[-1]
-                yield _sse_event("step", {
+                yield emit("step", {
                     "step": step.model_dump(),
                     "new_versions": {"v3": result.versions.get("v3", "")},
                     "new_page_markdowns": {},
                 })
             except Exception as e:
                 logger.error(f"Cleanup failed: {e}")
-                yield _sse_event("error", {"step_name": "cleanup", "message": str(e)})
+                yield emit("error", {"step_name": "cleanup", "message": str(e)})
 
         total_elapsed_ms = int((time.time() - pipeline_start) * 1000)
 
@@ -428,15 +452,14 @@ async def process_pdf_stream(
         except Exception:
             logger.warning("Document upload task failed", exc_info=True)
 
-        # Create a feedback session for iterative review
-        session = session_store.create(
-            result=result,
-            structure=structure,
-            section_map=section_map,
-        )
+        # Finalize session with results for feedback + reconnect
+        session.result = result
+        session.structure = structure
+        session.section_map = section_map
         session.document_ref = document_ref
+        session.status = "completed"
 
-        yield _sse_event("done", {
+        yield emit("done", {
             "total_steps": total_steps,
             "total_elapsed_ms": total_elapsed_ms,
             "total_input_tokens": sum(s.input_tokens for s in result.steps),
@@ -448,6 +471,53 @@ async def process_pdf_stream(
 
     return StreamingResponse(
         event_generator(),
+        media_type="text/event-stream",
+        headers={
+            "Cache-Control": "no-cache",
+            "Connection": "keep-alive",
+            "X-Accel-Buffering": "no",
+        },
+    )
+
+
+_RECONNECT_POLL_INTERVAL = 10  # seconds between polls when still processing
+
+
+@router.get("/sessions/{session_id}/stream")
+async def reconnect_stream(
+    session_id: str,
+    last_event_id: int = Query(default=-1),
+) -> StreamingResponse:
+    """Reconnect to a processing session and replay buffered SSE events.
+
+    The client sends the last event ID it received.  This endpoint replays
+    all events after that ID.  If the session is still processing, it polls
+    for new events with heartbeats until completion.
+    """
+    session = session_store.get(session_id)
+    if session is None:
+        raise HTTPException(status_code=404, detail="Session not found or expired")
+
+    async def replay_generator() -> AsyncGenerator[str, None]:
+        cursor = last_event_id + 1
+
+        while True:
+            # Replay any buffered events beyond cursor
+            buffer_len = len(session.event_buffer)
+            while cursor < buffer_len:
+                yield session.event_buffer[cursor]
+                cursor += 1
+
+            # If session is done, stop
+            if session.status in ("completed", "error"):
+                return
+
+            # Still processing — wait for more events or timeout
+            await asyncio.sleep(_RECONNECT_POLL_INTERVAL)
+            yield _SSE_HEARTBEAT
+
+    return StreamingResponse(
+        replay_generator(),
         media_type="text/event-stream",
         headers={
             "Cache-Control": "no-cache",

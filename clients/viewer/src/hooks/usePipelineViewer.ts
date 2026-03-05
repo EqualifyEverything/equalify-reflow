@@ -3,8 +3,8 @@ import type { PipelineViewerResult, StepResult } from '@/types/pipeline-viewer';
 
 const API_URL = import.meta.env.VITE_API_URL ?? '';
 
-const MAX_RECONNECT_ATTEMPTS = 3;
-const RECONNECT_BASE_DELAY_MS = 1000;
+const MAX_RECONNECT_ATTEMPTS = 10;
+const RECONNECT_BASE_DELAY_MS = 2000;
 
 interface ProcessOptions {
   imagesScale: number;
@@ -187,8 +187,10 @@ export function usePipelineViewer() {
           if (handleSSEEvent(event)) return true;
         }
       }
-    } catch {
-      // Stream interrupted
+    } catch (err) {
+      if (!(err instanceof DOMException && err.name === 'AbortError')) {
+        console.warn('SSE stream interrupted:', err instanceof Error ? err.message : err);
+      }
     }
     return false;
   }
@@ -206,9 +208,10 @@ export function usePipelineViewer() {
       return;
     }
 
-    // Exponential backoff
-    const delay = RECONNECT_BASE_DELAY_MS * Math.pow(2, attempt);
-    console.log(`SSE reconnect: attempt ${attempt + 1}/${MAX_RECONNECT_ATTEMPTS} in ${delay}ms (last_event_id=${lastId})`);
+    // Exponential backoff with jitter, capped at 30s
+    const baseDelay = Math.min(RECONNECT_BASE_DELAY_MS * Math.pow(2, attempt), 30000);
+    const delay = baseDelay + Math.random() * 1000;
+    console.log(`SSE reconnect: attempt ${attempt + 1}/${MAX_RECONNECT_ATTEMPTS} in ${Math.round(delay)}ms (last_event_id=${lastId})`);
     await new Promise((r) => setTimeout(r, delay));
     if (signal.aborted) return;
 

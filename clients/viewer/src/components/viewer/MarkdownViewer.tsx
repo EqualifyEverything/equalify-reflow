@@ -409,9 +409,12 @@ export function MarkdownViewer({
                       {children}
                     </a>
                   ),
-                  // Image — resolve from figureMap when available
+                  // Image — resolve from figureMap; show placeholder until base64 arrives
                   img: ({ src, alt }) => {
-                    const resolved = figureMap?.[src ?? ''] ?? src;
+                    const resolved = figureMap?.[src ?? ''];
+                    if (!resolved) {
+                      return <div className="max-w-full rounded my-4 h-48 bg-gray-100 dark:bg-gray-800 animate-pulse flex items-center justify-center text-sm text-gray-400">{alt || 'Loading figure…'}</div>;
+                    }
                     return <img src={resolved} alt={alt ?? ''} className="max-w-full rounded my-4" />;
                   },
                   // Horizontal rule

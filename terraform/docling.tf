@@ -138,7 +138,7 @@ resource "aws_autoscaling_group" "docling" {
 
     instances_distribution {
       on_demand_base_capacity                  = 0
-      on_demand_percentage_above_base_capacity = 100 # On-Demand until Spot quota approved
+      on_demand_percentage_above_base_capacity = 0
       spot_allocation_strategy                 = "capacity-optimized"
     }
   }

@@ -187,7 +187,7 @@ variable "bedrock_daily_budget_limit" {
 variable "monthly_budget_limit" {
   description = "Monthly budget limit for PDF converter infrastructure in us-east-1 (alerts at 50%, 80%, 100%)"
   type        = string
-  default     = "250" # Based on actual usage: ~$213/mo (ECS, ElastiCache, ALB, VPC, Bedrock, CloudWatch)
+  default     = "250"
 }
 
 # Docling Configuration

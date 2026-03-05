@@ -9,7 +9,7 @@ resource "aws_lb" "main" {
 
   idle_timeout               = 300 # 5 min — SSE streams during PDF processing
   enable_deletion_protection = var.environment == "production"
-  enable_http2               = true
+  enable_http2               = false # HTTP/1.1 only — HTTP/2 GOAWAY frames disrupt SSE streams
 
   tags = {
     Name = "${var.project_name}-alb"
@@ -35,7 +35,7 @@ resource "aws_lb_target_group" "app" {
     matcher             = "200"
   }
 
-  deregistration_delay = 30
+  deregistration_delay = 300 # 5 min — match ALB idle timeout for long SSE streams
 
   tags = {
     Name = "${var.project_name}-tg"

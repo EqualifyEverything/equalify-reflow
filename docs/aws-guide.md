@@ -21,6 +21,7 @@ Complete guide for deploying and managing the Equalify PDF Converter on AWS.
 6. [Monitoring & Debugging](#monitoring--debugging)
 7. [Cost Protection & Alerting](#cost-protection--alerting)
 8. [Troubleshooting](#troubleshooting)
+9. [Infrastructure & Cost Breakdown](#infrastructure--cost-breakdown)
 
 ---
 
@@ -631,19 +632,151 @@ curl -s http://equalify-pdf-alb-633052607.us-east-1.elb.amazonaws.com/metrics | 
 
 ---
 
-## Infrastructure Details
+## Infrastructure & Cost Breakdown
 
-**Deployed Resources:**
-- **VPC:** vpc-07275602e9211f0af
+All resources run in **us-east-1**. Monthly budget is set at **$250** (`terraform/variables.tf`).
+
+### Compute
+
+| Resource | Hardware | Why | Always-on? | Est. $/mo |
+|----------|----------|-----|------------|-----------|
+| **API Gateway** (Fargate) | 2 tasks × 2 vCPU / 4 GB | Runs FastAPI, PII detection, background workers. 2 tasks for availability during deployments and to handle concurrent requests. | Yes | ~$115 |
+| **Docling-serve** (EC2 GPU) | g4dn.xlarge — 1x NVIDIA T4, 4 vCPU, 16 GB RAM, 16 GB VRAM | Deep learning PDF parsing (layout analysis, table structure, OCR). T4 processes a 13-page PDF in ~15-25s vs ~90s on CPU. Cheapest GPU instance that fits — models use ~4-6 GB VRAM. | No (scale-to-zero) | ~$7-9 |
+
+### Networking
+
+| Resource | Why | Est. $/mo |
+|----------|-----|-----------|
+| **NAT Gateway** (single) | Private subnets need internet access for ECR pulls, Bedrock API, CloudWatch. Single gateway — AZ redundancy isn't worth ~$32/mo for a low-traffic internal tool. If the NAT's AZ goes down, the API degrades until ECS reschedules tasks. | ~$32 |
+| **Public ALB** | Routes external HTTPS traffic to Fargate API tasks. 300s idle timeout for SSE streams. | ~$16 base + LCU |
+| **Internal ALB** (docling) | Routes API→docling traffic within VPC. Decouples API scaling from GPU scaling. | ~$16 base + LCU |
+
+### Data & Caching
+
+| Resource | Hardware | Why | Est. $/mo |
+|----------|----------|-----|-----------|
+| **ElastiCache Redis** | cache.t4g.small (0.5 vCPU, 1.37 GB) | Job state, queue, rate limiting, SSE event bus. Single node — this is a cache, not a primary data store. | ~$25 |
+| **S3** (2 buckets) | Standard | Temp bucket (7-day lifecycle) for uploads, results bucket for output. | <$1 |
+| **ECR** (2 repos) | Standard | App images (mutable tags) + docling CUDA images (immutable tags, ~8-10 GB). | ~$1 |
+
+### AI
+
+| Resource | Why | Est. $/mo |
+|----------|-----|-----------|
+| **AWS Bedrock** (Claude Haiku 4.5) | Text correction, table/list remediation, alt-text generation. ~$0.20/document. | Variable (~$4-10 at 50 PDFs/day) |
+
+### Observability & Misc
+
+| Resource | Est. $/mo |
+|----------|-----------|
+| CloudWatch Logs (30-day retention, Container Insights) | ~$3-5 |
+| Secrets Manager (2 secrets: API keys, docs password) | <$1 |
+| EBS (50 GB gp3, only when GPU instance is running) | <$1 |
+| Budget alerts, CloudWatch alarms, SNS | <$1 |
+
+### Cost Summary
+
+| Category | Est. $/mo |
+|----------|-----------|
+| Fargate API (2 tasks, always-on) | ~$115 |
+| NAT Gateway (always-on) | ~$32 |
+| ElastiCache Redis (always-on) | ~$25 |
+| ALBs (2x, always-on) | ~$32 |
+| Docling GPU (Spot, scale-to-zero) | ~$7-9 |
+| Bedrock AI (pay-per-use) | ~$4-10 |
+| Everything else | ~$5-10 |
+| **Total** | **~$215-230** |
+
+The always-on infrastructure (Fargate + NAT + Redis + ALBs) accounts for ~$204/mo. The actual PDF processing (GPU + Bedrock) is ~$11-19/mo at current traffic.
+
+---
+
+## GPU (Docling-Serve)
+
+Docling-serve runs deep learning models (layout analysis, table structure, OCR) on a GPU to parse PDFs. Deployed March 4, 2026.
+
+### Why GPU?
+
+On CPU (c6g.xlarge), a 13-page PDF takes ~90 seconds. On GPU (g4dn.xlarge, NVIDIA T4), ~15-25 seconds — 4x faster. This matters because users wait in real-time via SSE streaming and the API has a 300-second timeout that complex PDFs were hitting on CPU.
+
+### Instance Selection
+
+| Instance | GPU | vCPUs | RAM | GPU RAM | Spot $/hr | On-Demand $/hr |
+|----------|-----|-------|-----|---------|-----------|----------------|
+| **g4dn.xlarge** | 1x T4 | 4 | 16 GB | 16 GB | ~$0.16 | ~$0.526 |
+| g4dn.2xlarge | 1x T4 | 8 | 32 GB | 16 GB | ~$0.22 | ~$0.752 |
+| g5.xlarge | 1x A10G | 4 | 16 GB | 24 GB | ~$0.36 | ~$1.006 |
+| p3.2xlarge | 1x V100 | 8 | 61 GB | 16 GB | ~$0.92 | ~$3.06 |
+
+g4dn.xlarge is the cheapest GPU that fits — docling's models use ~4-6 GB of the T4's 16 GB VRAM. g4dn.2xlarge is configured as an automatic fallback if xlarge Spot capacity is unavailable.
+
+### Spot Instances & Reclamation
+
+Spot instances are spare AWS capacity at 60-70% discount. AWS can reclaim them with 2 minutes notice. When that happens:
+
+1. AWS sends a 2-minute interruption notice
+2. ECS gracefully drains the task
+3. The ASG launches a replacement (falls back to g4dn.2xlarge if xlarge is unavailable)
+4. If a PDF was mid-processing, the API's circuit breaker retries automatically — processing is idempotent
+
+The in-flight PDF takes longer but doesn't fail. g4dn Spot interruption rates in us-east-1 are historically under 5%.
+
+**If all Spot capacity dries up**, PDFs queue until capacity returns. To recover immediately, change `on_demand_percentage_above_base_capacity` from `0` to `100` in `terraform/docling.tf` and run `terraform apply`. This switches to On-Demand at ~$0.53/hr instead of ~$0.16/hr.
+
+### Scale-to-Zero
+
+At 10-50 PDFs/day, keeping a GPU running 24/7 wastes money (~$114/mo on Spot). Scale-to-zero means the instance only exists during active processing — ~25 min/day = ~$7-9/mo.
+
+The tradeoff is a **3-5 minute cold start** from zero:
+
+1. CloudWatch alarm fires on `JobsInProcessing` metric (~60s)
+2. ASG launches instance (~30s)
+3. Docker pulls CUDA image (~60-90s first time, cached after)
+4. Docling loads ML models into GPU memory (~120-180s)
+5. ALB health check passes
+
+The application's circuit breaker and retry logic handle this transparently. Subsequent PDFs while warm process in 15-25 seconds. Scale-in happens after 120 seconds idle.
+
+### GPU Rollback Options
+
+| Scenario | What to change | Effect |
+|----------|---------------|--------|
+| Back to CPU | Revert `docling.tf` + `variables.tf` | ARM Spot, always-on, ~90s/PDF |
+| GPU always-on | `docling_min_capacity = 1` in `variables.tf` | No cold starts, ~$114/mo |
+| GPU On-Demand | `on_demand_percentage_above_base_capacity = 100` in `docling.tf` | Guaranteed capacity, ~$24/mo |
+| GPU Spot (current) | `on_demand_percentage_above_base_capacity = 0` in `docling.tf` | ~$7-9/mo |
+
+All changes are `terraform apply` — no application code changes needed.
+
+---
+
+## Key Terraform Files
+
+| File | Controls |
+|------|----------|
+| `terraform/docling.tf` | GPU instance, ASG, internal ALB, ECS service, scaling |
+| `terraform/ecs.tf` | Fargate API task, service, auto-scaling |
+| `terraform/vpc.tf` | VPC, subnets, NAT gateway |
+| `terraform/redis.tf` | ElastiCache cluster |
+| `terraform/alb.tf` | Public ALB, target group, listeners |
+| `terraform/variables.tf` | Instance types, capacities, budget limits |
+| `terraform/ecr.tf` | Docker image repositories |
+
+---
+
+## Deployed Resources
+
 - **ECS Cluster:** equalify-pdf-cluster
-- **ECS Service:** equalify-pdf-service (1 task, Fargate)
-- **ALB:** equalify-pdf-alb-633052607.us-east-1.elb.amazonaws.com
+- **API Service:** equalify-pdf-service (2 Fargate tasks)
+- **Docling Service:** equalify-pdf-docling-service (EC2 GPU, scale-to-zero)
+- **Public ALB:** equalify-pdf-alb-633052607.us-east-1.elb.amazonaws.com
 - **Redis:** equalify-pdf-redis.njtamw.0001.use1.cache.amazonaws.com:6379
 - **S3 Temp:** equalify-pdf-temp-380610849750
 - **S3 Results:** equalify-pdf-results-380610849750
-- **ECR:** 380610849750.dkr.ecr.us-east-1.amazonaws.com/equalify-pdf
+- **ECR (app):** 380610849750.dkr.ecr.us-east-1.amazonaws.com/equalify-pdf
+- **ECR (docling):** 380610849750.dkr.ecr.us-east-1.amazonaws.com/equalify-pdf-docling
 - **Region:** us-east-1
-- **AI Provider:** AWS Bedrock (Claude 3.5 Haiku)
+- **AI Provider:** AWS Bedrock (Claude Haiku 4.5)
 
 ---
 
@@ -655,4 +788,4 @@ curl -s http://equalify-pdf-alb-633052607.us-east-1.elb.amazonaws.com/metrics | 
 
 ---
 
-**Last Updated:** 2025-12-16
+**Last Updated:** 2026-03-05

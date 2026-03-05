@@ -3,7 +3,7 @@
 
 # AWS Configuration
 aws_region  = "us-east-1"
-environment = "staging" # Changed from "production" - single NAT gateway saves $32/mo
+environment = "production"
 
 # AWS Profile (using environment variable AWS_PROFILE=uic)
 aws_profile = "" # Leave empty to use AWS_PROFILE env var

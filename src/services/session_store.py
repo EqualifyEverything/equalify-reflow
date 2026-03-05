@@ -10,6 +10,8 @@ would swap for Redis-backed persistence.
 
 from __future__ import annotations
 
+import asyncio
+import logging
 import time
 import uuid
 from dataclasses import dataclass, field
@@ -21,6 +23,8 @@ from .pipeline_viewer_models import (
     SectionMap,
     StructureResult,
 )
+
+logger = logging.getLogger(__name__)
 
 SESSION_TTL_SECONDS = 3600  # 1 hour
 
@@ -44,6 +48,11 @@ class PipelineSession:
     # SSE reconnect support
     event_buffer: list[str] = field(default_factory=list)
     status: str = "processing"  # "processing" | "completed" | "error"
+    event_counter: int = 0
+    # Push notification for buffer readers
+    new_event: asyncio.Event = field(default_factory=asyncio.Event)
+    # Background pipeline task reference
+    pipeline_task: asyncio.Task | None = None
 
     def touch(self) -> None:
         """Update the last-accessed timestamp."""
@@ -115,12 +124,15 @@ class SessionStore:
         return self._sessions.pop(session_id, None) is not None
 
     def _evict_expired(self) -> None:
-        """Remove all expired sessions."""
+        """Remove all expired sessions and cancel their pipeline tasks."""
         expired = [
             sid for sid, s in self._sessions.items() if s.is_expired
         ]
         for sid in expired:
-            del self._sessions[sid]
+            session = self._sessions.pop(sid)
+            if session.pipeline_task and not session.pipeline_task.done():
+                session.pipeline_task.cancel()
+                logger.debug("Cancelled pipeline task for expired session %s", sid)
 
     @property
     def count(self) -> int:

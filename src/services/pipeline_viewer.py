@@ -533,7 +533,7 @@ class PipelineViewerService:
                     for finding in classification.findings:
                         if finding.code in scanned_codes:
                             finding.message = (
-                                "Document appears to be scanned. Tesseract OCR has been "
+                                "Document appears to be scanned. OCR has been "
                                 "applied, which may increase processing time and introduce "
                                 "character recognition errors."
                             )

@@ -223,7 +223,7 @@ async def _pipeline_steps(
             effective_langs = ocr_lang_list
             emit("processing", {
                 "step_name": "docling_ocr",
-                "display_name": "Tesseract OCR Re-extraction",
+                "display_name": "OCR Re-extraction",
             })
             try:
                 await service._step_docling_ocr(
@@ -234,7 +234,7 @@ async def _pipeline_steps(
                 for finding in classification.findings:
                     if finding.code in scanned_codes:
                         finding.message = (
-                            "Document appears to be scanned. Tesseract OCR has been "
+                            "Document appears to be scanned. OCR has been "
                             "applied, which may increase processing time and introduce "
                             "character recognition errors."
                         )

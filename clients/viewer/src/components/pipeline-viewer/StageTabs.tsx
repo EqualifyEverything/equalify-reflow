@@ -12,7 +12,7 @@ import {
   Merge,
   MessageSquareDot,
 } from 'lucide-react';
-import type { StepResult, StepStatus, StageDefinition } from '@/types/pipeline-viewer';
+import type { StepResult, StageDefinition } from '@/types/pipeline-viewer';
 import { PIPELINE_STAGES, REVIEW_STAGE } from '@/types/pipeline-viewer';
 
 const STAGE_ICONS: Record<string, React.ComponentType<{ className?: string }>> = {
@@ -30,24 +30,9 @@ interface StageTabsProps {
   onSelectStep: (index: number) => void;
   processingStepName?: string | null;
   onDownloadVersion?: (stepIndex: number) => void;
+  onOpenChangesModal?: () => void;
 }
 
-function getStepStatus(step: StepResult): StepStatus {
-  if (step.error) return 'error';
-  if (step.skipped) return 'skipped';
-  return 'success';
-}
-
-function StatusIcon({ status }: { status: StepStatus }) {
-  switch (status) {
-    case 'success':
-      return <CheckCircle2 className="w-3 h-3 text-green-500" />;
-    case 'skipped':
-      return <SkipForward className="w-3 h-3 text-amber-500" />;
-    case 'error':
-      return <AlertCircle className="w-3 h-3 text-red-500" />;
-  }
-}
 
 interface ResolvedStage {
   definition: StageDefinition;
@@ -55,6 +40,8 @@ interface ResolvedStage {
   status: 'pending' | 'active' | 'success' | 'error' | 'skipped';
   totalMs: number;
   totalCostCents: number;
+  totalChanges: number;
+  lastStepIdx: number | null;
 }
 
 function resolveStages(
@@ -77,6 +64,8 @@ function resolveStages(
       status: 'pending',
       totalMs: 0,
       totalCostCents: 0,
+      totalChanges: 0,
+      lastStepIdx: null,
     });
   }
 
@@ -94,6 +83,8 @@ function resolveStages(
       status: 'pending',
       totalMs: 0,
       totalCostCents: 0,
+      totalChanges: 0,
+      lastStepIdx: null,
     });
   }
 
@@ -102,6 +93,10 @@ function resolveStages(
     const stageSteps = stage.stepIndices.map((i) => steps[i]);
     stage.totalMs = stageSteps.reduce((sum, s) => sum + s.elapsed_ms, 0);
     stage.totalCostCents = stageSteps.reduce((sum, s) => sum + (s.cost_cents || 0), 0);
+    stage.totalChanges = stageSteps.reduce((sum, s) => sum + s.changes.length, 0);
+    stage.lastStepIdx = stage.stepIndices.length > 0
+      ? stage.stepIndices[stage.stepIndices.length - 1]
+      : null;
 
     if (stageSteps.length === 0) {
       // Check if processing step belongs to this stage
@@ -174,61 +169,89 @@ export function StageTabs({
   onSelectStep,
   processingStepName,
   onDownloadVersion,
+  onOpenChangesModal,
 }: StageTabsProps) {
   const stages = resolveStages(steps, processingStepName ?? null);
 
   // Find which stage the active step belongs to
   const activeStageIdx = stages.findIndex((s) => s.stepIndices.includes(activeStepIdx));
-  const activeStage = stages[activeStageIdx] ?? null;
-
-  // Steps to show in the sub-tab row
-  const visibleStepIndices = activeStage?.stepIndices ?? [];
 
   return (
     <div className="bg-white border-b">
-      {/* Stage row */}
-      <div className="flex items-center gap-0.5 px-4 py-1.5 border-b border-gray-100">
+      {/* Stage row — parent tabs only */}
+      <div className="flex items-center gap-0.5 px-4 py-1.5">
         {stages.map((stage, stageIdx) => {
           const Icon = STAGE_ICONS[stage.definition.name] ?? FileInput;
           const isActiveStage = stageIdx === activeStageIdx;
           const hasSteps = stage.stepIndices.length > 0;
+          // Last child step for download
+          const lastIdx = stage.lastStepIdx;
+          const lastStep = lastIdx != null ? steps[lastIdx] : null;
+          const canDownload = lastStep?.version_after && !lastStep.error;
 
           return (
-            <button
-              key={stage.definition.name}
-              onClick={() => {
-                // Click stage → select its first step
-                if (stage.stepIndices.length > 0) {
-                  onSelectStep(stage.stepIndices[0]);
-                }
-              }}
-              disabled={!hasSteps}
-              className={cn(
-                'flex items-center gap-1.5 px-3 py-1.5 rounded-md text-xs font-medium transition-colors',
-                isActiveStage
-                  ? 'bg-uic-blue/10 text-uic-blue'
-                  : hasSteps
-                    ? 'text-muted-foreground hover:text-foreground hover:bg-gray-50'
-                    : 'text-gray-300 cursor-default',
+            <div key={stage.definition.name} className="flex items-center">
+              <button
+                onClick={() => {
+                  // Click stage → select its last completed step
+                  if (lastIdx != null) {
+                    onSelectStep(lastIdx);
+                  }
+                }}
+                disabled={!hasSteps}
+                className={cn(
+                  'flex items-center gap-1.5 px-3 py-1.5 rounded-md text-xs font-medium transition-colors',
+                  isActiveStage
+                    ? 'bg-uic-blue/10 text-uic-blue'
+                    : hasSteps
+                      ? 'text-muted-foreground hover:text-foreground hover:bg-gray-50'
+                      : 'text-gray-300 cursor-default',
+                )}
+              >
+                <StageStatusIndicator status={stage.status} />
+                <Icon className={cn('w-3.5 h-3.5', isActiveStage ? 'text-uic-blue' : '')} />
+                <span>{stage.definition.label}</span>
+                {stage.totalMs > 0 && (
+                  <span className={cn(
+                    'text-[10px] px-1 py-0.5 rounded',
+                    isActiveStage ? 'bg-uic-blue/10 text-uic-blue' : 'bg-gray-100 text-gray-500',
+                  )}>
+                    {(stage.totalMs / 1000).toFixed(1)}s
+                  </span>
+                )}
+                {stage.totalCostCents > 0 && (
+                  <span className="text-[10px] px-1 py-0.5 rounded bg-green-50 text-green-700">
+                    ${(stage.totalCostCents / 100).toFixed(4)}
+                  </span>
+                )}
+                {stage.totalChanges > 0 && (
+                  <span
+                    role="button"
+                    onClick={(e) => {
+                      e.stopPropagation();
+                      // Select this stage first, then open modal
+                      if (lastIdx != null) onSelectStep(lastIdx);
+                      onOpenChangesModal?.();
+                    }}
+                    className="text-[10px] px-1 py-0.5 rounded bg-amber-50 text-amber-700 hover:bg-amber-100 cursor-pointer"
+                  >
+                    {stage.totalChanges}
+                  </span>
+                )}
+              </button>
+              {isActiveStage && canDownload && onDownloadVersion && lastIdx != null && (
+                <button
+                  onClick={(e) => {
+                    e.stopPropagation();
+                    onDownloadVersion(lastIdx);
+                  }}
+                  title={`Download ${lastStep!.version_after} markdown`}
+                  className="p-1 ml-0.5 rounded text-muted-foreground hover:text-green-600 hover:bg-green-50 transition-colors"
+                >
+                  <Download className="w-3 h-3" />
+                </button>
               )}
-            >
-              <StageStatusIndicator status={stage.status} />
-              <Icon className={cn('w-3.5 h-3.5', isActiveStage ? 'text-uic-blue' : '')} />
-              <span>{stage.definition.label}</span>
-              {stage.totalMs > 0 && (
-                <span className={cn(
-                  'text-[10px] px-1 py-0.5 rounded',
-                  isActiveStage ? 'bg-uic-blue/10 text-uic-blue' : 'bg-gray-100 text-gray-500',
-                )}>
-                  {(stage.totalMs / 1000).toFixed(1)}s
-                </span>
-              )}
-              {stage.totalCostCents > 0 && (
-                <span className="text-[10px] px-1 py-0.5 rounded bg-green-50 text-green-700">
-                  ${(stage.totalCostCents / 100).toFixed(4)}
-                </span>
-              )}
-            </button>
+            </div>
           );
         })}
 
@@ -240,70 +263,6 @@ export function StageTabs({
           </div>
         )}
       </div>
-
-      {/* Sub-step row */}
-      {visibleStepIndices.length > 0 && (
-        <div className="flex items-center gap-1 overflow-x-auto px-4 py-1.5">
-          {visibleStepIndices.map((idx) => {
-            const step = steps[idx];
-            const status = getStepStatus(step);
-            const isActive = idx === activeStepIdx;
-
-            return (
-              <div key={step.name} className="flex items-center">
-                <button
-                  onClick={() => onSelectStep(idx)}
-                  className={cn(
-                    'flex items-center gap-1.5 px-2.5 py-1 rounded text-xs font-medium whitespace-nowrap transition-colors border-b-2',
-                    isActive
-                      ? 'border-b-uic-blue text-uic-blue bg-uic-blue/5'
-                      : 'border-b-transparent text-muted-foreground hover:text-foreground hover:bg-gray-50',
-                  )}
-                >
-                  <StatusIcon status={status} />
-                  <span>{step.display_name}</span>
-                  <span className={cn(
-                    'text-[10px] px-1 py-0.5 rounded',
-                    isActive ? 'bg-uic-blue/10 text-uic-blue' : 'bg-gray-100 text-gray-500',
-                  )}>
-                    {(step.elapsed_ms / 1000).toFixed(1)}s
-                  </span>
-                  {step.cost_cents > 0 && (
-                    <span className="text-[10px] px-1 py-0.5 rounded bg-green-50 text-green-700">
-                      ${(step.cost_cents / 100).toFixed(4)}
-                    </span>
-                  )}
-                  {step.changes.length > 0 && (
-                    <span className="text-[10px] px-1 py-0.5 rounded bg-amber-50 text-amber-700">
-                      {step.changes.length}
-                    </span>
-                  )}
-                </button>
-                {isActive && onDownloadVersion && step.version_after && !step.error && (
-                  <button
-                    onClick={(e) => {
-                      e.stopPropagation();
-                      onDownloadVersion(idx);
-                    }}
-                    title={`Download ${step.version_after} markdown`}
-                    className="p-1 ml-0.5 rounded text-muted-foreground hover:text-green-600 hover:bg-green-50 transition-colors"
-                  >
-                    <Download className="w-3 h-3" />
-                  </button>
-                )}
-              </div>
-            );
-          })}
-
-          {/* Processing placeholder for sub-step within active stage */}
-          {processingStepName && activeStage?.status === 'active' && (
-            <div className="flex items-center gap-1.5 px-2.5 py-1 text-xs font-medium whitespace-nowrap text-muted-foreground border-b-2 border-b-transparent">
-              <Loader2 className="w-3 h-3 animate-spin text-uic-blue" />
-              <span>{processingStepName}</span>
-            </div>
-          )}
-        </div>
-      )}
     </div>
   );
 }

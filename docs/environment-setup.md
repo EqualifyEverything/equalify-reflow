@@ -90,6 +90,27 @@ make down
 
 **LocalStack is running but you don't directly interact with it.** The app and tests handle it automatically.
 
+### GPU-Accelerated Development (Apple Silicon)
+
+On macOS with Apple Silicon, docling-serve can run natively with MPS (Metal Performance Shaders) GPU acceleration, which is roughly 3-5x faster than the CPU-only Docker container.
+
+**One-time setup:**
+
+```bash
+make docling-install
+```
+
+**Workflow:**
+
+```bash
+make docling-native   # Start native docling-serve (MPS/GPU)
+make dev-gpu          # Start Docker stack pointing to native docling
+# ... develop as normal ...
+make down             # Stops everything including native docling
+```
+
+`make dev` still works for the fully-dockerized CPU mode, which requires no additional setup.
+
 ### AWS Operations
 
 ```bash

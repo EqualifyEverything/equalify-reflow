@@ -183,6 +183,41 @@ curl http://localhost:8080/health
 curl http://localhost:8080/metrics
 ```
 
+## Native Docling-Serve (GPU Acceleration)
+
+On Apple Silicon Macs, docling-serve can run natively with MPS (Metal Performance Shaders) for significantly faster PDF processing, especially OCR.
+
+### Setup (one-time)
+
+```bash
+make docling-install   # Installs docling-serve with EasyOCR support
+```
+
+### Usage
+
+```bash
+make docling-native    # Start native docling-serve with MPS
+make dev-gpu           # Start Docker stack using native docling
+```
+
+This replaces the dockerized docling-serve (CPU-only) with a host-native instance accessible via `host.docker.internal:5001`. The `docker-compose.native-docling.yml` override handles the routing.
+
+To check status:
+```bash
+make docling-health    # Check if docling-serve is responding
+curl http://localhost:5001/health
+```
+
+Logs are written to `/tmp/docling-serve.log`.
+
+### Stopping
+
+`make down` automatically stops both Docker services and the native docling-serve process. You can also stop it independently:
+
+```bash
+make docling-native-stop
+```
+
 ## Common Issues
 
 ### Tests failing with Redis connection refused

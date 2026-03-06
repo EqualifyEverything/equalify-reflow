@@ -10,7 +10,8 @@ The Equalify PDF Converter transforms PDF documents into accessible, semantic ma
 
 | Command | Purpose | When to Use |
 |---------|---------|-------------|
-| `make dev` | Start all services | Default for development |
+| `make dev` | Start all services (auto-detects GPU) | Default for development |
+| `make dev-docker` | Start with Docker docling (CPU only) | Force CPU mode |
 | `make down` | Stop all services | End of session |
 | `make test-fast` | Run unit tests (~30s) | Before commits |
 | `make test-integration` | Run integration tests (~2min) | Before PRs |
@@ -20,6 +21,7 @@ The Equalify PDF Converter transforms PDF documents into accessible, semantic ma
 | `make redis-cli` | Connect to Redis CLI | Redis operations |
 | `make health` | Verify infrastructure | Health checks |
 | `make coverage` | Run tests with coverage | Coverage reports |
+| `make docling-install` | Install native docling-serve | One-time GPU setup |
 
 ## Never Do These
 
@@ -40,6 +42,7 @@ The Equalify PDF Converter transforms PDF documents into accessible, semantic ma
 - Prometheus: `http://localhost:9090`
 - Grafana: `http://localhost:3001`
 - Jaeger: `http://localhost:16686`
+- Native Docling: `localhost:5001` (when using `make dev-gpu`)
 
 ## Quick Architecture
 

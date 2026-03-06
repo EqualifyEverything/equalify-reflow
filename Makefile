@@ -1,11 +1,12 @@
-.PHONY: help dev prod up down logs health test test-fast test-unit test-integration test-concurrent test-e2e test-large-files test-slow test-all clean build build-viewer build-viewer-dev shell test-docker logs-api grafana-url prometheus-url metrics-url coverage coverage-html coverage-report aws-health aws-logs aws-status aws-deploy aws-shell localstack-debug
+.PHONY: help dev dev-docker prod up down logs health test test-fast test-unit test-integration test-concurrent test-e2e test-large-files test-slow test-all clean build build-viewer build-viewer-dev shell test-docker logs-api grafana-url prometheus-url metrics-url coverage coverage-html coverage-report aws-health aws-logs aws-status aws-deploy aws-shell localstack-debug docling-native docling-native-stop docling-install
 
 # Default target
 help:
 	@echo "Equalify PDF Converter - Makefile Commands"
 	@echo ""
 	@echo "Essential:"
-	@echo "  make dev          - Start development environment"
+	@echo "  make dev          - Start development (auto-detects native GPU docling)"
+	@echo "  make dev-docker   - Start development (force Docker docling, CPU only)"
 	@echo "  make down         - Stop all services"
 	@echo "  make logs         - View all service logs"
 	@echo "  make logs-api     - View API logs only"
@@ -40,6 +41,11 @@ help:
 	@echo "  make canvas-down  - Stop local Canvas LMS"
 	@echo "  make canvas-logs  - View Canvas web logs"
 	@echo ""
+	@echo "Native Docling (GPU):"
+	@echo "  make docling-install  - Install docling-serve natively (one-time)"
+	@echo "  make docling-native   - Start native docling-serve (MPS/GPU)"
+	@echo "  make docling-native-stop - Stop native docling-serve"
+	@echo ""
 	@echo "Utilities:"
 	@echo "  make redis-cli    - Connect to Redis CLI"
 	@echo "  make clean        - Remove containers and volumes"
@@ -60,21 +66,115 @@ help:
 	@echo ""
 
 # Development environment
+# Auto-detects native docling-serve for GPU acceleration (Apple Silicon MPS).
+# If installed, launches it automatically. Falls back to Docker CPU mode.
+# Force Docker mode: make dev-docker
 dev: build-viewer-dev
-	@AWS_PROFILE=$${AWS_PROFILE:-uic}; \
+	@COMPOSE_FILES="-f docker-compose.yml -f docker-compose.dev.yml"; \
+	USE_NATIVE=false; \
+	if curl -sf http://localhost:5001/health > /dev/null 2>&1; then \
+		echo "✅ Native docling-serve already running (GPU/MPS)"; \
+		USE_NATIVE=true; \
+	elif command -v docling-serve > /dev/null 2>&1; then \
+		echo "Starting native docling-serve (GPU/MPS)..."; \
+		DOCLING_DEVICE=mps \
+		DOCLING_SERVE_LOAD_MODELS_AT_BOOT=true \
+		DOCLING_SERVE_ENG_LOC_SHARE_MODELS=true \
+		DOCLING_SERVE_MAX_SYNC_WAIT=600 \
+		nohup docling-serve run > /tmp/docling-serve.log 2>&1 & echo $$! > /tmp/docling-serve.pid; \
+		echo "   Waiting for docling-serve to start (logs: /tmp/docling-serve.log)..."; \
+		for i in $$(seq 1 60); do \
+			if curl -sf http://localhost:5001/health > /dev/null 2>&1; then \
+				echo "✅ Native docling-serve ready (GPU/MPS)"; \
+				USE_NATIVE=true; \
+				break; \
+			fi; \
+			sleep 5; \
+		done; \
+		if [ "$$USE_NATIVE" = "false" ]; then \
+			echo "⚠️  Native docling-serve failed to start — falling back to Docker (CPU)"; \
+			echo "   Check /tmp/docling-serve.log for details"; \
+		fi; \
+	else \
+		echo "ℹ️  Using Docker docling-serve (CPU mode)"; \
+		echo "   For GPU acceleration: make docling-install (one-time setup)"; \
+	fi; \
+	if [ "$$USE_NATIVE" = "true" ]; then \
+		COMPOSE_FILES="$$COMPOSE_FILES -f docker-compose.native-docling.yml"; \
+	fi; \
+	AWS_PROFILE=$${AWS_PROFILE:-uic}; \
 	if aws sts get-caller-identity --profile $$AWS_PROFILE > /dev/null 2>&1; then \
-		echo "✅ AWS credentials valid for profile $$AWS_PROFILE, exporting for Docker..."; \
+		echo "✅ AWS credentials valid for profile $$AWS_PROFILE"; \
+		eval "$$(aws configure export-credentials --profile $$AWS_PROFILE --format env)" && \
+		export AWS_ACCESS_KEY_ID AWS_SECRET_ACCESS_KEY AWS_SESSION_TOKEN && \
+		docker compose $$COMPOSE_FILES up -d; \
+	else \
+		echo "⚠️  AWS credentials not found for profile $$AWS_PROFILE - Bedrock AI unavailable"; \
+		echo "   To enable: aws sso login --profile $$AWS_PROFILE && make down && make dev"; \
+		docker compose $$COMPOSE_FILES up -d; \
+	fi
+
+# Development with Docker docling-serve only (skip native GPU detection)
+dev-docker: build-viewer-dev
+	@AWS_PROFILE=$${AWS_PROFILE:-uic}; \
+	echo "ℹ️  Using Docker docling-serve (CPU mode)"; \
+	if aws sts get-caller-identity --profile $$AWS_PROFILE > /dev/null 2>&1; then \
+		echo "✅ AWS credentials valid for profile $$AWS_PROFILE"; \
 		eval "$$(aws configure export-credentials --profile $$AWS_PROFILE --format env)" && \
 		export AWS_ACCESS_KEY_ID AWS_SECRET_ACCESS_KEY AWS_SESSION_TOKEN && \
 		docker compose -f docker-compose.yml -f docker-compose.dev.yml up -d; \
 	else \
 		echo "⚠️  AWS credentials not found for profile $$AWS_PROFILE - Bedrock AI unavailable"; \
-		echo "   To enable, run:"; \
-		echo "     aws sso login --profile $$AWS_PROFILE"; \
-		echo "     make down && make dev"; \
-		echo ""; \
-		echo "Starting without Bedrock (LocalStack S3 only)..."; \
 		docker compose -f docker-compose.yml -f docker-compose.dev.yml up -d; \
+	fi
+
+# Install docling-serve natively (one-time setup for dev-gpu)
+docling-install:
+	@echo "Installing docling-serve with EasyOCR support..."
+	uv tool install "docling-serve[ui,easyocr]"
+	@echo ""
+	@echo "✅ docling-serve installed. Start it with: make docling-native"
+
+# Start native docling-serve with MPS (Apple Silicon GPU) acceleration
+DOCLING_PID_FILE := /tmp/docling-serve.pid
+docling-native:
+	@if curl -sf http://localhost:5001/health > /dev/null 2>&1; then \
+		echo "✅ docling-serve already running on localhost:5001"; \
+		exit 0; \
+	fi
+	@echo "Starting native docling-serve with MPS acceleration..."
+	@DOCLING_DEVICE=mps \
+	DOCLING_SERVE_LOAD_MODELS_AT_BOOT=true \
+	DOCLING_SERVE_ENG_LOC_SHARE_MODELS=true \
+	DOCLING_SERVE_MAX_SYNC_WAIT=600 \
+	nohup docling-serve run > /tmp/docling-serve.log 2>&1 & echo $$! > $(DOCLING_PID_FILE)
+	@echo "docling-serve starting in background (PID: $$(cat $(DOCLING_PID_FILE)))"
+	@echo "Logs: /tmp/docling-serve.log"
+	@echo "Waiting for health check..."
+	@for i in $$(seq 1 60); do \
+		if curl -sf http://localhost:5001/health > /dev/null 2>&1; then \
+			echo "✅ docling-serve healthy on localhost:5001 (MPS/GPU)"; \
+			exit 0; \
+		fi; \
+		sleep 5; \
+	done; \
+	echo "⚠️  docling-serve not healthy after 5 minutes — check /tmp/docling-serve.log"; \
+	exit 1
+
+# Stop native docling-serve
+docling-native-stop:
+	@if [ -f $(DOCLING_PID_FILE) ]; then \
+		PID=$$(cat $(DOCLING_PID_FILE)); \
+		if kill -0 $$PID 2>/dev/null; then \
+			kill $$PID; \
+			echo "✅ docling-serve stopped (PID: $$PID)"; \
+		else \
+			echo "docling-serve not running (stale PID file)"; \
+		fi; \
+		rm -f $(DOCLING_PID_FILE); \
+	else \
+		echo "No PID file found — docling-serve may not be running"; \
+		echo "Try: pkill -f docling-serve"; \
 	fi
 
 # Build pipeline viewer (used by dev target)
@@ -89,6 +189,15 @@ prod:
 down:
 	docker compose -f docker-compose.yml -f docker-compose.dev.yml down
 	docker compose -f docker-compose.yml -f docker-compose.prod.yml down
+	@# Stop native docling-serve if running
+	@if [ -f /tmp/docling-serve.pid ]; then \
+		PID=$$(cat /tmp/docling-serve.pid); \
+		if kill -0 $$PID 2>/dev/null; then \
+			kill $$PID; \
+			echo "Stopped native docling-serve (PID: $$PID)"; \
+		fi; \
+		rm -f /tmp/docling-serve.pid; \
+	fi
 
 # Restart services (down + dev)
 restart: down dev
@@ -198,6 +307,7 @@ logs-api:
 # Cleanup
 clean:
 	docker compose -f docker-compose.yml -f docker-compose.dev.yml down -v
+	docker compose -f docker-compose.yml -f docker-compose.dev.yml -f docker-compose.native-docling.yml down -v
 	docker compose -f docker-compose.yml -f docker-compose.prod.yml down -v
 
 # Observability URLs

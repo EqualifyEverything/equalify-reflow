@@ -1,0 +1,34 @@
+# Native Docling Override - Use host-native docling-serve for GPU (MPS) acceleration
+#
+# Replaces the dockerized docling-serve with a lightweight stub so that
+# depends_on healthchecks still pass. The API gateway is pointed at the
+# host-native instance via Docker's host.docker.internal gateway.
+#
+# Usage:
+#   make dev-gpu            (starts native docling-serve + docker stack)
+#   make docling-native     (starts only the native docling-serve)
+#
+# Prerequisites:
+#   uv tool install "docling-serve[ui,easyocr]"
+
+services:
+  # Stub: replaces the real docling-serve container with a no-op so that
+  # api-gateway's depends_on still resolves. Uses <16MB of memory.
+  docling-serve:
+    image: busybox:latest
+    command: ["sh", "-c", "while true; do sleep 3600; done"]
+    healthcheck:
+      test: ["CMD", "true"]
+      interval: 30s
+      timeout: 2s
+      retries: 1
+      start_period: 1s
+    deploy:
+      resources:
+        limits:
+          memory: 16M
+
+  api-gateway:
+    environment:
+      # Point to host-native docling-serve via Docker's host gateway
+      - DOCLING_SERVE_URL=http://host.docker.internal:5001

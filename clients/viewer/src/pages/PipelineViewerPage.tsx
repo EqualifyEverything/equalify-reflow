@@ -3,7 +3,7 @@ import { Panel, Group as PanelGroup, Separator as PanelResizeHandle } from 'reac
 import { cn } from '@/lib/utils';
 import { Button } from '@/components/ui/button';
 import { MarkdownViewer } from '@/components/viewer/MarkdownViewer';
-import { StepTabs } from '@/components/pipeline-viewer/StepTabs';
+import { StageTabs } from '@/components/pipeline-viewer/StageTabs';
 import { ChangesSidebar } from '@/components/pipeline-viewer/ChangesSidebar';
 import { WarningsBanner } from '@/components/pipeline-viewer/WarningsBanner';
 import { ClassificationError } from '@/components/pipeline-viewer/ClassificationError';
@@ -539,10 +539,10 @@ export function PipelineViewerPage() {
       {result && Object.keys(result.versions).length > 0 && (
         <div className="flex-1 flex flex-col min-h-0">
           {/* Step tabs */}
-          <StepTabs
+          <StageTabs
             steps={result.steps}
-            activeIndex={activeStepIdx}
-            onSelect={setActiveStepIdx}
+            activeStepIdx={activeStepIdx}
+            onSelectStep={setActiveStepIdx}
             processingStepName={processing ? currentStepName : null}
             onDownloadVersion={handleDownloadVersion}
           />

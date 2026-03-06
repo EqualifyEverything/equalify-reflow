@@ -30,6 +30,31 @@ export interface StepResult {
   cost_cents: number;
 }
 
+export interface StageDefinition {
+  name: string;
+  label: string;
+  steps: string[];
+}
+
+/**
+ * The 5-stage pipeline, mapping internal step names to user-facing stages.
+ * Steps not listed here (e.g. revision_*, feedback_*) go into a dynamic "Review" stage.
+ */
+export const PIPELINE_STAGES: StageDefinition[] = [
+  { name: 'extraction',  label: 'Extraction',   steps: ['docling', 'docling_ocr'] },
+  { name: 'analysis',    label: 'Analysis',      steps: ['classification', 'structure'] },
+  { name: 'headings',    label: 'Headings',      steps: ['heading_levels', 'heading_reconciliation'] },
+  { name: 'translation', label: 'Translation',   steps: ['page_content', 'code_blocks'] },
+  { name: 'assembly',    label: 'Assembly',       steps: ['boundaries', 'cleanup'] },
+];
+
+/** Steps that don't belong to a known stage get grouped here. */
+export const REVIEW_STAGE: StageDefinition = {
+  name: 'review',
+  label: 'Review',
+  steps: [],
+};
+
 export interface PipelineViewerResult {
   filename: string;
   total_pages: number;

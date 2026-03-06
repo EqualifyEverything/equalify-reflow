@@ -34,7 +34,7 @@ The Equalify PDF Converter transforms PDF documents into accessible, semantic ma
 
 **API Gateway:** `http://localhost:8080`
 - FastAPI docs: `http://localhost:8080/docs`
-- Pipeline Viewer: `http://localhost:8080/viewer`
+- Reflow Viewer: `http://localhost:8080/viewer`
 
 **Other Services:**
 - Redis: `localhost:6379`

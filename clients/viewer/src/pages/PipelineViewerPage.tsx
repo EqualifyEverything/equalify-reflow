@@ -4,8 +4,12 @@ import { cn } from '@/lib/utils';
 import { Button } from '@/components/ui/button';
 import { MarkdownViewer } from '@/components/viewer/MarkdownViewer';
 import { StageTabs } from '@/components/pipeline-viewer/StageTabs';
-import { ChangesSidebar } from '@/components/pipeline-viewer/ChangesSidebar';
+import { PIPELINE_STAGES, REVIEW_STAGE } from '@/types/pipeline-viewer';
+// import { ChangesSidebar } from '@/components/pipeline-viewer/ChangesSidebar';
+import { ChangesModal } from '@/components/pipeline-viewer/ChangesModal';
+import { StructureMetadataModal } from '@/components/pipeline-viewer/StructureMetadataModal';
 import { WarningsBanner } from '@/components/pipeline-viewer/WarningsBanner';
+import { KeyboardShortcuts } from '@/components/pipeline-viewer/KeyboardShortcuts';
 import { ClassificationError } from '@/components/pipeline-viewer/ClassificationError';
 import { FeedbackPanel } from '@/components/feedback/FeedbackPanel';
 import { ReviewPanel } from '@/components/feedback/ReviewPanel';
@@ -24,7 +28,11 @@ import {
   Copy,
   Check,
   DollarSign,
-  MessageSquare,
+  // MessageSquare, // DEMO: hidden for demo
+  Clock,
+  Play,
+  Pause,
+  Maximize2,
 } from 'lucide-react';
 
 const FLAG_STYLES: Record<string, { bg: string; text: string; label: string }> = {
@@ -82,7 +90,7 @@ function CollapsibleSection({
   );
 }
 
-function StructureMetadataPanel({ metadata }: { metadata: Record<string, unknown> }) {
+function StructureMetadataPanel({ metadata, onExpand }: { metadata: Record<string, unknown>; onExpand?: () => void }) {
   const pageAttributes = (metadata.page_attributes ?? {}) as Record<string, PageAttrs>;
   const outline = (metadata.outline ?? []) as Array<{ level: number; text: string; page: number }>;
   const footnotes = (metadata.footnotes ?? []) as Array<{
@@ -116,8 +124,17 @@ function StructureMetadataPanel({ metadata }: { metadata: Record<string, unknown
 
   return (
     <div className="w-72 flex-shrink-0 border-l bg-white flex flex-col overflow-y-auto">
-      <div className="px-4 py-3 border-b">
+      <div className="px-4 py-3 border-b flex items-center justify-between">
         <h3 className="text-sm font-semibold text-gray-800">Structure Metadata</h3>
+        {onExpand && (
+          <button
+            onClick={onExpand}
+            className="p-1 rounded hover:bg-gray-100 transition-colors"
+            title="Expand to full view"
+          >
+            <Maximize2 className="w-3.5 h-3.5 text-muted-foreground" />
+          </button>
+        )}
       </div>
 
       {/* Document summary */}
@@ -299,16 +316,19 @@ export function PipelineViewerPage() {
   const [activeStepIdx, setActiveStepIdx] = useState(0);
   const [copiedImage, setCopiedImage] = useState(false);
   const [dragOver, setDragOver] = useState(false);
+  const [autoAdvance, setAutoAdvance] = useState(true);
+  const [changesModalOpen, setChangesModalOpen] = useState(false);
+  const [metadataModalOpen, setMetadataModalOpen] = useState(false);
 
   const fileInputRef = useRef<HTMLInputElement>(null);
 
   // Auto-advance to newest step tab as steps stream in
   const stepsLength = result?.steps.length ?? 0;
   useEffect(() => {
-    if (stepsLength > 0) {
+    if (autoAdvance && stepsLength > 0) {
       setActiveStepIdx(stepsLength - 1);
     }
-  }, [stepsLength]);
+  }, [stepsLength, autoAdvance]);
 
   const totalPages = result?.total_pages ?? 0;
   const activeStep = result?.steps[activeStepIdx] ?? null;
@@ -337,6 +357,18 @@ export function PipelineViewerPage() {
     }
     return map;
   }, [result?.figures]);
+
+  // Aggregate all changes from the active stage (not just the active step)
+  const stageChanges = useMemo(() => {
+    if (!result || !activeStep) return [];
+    const allStages = [...PIPELINE_STAGES, REVIEW_STAGE];
+    const stage = allStages.find((s) => s.steps.includes(activeStep.name))
+      ?? (PIPELINE_STAGES.every((s) => !s.steps.includes(activeStep.name)) ? REVIEW_STAGE : null);
+    if (!stage) return activeStep.changes;
+    return result.steps
+      .filter((s) => stage.steps.includes(s.name))
+      .flatMap((s) => s.changes);
+  }, [result, activeStep]);
 
   /** Convert a base64 PNG string to a Blob. */
   const base64ToBlob = useCallback((b64: string, mime = 'image/png'): Blob => {
@@ -454,78 +486,51 @@ export function PipelineViewerPage() {
     [feedback],
   );
 
+  // Focus a landmark region by ID with a visible focus ring
+  const handleFocusRegion = useCallback((region: 'pages' | 'stages' | 'preview' | 'changes') => {
+    const idMap = { pages: 'region-pages', stages: 'region-stages', preview: 'region-preview', changes: 'region-changes' };
+    const el = document.getElementById(idMap[region]);
+    if (el) {
+      el.focus();
+      el.scrollIntoView({ block: 'nearest' });
+      // Apply a visible focus ring via inline style (Tailwind focus: doesn't reliably work on programmatic focus)
+      el.style.outline = '2px solid #1e3a5f';
+      el.style.outlineOffset = '-2px';
+      const cleanup = () => {
+        el.style.outline = '';
+        el.style.outlineOffset = '';
+        el.removeEventListener('blur', cleanup);
+      };
+      el.addEventListener('blur', cleanup);
+    }
+  }, []);
+
   // Determine if feedback mode is active
-  const isFeedbackActive = feedback.phase != null;
+  // const isFeedbackActive = feedback.phase != null; // DEMO: hidden for demo
   const isFeedbackCollecting = feedback.phase === 'collecting' || feedback.phase === 'submitting';
   const isFeedbackReviewing = feedback.phase === 'reviewing' || feedback.phase === 'applying';
-  const canShowFeedbackButton =
-    sessionId != null && !processing && !isFeedbackActive && result != null;
+  // DEMO: Feedback button hidden for demo
+  // const canShowFeedbackButton =
+  //   sessionId != null && !processing && !isFeedbackActive && result != null;
 
   return (
     <div className="flex flex-col h-screen bg-gray-50">
+      {/* Skip navigation menu */}
+      <nav aria-label="Skip navigation" className="sr-only focus-within:not-sr-only focus-within:absolute focus-within:z-[60] focus-within:top-0 focus-within:left-0 focus-within:bg-white focus-within:border focus-within:rounded-md focus-within:shadow-lg focus-within:p-3">
+        <ul className="flex flex-col gap-1">
+          <li><a href="#region-preview" className="text-sm text-uic-blue underline focus:outline-2 focus:outline-uic-blue px-2 py-1 block rounded hover:bg-uic-blue/5">Skip to Rendered Preview</a></li>
+          <li><a href="#region-stages" className="text-sm text-uic-blue underline focus:outline-2 focus:outline-uic-blue px-2 py-1 block rounded hover:bg-uic-blue/5">Skip to Stage Picker</a></li>
+          <li><a href="#region-pages" className="text-sm text-uic-blue underline focus:outline-2 focus:outline-uic-blue px-2 py-1 block rounded hover:bg-uic-blue/5">Skip to Page Picker</a></li>
+          <li><a href="#region-changes" className="text-sm text-uic-blue underline focus:outline-2 focus:outline-uic-blue px-2 py-1 block rounded hover:bg-uic-blue/5">Skip to Changes Panel</a></li>
+        </ul>
+      </nav>
+
+      <KeyboardShortcuts onFocusRegion={handleFocusRegion} />
+
       {/* Header */}
       <header className="flex items-center px-6 py-3 bg-white border-b shadow-sm">
-        <h1 className="text-lg font-bold text-uic-blue">Pipeline Viewer</h1>
-        <span className="ml-3 text-xs font-medium text-muted-foreground bg-gray-100 px-2 py-0.5 rounded">
-          Dev Tool
-        </span>
+        <h1 className="text-lg font-bold text-uic-blue">Equalify Reflow Viewer</h1>
       </header>
-
-      {/* Upload area */}
-      {!result && !uploading && !error && (
-        <div className="flex-1 flex items-center justify-center p-8">
-          <div
-            onDragOver={(e) => {
-              e.preventDefault();
-              setDragOver(true);
-            }}
-            onDragLeave={() => setDragOver(false)}
-            onDrop={handleDrop}
-            className={cn(
-              'w-full max-w-lg border-2 border-dashed rounded-xl p-12 text-center transition-colors cursor-pointer',
-              dragOver ? 'border-uic-blue bg-uic-blue/5' : 'border-gray-300 hover:border-gray-400',
-            )}
-            onClick={() => fileInputRef.current?.click()}
-          >
-            <Upload className="w-12 h-12 mx-auto mb-4 text-gray-400" />
-            <p className="text-lg font-medium text-gray-700 mb-1">
-              Drop a PDF here or click to upload
-            </p>
-            <p className="text-sm text-muted-foreground">
-              Versioned pipeline viewer — see every processing step
-            </p>
-            <input
-              ref={fileInputRef}
-              type="file"
-              accept=".pdf"
-              className="hidden"
-              onChange={handleFileSelect}
-            />
-          </div>
-        </div>
-      )}
-
-      {/* Loading state — shown while waiting for Docling */}
-      {uploading && (
-        <div className="flex-1 flex flex-col items-center justify-center gap-4">
-          <Loader2 className="w-10 h-10 animate-spin text-uic-blue" />
-          <p className="text-muted-foreground">Extracting document content...</p>
-          <p className="text-xs text-muted-foreground">Processing time depends on document length and complexity</p>
-        </div>
-      )}
-
-      {/* Error state — only show full overlay when no results have been received */}
-      {error && !result && (
-        <div className="flex-1 flex items-center justify-center p-8">
-          <div className="max-w-md text-center">
-            <p className="text-red-600 font-medium mb-2">Processing Error</p>
-            <p className="text-sm text-muted-foreground mb-4">{error}</p>
-            <Button variant="outline" onClick={reset}>
-              Try Again
-            </Button>
-          </div>
-        </div>
-      )}
 
       {/* Classification error — document was rejected before processing */}
       {result && Object.keys(result.versions).length === 0 && (() => {
@@ -535,24 +540,78 @@ export function PipelineViewerPage() {
         ) : null;
       })()}
 
-      {/* Results — shown as soon as init event arrives (while processing continues) */}
-      {result && Object.keys(result.versions).length > 0 && (
+      {/* Pipeline layout — always visible */}
+      {!(result && Object.keys(result.versions).length === 0 && result.steps.some((s) => s.name === 'classification' && s.error)) && (
         <div className="flex-1 flex flex-col min-h-0">
           {/* Step tabs */}
+          <nav id="region-stages" tabIndex={-1} aria-label="Pipeline stages" className="outline-none rounded-sm">
           <StageTabs
-            steps={result.steps}
+            steps={result?.steps ?? []}
             activeStepIdx={activeStepIdx}
             onSelectStep={setActiveStepIdx}
             processingStepName={processing ? currentStepName : null}
             onDownloadVersion={handleDownloadVersion}
+            onOpenChangesModal={() => setChangesModalOpen(true)}
           />
+          </nav>
 
           {/* Warnings banner */}
-          {result.warnings?.length > 0 && (
+          {result?.warnings && result.warnings.length > 0 && (
             <WarningsBanner warnings={result.warnings} />
           )}
 
-          {/* Stats bar */}
+          {/* Pre-result states: upload, loading, error */}
+          {!result && (
+            <div className="flex-1 flex items-center justify-center p-8">
+              {uploading ? (
+                <div className="flex flex-col items-center gap-4">
+                  <Loader2 className="w-10 h-10 animate-spin text-uic-blue" />
+                  <p className="text-muted-foreground">Extracting document content...</p>
+                  <p className="text-xs text-muted-foreground">Processing time depends on document length and complexity</p>
+                </div>
+              ) : error ? (
+                <div className="max-w-md text-center">
+                  <p className="text-red-600 font-medium mb-2">Processing Error</p>
+                  <p className="text-sm text-muted-foreground mb-4">{error}</p>
+                  <Button variant="outline" onClick={reset}>
+                    Try Again
+                  </Button>
+                </div>
+              ) : (
+                <div
+                  onDragOver={(e) => {
+                    e.preventDefault();
+                    setDragOver(true);
+                  }}
+                  onDragLeave={() => setDragOver(false)}
+                  onDrop={handleDrop}
+                  className={cn(
+                    'w-full max-w-lg border-2 border-dashed rounded-xl p-12 text-center transition-colors cursor-pointer',
+                    dragOver ? 'border-uic-blue bg-uic-blue/5' : 'border-gray-300 hover:border-gray-400',
+                  )}
+                  onClick={() => fileInputRef.current?.click()}
+                >
+                  <Upload className="w-12 h-12 mx-auto mb-4 text-gray-400" />
+                  <p className="text-lg font-medium text-gray-700 mb-1">
+                    Drop a PDF here or click to upload
+                  </p>
+                  <p className="text-sm text-muted-foreground">
+                    See every processing step in the pipeline above
+                  </p>
+                  <input
+                    ref={fileInputRef}
+                    type="file"
+                    accept=".pdf"
+                    className="hidden"
+                    onChange={handleFileSelect}
+                  />
+                </div>
+              )}
+            </div>
+          )}
+
+          {/* Stats bar — only when we have results */}
+          {result && Object.keys(result.versions).length > 0 && (
           <div className="flex items-center gap-6 px-6 py-2 bg-white border-b text-sm">
             <div className="flex items-center gap-3 text-xs text-muted-foreground">
               <span className="flex items-center gap-1">
@@ -572,6 +631,19 @@ export function PipelineViewerPage() {
                   {result.figures.length} figures
                 </span>
               )}
+              {(() => {
+                const totalMs = result.steps.reduce((s, st) => s + (st.elapsed_ms || 0), 0);
+                const totalSec = totalMs / 1000;
+                const timeStr = totalSec >= 60
+                  ? `${Math.floor(totalSec / 60)}m ${Math.round(totalSec % 60)}s`
+                  : `${totalSec.toFixed(1)}s`;
+                return totalMs > 0 ? (
+                  <span className="flex items-center gap-1">
+                    <Clock className="w-3.5 h-3.5" />
+                    {timeStr}
+                  </span>
+                ) : null;
+              })()}
               {(() => {
                 const totalCost = result.steps.reduce((s, st) => s + (st.cost_cents || 0), 0);
                 const totalTokens = result.steps.reduce((s, st) => s + (st.input_tokens || 0) + (st.output_tokens || 0), 0);
@@ -595,8 +667,8 @@ export function PipelineViewerPage() {
 
             <div className="flex-1" />
 
-            {/* Feedback button */}
-            {canShowFeedbackButton && (
+            {/* DEMO: Feedback button hidden for demo */}
+            {/* {canShowFeedbackButton && (
               <Button
                 variant="outline"
                 size="sm"
@@ -611,7 +683,24 @@ export function PipelineViewerPage() {
               <span className="text-[10px] font-medium px-2 py-1 rounded bg-green-50 text-green-700">
                 Session Finalized
               </span>
-            )}
+            )} */}
+
+            {/* Auto-advance toggle */}
+            <Button
+              variant="outline"
+              size="sm"
+              className={cn(
+                'h-7 text-xs gap-1.5',
+                autoAdvance
+                  ? 'text-uic-blue border-uic-blue/30 hover:bg-uic-blue/5'
+                  : 'text-muted-foreground',
+              )}
+              onClick={() => setAutoAdvance(!autoAdvance)}
+              title={autoAdvance ? 'Auto-advance is on — click to pause' : 'Auto-advance is off — click to resume'}
+            >
+              {autoAdvance ? <Play className="w-3.5 h-3.5" /> : <Pause className="w-3.5 h-3.5" />}
+              Auto-advance
+            </Button>
 
             {/* New upload */}
             <Button
@@ -624,6 +713,7 @@ export function PipelineViewerPage() {
               New PDF
             </Button>
           </div>
+          )}
 
           {/* Feedback error */}
           {feedback.error && (
@@ -632,15 +722,18 @@ export function PipelineViewerPage() {
             </div>
           )}
 
-          {/* Main content area */}
+          {/* Main content area — only when we have results */}
+          {result && Object.keys(result.versions).length > 0 && (
           <div className="flex-1 flex min-h-0 overflow-hidden">
             {/* Page sidebar */}
             {totalPages > 1 && (
-              <div className="w-16 border-r bg-white overflow-y-auto flex-shrink-0">
+              <nav id="region-pages" tabIndex={-1} aria-label="Page navigation" className="w-16 border-r bg-white overflow-y-auto flex-shrink-0 outline-none rounded-sm">
                 {Array.from({ length: totalPages }, (_, i) => i + 1).map((p) => (
                   <button
                     key={p}
                     onClick={() => setCurrentPage(p)}
+                    aria-label={`Page ${p}`}
+                    aria-current={p === currentPage ? 'page' : undefined}
                     className={cn(
                       'w-full py-2 text-xs font-medium border-b transition-colors',
                       p === currentPage
@@ -651,7 +744,7 @@ export function PipelineViewerPage() {
                     {p}
                   </button>
                 ))}
-              </div>
+              </nav>
             )}
 
             {/* Split view */}
@@ -708,6 +801,7 @@ export function PipelineViewerPage() {
               <PanelResizeHandle className="w-1.5 bg-gray-200 hover:bg-uic-blue/30 transition-colors cursor-col-resize" />
 
               <Panel defaultSize={55} minSize={20}>
+                <main id="region-preview" tabIndex={-1} aria-label="Rendered document preview" className="h-full outline-none rounded-sm">
                 <MarkdownViewer
                   content={pageMarkdown}
                   figureMap={figureMap}
@@ -720,10 +814,12 @@ export function PipelineViewerPage() {
                     navigator.clipboard.writeText(pageMarkdown);
                   }}
                 />
+                </main>
               </Panel>
             </PanelGroup>
 
             {/* Right sidebar: feedback panels override the default sidebar */}
+            <aside id="region-changes" tabIndex={-1} aria-label="Changes and metadata panel" className="flex-shrink-0 outline-none rounded-sm">
             {isFeedbackCollecting ? (
               <FeedbackPanel
                 items={feedback.pendingItems}
@@ -744,16 +840,59 @@ export function PipelineViewerPage() {
                 onBackToCollecting={feedback.backToCollecting}
               />
             ) : activeStep?.name === 'structure' && activeStep.metadata ? (
-              <StructureMetadataPanel metadata={activeStep.metadata} />
+              <StructureMetadataPanel metadata={activeStep.metadata} onExpand={() => setMetadataModalOpen(true)} />
             ) : (
-              <ChangesSidebar
-                changes={activeStep?.changes ?? []}
-                totalPages={totalPages}
-              />
+              <div className="w-64 flex-shrink-0 border-l bg-white flex flex-col">
+                <div className="px-4 py-3 border-b">
+                  <h3 className="text-sm font-medium text-muted-foreground">Changes</h3>
+                </div>
+                {stageChanges.length === 0 ? (
+                  <div className="flex-1 flex items-center justify-center p-4">
+                    <p className="text-xs text-muted-foreground text-center">
+                      No changes in this stage.
+                      <br />
+                      Docling produces v0 from scratch.
+                    </p>
+                  </div>
+                ) : (
+                  <div className="flex-1 flex flex-col items-center justify-center p-4 gap-3">
+                    <span className="text-2xl font-bold text-amber-700">{stageChanges.length}</span>
+                    <p className="text-xs text-muted-foreground text-center">
+                      change{stageChanges.length !== 1 ? 's' : ''} in this stage
+                    </p>
+                    <Button
+                      variant="outline"
+                      size="sm"
+                      className="text-xs gap-1.5"
+                      onClick={() => setChangesModalOpen(true)}
+                    >
+                      <Maximize2 className="w-3.5 h-3.5" />
+                      View Details
+                    </Button>
+                  </div>
+                )}
+              </div>
             )}
+            </aside>
           </div>
+          )}
 
         </div>
+      )}
+
+      {/* Modals */}
+      {changesModalOpen && (
+        <ChangesModal
+          changes={stageChanges}
+          totalPages={totalPages}
+          onClose={() => setChangesModalOpen(false)}
+        />
+      )}
+      {metadataModalOpen && activeStep?.metadata && (
+        <StructureMetadataModal
+          metadata={activeStep.metadata}
+          onClose={() => setMetadataModalOpen(false)}
+        />
       )}
     </div>
   );

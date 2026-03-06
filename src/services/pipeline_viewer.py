@@ -520,36 +520,40 @@ class PipelineViewerService:
                 phase_total += 1
                 _emit_phase("docling_ocr", "OCR Re-extraction")
                 effective_langs = ocr_languages or settings.ocr_default_languages
-                await self._step_docling_ocr(
-                    result,
-                    file_content,
-                    filename,
-                    images_scale,
-                    do_table_structure,
-                    languages=effective_langs,
-                )
-                # Update scanned finding to reflect that OCR was applied
-                for finding in classification.findings:
-                    if finding.code in scanned_codes:
-                        finding.message = (
-                            "Document appears to be scanned. Tesseract OCR has been "
-                            "applied, which may increase processing time and introduce "
-                            "character recognition errors."
-                        )
-                # Re-enrich classification with post-OCR stats
-                enrich_classification(
-                    classification,
-                    total_pages=result.total_pages,
-                    total_chars=result.stats.get("total_chars", 0),
-                    figure_count=result.stats.get("figure_count", 0),
-                    layout_hints=result.stats.get("layout_hints", {}),
-                )
-                result.warnings = classification.warning_messages
-                result.stats["classification"] = {
-                    "document_type": classification.document_type.value,
-                    "findings_count": len(classification.findings),
-                    "elapsed_ms": classification.elapsed_ms,
-                }
+                try:
+                    await self._step_docling_ocr(
+                        result,
+                        file_content,
+                        filename,
+                        images_scale,
+                        do_table_structure,
+                        languages=effective_langs,
+                    )
+                    # Update scanned finding to reflect that OCR was applied
+                    for finding in classification.findings:
+                        if finding.code in scanned_codes:
+                            finding.message = (
+                                "Document appears to be scanned. Tesseract OCR has been "
+                                "applied, which may increase processing time and introduce "
+                                "character recognition errors."
+                            )
+                    # Re-enrich classification with post-OCR stats
+                    enrich_classification(
+                        classification,
+                        total_pages=result.total_pages,
+                        total_chars=result.stats.get("total_chars", 0),
+                        figure_count=result.stats.get("figure_count", 0),
+                        layout_hints=result.stats.get("layout_hints", {}),
+                    )
+                    result.warnings = classification.warning_messages
+                    result.stats["classification"] = {
+                        "document_type": classification.document_type.value,
+                        "findings_count": len(classification.findings),
+                        "elapsed_ms": classification.elapsed_ms,
+                    }
+                except Exception as e:
+                    logger.error(f"OCR re-extraction failed: {e}")
+                    # Continue with the non-OCR extraction already in v0
         # ── End Tesseract OCR re-run ────────────────────────────
 
         # ── Empty-content guard ─────────────────────────────────
@@ -857,6 +861,7 @@ class PipelineViewerService:
         from .page_image_renderer import crop_figure_from_page_image
 
         client = get_docling_client()
+        # OCR is significantly slower than text extraction — use 5min timeout
         response = await client.convert(
             file_content,
             filename,
@@ -869,6 +874,7 @@ class PipelineViewerService:
             images_scale=images_scale,
             image_export_mode="placeholder",
             md_page_break_placeholder="<!-- PAGE_BREAK -->",
+            timeout=300.0,
         )
 
         # Page count from JSON
@@ -1329,7 +1335,7 @@ class PipelineViewerService:
         # Rebuild full v0 from corrected pages
         if changes:
             result.versions["v0"] = "\n\n".join(
-                page_mds[str(p)] for p in range(1, result.total_pages + 1)
+                page_mds.get(str(p), "") for p in range(1, result.total_pages + 1)
             )
 
         elapsed_ms = int((time.time() - step_start) * 1000)
@@ -2087,8 +2093,12 @@ class PipelineViewerService:
                     page_tables=pt,
                 )
 
-        # Fan out all pages
-        tasks = [_process_page(p) for p in range(1, result.total_pages + 1)]
+        # Fan out only pages that have markdown content (scanned PDFs may
+        # have blank pages that were not extracted by OCR).
+        pages_to_process = [
+            p for p in range(1, result.total_pages + 1) if str(p) in page_mds
+        ]
+        tasks = [_process_page(p) for p in pages_to_process]
         page_results = await asyncio.gather(*tasks, return_exceptions=True)
 
         # Collect results
@@ -2102,12 +2112,12 @@ class PipelineViewerService:
         total_list_reconstructor_input = 0
         total_list_reconstructor_output = 0
         for i, pr in enumerate(page_results):
-            page_num = i + 1
+            page_num = pages_to_process[i]
             page_key = str(page_num)
 
             if isinstance(pr, Exception):
                 logger.error(f"Page {page_num} agent failed: {pr}")
-                corrected_mds[page_key] = page_mds[page_key]  # keep original
+                corrected_mds[page_key] = page_mds.get(page_key, "")  # keep original
                 all_issues.append(f"Page {page_num}: agent error — {pr}")
                 continue
 
@@ -2126,7 +2136,7 @@ class PipelineViewerService:
         # Write v1
         result.page_markdowns["v1"] = corrected_mds
         result.versions["v1"] = "\n\n".join(
-            corrected_mds[str(p)] for p in range(1, result.total_pages + 1)
+            corrected_mds.get(str(p), "") for p in range(1, result.total_pages + 1)
         )
 
         elapsed_ms = int((time.time() - step_start) * 1000)
@@ -2645,7 +2655,7 @@ class PipelineViewerService:
         # Rebuild full version from corrected pages
         if changes:
             result.versions[source_version] = "\n\n".join(
-                page_mds[str(p)] for p in range(1, result.total_pages + 1)
+                page_mds.get(str(p), "") for p in range(1, result.total_pages + 1)
             )
 
         elapsed_ms = int((time.time() - step_start) * 1000)

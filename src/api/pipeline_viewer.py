@@ -225,26 +225,31 @@ async def _pipeline_steps(
                 "step_name": "docling_ocr",
                 "display_name": "Tesseract OCR Re-extraction",
             })
-            await service._step_docling_ocr(
-                result, content, filename, images_scale, do_table_structure,
-                languages=effective_langs,
-            )
-            # Update scanned finding to reflect that OCR was applied
-            for finding in classification.findings:
-                if finding.code in scanned_codes:
-                    finding.message = (
-                        "Document appears to be scanned. Tesseract OCR has been "
-                        "applied, which may increase processing time and introduce "
-                        "character recognition errors."
-                    )
-            enrich_classification(
-                classification,
-                total_pages=result.total_pages,
-                total_chars=result.stats.get("total_chars", 0),
-                figure_count=result.stats.get("figure_count", 0),
-                layout_hints=result.stats.get("layout_hints", {}),
-            )
-            result.warnings = classification.warning_messages
+            try:
+                await service._step_docling_ocr(
+                    result, content, filename, images_scale, do_table_structure,
+                    languages=effective_langs,
+                )
+                # Update scanned finding to reflect that OCR was applied
+                for finding in classification.findings:
+                    if finding.code in scanned_codes:
+                        finding.message = (
+                            "Document appears to be scanned. Tesseract OCR has been "
+                            "applied, which may increase processing time and introduce "
+                            "character recognition errors."
+                        )
+                enrich_classification(
+                    classification,
+                    total_pages=result.total_pages,
+                    total_chars=result.stats.get("total_chars", 0),
+                    figure_count=result.stats.get("figure_count", 0),
+                    layout_hints=result.stats.get("layout_hints", {}),
+                )
+                result.warnings = classification.warning_messages
+            except Exception as e:
+                logger.error(f"OCR re-extraction failed: {e}")
+                emit("error", {"step_name": "docling_ocr", "message": str(e)})
+                # Continue with the non-OCR extraction already in v0
 
     # Send slim init (metadata + markdown, no binary images)
     emit("init", _slim_init_payload(result))

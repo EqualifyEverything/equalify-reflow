@@ -89,6 +89,7 @@ class DoclingServeClient:
         md_page_break_placeholder: str = "<!-- PAGE_BREAK -->",
         image_export_mode: str = "placeholder",
         max_retries: int = 2,
+        timeout: float | None = None,
     ) -> DoclingServeResponse:
         """Convert a PDF via docling-serve with retry and circuit breaker.
 
@@ -105,6 +106,9 @@ class DoclingServeClient:
             md_page_break_placeholder: Marker inserted between pages in MD.
             image_export_mode: How images appear in output (``embedded`` / ``placeholder``).
             max_retries: Maximum retry attempts on transient errors.
+            timeout: Per-request timeout override (seconds). When set,
+                overrides the client-level timeout for this conversion only.
+                Useful for OCR which is significantly slower than text extraction.
 
         Returns:
             Parsed :class:`DoclingServeResponse`.
@@ -131,6 +135,7 @@ class DoclingServeClient:
                 md_page_break_placeholder=md_page_break_placeholder,
                 image_export_mode=image_export_mode,
                 max_retries=max_retries,
+                timeout=timeout,
             )
 
     async def _convert_with_retry(
@@ -148,6 +153,7 @@ class DoclingServeClient:
         md_page_break_placeholder: str,
         image_export_mode: str,
         max_retries: int,
+        timeout: float | None = None,
     ) -> DoclingServeResponse:
         """Inner retry loop (runs inside the concurrency semaphore)."""
         last_exc: Exception | None = None
@@ -165,6 +171,7 @@ class DoclingServeClient:
                     images_scale=images_scale,
                     md_page_break_placeholder=md_page_break_placeholder,
                     image_export_mode=image_export_mode,
+                    timeout=timeout,
                 )
                 _CIRCUIT_BREAKER.record_success()
                 return response
@@ -265,6 +272,7 @@ class DoclingServeClient:
         images_scale: float,
         md_page_break_placeholder: str,
         image_export_mode: str,
+        timeout: float | None = None,
     ) -> DoclingServeResponse:
         """Send the actual HTTP request to docling-serve."""
         # httpx 0.28+ requires all multipart fields in `files` param when using
@@ -286,7 +294,10 @@ class DoclingServeClient:
         for lang in ocr_lang:
             fields.append(("ocr_lang", (None, lang)))
 
-        resp = await self._client.post("/v1/convert/file", files=fields)
+        request_kwargs: dict = {"files": fields}
+        if timeout is not None:
+            request_kwargs["timeout"] = httpx.Timeout(timeout, connect=10.0)
+        resp = await self._client.post("/v1/convert/file", **request_kwargs)
         resp.raise_for_status()
 
         body = resp.json()

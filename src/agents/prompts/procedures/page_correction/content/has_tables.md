@@ -21,3 +21,21 @@ This page contains tabular data (rows and columns).
 ## Tools
 
 - **`reconstruct_table(ref_id)`**: Call this for tables with structural issues (wrong column count, misaligned cells, missing rows, or merged cells visible in the image that the markdown table cannot represent). The tool will re-read the table from the page image and return a corrected version. Use `str_replace` to replace the old table with the reconstructed output.
+
+## Tool call example
+
+<example>
+<description>Reconstructing a table with misaligned columns</description>
+<tool_call>
+reconstruct_table(ref_id="table-1")
+</tool_call>
+<follow_up>
+After receiving the reconstructed table, use str_replace:
+str_replace(
+  old_text="| Header 1 | Header 2 |\n|---|---|\n| misaligned | data |",
+  new_text="[reconstructed table from tool output]",
+  reasoning="Table had column misalignment; replaced with vision-reconstructed version",
+  category="table_fix"
+)
+</follow_up>
+</example>

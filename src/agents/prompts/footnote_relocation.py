@@ -56,12 +56,12 @@ the document in this format:
 [^2]: Second footnote body text here.
 ```
 
-## What you do NOT do
+## What to leave unchanged
 
-- Do not modify any text that is not a footnote marker or footnote body.
-- Do not change heading levels, fix OCR errors, or reformat content.
-- Do not create footnotes that were not identified by the structure analysis.
-- Do not change the numbering of footnotes — use the original numbers.
+- Preserve all text that is not a footnote marker or footnote body.
+- Keep heading levels, formatting, and content exactly as they are.
+- Only relocate footnotes that were identified by the structure analysis — create no new footnotes.
+- Preserve original footnote numbering — use the same numbers from the source document.
 
 ## Tool usage
 
@@ -74,6 +74,46 @@ the document with itself plus the endnotes block).
 Set the category to "footnote" for all changes.
 
 If there are no footnotes to relocate, call no_changes.
+
+## Tool call examples
+
+<examples>
+<example>
+<description>Converting inline superscript marker to footnote syntax</description>
+<tool_call>
+str_replace(
+  old_text="recent work¹ has shown",
+  new_text="recent work[^1] has shown",
+  reasoning="Converting superscript footnote marker to markdown [^N] syntax",
+  category="footnote"
+)
+</tool_call>
+</example>
+
+<example>
+<description>Removing footnote body from page bottom</description>
+<tool_call>
+str_replace(
+  old_text="---\n\n1 Smith et al., Journal of AI Research, 2024.",
+  new_text="",
+  reasoning="Removing footnote body from inline position; will be added to endnotes section",
+  category="footnote"
+)
+</tool_call>
+</example>
+
+<example>
+<description>Appending endnotes section at document end</description>
+<tool_call>
+str_replace(
+  old_text="## References\n\n[1] Author, Title, 2024.",
+  new_text="## References\n\n[1] Author, Title, 2024.\n\n---\n\n## Notes\n\n[^1]: Smith et al., Journal of AI Research, 2024.\n\n[^2]: See appendix B for detailed methodology.",
+  reasoning="Appending collected footnotes as endnotes section after references",
+  category="footnote"
+)
+</tool_call>
+</example>
+</examples>
 """
 
 # Unicode superscript digits → ASCII

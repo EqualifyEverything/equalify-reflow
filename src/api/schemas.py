@@ -82,67 +82,12 @@ class AwaitingPIIApprovalResponse(JobStatusBase):
     approval_url: str = Field(..., description="URL to submit approval decision")
 
 
-class CorrectionSummary(BaseModel):
-    """Summary of AI corrections made."""
-
-    total_corrections: int = Field(..., description="Total corrections made")
-    auto_applied_count: int = Field(..., description="Corrections auto-applied by AI")
-    manual_review_count: int = Field(..., description="Corrections requiring manual review")
-    confidence_score: float = Field(..., description="Overall confidence (0.0-1.0)")
-    corrections_by_type: dict[str, int] = Field(..., description="Count by correction type")
-
-
-class CorrectionItem(BaseModel):
-    """Individual correction detail."""
-
-    page: int = Field(..., ge=1, description="Page number (1-indexed)")
-    type: str = Field(..., description="Correction type")
-    original_snippet: str = Field(..., description="Original text (first 200 chars)")
-    corrected_snippet: str = Field(..., description="Corrected text (first 200 chars)")
-    confidence: float = Field(..., ge=0.0, le=1.0, description="AI confidence score")
-    explanation: str = Field(..., description="Explanation of the correction")
-    is_auto_applied: bool = Field(..., description="Whether auto-applied by AI")
-
-
-class AwaitingCorrectionApprovalResponse(JobStatusBase):
-    """Response when job needs correction approval."""
-
-    status: Literal["awaiting_correction_approval"] = "awaiting_correction_approval"
-    correction_summary: CorrectionSummary = Field(..., description="Summary of corrections")
-    corrections: list[CorrectionItem] = Field(..., description="All correction details")
-    approval_token: str = Field(..., description="Token for approval/rejection")
-    approval_expires_at: str = Field(..., description="When approval token expires")
-    review_url: str = Field(..., description="URL to review corrections in detail")
-    original_markdown_url: str = Field(..., description="URL to original markdown")
-    corrected_markdown_url: str = Field(..., description="URL to corrected markdown")
-    page_image_urls: list[str] = Field(..., description="URLs to page preview images")
-    llm_cost: LLMCostInfo = Field(..., description="LLM usage and cost")
-
-
-class CorrectionDecision(BaseModel):
-    """Record of correction approval/rejection.
-
-    Decision types:
-    - approved: Human reviewed and approved corrections
-    - rejected: Human reviewed and rejected corrections (original used)
-    - auto_completed: No correction review was needed (direct processing)
-    """
-
-    decision: Literal["approved", "rejected", "auto_completed"] = Field(
-        ..., description="The decision: approved/rejected (human review) or auto_completed (no review needed)"
-    )
-    reviewed_by: str = Field("", description="Email of reviewer (empty for auto_completed)")
-    reviewed_at: str = Field("", description="When the decision was made (empty for auto_completed)")
-    justification: str = Field("", description="Reason for decision (empty for auto_completed)")
-
-
 class CompletedResponse(JobStatusBase):
     """Response when job is completed."""
 
     status: Literal["completed"] = "completed"
     markdown_url: str = Field(..., description="URL to final markdown")
     confidence_score: float = Field(..., description="Overall confidence score")
-    correction_decision: CorrectionDecision = Field(..., description="How corrections were handled")
     llm_cost: LLMCostInfo = Field(..., description="LLM usage and cost")
     warnings: list[str] = Field(default_factory=list, description="Classification warnings about the document")
 
@@ -160,22 +105,6 @@ class DeniedResponse(JobStatusBase):
 
     status: Literal["denied"] = "denied"
     reason: str = Field(..., description="Reason for denial")
-
-
-class NeedsReviewResponse(JobStatusBase):
-    """Response when job needs human review of AI suggestions (PRD-027).
-
-    This status indicates processing is complete but there are review items
-    that require human decision before the job can be finalized.
-    """
-
-    status: Literal["needs_review"] = "needs_review"
-    confidence_score: float = Field(..., description="Overall confidence score")
-    review_item_count: int = Field(..., description="Number of items requiring review")
-    processing_result_key: str = Field(..., description="S3 key to full ProcessingResult JSON")
-    review_url: str = Field(..., description="URL to access review checklist API")
-    page_image_urls: list[str] = Field(default_factory=list, description="URLs to page preview images")
-    llm_cost: LLMCostInfo = Field(..., description="LLM usage and cost")
 
 
 # Agentic Pipeline Response Models
@@ -267,10 +196,8 @@ DocumentStatusResponse = (
     | ProcessingResponse
     | AgenticProcessingResponse
     | AwaitingPIIApprovalResponse
-    | AwaitingCorrectionApprovalResponse
     | CompletedResponse
     | AgenticCompletedResponse
     | FailedResponse
     | DeniedResponse
-    | NeedsReviewResponse
 )

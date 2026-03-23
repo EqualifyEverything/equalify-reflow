@@ -25,12 +25,8 @@ from ..services.metrics_service import jobs_submitted_total
 from .schemas import (
     AgenticCompletedResponse,
     AgenticProcessingResponse,
-    AwaitingCorrectionApprovalResponse,
     AwaitingPIIApprovalResponse,
     CompletedResponse,
-    CorrectionDecision,
-    CorrectionItem,
-    CorrectionSummary,
     DeniedResponse,
     DocumentStatusResponse,
     FailedResponse,
@@ -40,7 +36,6 @@ from .schemas import (
     LedgerResponse,
     LLMCallInfo,
     LLMCostInfo,
-    NeedsReviewResponse,
     PIIFinding,
     PIIScanningResponse,
     ProcessingResponse,
@@ -131,7 +126,6 @@ async def submit_document(
     generate_debug_bundle: bool = Form(
         default=False, description="Generate debug bundle with all agent prompts and responses"
     ),
-    max_rounds: int = Form(default=1, ge=1, le=5, description="Max processing rounds for iterative refinement (1-5)"),
     ocr_languages: str | None = Form(
         default=None,
         description="Comma-separated Tesseract OCR language codes for scanned documents (e.g. 'eng,deu'). Defaults to 'eng'.",
@@ -150,7 +144,6 @@ async def submit_document(
         skip_reason: Optional justification for skipping PII scan (recorded in audit trail)
         review_mode: 'auto' (immediate completion) or 'human' (ledger available for review)
         generate_debug_bundle: If True, save all agent prompts/responses for debugging
-        max_rounds: Maximum number of iterative refinement rounds (1-5, default: 1)
     """
     # Parse and validate OCR languages
     ocr_lang_list = [lang.strip() for lang in ocr_languages.split(",")] if ocr_languages else None
@@ -177,7 +170,6 @@ async def submit_document(
             pii_skip_reason=skip_reason or "User requested PII scan skip",
             debug_bundle_requested=generate_debug_bundle,
             review_mode=review_mode,
-            max_rounds=max_rounds,
             ocr_languages=ocr_lang_list,
         )
 
@@ -211,7 +203,6 @@ async def submit_document(
             s3_key=s3_key,
             filename=file.filename or "document.pdf",
             review_mode=review_mode,
-            max_rounds=max_rounds,
             ocr_languages=ocr_lang_list,
         )
 
@@ -231,7 +222,6 @@ async def submit_document(
             original_filename=file.filename,
             debug_bundle_requested=generate_debug_bundle,
             review_mode=review_mode,
-            max_rounds=max_rounds,
             ocr_languages=ocr_lang_list,
         )
         await queue.queue_pii_job(job_id, s3_key)
@@ -326,92 +316,6 @@ async def get_job(
                 approval_url=f"/api/v1/approval/{token}/decision",
             )
 
-        case "awaiting_correction_approval":
-            # Build correction summary and full correction list
-            correction_results = job.get("correction_results", [])
-            by_type: dict[str, int] = {}
-            total = 0
-            auto_applied = 0
-            manual_review = 0
-            corrections_list: list[CorrectionItem] = []
-
-            for page_result in correction_results:
-                page_num = page_result.get("page", 1)
-                for c in page_result.get("corrections", []):
-                    ctype = c.get("type", "other")
-                    is_auto = c.get("is_auto_applied", False)
-                    by_type[ctype] = by_type.get(ctype, 0) + 1
-                    total += 1
-                    if is_auto:
-                        auto_applied += 1
-                    else:
-                        manual_review += 1
-
-                    corrections_list.append(
-                        CorrectionItem(
-                            page=page_num,
-                            type=ctype,
-                            original_snippet=c.get("original", "")[:200],
-                            corrected_snippet=c.get("corrected", "")[:200],
-                            confidence=c.get("confidence", 0.0),
-                            explanation=c.get("explanation", ""),
-                            is_auto_applied=is_auto,
-                        )
-                    )
-
-            token = job.get("correction_approval_token", "")
-            # page_image_urls is stored as comma-separated string in Redis
-            page_keys_raw = job.get("page_image_urls", "")
-            page_keys = page_keys_raw.split(",") if page_keys_raw else []
-
-            return AwaitingCorrectionApprovalResponse(
-                **base,
-                correction_summary=CorrectionSummary(
-                    total_corrections=total,
-                    auto_applied_count=auto_applied,
-                    manual_review_count=manual_review,
-                    confidence_score=float(job.get("confidence_score", 0.0)),
-                    corrections_by_type=by_type,
-                ),
-                corrections=corrections_list,
-                approval_token=token,
-                approval_expires_at=job.get("correction_expires_at", ""),
-                review_url=f"/api/v1/corrections/{job_id}/review?token={token}",
-                original_markdown_url=await url_service.generate_url(
-                    job["original_markdown_key"], bucket=url_service.results_bucket
-                ),
-                corrected_markdown_url=await url_service.generate_url(
-                    job["corrected_markdown_key"], bucket=url_service.results_bucket
-                ),
-                page_image_urls=[await url_service.generate_url(k, bucket=url_service.temp_bucket) for k in page_keys],
-                llm_cost=_build_llm_cost(job)
-                or LLMCostInfo(
-                    input_tokens=0, output_tokens=0, total_tokens=0, estimated_cost_cents=0, estimated_cost_dollars=0
-                ),
-            )
-
-        case "needs_review":
-            # PRD-027: New review checklist workflow
-            # page_image_urls is stored as comma-separated string in Redis
-            page_keys_raw = job.get("page_image_urls", "")
-            page_keys = page_keys_raw.split(",") if page_keys_raw else []
-            return NeedsReviewResponse(
-                **base,
-                confidence_score=float(job.get("confidence_score", 0.0)),
-                review_item_count=int(job.get("review_item_count", 0)),
-                processing_result_key=job.get("processing_result_key", ""),
-                review_url=f"/api/v1/documents/{job_id}/result/checklist",
-                page_image_urls=[
-                    await url_service.generate_url(k, bucket=url_service.temp_bucket)
-                    for k in page_keys
-                    if k  # Skip empty strings
-                ],
-                llm_cost=_build_llm_cost(job)
-                or LLMCostInfo(
-                    input_tokens=0, output_tokens=0, total_tokens=0, estimated_cost_cents=0, estimated_cost_dollars=0
-                ),
-            )
-
         case "completed":
             # Check if this is an agentic pipeline job (has review_mode set)
             review_mode = job.get("review_mode")
@@ -502,13 +406,6 @@ async def get_job(
                     **base,
                     markdown_url=await url_service.generate_url(markdown_key, bucket=url_service.results_bucket),
                     confidence_score=float(job.get("confidence_score", 0.0)),
-                    correction_decision=CorrectionDecision(
-                        # Default to "auto_completed" when no manual review was performed
-                        decision=job.get("correction_decision", "auto_completed"),
-                        reviewed_by=job.get("correction_reviewed_by", ""),
-                        reviewed_at=job.get("correction_reviewed_at", ""),
-                        justification=job.get("correction_justification", ""),
-                    ),
                     llm_cost=_build_llm_cost(job)
                     or LLMCostInfo(
                         input_tokens=0,

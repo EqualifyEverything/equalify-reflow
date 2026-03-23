@@ -57,6 +57,9 @@ class Settings(BaseSettings):
 
     # Processing Configuration
     estimated_processing_minutes: int = Field(ge=1, le=60, default=5)
+    pipeline_timeout_seconds: int = Field(
+        ge=60, le=7200, default=1800, description="Global timeout for pipeline processing (seconds)"
+    )
 
     # PDF Classification Configuration
     pdf_max_pages: int = Field(

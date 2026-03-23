@@ -92,7 +92,6 @@ The Equalify PDF Converter transforms PDF documents into accessible, semantic ma
 - [Testing](.claude/docs/testing.md) - 3-tier strategy, fixtures, markers, running tests
 - [S3 Resilience](.claude/docs/s3-resilience.md) - Circuit breakers, retry logic, metrics
 - [Development](.claude/docs/development.md) - Adding features, debugging, common issues
-- [Feedback System](.claude/docs/feedback-system.md) - Human review workflow, session store, API endpoints
 
 ## Development Workflow
 

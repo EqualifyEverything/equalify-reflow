@@ -398,11 +398,8 @@ async def _pipeline_steps(
     except Exception:
         logger.warning("Document upload task failed", exc_info=True)
 
-    # Finalize session with results for feedback + reconnect
+    # Finalize session with results for reconnect
     session.result = result
-    session.structure = structure
-    session.section_map = section_map
-    session.document_ref = document_ref
     session.status = "completed"
 
     emit("done", {

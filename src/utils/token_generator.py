@@ -21,20 +21,3 @@ def generate_secure_token() -> str:
     return secrets.token_urlsafe(32)  # 32 bytes = 256 bits
 
 
-def create_approval_url(token: str, base_url: str = "http://localhost:3000") -> str:
-    """Create approval URL for frontend review interface.
-
-    Args:
-        token: Secure approval token from generate_secure_token()
-        base_url: Base URL for approval frontend (default: localhost:3000)
-
-    Returns:
-        str: Complete approval URL
-
-    Example:
-        >>> token = "abc123def456"
-        >>> url = create_approval_url(token)
-        >>> url
-        'http://localhost:3000/approve/abc123def456'
-    """
-    return f"{base_url}/approve/{token}"

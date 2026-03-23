@@ -38,7 +38,6 @@ class TimeoutWorker:
         job_service: JobService,
         metrics_service: MetricsService,
         s3_cleanup_service: S3CleanupService,
-        course_config_service: object | None = None,
     ) -> None:
         """Initialize timeout worker with service dependencies.
 
@@ -48,7 +47,6 @@ class TimeoutWorker:
             job_service: Job status management
             metrics_service: Metrics tracking
             s3_cleanup_service: S3 cleanup operations (best-effort)
-            course_config_service: Course config management (optional)
         """
         # Core services
         self.storage_service = storage_service
@@ -56,7 +54,6 @@ class TimeoutWorker:
         self.job_service = job_service
         self.metrics_service = metrics_service
         self.s3_cleanup_service = s3_cleanup_service
-        self.course_config_service = course_config_service
 
         # Derived services
         self.cleanup_service = CleanupService(storage_service)
@@ -71,7 +68,6 @@ class TimeoutWorker:
         self.last_debug_cleanup: datetime | None = None
         self.last_orphan_cleanup: datetime | None = None
         self.last_metrics_cleanup: datetime | None = None
-        self.last_course_config_cleanup: datetime | None = None
         self.last_scaling_metrics_publish: datetime | None = None
 
         # Worker state
@@ -119,15 +115,7 @@ class TimeoutWorker:
                         await self._run_metrics_cleanup()
                         self.last_metrics_cleanup = current_time
 
-                    # Task 6: Course config stale entry cleanup (daily)
-                    if self.course_config_service and self._should_run_task(
-                        self.last_course_config_cleanup,
-                        settings.course_config_cleanup_interval_hours * 3600,
-                    ):
-                        await self._run_course_config_cleanup()
-                        self.last_course_config_cleanup = current_time
-
-                    # Task 7: Publish scaling metrics to CloudWatch (every 60s, production only)
+                    # Task 6: Publish scaling metrics to CloudWatch (every 60s, production only)
                     if settings.environment == "production" and self._should_run_task(
                         self.last_scaling_metrics_publish, 60
                     ):
@@ -249,17 +237,6 @@ class TimeoutWorker:
 
         except Exception as e:
             logger.error(f"Error in metrics cleanup: {e}", exc_info=True)
-            await self.metrics_service.increment_metric("worker_task_errors", 1)
-
-    async def _run_course_config_cleanup(self) -> None:
-        """Run stale course config cleanup task."""
-        assert self.course_config_service is not None
-        try:
-            logger.info("Running course config cleanup...")
-            removed = await self.course_config_service.cleanup_stale_courses()
-            logger.info(f"Course config cleanup complete: {removed} stale entries removed")
-        except Exception as e:
-            logger.error(f"Error in course config cleanup: {e}", exc_info=True)
             await self.metrics_service.increment_metric("worker_task_errors", 1)
 
     async def _publish_scaling_metrics(self) -> None:

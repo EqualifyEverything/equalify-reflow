@@ -26,8 +26,6 @@ class Settings(BaseSettings):
 
     # Queue Configuration (align with shared/constants/queues.py)
     pii_queue_name: str = "eq-pdf:queue:pii"
-    processing_queue_name: str = "eq-pdf:queue:processing"
-    approval_queue_name: str = "eq-pdf:queue:approval"
     timeout_queue_name: str = "eq-pdf:timeouts:approval"
 
     # Job Status Configuration
@@ -56,33 +54,9 @@ class Settings(BaseSettings):
     # Application Settings
     max_upload_size: int = Field(gt=0, le=1024 * 1024 * 1024, default=100 * 1024 * 1024)  # 100MB, max 1GB
     max_file_size_mb: int = Field(gt=0, le=1000, default=100)
-    job_ttl_days: int = Field(ge=1, le=365, default=30)
 
     # Processing Configuration
     estimated_processing_minutes: int = Field(ge=1, le=60, default=5)
-
-    # AI Provider Configuration
-    ai_provider: str = "bedrock"  # Only "bedrock" is supported
-
-    # Bedrock Configuration
-    # Note: Model selection is handled by src/agents/model_tiers.py (not configurable via env)
-    bedrock_region: str = "us-east-1"
-
-    # Claude Model Settings
-    claude_max_tokens: int = Field(ge=1, le=100000, default=4096)
-    claude_temperature: float = Field(ge=0.0, le=2.0, default=0.2)
-
-    # AI Processing Configuration
-    confidence_threshold_high: float = Field(ge=0.0, le=1.0, default=0.85)
-    confidence_threshold_medium: float = Field(ge=0.0, le=1.0, default=0.60)
-
-    # Page-by-Page Extraction Configuration
-    extraction_concurrency: int = Field(
-        ge=1, le=10, default=5, description="Number of concurrent page extractions (AWS Bedrock limit aware)"
-    )
-    max_page_retries: int = Field(
-        ge=1, le=5, default=2, description="Maximum retry attempts per page on validation failure"
-    )
 
     # PDF Classification Configuration
     pdf_max_pages: int = Field(
@@ -91,8 +65,6 @@ class Settings(BaseSettings):
         default=50,
         description="Maximum pages allowed per PDF. Documents exceeding this are rejected.",
     )
-    pdf_block_forms: bool = Field(default=True, description="Block PDFs with interactive form fields")
-    pdf_block_encrypted: bool = Field(default=True, description="Block password-protected PDFs")
 
     # Docling-serve sidecar configuration
     docling_serve_url: str = Field(
@@ -122,41 +94,6 @@ class Settings(BaseSettings):
         "2.0x (144 DPI) may be needed for complex diagrams.",
     )
 
-    # Multi-Agent Configuration
-    agent_prompts_dir: str = Field(default="config/agents", description="Directory containing agent YAML prompt files")
-    agent_max_retries: int = Field(
-        ge=0, le=10, default=2, description="Maximum retries for agent output validation failures"
-    )
-    agent_default_temperature: float = Field(
-        ge=0.0, le=2.0, default=0.2, description="Default temperature for agent LLM calls"
-    )
-    max_concurrent_agents: int = Field(
-        ge=1, le=4, default=4, description="Maximum specialized agents to run concurrently"
-    )
-
-    # Deterministic Pre-Analysis Configuration
-    # VeraPDF settings for PDF/UA-1 accessibility validation
-    verapdf_url: str = Field(default="http://verapdf:8080", description="VeraPDF REST API URL")
-    verapdf_timeout: int = Field(ge=30, le=600, default=120, description="VeraPDF request timeout in seconds")
-    verapdf_enabled: bool = Field(default=True, description="Enable VeraPDF PDF/UA-1 validation")
-
-    # PyMarkdown settings for markdown structure validation
-    pymarkdown_enabled: bool = Field(default=True, description="Enable PyMarkdown structure linting")
-    pymarkdown_rules: str = Field(
-        default="MD001,MD025,MD036,MD045", description="Comma-separated list of PyMarkdown rules to enable"
-    )
-
-    # Document Context Extraction Configuration
-    context_extraction_enabled: bool = Field(
-        default=True, description="Enable document context extraction for agent grounding"
-    )
-    context_max_headings: int = Field(ge=10, le=500, default=100, description="Maximum headings to track per document")
-    context_recurring_threshold: float = Field(
-        ge=0.1,
-        le=1.0,
-        default=0.5,
-        description="Minimum page occurrence rate to consider element recurring (0.5 = 50%)",
-    )
 
     # Timeout Worker Configuration
     approval_timeout_hours: int = Field(ge=1, le=168, default=4)  # Approval deadline (hours), max 1 week
@@ -177,31 +114,6 @@ class Settings(BaseSettings):
     # PII Detection Configuration
     pii_confidence_threshold: float = Field(ge=0.0, le=1.0, default=0.85)  # Minimum confidence score for PII detection
 
-    # Confidence threshold for auto vs manual routing
-    # Observations/proposals with confidence >= this go to auto queue, < this go to manual
-    min_confidence_for_auto_approval: float = Field(
-        default=0.7,
-        ge=0.0,
-        le=1.0,
-        description="Confidence threshold for auto vs manual routing. "
-        "Observations/proposals >= this go to auto queue (batch approval), "
-        "< this go to manual queue (individual review). "
-        "Set to 0.0 to auto-approve all, 1.0 to require manual review for all.",
-    )
-
-    # Correction review workflow
-    always_require_correction_review: bool = Field(
-        default=True, description="Always route to correction review (True for demo/testing)"
-    )
-
-    correction_approval_timeout_hours: int = Field(
-        ge=1, le=168, default=4, description="Hours until correction approval expires"
-    )
-
-    @property
-    def auto_approval_threshold(self) -> float:
-        """Deprecated: Use min_confidence_for_auto_approval instead."""
-        return self.min_confidence_for_auto_approval
 
     # Redis TTL Configuration (in seconds)
     # TTL ensures job hashes auto-expire to prevent Redis memory exhaustion
@@ -217,9 +129,6 @@ class Settings(BaseSettings):
     # Worker Queue Configuration
     pii_worker_queue_timeout_seconds: int = Field(
         ge=1, le=300, default=30, description="PII worker queue blocking timeout in seconds"
-    )
-    processing_worker_queue_timeout_seconds: int = Field(
-        ge=1, le=300, default=60, description="Processing worker queue blocking timeout in seconds"
     )
     worker_error_sleep_seconds: int = Field(
         ge=1, le=300, default=5, description="Sleep duration after worker error to avoid tight error loops"
@@ -247,65 +156,6 @@ class Settings(BaseSettings):
     # Logfire Configuration (PydanticAI agent tracing)
     logfire_enabled: bool = Field(default=False, description="Enable Logfire tracing for PydanticAI agents")
     logfire_token: str = Field(default="", description="Logfire API token")
-
-    # LTI 1.3 Configuration
-    lti_enabled: bool = Field(default=False, description="Enable LTI 1.3 integration endpoints")
-
-    # Canvas LMS Platform Configuration
-    lti_issuer: str = Field(default="", description="Canvas instance URL (e.g., https://canvas.instructure.com)")
-    lti_client_id: str = Field(default="", description="Canvas Developer Key client ID")
-    lti_deployment_id: str = Field(default="", description="Canvas deployment ID (usually same as client_id)")
-
-    # Canvas OAuth/OIDC Endpoints
-    lti_auth_login_url: str = Field(
-        default="", description="Canvas OIDC authorization URL (e.g., https://canvas.instructure.com/api/lti/authorize)"
-    )
-    lti_auth_token_url: str = Field(
-        default="", description="Canvas OAuth token URL (e.g., https://canvas.instructure.com/login/oauth2/token)"
-    )
-    lti_jwks_url: str = Field(
-        default="",
-        description="Canvas JWKS URL for verifying Canvas signatures (e.g., https://canvas.instructure.com/api/lti/security/jwks)",
-    )
-
-    # Tool RSA Key Configuration
-    lti_private_key_path: str = Field(
-        default="/app/keys/lti_private.pem", description="Path to tool's RSA private key for signing JWTs"
-    )
-    lti_public_key_path: str = Field(
-        default="/app/keys/lti_public.pem", description="Path to tool's RSA public key for JWKS endpoint"
-    )
-
-    # Canvas API Configuration (for file downloads)
-    canvas_api_url: str = Field(default="", description="Canvas API base URL (e.g., https://canvas.instructure.com/api/v1)")
-    canvas_api_token: str = Field(default="", description="Canvas API access token for file downloads")
-    canvas_host_header: str = Field(
-        default="",
-        description="Explicit Host header for Canvas API requests (e.g., localhost:3000). "
-        "Used when connecting to Canvas via Docker container name instead of host.docker.internal.",
-    )
-
-    # Canvas Auto-Publishing Configuration
-    canvas_autopublish_enabled: bool = Field(
-        default=False, description="Enable automatic PDF-to-Canvas Page publishing"
-    )
-    canvas_polling_interval_seconds: int = Field(
-        ge=30, le=600, default=120, description="How often to poll Canvas for new PDFs (seconds)"
-    )
-    canvas_rate_limit_buffer: int = Field(
-        ge=10, le=200, default=50, description="Pause API calls when Canvas rate limit remaining is below this"
-    )
-
-    # Course Config TTL
-    course_config_ttl_days: int = Field(ge=1, le=365, default=90, description="TTL in days for course config keys")
-    course_config_cleanup_interval_hours: int = Field(
-        ge=1, le=168, default=24, description="How often to run stale course config cleanup (hours)"
-    )
-
-    # LTI State Storage Configuration
-    lti_state_ttl_seconds: int = Field(
-        ge=60, le=3600, default=600, description="TTL for LTI OIDC state in Redis (10 minutes default)"
-    )
 
     # Feedback service (optional)
     feedback_enabled: bool = False

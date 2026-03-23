@@ -68,7 +68,9 @@ def localstack_container():
 
     Container starts once per test session, providing isolated S3 service.
     """
-    with LocalStackContainer(image="localstack/localstack:latest") as localstack:
+    with LocalStackContainer(image="localstack/localstack:latest").with_env(
+        "LOCALSTACK_ACKNOWLEDGE_ACCOUNT_REQUIREMENT", "1"
+    ) as localstack:
         localstack.with_services("s3")
         yield localstack
 

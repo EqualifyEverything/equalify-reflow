@@ -21,3 +21,24 @@ This page contains list content (bulleted, numbered, or definition lists).
 ## Tools
 
 - **`reconstruct_list(list_text, reasoning)`**: Call this for lists with structural issues (merged/split items, wrong nesting, or definition lists that need HTML `<dl>` markup). Pass the problematic list text and explain the issue. The tool will re-read the list from the page image and return a corrected version. Use `str_replace` to apply the result.
+
+## Tool call example
+
+<example>
+<description>Reconstructing a list with merged items</description>
+<tool_call>
+reconstruct_list(
+  list_text="- First item Second item\n- Third item",
+  reasoning="Image shows three separate bullet points but items 1 and 2 are merged in the markdown"
+)
+</tool_call>
+<follow_up>
+After receiving the corrected list, use str_replace:
+str_replace(
+  old_text="- First item Second item\n- Third item",
+  new_text="- First item\n- Second item\n- Third item",
+  reasoning="Applied vision-reconstructed list structure",
+  category="list_fix"
+)
+</follow_up>
+</example>

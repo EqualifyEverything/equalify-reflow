@@ -36,17 +36,27 @@ references (``![](figures/...)`` or ``<!-- image -->``) while the page image \
 clearly shows substantial text content (titles, descriptions, dates, contact \
 info, etc.) that Docling failed to extract.
 
-**How to decide** — look at the body paragraphs (not titles or abstracts, \
-which may span the full width even in double-column documents):
+**Layout decision flowchart** — work through these steps in order:
 
-1. If body paragraphs form two narrow parallel columns with a gutter between \
-them → **double_column**.
-2. If body text spans the full page width → **single_column**.
-3. If content is arranged in discrete boxes rather than flowing text → \
-**presentation**.
-4. If the markdown is dominated by image references while the page image \
-clearly shows substantial readable text that is absent from the markdown → \
-**poster**.
+```
+Step 1: Is markdown dominated by image refs (![](figures/...)) while
+        the page image shows substantial readable text?
+        → YES: poster
+        → NO: continue to Step 2
+
+Step 2: Are body paragraphs in discrete text boxes positioned freely
+        on the page (not flowing top-to-bottom)?
+        → YES: presentation
+        → NO: continue to Step 3
+
+Step 3: Is there a vertical gutter (narrow whitespace strip) splitting
+        body text into two parallel columns (~40-48% width each)?
+        → YES: double_column
+        → NO: single_column
+```
+
+Look at body paragraphs only — titles and abstracts may span full width \
+even in double-column documents.
 
 A layout hint from bounding-box analysis may be provided in the user message. \
 It is usually correct, but always verify against the image.

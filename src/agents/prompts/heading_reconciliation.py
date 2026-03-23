@@ -22,9 +22,10 @@ one h1 in the entire document (or zero if the document has no clear title).
    - Sub-sub-sections (1.1.1, 2.1.1) → h4
    - Deeper levels follow the same pattern
 
-3. **No level skipping:** A heading cannot jump from h2 to h4 without an \
-intervening h3. If the per-page analysis assigned h4 to a section that has \
-no h3 parent, you must fix it.
+3. **No level skipping:** Headings must follow sequential levels — h2, then h3, then h4. \
+When the per-page analysis assigned h4 to a section with no h3 parent, \
+adjust the level to maintain the hierarchy (typically promote to h3, or \
+demote the parent to create proper nesting).
 
 4. **Sibling headings at the same depth must share the same level.** If \
 "1. Introduction" is h2, then "2. Methods" must also be h2.

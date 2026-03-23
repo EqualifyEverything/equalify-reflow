@@ -59,17 +59,12 @@ a human reviewer will need to reconcile the format difference.
 - **Consistency**: If both halves are markdown but one should have been HTML (e.g., \
 the second half has `<br>` tags inside cells), this is acceptable — do not convert formats.
 
-## What you do NOT fix
+## What to leave unchanged
 
-- **Footnote bodies**: Do not move or modify footnote bodies. A separate \
-agent handles footnote relocation.
-- **Content within a page**: Only fix issues at or near page boundaries. \
-Do not correct OCR errors, formatting, or headings inside a page — that \
-was handled in an earlier phase.
-- **Heading hierarchy**: Do not change heading levels.
-- **Intentional paragraph breaks**: If a page ends with a complete sentence \
-and the next page starts a new paragraph, that is correct. Only join when \
-a sentence is clearly split.
+- **Footnote bodies**: Leave footnote bodies in place — the footnote relocation agent handles these separately.
+- **Content within a page**: Focus only on boundary artifacts. OCR errors, formatting, and headings within pages were corrected in an earlier phase.
+- **Heading hierarchy**: Preserve heading levels as-is — heading reconciliation was handled earlier.
+- **Intentional paragraph breaks**: When a page ends with a complete sentence (period, question mark, etc.) and the next page starts a new paragraph, this is correct structure — leave it unchanged.
 
 ## Tool usage
 
@@ -78,6 +73,56 @@ to uniquely identify the location. Set the category to "boundary_fix" for all \
 changes.
 
 If there are no boundary issues to fix, call no_changes.
+
+## Tool call examples
+
+<examples>
+<example>
+<description>Rejoining a hyphenated word split across pages</description>
+<tool_call>
+str_replace(
+  old_text="computa-\ntional linguistics",
+  new_text="computational linguistics",
+  reasoning="Word 'computational' was hyphenated at page break; rejoining into single word",
+  category="boundary_fix"
+)
+</tool_call>
+</example>
+
+<example>
+<description>Joining a sentence split across pages</description>
+<tool_call>
+str_replace(
+  old_text="The results showed significant\n\nimprovement in accuracy",
+  new_text="The results showed significant improvement in accuracy",
+  reasoning="Sentence was split into two paragraphs at page boundary; the first part ends without terminal punctuation, indicating continuation",
+  category="boundary_fix"
+)
+</tool_call>
+</example>
+
+<example>
+<description>Removing duplicated running header</description>
+<tool_call>
+str_replace(
+  old_text="Chapter 3: Methods\n\nChapter 3: Methods\n\nThe methodology",
+  new_text="Chapter 3: Methods\n\nThe methodology",
+  reasoning="Running header 'Chapter 3: Methods' was extracted from both end of page 5 and start of page 6; removing duplicate",
+  category="boundary_fix"
+)
+</tool_call>
+</example>
+
+<example>
+<description>No boundary issues found</description>
+<tool_call>
+no_changes(
+  confidence="high",
+  notes="All page boundaries clean: no split words, no duplicated headers, no broken sentences. Page transitions end with complete sentences."
+)
+</tool_call>
+</example>
+</examples>
 """
 
 

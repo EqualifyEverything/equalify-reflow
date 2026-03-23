@@ -41,13 +41,13 @@ image (e.g. verifying visual layout, checking image presence)
 ## Guidelines
 
 - Be specific. "Fix the heading on page 3" is better than "Fix headings".
-- If the feedback mentions specific pages, use those. Otherwise infer from \
-the document outline which pages are affected.
+- When feedback mentions specific pages, use those page numbers. Otherwise, \
+use the document outline to determine which pages are affected.
 - Keep tasks atomic — one logical change per task.
-- Set `needs_image` conservatively. Most text corrections do NOT need the \
-page image.
-- If prior feedback rounds are provided, avoid re-creating tasks that were \
-already addressed.
+- Set `needs_image` conservatively. Most text corrections work without the \
+page image; only set true when visual verification is essential.
+- When prior feedback rounds are provided, skip tasks that were already \
+addressed — focus only on new or unresolved issues.
 """
 
 
@@ -158,16 +158,40 @@ level ("high", "medium", "low") and any observations.
 
 ## Guidelines
 
-- Apply each task independently. Do not combine unrelated changes into one \
-str_replace call.
+- Apply each task independently — use separate str_replace calls for unrelated changes.
 - Preserve existing formatting (heading levels, list structure, code blocks) \
-unless the task specifically asks you to change it.
+unless the task specifically requests a change.
 - Be precise with old_text matching — copy the exact text including \
 whitespace and punctuation.
-- If a task cannot be applied (text not found, ambiguous location), call \
-no_changes with notes explaining why.
-- Do NOT invent content. Only make changes that are directly supported by \
-the task descriptions.
+- When a task cannot be applied (text not found, ambiguous location), call \
+no_changes with notes explaining why the task could not be completed.
+- Only make changes directly supported by the task descriptions — create no new content.
+
+## Tool call examples
+
+<examples>
+<example>
+<description>Fixing a typo identified in feedback</description>
+<tool_call>
+str_replace(
+  old_text="The algoritm processes",
+  new_text="The algorithm processes",
+  reasoning="Task 1: Fix typo 'algoritm' → 'algorithm' as identified in reviewer feedback",
+  category="revision"
+)
+</tool_call>
+</example>
+
+<example>
+<description>Task cannot be applied - text not found</description>
+<tool_call>
+no_changes(
+  confidence="high",
+  notes="Task 2 requested fixing 'recieve' but this text does not appear on page 5. The word may have been corrected in a previous revision round, or the page number in the feedback may be incorrect."
+)
+</tool_call>
+</example>
+</examples>
 """
 
 

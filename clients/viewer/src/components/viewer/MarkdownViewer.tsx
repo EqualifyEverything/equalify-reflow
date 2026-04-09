@@ -1,4 +1,4 @@
-import { useState, useRef, useCallback } from 'react';
+import { useState, useRef } from 'react';
 import ReactMarkdown from 'react-markdown';
 import remarkGfm from 'remark-gfm';
 import rehypeRaw from 'rehype-raw';
@@ -6,128 +6,6 @@ import { motion, AnimatePresence } from 'framer-motion';
 import { cn } from '@/lib/utils';
 import { Button } from '@/components/ui/button';
 import { Eye, Code2, Download, Bug, Copy, Check } from 'lucide-react';
-import { useTextSelection } from '@/hooks/useTextSelection';
-import { SelectionPopover } from '@/components/feedback/SelectionPopover';
-import { InlineFeedbackForm } from '@/components/feedback/InlineFeedbackForm';
-import type { FeedbackItemType, FeedbackCategory, TextSelector } from '@/types/feedback';
-
-/**
- * Resolve rendered text back to the raw markdown.
- *
- * The user selects text from the rendered HTML (which strips markdown syntax).
- * The backend needs to find the text in raw markdown.  We search the raw
- * content for the best match:
- *   1. Exact substring (works for plain text without formatting)
- *   2. Normalized whitespace match (collapses runs of whitespace)
- *   3. Line-by-line fuzzy match for shorter selections
- *
- * Returns a TextSelector with `exact` from the raw markdown (not the rendered text),
- * plus surrounding context for disambiguation.
- */
-function resolveToRawMarkdown(
-  renderedText: string,
-  rawContent: string,
-  renderedPrefix: string,
-  renderedSuffix: string,
-): TextSelector {
-  // 1. Try exact match (works when there's no formatting syntax in selection)
-  const exactIdx = rawContent.indexOf(renderedText);
-  if (exactIdx !== -1) {
-    return {
-      exact: renderedText,
-      prefix: rawContent.slice(Math.max(0, exactIdx - 20), exactIdx) || null,
-      suffix: rawContent.slice(exactIdx + renderedText.length, exactIdx + renderedText.length + 20) || null,
-    };
-  }
-
-  // 2. Normalized whitespace match: collapse whitespace in both
-  const normalize = (s: string) => s.replace(/\s+/g, ' ').trim();
-  const normalizedRendered = normalize(renderedText);
-  const normalizedRaw = normalize(rawContent);
-  const normIdx = normalizedRaw.indexOf(normalizedRendered);
-  if (normIdx !== -1) {
-    // Map back to the original raw string by walking character positions
-    const rawMatch = findNormalizedSpan(rawContent, normalizedRendered);
-    if (rawMatch) {
-      const [start, end] = rawMatch;
-      const exact = rawContent.slice(start, end);
-      return {
-        exact,
-        prefix: rawContent.slice(Math.max(0, start - 20), start) || null,
-        suffix: rawContent.slice(end, end + 20) || null,
-      };
-    }
-  }
-
-  // 3. Fallback: return rendered text with rendered context.
-  // The backend has a fuzzy fallback (edit distance on lines) that may catch this.
-  return {
-    exact: renderedText,
-    prefix: renderedPrefix || null,
-    suffix: renderedSuffix || null,
-  };
-}
-
-/**
- * Find the span in the original string that, when whitespace-normalized,
- * matches the given normalized target.
- */
-function findNormalizedSpan(raw: string, normalizedTarget: string): [number, number] | null {
-  // Walk through the raw string, building a normalized version char by char,
-  // tracking the mapping from normalized position to raw position.
-  let normPos = 0;
-  let inWhitespace = false;
-  let matchStartRaw = -1;
-
-  for (let i = 0; i < raw.length && normPos <= normalizedTarget.length; i++) {
-    const ch = raw[i];
-    const isWs = /\s/.test(ch);
-
-    let normCh: string | null = null;
-    if (isWs) {
-      if (!inWhitespace) {
-        normCh = ' ';
-        inWhitespace = true;
-      }
-    } else {
-      normCh = ch;
-      inWhitespace = false;
-    }
-
-    if (normCh !== null) {
-      if (normCh === normalizedTarget[normPos]) {
-        if (normPos === 0) {
-          matchStartRaw = i;
-        }
-        normPos++;
-        if (normPos === normalizedTarget.length) {
-          // Found the match - end is after the current raw character
-          return [matchStartRaw, i + 1];
-        }
-      } else {
-        // Restart match
-        if (matchStartRaw !== -1) {
-          // Restart from the character after where the match started
-          i = matchStartRaw;
-        }
-        normPos = 0;
-        matchStartRaw = -1;
-        inWhitespace = false;
-      }
-    }
-  }
-
-  return null;
-}
-
-interface FeedbackCreateData {
-  type: FeedbackItemType;
-  selector: TextSelector;
-  newText: string | null;
-  description: string;
-  category: FeedbackCategory | null;
-  page: number;
-}
 
 interface MarkdownViewerProps {
   content: string;
@@ -138,9 +16,6 @@ interface MarkdownViewerProps {
   onDownloadMarkdown?: () => void;
   onDownloadDebug?: () => void;
   onCopy?: () => void;
-  feedbackEnabled?: boolean;
-  currentPage?: number;
-  onFeedbackCreate?: (data: FeedbackCreateData) => void;
 }
 
 export function MarkdownViewer({
@@ -152,23 +27,11 @@ export function MarkdownViewer({
   onDownloadMarkdown,
   onDownloadDebug,
   onCopy,
-  feedbackEnabled = false,
-  currentPage = 1,
-  onFeedbackCreate,
 }: MarkdownViewerProps) {
   const [showRaw, setShowRaw] = useState(false);
   const [copied, setCopied] = useState(false);
-  const [activeForm, setActiveForm] = useState<{
-    type: FeedbackItemType;
-    text: string;
-    selector: TextSelector;
-    rect: { top: number; left: number; width: number; height: number; bottom: number };
-  } | null>(null);
 
   const contentRef = useRef<HTMLDivElement>(null);
-  const { selection, clearSelection } = useTextSelection(
-    feedbackEnabled ? contentRef : { current: null },
-  );
 
   const handleCopy = () => {
     if (onCopy) {
@@ -180,56 +43,12 @@ export function MarkdownViewer({
     setTimeout(() => setCopied(false), 1500);
   };
 
-  const handlePopoverAction = useCallback(
-    (type: FeedbackItemType) => {
-      if (!selection) return;
-
-      // Resolve the rendered text selection back to the raw markdown
-      const selector = resolveToRawMarkdown(
-        selection.text,
-        content,
-        selection.prefix,
-        selection.suffix,
-      );
-
-      setActiveForm({
-        type,
-        text: selection.text,
-        selector,
-        rect: selection.rect,
-      });
-      clearSelection();
-    },
-    [selection, clearSelection, content],
-  );
-
-  const handleFormSubmit = useCallback(
-    (data: FeedbackCreateData) => {
-      onFeedbackCreate?.(data);
-      setActiveForm(null);
-    },
-    [onFeedbackCreate],
-  );
-
-  const handleFormCancel = useCallback(() => {
-    setActiveForm(null);
-  }, []);
-
-  const handlePopoverDismiss = useCallback(() => {
-    clearSelection();
-  }, [clearSelection]);
-
   return (
     <div className={cn('flex flex-col h-full', className)}>
       {/* Toggle Header */}
       <div className="flex items-center justify-between px-4 py-2 border-b bg-gray-50">
         <span className="text-sm font-medium text-muted-foreground">
           {showRaw ? 'Raw Markdown' : 'Rendered Preview'}
-          {feedbackEnabled && (
-            <span className="ml-2 text-[10px] font-medium px-1.5 py-0.5 rounded bg-blue-50 text-blue-700">
-              Select text to give feedback
-            </span>
-          )}
         </span>
         <div className="flex items-center gap-2">
           {/* Download buttons - shown when complete */}
@@ -431,35 +250,6 @@ export function MarkdownViewer({
                 {content || '*Waiting for content...*'}
               </ReactMarkdown>
             </motion.div>
-          )}
-        </AnimatePresence>
-
-        {/* Selection popover */}
-        <AnimatePresence>
-          {feedbackEnabled && selection && !activeForm && (
-            <SelectionPopover
-              rect={selection.rect}
-              containerRef={contentRef}
-              onEdit={() => handlePopoverAction('edit')}
-              onComment={() => handlePopoverAction('comment')}
-              onDismiss={handlePopoverDismiss}
-            />
-          )}
-        </AnimatePresence>
-
-        {/* Inline feedback form */}
-        <AnimatePresence>
-          {feedbackEnabled && activeForm && (
-            <InlineFeedbackForm
-              type={activeForm.type}
-              selectedText={activeForm.text}
-              selector={activeForm.selector}
-              rect={activeForm.rect}
-              containerRef={contentRef}
-              page={currentPage}
-              onSubmit={handleFormSubmit}
-              onCancel={handleFormCancel}
-            />
           )}
         </AnimatePresence>
       </div>

@@ -1,8 +1,8 @@
-"""In-memory session store for pipeline feedback sessions.
+"""In-memory session store for pipeline SSE streaming sessions.
 
-Each session holds the pipeline result, structure analysis output, and
-feedback state for iterative human review rounds.  Sessions expire after
-a configurable TTL (default 1 hour).
+Each session holds the pipeline result and event buffer for SSE
+reconnection support.  Sessions expire after a configurable TTL
+(default 1 hour).
 
 This is appropriate for the Pipeline Viewer dev tool.  Production usage
 would swap for Redis-backed persistence.
@@ -16,13 +16,7 @@ import time
 import uuid
 from dataclasses import dataclass, field
 
-from .pipeline_viewer_models import (
-    CandidateChange,
-    FeedbackItem,
-    PipelineViewerResult,
-    SectionMap,
-    StructureResult,
-)
+from .pipeline_viewer_models import PipelineViewerResult
 
 logger = logging.getLogger(__name__)
 
@@ -31,18 +25,10 @@ SESSION_TTL_SECONDS = 3600  # 1 hour
 
 @dataclass
 class PipelineSession:
-    """State for a single feedback session."""
+    """State for a single streaming session."""
 
     session_id: str
     result: PipelineViewerResult
-    structure: StructureResult | None = None
-    section_map: SectionMap | None = None
-    document_ref: str | None = None
-    feedback_history: list[list[FeedbackItem]] = field(default_factory=list)
-    candidate_changes: list[CandidateChange] = field(default_factory=list)
-    revision_round: int = 0
-    finalized: bool = False
-    processing: bool = False
     created_at: float = field(default_factory=time.time)
     last_accessed: float = field(default_factory=time.time)
     # SSE reconnect support
@@ -77,7 +63,7 @@ class SessionStore:
         """Create a session early for SSE reconnect support.
 
         The session starts with an empty result and status="processing".
-        The caller populates result/structure/section_map as processing completes.
+        The caller populates the result as processing completes.
         """
         self._evict_expired()
         session_id = uuid.uuid4().hex[:12]
@@ -85,24 +71,6 @@ class SessionStore:
             session_id=session_id,
             result=PipelineViewerResult(filename=filename, total_pages=0),
             status="processing",
-        )
-        self._sessions[session_id] = session
-        return session
-
-    def create(
-        self,
-        result: PipelineViewerResult,
-        structure: StructureResult | None = None,
-        section_map: SectionMap | None = None,
-    ) -> PipelineSession:
-        """Create a new session and return it."""
-        self._evict_expired()
-        session_id = uuid.uuid4().hex[:12]
-        session = PipelineSession(
-            session_id=session_id,
-            result=result,
-            structure=structure,
-            section_map=section_map,
         )
         self._sessions[session_id] = session
         return session

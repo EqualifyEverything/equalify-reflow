@@ -162,7 +162,7 @@ if settings.enable_docs_auth:
 app.add_middleware(ErrorHandlerMiddleware)  # Catch all errors
 app.add_middleware(RateLimitMiddleware)  # Rate limit before processing
 app.add_middleware(LoggingMiddleware)  # Log all requests
-app.add_middleware(SecurityHeadersMiddleware, canvas_origin=settings.lti_auth_login_url)  # Frame security
+app.add_middleware(SecurityHeadersMiddleware)  # Frame security
 add_cors_middleware(app)  # CORS headers
 
 # Include routers
@@ -171,12 +171,10 @@ app.include_router(documents.router)
 app.include_router(approval.router)
 
 # Pipeline viewer — always available (primary processing API)
-from .api import pipeline_feedback, pipeline_viewer  # noqa: E402
+from .api import pipeline_viewer  # noqa: E402
 
 app.include_router(pipeline_viewer.router)
-app.include_router(pipeline_feedback.router)
 logger.info("✅ Pipeline endpoint enabled at /api/v1/pipeline/process")
-logger.info("✅ Pipeline feedback endpoint enabled at /api/v1/pipeline/sessions")
 
 # Conditionally import dev-only endpoints (only in development)
 if settings.environment == "dev":

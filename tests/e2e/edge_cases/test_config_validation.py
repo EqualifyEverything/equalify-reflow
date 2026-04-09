@@ -20,8 +20,7 @@ class TestConfigurationValidation:
         assert settings.max_file_size_mb > 0
         assert settings.approval_timeout_hours > 0
         assert settings.redis_max_connections > 0
-        assert settings.confidence_threshold_high >= 0.0
-        assert settings.confidence_threshold_medium >= 0.0
+        assert settings.pii_confidence_threshold >= 0.0
 
     def test_negative_timeout_rejected(self):
         """Test that negative timeout values are rejected."""
@@ -94,9 +93,8 @@ class TestConfigurationValidation:
     def test_invalid_confidence_thresholds(self):
         """Test invalid confidence threshold values."""
         invalid_thresholds = [
-            {"confidence_threshold_high": -0.1},  # Below 0
-            {"confidence_threshold_high": 1.5},  # Above 1
-            {"confidence_threshold_medium": 2.0},  # Above 1
+            {"pii_confidence_threshold": -0.1},  # Below 0
+            {"pii_confidence_threshold": 1.5},  # Above 1
         ]
 
         for invalid_config in invalid_thresholds:
@@ -113,11 +111,11 @@ class TestConfigurationValidation:
     def test_confidence_threshold_boundaries(self):
         """Test confidence threshold boundary values."""
         # Test exact boundaries
-        settings_zero = Settings(confidence_threshold_high=0.0)
-        settings_one = Settings(confidence_threshold_high=1.0)
+        settings_zero = Settings(pii_confidence_threshold=0.0)
+        settings_one = Settings(pii_confidence_threshold=1.0)
 
-        assert settings_zero.confidence_threshold_high == 0.0
-        assert settings_one.confidence_threshold_high == 1.0
+        assert settings_zero.pii_confidence_threshold == 0.0
+        assert settings_one.pii_confidence_threshold == 1.0
 
     def test_invalid_redis_url_format(self):
         """Test invalid Redis URL formats."""
@@ -325,56 +323,6 @@ class TestConfigurationValidation:
                 metrics_cleanup_interval_hours=87600,  # 10 years - exceeds max 168 hours
             )
 
-    def test_negative_claude_max_tokens(self):
-        """Test negative Claude max tokens."""
-        try:
-            settings = Settings(claude_max_tokens=-1)
-            assert settings.claude_max_tokens >= 0
-        except (ValidationError, ValueError):
-            pass
-
-    def test_zero_claude_max_tokens(self):
-        """Test zero Claude max tokens."""
-        try:
-            settings = Settings(claude_max_tokens=0)
-            # Zero tokens is invalid
-            assert settings.claude_max_tokens > 0
-        except (ValidationError, ValueError):
-            pass
-
-    def test_extreme_claude_max_tokens(self):
-        """Test extremely high max tokens."""
-        try:
-            settings = Settings(claude_max_tokens=1000000)
-            # Should accept but might hit API limits
-            assert settings.claude_max_tokens > 0
-        except (ValidationError, ValueError):
-            pass
-
-    def test_invalid_temperature_range(self):
-        """Test invalid temperature values."""
-        invalid_temps = [
-            -0.5,  # Negative
-            2.0,  # Above typical max
-            10.0,  # Way above max
-        ]
-
-        for temp in invalid_temps:
-            try:
-                settings = Settings(claude_temperature=temp)
-                # Should be in valid range (typically 0.0-1.0)
-                assert settings.claude_temperature >= 0.0
-            except (ValidationError, ValueError):
-                pass
-
-    def test_temperature_boundaries(self):
-        """Test temperature boundary values."""
-        settings_zero = Settings(claude_temperature=0.0)
-        settings_one = Settings(claude_temperature=1.0)
-
-        assert settings_zero.claude_temperature == 0.0
-        assert settings_one.claude_temperature == 1.0
-
     def test_retention_policies_consistency(self):
         """Test that retention policies are logically consistent."""
         settings = Settings(
@@ -399,60 +347,3 @@ class TestConfigurationValidation:
         assert job_hours > 0
         assert metrics_hours > 0
 
-    # --- Canvas Auto-Publishing Configuration Tests ---
-
-    def test_canvas_autopublish_defaults(self, monkeypatch):
-        """Test that Canvas auto-publish configuration has correct defaults."""
-        monkeypatch.delenv("CANVAS_AUTOPUBLISH_ENABLED", raising=False)
-        monkeypatch.delenv("CANVAS_POLLING_INTERVAL_SECONDS", raising=False)
-        monkeypatch.delenv("CANVAS_RATE_LIMIT_BUFFER", raising=False)
-        settings = Settings(_env_file=None)
-
-        assert settings.canvas_autopublish_enabled is False
-        assert settings.canvas_polling_interval_seconds == 120
-        assert settings.canvas_rate_limit_buffer == 50
-
-    def test_canvas_autopublish_enabled_toggle(self):
-        """Test that canvas_autopublish_enabled can be toggled on."""
-        settings = Settings(canvas_autopublish_enabled=True)
-        assert settings.canvas_autopublish_enabled is True
-
-    def test_canvas_polling_interval_boundaries(self):
-        """Test canvas_polling_interval_seconds boundary values."""
-        # Lower bound (ge=30)
-        settings_min = Settings(canvas_polling_interval_seconds=30)
-        assert settings_min.canvas_polling_interval_seconds == 30
-
-        # Upper bound (le=600)
-        settings_max = Settings(canvas_polling_interval_seconds=600)
-        assert settings_max.canvas_polling_interval_seconds == 600
-
-    def test_canvas_polling_interval_below_minimum_rejected(self):
-        """Test that canvas_polling_interval_seconds below 30 is rejected."""
-        with pytest.raises(ValidationError):
-            Settings(canvas_polling_interval_seconds=29)
-
-    def test_canvas_polling_interval_above_maximum_rejected(self):
-        """Test that canvas_polling_interval_seconds above 600 is rejected."""
-        with pytest.raises(ValidationError):
-            Settings(canvas_polling_interval_seconds=601)
-
-    def test_canvas_rate_limit_buffer_boundaries(self):
-        """Test canvas_rate_limit_buffer boundary values."""
-        # Lower bound (ge=10)
-        settings_min = Settings(canvas_rate_limit_buffer=10)
-        assert settings_min.canvas_rate_limit_buffer == 10
-
-        # Upper bound (le=200)
-        settings_max = Settings(canvas_rate_limit_buffer=200)
-        assert settings_max.canvas_rate_limit_buffer == 200
-
-    def test_canvas_rate_limit_buffer_below_minimum_rejected(self):
-        """Test that canvas_rate_limit_buffer below 10 is rejected."""
-        with pytest.raises(ValidationError):
-            Settings(canvas_rate_limit_buffer=9)
-
-    def test_canvas_rate_limit_buffer_above_maximum_rejected(self):
-        """Test that canvas_rate_limit_buffer above 200 is rejected."""
-        with pytest.raises(ValidationError):
-            Settings(canvas_rate_limit_buffer=201)

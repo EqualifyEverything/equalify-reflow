@@ -14,6 +14,7 @@ from ..services.feedback_client import feedback_client
 from ..services.pdf_classifier import classify_pdf, enrich_classification
 from ..services.pipeline_viewer import PipelineViewerService
 from ..services.pipeline_viewer_models import PipelineViewerResult, StepResult
+from ..config import settings
 from ..services.session_store import PipelineSession, session_store
 
 logger = logging.getLogger(__name__)
@@ -22,7 +23,6 @@ router = APIRouter(prefix="/api/v1/pipeline", tags=["Pipeline"])
 
 _HEARTBEAT_INTERVAL_SECONDS = 10
 _SSE_HEARTBEAT = ": heartbeat\n\n"
-_PIPELINE_TIMEOUT_SECONDS = 1800  # 30 min global timeout
 
 
 def _sse_event(event_type: str, data: Any, event_id: int | None = None) -> str:
@@ -120,7 +120,7 @@ async def _run_pipeline(
         session.new_event.set()
 
     try:
-        async with asyncio.timeout(_PIPELINE_TIMEOUT_SECONDS):
+        async with asyncio.timeout(settings.pipeline_timeout_seconds):
             await _pipeline_steps(
                 session, content, filename, images_scale,
                 do_table_structure, ocr_lang_list, doc_upload_task, emit,
@@ -134,7 +134,7 @@ async def _run_pipeline(
         logger.error("Pipeline timed out for session %s", session.session_id)
         emit("error", {"step_name": "pipeline", "message": "Pipeline timed out"})
         session.status = "error"
-        emit("done", {"total_steps": 0, "total_elapsed_ms": _PIPELINE_TIMEOUT_SECONDS * 1000})
+        emit("done", {"total_steps": 0, "total_elapsed_ms": settings.pipeline_timeout_seconds * 1000})
     except Exception as e:
         logger.error("Pipeline crashed for session %s: %s", session.session_id, e, exc_info=True)
         emit("error", {"step_name": "pipeline", "message": str(e)})
@@ -398,11 +398,8 @@ async def _pipeline_steps(
     except Exception:
         logger.warning("Document upload task failed", exc_info=True)
 
-    # Finalize session with results for feedback + reconnect
+    # Finalize session with results for reconnect
     session.result = result
-    session.structure = structure
-    session.section_map = section_map
-    session.document_ref = document_ref
     session.status = "completed"
 
     emit("done", {

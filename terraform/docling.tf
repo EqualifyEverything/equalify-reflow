@@ -462,6 +462,25 @@ resource "aws_appautoscaling_policy" "docling_scale_out" {
   }
 }
 
+resource "aws_appautoscaling_policy" "docling_scale_in" {
+  name               = "${var.project_name}-docling-scale-in"
+  policy_type        = "StepScaling"
+  resource_id        = aws_appautoscaling_target.docling.resource_id
+  scalable_dimension = aws_appautoscaling_target.docling.scalable_dimension
+  service_namespace  = aws_appautoscaling_target.docling.service_namespace
+
+  step_scaling_policy_configuration {
+    adjustment_type         = "ExactCapacity"
+    cooldown                = 300
+    metric_aggregation_type = "Maximum"
+
+    step_adjustment {
+      scaling_adjustment          = 0
+      metric_interval_upper_bound = 0
+    }
+  }
+}
+
 resource "aws_cloudwatch_metric_alarm" "docling_jobs" {
   alarm_name          = "${var.project_name}-docling-jobs-in-processing"
   comparison_operator = "GreaterThanOrEqualToThreshold"
@@ -475,6 +494,7 @@ resource "aws_cloudwatch_metric_alarm" "docling_jobs" {
   treat_missing_data  = "notBreaching" # Silence = no jobs = don't alarm
 
   alarm_actions = [aws_appautoscaling_policy.docling_scale_out.arn]
+  ok_actions    = [aws_appautoscaling_policy.docling_scale_in.arn]
 
   tags = {
     Name = "${var.project_name}-docling-scaling-alarm"

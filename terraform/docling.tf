@@ -536,3 +536,35 @@ resource "aws_cloudwatch_metric_alarm" "docling_idle" {
     Name = "${var.project_name}-docling-scale-in-alarm"
   }
 }
+
+# ---------------------------------------------------------------------------
+# Scheduled Scaling — Business hours warm, nights/weekends cold
+# ---------------------------------------------------------------------------
+
+# Scale up to 1 at 8am CT (13:00 UTC) Mon-Fri
+resource "aws_appautoscaling_scheduled_action" "docling_morning" {
+  name               = "${var.project_name}-docling-morning-warmup"
+  service_namespace  = aws_appautoscaling_target.docling.service_namespace
+  resource_id        = aws_appautoscaling_target.docling.resource_id
+  scalable_dimension = aws_appautoscaling_target.docling.scalable_dimension
+  schedule           = "cron(0 13 ? * MON-FRI *)"
+
+  scalable_target_action {
+    min_capacity = 1
+    max_capacity = var.docling_max_capacity
+  }
+}
+
+# Scale down to 0 at 6pm CT (23:00 UTC) Mon-Fri
+resource "aws_appautoscaling_scheduled_action" "docling_evening" {
+  name               = "${var.project_name}-docling-evening-scaledown"
+  service_namespace  = aws_appautoscaling_target.docling.service_namespace
+  resource_id        = aws_appautoscaling_target.docling.resource_id
+  scalable_dimension = aws_appautoscaling_target.docling.scalable_dimension
+  schedule           = "cron(0 23 ? * MON-FRI *)"
+
+  scalable_target_action {
+    min_capacity = 0
+    max_capacity = var.docling_max_capacity
+  }
+}

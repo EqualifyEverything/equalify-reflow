@@ -5,7 +5,7 @@
 services:
   # LocalStack - Local AWS cloud stack for development
   localstack:
-    image: localstack/localstack:latest
+    image: localstack/localstack:4.12.0
     container_name: equalify-pdf-localstack
     restart: unless-stopped
     ports:
@@ -20,6 +20,7 @@ services:
       - AWS_SECRET_ACCESS_KEY=test
       - AWS_DEFAULT_REGION=us-east-1
       - SKIP_SSL_CERT_DOWNLOAD=1
+      - LOCALSTACK_ACKNOWLEDGE_ACCOUNT_REQUIREMENT=1
       - TMPDIR=/tmp/localstack
     volumes:
       - ./infrastructure/localstack/init-aws.sh:/etc/localstack/init/ready.d/init-aws.sh:ro

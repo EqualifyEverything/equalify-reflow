@@ -221,6 +221,29 @@ variable "docling_max_capacity" {
   default     = 2
 }
 
+# Blue-Green Deployment Configuration
+variable "deployment_strategy" {
+  description = "CodeDeploy traffic shifting strategy for blue-green deployments"
+  type        = string
+  default     = "CodeDeployDefault.ECSAllAtOnce"
+  validation {
+    condition = contains([
+      "CodeDeployDefault.ECSAllAtOnce",
+      "CodeDeployDefault.ECSCanary10Percent5Minutes",
+      "CodeDeployDefault.ECSCanary10Percent15Minutes",
+      "CodeDeployDefault.ECSLinear10PercentEvery1Minute",
+      "CodeDeployDefault.ECSLinear10PercentEvery3Minutes",
+    ], var.deployment_strategy)
+    error_message = "Must be a valid CodeDeploy ECS deployment config name."
+  }
+}
+
+variable "deployment_termination_wait_minutes" {
+  description = "Minutes to wait before terminating old tasks after traffic shift (must exceed max SSE stream duration of 5 min)"
+  type        = number
+  default     = 10
+}
+
 # Tags
 variable "additional_tags" {
   description = "Additional tags to apply to all resources"

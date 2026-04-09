@@ -171,15 +171,7 @@ resource "aws_ecs_service" "app" {
   }
 
   deployment_controller {
-    type = "ECS"
-  }
-
-  deployment_maximum_percent         = 200
-  deployment_minimum_healthy_percent = 100
-
-  deployment_circuit_breaker {
-    enable   = true
-    rollback = true
+    type = "CODE_DEPLOY"
   }
 
   # Wait for ALB to be ready
@@ -189,6 +181,11 @@ resource "aws_ecs_service" "app" {
     aws_iam_role_policy.ecs_task_cloudwatch,
     aws_cloudwatch_log_group.ecs_exec_logs
   ]
+
+  # CodeDeploy manages task_definition and load_balancer after initial creation
+  lifecycle {
+    ignore_changes = [task_definition, load_balancer]
+  }
 
   tags = {
     Name = "${var.project_name}-service"

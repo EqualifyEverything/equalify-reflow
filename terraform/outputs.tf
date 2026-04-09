@@ -112,6 +112,17 @@ output "bedrock_model_id" {
   value       = var.ai_provider == "bedrock" ? var.bedrock_model_id : "N/A"
 }
 
+# CodeDeploy
+output "codedeploy_app_name" {
+  description = "CodeDeploy application name"
+  value       = aws_codedeploy_app.app.name
+}
+
+output "codedeploy_deployment_group" {
+  description = "CodeDeploy deployment group name"
+  value       = aws_codedeploy_deployment_group.app.deployment_group_name
+}
+
 # Deployment information
 output "deployment_info" {
   description = "Key information for deployment"
@@ -119,6 +130,9 @@ output "deployment_info" {
     ecr_repository    = aws_ecr_repository.app.repository_url
     ecs_cluster       = aws_ecs_cluster.main.name
     ecs_service       = aws_ecs_service.app.name
+    codedeploy_app    = aws_codedeploy_app.app.name
+    codedeploy_group  = aws_codedeploy_deployment_group.app.deployment_group_name
+    deployment_type   = "blue-green"
     application_url   = var.domain_name != "" ? "https://${var.domain_name}" : "http://${aws_lb.main.dns_name}"
     alb_dns_name      = aws_lb.main.dns_name
     region            = var.aws_region

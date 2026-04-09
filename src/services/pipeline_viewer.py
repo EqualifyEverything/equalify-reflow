@@ -655,6 +655,7 @@ class PipelineViewerService:
         filename: str,
         images_scale: float,
         do_table_structure: bool,
+        on_cold_start: Callable[[], None] | None = None,
     ) -> None:
         """Run docling-serve extraction + pypdfium2 page rendering, producing v0.
 
@@ -684,6 +685,7 @@ class PipelineViewerService:
             images_scale=images_scale,
             image_export_mode="placeholder",
             md_page_break_placeholder="<!-- PAGE_BREAK -->",
+            on_cold_start=on_cold_start,
         )
         images_task = render_page_images(file_content, scale=images_scale)
         response, page_images = await asyncio.gather(docling_task, images_task)

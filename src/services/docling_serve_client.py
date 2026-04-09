@@ -20,6 +20,7 @@ from __future__ import annotations
 
 import asyncio
 import logging
+from collections.abc import Callable
 from typing import Any
 
 import httpx
@@ -90,6 +91,7 @@ class DoclingServeClient:
         image_export_mode: str = "placeholder",
         max_retries: int = 2,
         timeout: float | None = None,
+        on_cold_start: Callable[[], None] | None = None,
     ) -> DoclingServeResponse:
         """Convert a PDF via docling-serve with retry and circuit breaker.
 
@@ -136,6 +138,7 @@ class DoclingServeClient:
                 image_export_mode=image_export_mode,
                 max_retries=max_retries,
                 timeout=timeout,
+                on_cold_start=on_cold_start,
             )
 
     async def _convert_with_retry(
@@ -154,6 +157,7 @@ class DoclingServeClient:
         image_export_mode: str,
         max_retries: int,
         timeout: float | None = None,
+        on_cold_start: Callable[[], None] | None = None,
     ) -> DoclingServeResponse:
         """Inner retry loop (runs inside the concurrency semaphore)."""
         last_exc: Exception | None = None
@@ -186,6 +190,9 @@ class DoclingServeClient:
                         max_retries + 1,
                         type(exc).__name__,
                     )
+                    if on_cold_start is not None:
+                        on_cold_start()
+                        on_cold_start = None
                     await self._wait_for_healthy(timeout=300.0)
                     continue
                 raise
@@ -215,6 +222,9 @@ class DoclingServeClient:
                         logger.warning(
                             "docling-serve 503 (cold start?), waiting for healthy...",
                         )
+                        if on_cold_start is not None:
+                            on_cold_start()
+                            on_cold_start = None  # fire only once
                         await self._wait_for_healthy(timeout=300.0)
                         continue
                     raise

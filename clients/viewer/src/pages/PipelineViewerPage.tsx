@@ -294,6 +294,7 @@ export function PipelineViewerPage() {
     error,
     processing,
     currentStepName,
+    statusMessage,
     processFile,
     reset,
   } = usePipelineViewer();
@@ -520,7 +521,13 @@ export function PipelineViewerPage() {
                 <div className="flex flex-col items-center gap-4">
                   <Loader2 className="w-10 h-10 animate-spin text-uic-blue" />
                   <p className="text-muted-foreground">Extracting document content...</p>
-                  <p className="text-xs text-muted-foreground">Processing time depends on document length and complexity</p>
+                  {statusMessage ? (
+                    <div className="bg-amber-50 border border-amber-200 rounded-lg px-4 py-3 max-w-md text-center">
+                      <p className="text-sm text-amber-800">{statusMessage}</p>
+                    </div>
+                  ) : (
+                    <p className="text-xs text-muted-foreground">Processing time depends on document length and complexity</p>
+                  )}
                 </div>
               ) : error ? (
                 <div className="max-w-md text-center">

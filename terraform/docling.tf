@@ -132,13 +132,29 @@ resource "aws_autoscaling_group" "docling" {
       }
 
       override {
-        instance_type = "g4dn.2xlarge" # fallback
+        instance_type = "g4dn.2xlarge"
+      }
+
+      override {
+        instance_type = "g5.xlarge"
+      }
+
+      override {
+        instance_type = "g5.2xlarge"
+      }
+
+      override {
+        instance_type = "g6.xlarge"
+      }
+
+      override {
+        instance_type = "g6.2xlarge"
       }
     }
 
     instances_distribution {
       on_demand_base_capacity                  = 0
-      on_demand_percentage_above_base_capacity = 0
+      on_demand_percentage_above_base_capacity = 10 # Fall back to on-demand if all Spot pools empty
       spot_allocation_strategy                 = "capacity-optimized"
     }
   }
@@ -484,7 +500,7 @@ resource "aws_appautoscaling_policy" "docling_scale_in" {
 resource "aws_cloudwatch_metric_alarm" "docling_jobs" {
   alarm_name          = "${var.project_name}-docling-jobs-in-processing"
   comparison_operator = "GreaterThanOrEqualToThreshold"
-  evaluation_periods  = 1
+  evaluation_periods  = 5
   metric_name         = "JobsInProcessing"
   namespace           = "EqualifyPDF"
   period              = 60

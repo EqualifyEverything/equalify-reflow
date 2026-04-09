@@ -203,8 +203,14 @@ async def _pipeline_steps(
     result.warnings = classification.warning_messages
 
     # Step 1: Docling extraction
+    def _on_cold_start() -> None:
+        emit("status", {
+            "message": "GPU service is starting up. This may take a few minutes...",
+            "type": "cold_start",
+        })
+
     try:
-        await service._step_docling(result, content, filename, images_scale, do_table_structure)
+        await service._step_docling(result, content, filename, images_scale, do_table_structure, on_cold_start=_on_cold_start)
     except Exception as e:
         logger.error(f"Docling extraction failed: {e}")
         emit("error", {"step_name": "docling", "message": str(e)})

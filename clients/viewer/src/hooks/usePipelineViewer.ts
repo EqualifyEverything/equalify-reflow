@@ -66,6 +66,7 @@ export function usePipelineViewer() {
   const [uploading, setUploading] = useState(false);
   const [processing, setProcessing] = useState(false);
   const [currentStepName, setCurrentStepName] = useState<string | null>(null);
+  const [statusMessage, setStatusMessage] = useState<string | null>(null);
   const [error, setError] = useState<string | null>(null);
   const [sessionId, setSessionId] = useState<string | null>(null);
 
@@ -96,6 +97,7 @@ export function usePipelineViewer() {
         setResult(initData);
         setUploading(false);
         setProcessing(true);
+        setStatusMessage(null);
         break;
       }
 
@@ -119,9 +121,16 @@ export function usePipelineViewer() {
         break;
       }
 
+      case 'status': {
+        const { message } = event.data as { message: string; type: string };
+        setStatusMessage(message);
+        break;
+      }
+
       case 'processing': {
         const { display_name } = event.data as { step_name: string; display_name: string };
         setCurrentStepName(display_name);
+        setStatusMessage(null);
         break;
       }
 
@@ -333,8 +342,9 @@ export function usePipelineViewer() {
     setError(null);
     setProcessing(false);
     setCurrentStepName(null);
+    setStatusMessage(null);
     setSessionId(null);
   }, []);
 
-  return { result, uploading, error, processing, currentStepName, processFile, reset, sessionId, updateVersion };
+  return { result, uploading, error, processing, currentStepName, statusMessage, processFile, reset, sessionId, updateVersion };
 }

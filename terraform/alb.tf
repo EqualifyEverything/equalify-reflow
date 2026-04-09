@@ -108,6 +108,11 @@ resource "aws_lb_listener" "http" {
     # Forward directly if no domain (development mode)
     target_group_arn = var.domain_name == "" ? aws_lb_target_group.app.arn : null
   }
+
+  # CodeDeploy swaps target groups on this listener — don't let Terraform revert it
+  lifecycle {
+    ignore_changes = [default_action]
+  }
 }
 
 # HTTPS Listener (requires ACM certificate)
@@ -124,6 +129,11 @@ resource "aws_lb_listener" "https" {
   default_action {
     type             = "forward"
     target_group_arn = aws_lb_target_group.app.arn
+  }
+
+  # CodeDeploy swaps target groups on this listener — don't let Terraform revert it
+  lifecycle {
+    ignore_changes = [default_action]
   }
 
   tags = {

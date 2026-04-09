@@ -497,22 +497,42 @@ resource "aws_appautoscaling_policy" "docling_scale_in" {
   }
 }
 
+# Scale-out alarm: react immediately (1 evaluation period)
 resource "aws_cloudwatch_metric_alarm" "docling_jobs" {
   alarm_name          = "${var.project_name}-docling-jobs-in-processing"
   comparison_operator = "GreaterThanOrEqualToThreshold"
-  evaluation_periods  = 5
+  evaluation_periods  = 1
   metric_name         = "JobsInProcessing"
   namespace           = "EqualifyPDF"
   period              = 60
   statistic           = "Maximum"
   threshold           = 1
   alarm_description   = "Scale out docling when jobs are being processed"
-  treat_missing_data  = "notBreaching" # Silence = no jobs = don't alarm
+  treat_missing_data  = "notBreaching"
 
   alarm_actions = [aws_appautoscaling_policy.docling_scale_out.arn]
-  ok_actions    = [aws_appautoscaling_policy.docling_scale_in.arn]
 
   tags = {
-    Name = "${var.project_name}-docling-scaling-alarm"
+    Name = "${var.project_name}-docling-scale-out-alarm"
+  }
+}
+
+# Scale-in alarm: wait 5 minutes of zero before scaling down (warm buffer)
+resource "aws_cloudwatch_metric_alarm" "docling_idle" {
+  alarm_name          = "${var.project_name}-docling-idle"
+  comparison_operator = "LessThanThreshold"
+  evaluation_periods  = 5
+  metric_name         = "JobsInProcessing"
+  namespace           = "EqualifyPDF"
+  period              = 60
+  statistic           = "Maximum"
+  threshold           = 1
+  alarm_description   = "Scale in docling after 5 minutes idle"
+  treat_missing_data  = "breaching" # No data = no jobs = should scale in
+
+  alarm_actions = [aws_appautoscaling_policy.docling_scale_in.arn]
+
+  tags = {
+    Name = "${var.project_name}-docling-scale-in-alarm"
   }
 }

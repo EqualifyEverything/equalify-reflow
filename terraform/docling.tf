@@ -154,7 +154,7 @@ resource "aws_autoscaling_group" "docling" {
 
     instances_distribution {
       on_demand_base_capacity                  = 0
-      on_demand_percentage_above_base_capacity = 10 # Fall back to on-demand if all Spot pools empty
+      on_demand_percentage_above_base_capacity = 100 # On-demand only — Spot GPU unavailable in us-east-1a/1b
       spot_allocation_strategy                 = "capacity-optimized"
     }
   }

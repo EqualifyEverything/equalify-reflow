@@ -242,7 +242,7 @@ class TimeoutWorker:
     async def _publish_scaling_metrics(self) -> None:
         """Publish jobs-in-processing count to CloudWatch for docling auto-scaling."""
         try:
-            redis = self.job_service._redis
+            redis = self.job_service.redis
             raw = await redis.get("eq-pdf:metrics:jobs_in_processing")
             count = max(0, int(raw or 0))
 

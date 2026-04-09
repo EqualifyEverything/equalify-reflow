@@ -20,8 +20,7 @@ class TestConfigurationValidation:
         assert settings.max_file_size_mb > 0
         assert settings.approval_timeout_hours > 0
         assert settings.redis_max_connections > 0
-        assert settings.confidence_threshold_high >= 0.0
-        assert settings.confidence_threshold_medium >= 0.0
+        assert settings.pii_confidence_threshold >= 0.0
 
     def test_negative_timeout_rejected(self):
         """Test that negative timeout values are rejected."""
@@ -94,9 +93,8 @@ class TestConfigurationValidation:
     def test_invalid_confidence_thresholds(self):
         """Test invalid confidence threshold values."""
         invalid_thresholds = [
-            {"confidence_threshold_high": -0.1},  # Below 0
-            {"confidence_threshold_high": 1.5},  # Above 1
-            {"confidence_threshold_medium": 2.0},  # Above 1
+            {"pii_confidence_threshold": -0.1},  # Below 0
+            {"pii_confidence_threshold": 1.5},  # Above 1
         ]
 
         for invalid_config in invalid_thresholds:
@@ -113,11 +111,11 @@ class TestConfigurationValidation:
     def test_confidence_threshold_boundaries(self):
         """Test confidence threshold boundary values."""
         # Test exact boundaries
-        settings_zero = Settings(confidence_threshold_high=0.0)
-        settings_one = Settings(confidence_threshold_high=1.0)
+        settings_zero = Settings(pii_confidence_threshold=0.0)
+        settings_one = Settings(pii_confidence_threshold=1.0)
 
-        assert settings_zero.confidence_threshold_high == 0.0
-        assert settings_one.confidence_threshold_high == 1.0
+        assert settings_zero.pii_confidence_threshold == 0.0
+        assert settings_one.pii_confidence_threshold == 1.0
 
     def test_invalid_redis_url_format(self):
         """Test invalid Redis URL formats."""

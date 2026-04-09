@@ -47,6 +47,8 @@ fi
 ECR_REPO=$(terraform output -raw ecr_repository_url)
 ECS_CLUSTER=$(terraform output -raw ecs_cluster_name)
 ECS_SERVICE=$(terraform output -raw ecs_service_name)
+CODEDEPLOY_APP=$(terraform output -raw codedeploy_app_name)
+CODEDEPLOY_GROUP=$(terraform output -raw codedeploy_deployment_group)
 AWS_REGION=$(terraform output -json deployment_info | jq -r '.region')
 AWS_ACCOUNT_ID=$(aws sts get-caller-identity --query Account --output text)
 
@@ -56,6 +58,8 @@ echo -e "${GREEN}✓ Infrastructure details:${NC}"
 echo "  ECR Repository: $ECR_REPO"
 echo "  ECS Cluster: $ECS_CLUSTER"
 echo "  ECS Service: $ECS_SERVICE"
+echo "  CodeDeploy App: $CODEDEPLOY_APP"
+echo "  CodeDeploy Group: $CODEDEPLOY_GROUP"
 echo "  AWS Region: $AWS_REGION"
 echo "  AWS Account: $AWS_ACCOUNT_ID"
 echo ""
@@ -103,35 +107,103 @@ docker push ${ECR_REPO}:${IMAGE_TAG}
 echo -e "${GREEN}✓ Images pushed to ECR${NC}"
 echo ""
 
-# Update ECS service
-echo -e "${BLUE}Step 6: Deploying to ECS${NC}"
-echo "⏳ Triggering ECS deployment..."
-echo ""
+# Register new task definition with the specific image tag
+echo -e "${BLUE}Step 6: Registering New Task Definition${NC}"
 
-aws ecs update-service \
-    --cluster ${ECS_CLUSTER} \
-    --service ${ECS_SERVICE} \
-    --force-new-deployment \
-    --region ${AWS_REGION} \
-    --no-cli-pager
-
-echo -e "${GREEN}✓ ECS deployment triggered${NC}"
-echo ""
-
-# Wait for deployment
-echo -e "${BLUE}Step 7: Waiting for Deployment${NC}"
-echo "⏳ This may take 3-5 minutes..."
-echo "You can watch progress in AWS Console:"
-echo "https://us-east-1.console.aws.amazon.com/ecs/v2/clusters/${ECS_CLUSTER}/services/${ECS_SERVICE}"
-echo ""
-
-# Wait for service to stabilize
-aws ecs wait services-stable \
+# Get current task definition from the running service
+TASK_DEF_ARN=$(aws ecs describe-services \
     --cluster ${ECS_CLUSTER} \
     --services ${ECS_SERVICE} \
+    --region ${AWS_REGION} \
+    --query 'services[0].taskDefinition' \
+    --output text)
+
+# Get current task definition JSON and update the image
+TASK_DEF_JSON=$(aws ecs describe-task-definition \
+    --task-definition ${TASK_DEF_ARN} \
+    --region ${AWS_REGION} \
+    --query 'taskDefinition' \
+    --output json)
+
+# Update image tag and strip read-only fields for registration
+NEW_TASK_DEF=$(echo $TASK_DEF_JSON | jq \
+    --arg IMAGE "${ECR_REPO}:${IMAGE_TAG}" \
+    '.containerDefinitions[0].image = $IMAGE |
+     del(.taskDefinitionArn, .revision, .status, .requiresAttributes, .compatibilities, .registeredAt, .registeredBy)')
+
+NEW_TASK_DEF_ARN=$(aws ecs register-task-definition \
+    --cli-input-json "$NEW_TASK_DEF" \
+    --region ${AWS_REGION} \
+    --query 'taskDefinition.taskDefinitionArn' \
+    --output text)
+
+echo -e "${GREEN}✓ New task definition: ${NEW_TASK_DEF_ARN}${NC}"
+echo ""
+
+# Create CodeDeploy blue-green deployment
+echo -e "${BLUE}Step 7: Creating Blue-Green Deployment${NC}"
+
+CONTAINER_NAME="api-gateway"
+CONTAINER_PORT=${CONTAINER_PORT:-8080}
+
+# Build AppSpec for CodeDeploy
+APPSPEC_CONTENT=$(jq -n \
+    --arg TASK_DEF "${NEW_TASK_DEF_ARN}" \
+    --arg CONTAINER "${CONTAINER_NAME}" \
+    --argjson PORT ${CONTAINER_PORT} \
+    '{
+      version: 0.0,
+      Resources: [{
+        TargetService: {
+          Type: "AWS::ECS::Service",
+          Properties: {
+            TaskDefinition: $TASK_DEF,
+            LoadBalancerInfo: {
+              ContainerName: $CONTAINER,
+              ContainerPort: $PORT
+            }
+          }
+        }
+      }]
+    }')
+
+# Create the deployment
+DEPLOYMENT_ID=$(aws deploy create-deployment \
+    --application-name ${CODEDEPLOY_APP} \
+    --deployment-group-name ${CODEDEPLOY_GROUP} \
+    --revision "{\"revisionType\": \"AppSpecContent\", \"appSpecContent\": {\"content\": $(echo $APPSPEC_CONTENT | jq -Rs '.')}}" \
+    --region ${AWS_REGION} \
+    --query 'deploymentId' \
+    --output text)
+
+echo -e "${GREEN}✓ Deployment created: ${DEPLOYMENT_ID}${NC}"
+echo ""
+echo "You can watch progress in AWS Console:"
+echo "https://${AWS_REGION}.console.aws.amazon.com/codesuite/codedeploy/deployments/${DEPLOYMENT_ID}"
+echo ""
+
+# Wait for deployment to complete
+echo -e "${BLUE}Step 8: Waiting for Blue-Green Deployment${NC}"
+echo "⏳ This may take 5-15 minutes (includes traffic shifting + termination wait)..."
+echo ""
+
+aws deploy wait deployment-successful \
+    --deployment-id ${DEPLOYMENT_ID} \
     --region ${AWS_REGION}
 
-echo -e "${GREEN}✓ Deployment complete!${NC}"
+DEPLOY_STATUS=$?
+
+if [ $DEPLOY_STATUS -ne 0 ]; then
+    echo -e "${RED}✗ Deployment failed or timed out!${NC}"
+    echo ""
+    echo "Check deployment status:"
+    echo "  aws deploy get-deployment --deployment-id ${DEPLOYMENT_ID} --region ${AWS_REGION}"
+    echo ""
+    echo "Deployment logs saved to: $LOG_FILE"
+    exit 1
+fi
+
+echo -e "${GREEN}✓ Blue-green deployment complete!${NC}"
 echo ""
 
 # Get ALB URL from Terraform
@@ -143,6 +215,9 @@ echo ""
 echo -e "${GREEN}========================================${NC}"
 echo -e "${GREEN}Deployment Successful!${NC}"
 echo -e "${GREEN}========================================${NC}"
+echo ""
+echo -e "${BLUE}Deployment ID:${NC}"
+echo "  $DEPLOYMENT_ID"
 echo ""
 echo -e "${BLUE}Application URL:${NC}"
 echo "  $ALB_URL"

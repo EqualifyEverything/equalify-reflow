@@ -172,6 +172,33 @@ resource "aws_iam_policy" "ecs_exec_access" {
   }
 }
 
+# CodeDeploy Service Role (for blue-green ECS deployments)
+resource "aws_iam_role" "codedeploy" {
+  name = "${var.project_name}-codedeploy-role"
+
+  assume_role_policy = jsonencode({
+    Version = "2012-10-17"
+    Statement = [
+      {
+        Action = "sts:AssumeRole"
+        Effect = "Allow"
+        Principal = {
+          Service = "codedeploy.amazonaws.com"
+        }
+      }
+    ]
+  })
+
+  tags = {
+    Name = "${var.project_name}-codedeploy-role"
+  }
+}
+
+resource "aws_iam_role_policy_attachment" "codedeploy_ecs" {
+  role       = aws_iam_role.codedeploy.name
+  policy_arn = "arn:aws:iam::aws:policy/AWSCodeDeployRoleForECS"
+}
+
 # Output the policy ARN so you know what to attach to users
 # You'll manually attach this to IAM users who need exec access
 output "ecs_exec_policy_arn" {

@@ -10,11 +10,14 @@ from typing import Any
 from fastapi import APIRouter, File, Form, HTTPException, Query, UploadFile
 from fastapi.responses import StreamingResponse
 
+import redis.asyncio as aioredis
+
 from ..services.feedback_client import feedback_client
 from ..services.pdf_classifier import classify_pdf, enrich_classification
 from ..services.pipeline_viewer import PipelineViewerService
 from ..services.pipeline_viewer_models import PipelineViewerResult, StepResult
 from ..config import settings
+from ..dependencies import _get_redis_pool
 from ..services.session_store import PipelineSession, session_store
 
 logger = logging.getLogger(__name__)
@@ -119,6 +122,13 @@ async def _run_pipeline(
         session.event_buffer.append(sse_text)
         session.new_event.set()
 
+    # Increment jobs_in_processing so docling GPU auto-scales
+    redis_client = aioredis.Redis(connection_pool=_get_redis_pool())
+    try:
+        await redis_client.incr("eq-pdf:metrics:jobs_in_processing")
+    except Exception:
+        logger.warning("Failed to increment jobs_in_processing counter")
+
     try:
         async with asyncio.timeout(settings.pipeline_timeout_seconds):
             await _pipeline_steps(
@@ -140,6 +150,11 @@ async def _run_pipeline(
         emit("error", {"step_name": "pipeline", "message": str(e)})
         session.status = "error"
         emit("done", {"total_steps": 0, "total_elapsed_ms": 0})
+    finally:
+        try:
+            await redis_client.decr("eq-pdf:metrics:jobs_in_processing")
+        except Exception:
+            logger.warning("Failed to decrement jobs_in_processing counter")
 
 
 async def _pipeline_steps(

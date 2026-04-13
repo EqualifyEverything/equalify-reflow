@@ -11,14 +11,13 @@ terraform {
     }
   }
 
-  # Uncomment for remote state (recommended for team collaboration)
-  # backend "s3" {
-  #   bucket         = "equalify-terraform-state"
-  #   key            = "pdf-converter/terraform.tfstate"
-  #   region         = "us-east-1"
-  #   encrypt        = true
-  #   dynamodb_table = "terraform-state-lock"
-  # }
+  backend "s3" {
+    bucket         = "equalify-reflow-terraform-state"
+    key            = "pdf-converter/terraform.tfstate"
+    region         = "us-east-1"
+    encrypt        = true
+    dynamodb_table = "terraform-state-lock"
+  }
 }
 
 provider "aws" {

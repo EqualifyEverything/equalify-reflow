@@ -173,6 +173,10 @@ resource "aws_autoscaling_group" "docling" {
 
   lifecycle {
     create_before_destroy = true
+    # desired_capacity is managed by the ECS capacity provider (responding to
+    # scaling policies and scheduled actions on aws_appautoscaling_target.docling).
+    # Without this, terraform reverts in-flight scale events back to the code default.
+    ignore_changes = [desired_capacity]
   }
 }
 
@@ -457,6 +461,13 @@ resource "aws_appautoscaling_target" "docling" {
   resource_id        = "service/${aws_ecs_cluster.main.name}/${aws_ecs_service.docling.name}"
   scalable_dimension = "ecs:service:DesiredCount"
   service_namespace  = "ecs"
+
+  lifecycle {
+    # min_capacity is managed by docling_morning/evening scheduled actions
+    # (1 during 8am-6pm CT weekdays, 0 otherwise). Without this, terraform
+    # reverts the in-flight scheduled state on every plan/apply.
+    ignore_changes = [min_capacity]
+  }
 }
 
 resource "aws_appautoscaling_policy" "docling_scale_out" {

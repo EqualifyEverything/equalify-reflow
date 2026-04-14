@@ -1,98 +1,38 @@
-# Environment Setup - Simplified Guide
+# Environment Setup
+
+Local development setup for the Equalify PDF Converter.
 
 ## TL;DR
 
-**Local Development:**
 ```bash
 make dev          # Everything just works
 ```
 
-**AWS Operations:**
-```bash
-# One-time setup
-cp .aws-config-example ~/.aws/config  # Merge with existing config
-aws sso login --profile uic
+The stack (API Gateway, Redis, LocalStack-as-S3, docling-serve, observability) runs in Docker Compose and hot-reloads on source changes.
 
-# Then use Makefile commands (auto-login if token expires!)
-make aws-health   # Check deployment
-make aws-logs     # View logs
-make aws-status   # ECS status
-make aws-shell    # Connect to ECS container (requires session-manager-plugin)
-```
+## Prerequisites
 
----
+- Docker (Desktop or Engine)
+- `uv` (Python package manager) — `curl -LsSf https://astral.sh/uv/install.sh | sh`
+- Optional: AWS SSO profile for Bedrock access (see "AI / Bedrock" below)
 
-## The Key Insight
-
-Your project has **two separate worlds** that don't need to interact:
-
-### 🏠 Local Development World
-- **Docker Compose** runs everything
-- **.env file** configures containers
-- **LocalStack** is inside Docker network (`localstack:4566`)
-- **You interact through:** `make dev`, `curl localhost:8080`, `make test`
-
-### ☁️ AWS Production World
-- **AWS CLI** manages real infrastructure
-- **AWS Profiles** configure authentication
-- **Real AWS** services in us-east-1
-- **You interact through:** `make aws-*` commands or AWS Console
-
-**These are separate workflows.** You don't "switch" between them - you use different tools.
-
----
-
-## Setup: One-Time Configuration
-
-### Step 1: AWS Profile Configuration
-
-Copy the example to your AWS config:
+## Daily Workflow
 
 ```bash
-cat .aws-config-example >> ~/.aws/config
+make dev          # Start everything
+make test-fast    # Unit tests (~30s)
+make logs-api     # API logs
+make shell        # Exec into API container
+make down         # Stop everything
 ```
 
-This adds two profiles:
-- `uic` - Real AWS (your production account)
-- `localstack` - LocalStack (debugging only, rarely needed)
+See `make help` for the full command list.
 
-### Step 2: AWS SSO Login
+**Hot reload:** Edit files under `src/` on the host; the API container picks them up automatically.
 
-```bash
-aws sso login --profile uic
-```
+## GPU-Accelerated Development (Apple Silicon)
 
-That's it. Now all AWS commands work.
-
----
-
-## Daily Workflows
-
-### Local Development
-
-```bash
-# Start everything
-make dev
-
-# Test your changes
-curl http://localhost:8080/health
-make test-fast
-
-# View logs
-make logs-api
-
-# Debug inside container
-make shell
-
-# Stop everything
-make down
-```
-
-**LocalStack is running but you don't directly interact with it.** The app and tests handle it automatically.
-
-### GPU-Accelerated Development (Apple Silicon)
-
-On macOS with Apple Silicon, docling-serve can run natively with MPS (Metal Performance Shaders) GPU acceleration, which is roughly 3-5x faster than the CPU-only Docker container.
+On macOS with Apple Silicon, docling-serve can run natively with MPS (Metal Performance Shaders), roughly 3-5x faster than the CPU-only Docker container.
 
 **One-time setup:**
 
@@ -103,179 +43,41 @@ make docling-install
 **Workflow:**
 
 ```bash
-make docling-native   # Start native docling-serve (MPS/GPU)
-make dev-gpu          # Start Docker stack pointing to native docling
-# ... develop as normal ...
-make down             # Stops everything including native docling
+make dev          # Auto-detects native docling if installed, falls back to Docker
 ```
 
-`make dev` still works for the fully-dockerized CPU mode, which requires no additional setup.
+`make dev-docker` forces the CPU-only Docker path regardless.
 
-### AWS Operations
+## LocalStack
 
-```bash
-# Check deployment health
-make aws-health
+LocalStack provides a local S3 (and related AWS APIs) inside the Docker network. The app talks to it at `localstack:4566` automatically. You almost never need to interact with LocalStack directly — the app and tests handle it.
 
-# View live logs
-make aws-logs
+For occasional host-side debugging, see `make localstack-debug` for AWS CLI examples against LocalStack.
 
-# Check ECS status
-make aws-status
+## AI / Bedrock
 
-# Connect to ECS container (requires session-manager-plugin)
-make aws-shell
+The pipeline uses AWS Bedrock (Claude Haiku) for text correction. For local dev against real Bedrock:
 
-# Deploy changes
-make aws-deploy
-```
+1. Configure an AWS SSO profile locally (any name works — the Makefile defaults to `uic`, override with `AWS_PROFILE=<name> make dev`).
+2. Run `aws sso login --profile <name>` when your token expires.
+3. `make dev` exports the credentials into the API container automatically.
 
-**Auto-login:** All AWS commands automatically detect expired SSO tokens and prompt you to login. No need to manually check or run `aws sso login` first!
+If Bedrock credentials are not available, the stack still starts but LLM-dependent code paths will fail.
 
-All AWS commands automatically use `AWS_PROFILE=uic` (set in Makefile).
+## Environment Variables
 
----
+The app reads configuration via Pydantic Settings (see `src/config.py`). The Docker Compose files wire sensible defaults for local dev; you generally don't need a `.env` file unless you want to override something.
 
-## Why This Works
-
-### The `.env` File (Don't Source It!)
-
-Your `.env` is **only for Docker Compose**:
-
-```bash
-# .env - Docker Compose reads this automatically
-AWS_ENDPOINT_URL=http://localstack:4566  # ← Docker DNS name
-```
-
-**Never run:** `source .env` in your shell ❌
-
-The endpoint `localstack:4566` only works inside Docker. From your host, it's `localhost:4566`.
-
-### AWS Profiles (The Right Way)
-
-AWS CLI uses `~/.aws/config`:
-
-```ini
-[profile uic]
-region = us-east-1
-# No endpoint_url = uses real AWS
-
-[profile localstack]
-region = us-east-1
-endpoint_url = http://localhost:4566  # ← Host networking
-```
-
-Commands use: `AWS_PROFILE=uic aws ...`
-
-This is **AWS's native feature**, works on all platforms (Windows/Mac/Linux).
-
----
-
-## Advanced: When You'd Use Each Profile
-
-### `AWS_PROFILE=uic` (Most Common)
-
-```bash
-# Check ECS services
-AWS_PROFILE=uic aws ecs describe-services ...
-
-# View logs
-AWS_PROFILE=uic aws logs tail /ecs/equalify-pdf --follow
-
-# Manage S3
-AWS_PROFILE=uic aws s3 ls s3://equalify-pdf-temp-380610849750/
-```
-
-**Or just use Makefile:** `make aws-logs`, `make aws-status`, etc.
-
-### `AWS_PROFILE=localstack` (Rarely Needed)
-
-Only for debugging LocalStack from your host machine:
-
-```bash
-# List LocalStack S3 buckets (from host)
-AWS_PROFILE=localstack aws s3 ls
-
-# Check what's in temp bucket
-AWS_PROFILE=localstack aws s3 ls s3://equalify-pdf-temp/
-```
-
-**But usually you'd just:**
-```bash
-# Check via the API
-curl http://localhost:8080/health
-
-# Or exec into container
-docker exec -it equalify-pdf-api-gateway bash
-# Now you're inside Docker network, can use localstack:4566
-```
-
----
+**Never source `.env` into your shell** — it's Docker Compose-only. `AWS_ENDPOINT_URL=http://localstack:4566` only resolves inside the Docker network.
 
 ## Troubleshooting
 
-### "Could not connect to endpoint URL: http://localstack:4566"
-
-**Problem:** You're trying to use AWS CLI from host with Docker DNS name.
-
-**Solution:**
-```bash
-# If you need to debug LocalStack from host:
-AWS_PROFILE=localstack aws s3 ls  # Uses localhost:4566
-
-# Or just use the app:
-curl http://localhost:8080/api/...
-```
-
-### "The security token is invalid"
-
-**Problem:** AWS SSO session expired.
-
-**Solution:**
-```bash
-aws sso login --profile uic
-```
-
-**Note:** All `make aws-*` commands now handle this automatically! If your token is expired, the Makefile will detect it, prompt you to login, and retry the command.
-
-### "Which environment am I in?"
-
-**You're not "in" an environment.** You're using different tools:
-
-```bash
-# Local development
-make dev          # Docker world
-curl localhost:8080
-
-# AWS operations
-make aws-health   # AWS world
-```
-
-They're separate workflows, not modes to switch between.
-
----
+- **"Could not connect to endpoint URL: http://localstack:4566"** — you're running a command from the host that expects Docker DNS. Use `docker exec` or the `localstack` profile mapped to `http://localhost:4566`.
+- **Bedrock calls failing** — SSO token expired. `aws sso login --profile <name>` and restart the stack.
+- **Dependency changes not picked up** — `make clean && make dev` rebuilds the image.
 
 ## Platform Support
 
-This setup works identically on:
-- ✅ **macOS** (native terminal)
-- ✅ **Linux** (native terminal)
-- ✅ **Windows** (WSL2 required)
-
-**Windows users:** Install WSL2 + Docker Desktop, then follow Linux instructions.
-
----
-
-## Summary: Best Practices
-
-1. ✅ **Never source `.env`** - it's Docker-only
-2. ✅ **Use Makefile commands** - they handle profiles automatically
-3. ✅ **Local and AWS are separate workflows** - don't try to "switch"
-4. ✅ **For manual AWS commands** - use `AWS_PROFILE=uic`
-5. ✅ **Rarely need LocalStack profile** - app and tests handle it
-
-**Most common mistake:** Trying to use `aws` CLI against LocalStack manually. You almost never need to - that's what your app and tests do.
-
----
-
-**Last Updated:** 2025-10-15
+- macOS (native)
+- Linux (native)
+- Windows (WSL2 + Docker Desktop)

@@ -56,7 +56,6 @@ Results available via API or pipeline viewer UI
 | **Monitoring** -- Prometheus metrics, Grafana dashboards, Jaeger tracing | Complete |
 | **Pipeline viewer** -- React UI for upload, step-by-step review, version diff comparison | Complete |
 | **Testing** -- 1133 tests (unit, integration, E2E) | Complete |
-| **AWS deployment** -- ECS Fargate, Terraform, CloudWatch, budget alerts | Complete |
 
 ## Quick Start
 
@@ -125,9 +124,9 @@ docs/                       # Architecture, guides
 
 **Backend:** Python 3.11+, FastAPI, PydanticAI, IBM Docling, Microsoft Presidio, AWS Bedrock (Claude Haiku)
 
-**Infrastructure:** Docker, Redis, AWS S3, AWS ECS Fargate, LocalStack, Terraform
+**Infrastructure (local dev):** Docker, Redis, AWS S3 (via LocalStack), Prometheus + Grafana
 
-**Monitoring:** Prometheus, Grafana, Jaeger (OpenTelemetry), CloudWatch
+**Monitoring:** Prometheus, Grafana, Jaeger (OpenTelemetry)
 
 **Pipeline Viewer:** React 18, TypeScript, Vite, ShadCN/Radix, Tailwind CSS
 
@@ -151,6 +150,5 @@ docs/                       # Architecture, guides
 | [Architecture](docs/architecture.md) | System design, data flows, service layer |
 | [Environment Setup](docs/environment-setup.md) | Complete setup guide |
 | [Testing](docs/ci-cd.md) | Test tiers, CI/CD, GitHub Actions |
-| [AWS Guide](docs/aws-guide.md) | Deployment, operations, cost protection |
 | [Contributing](CONTRIBUTING.md) | Development workflow and standards |
 | [CLAUDE.md](CLAUDE.md) | Instructions for AI-assisted development |

@@ -3,11 +3,11 @@
 # Architecture: Monolith with Background Workers
 # - Single Python application runs FastAPI + background worker threads
 # - Redis provides task queues for async background processing
-# - LocalStack (dev) / AWS (prod) for S3 storage
+# - LocalStack provides S3 for local development
 #
 # Usage:
 #   Development: docker-compose -f docker-compose.yml -f docker-compose.dev.yml up -d
-#   Production:  docker-compose -f docker-compose.yml -f docker-compose.prod.yml up -d
+#   CI:          docker-compose -f docker-compose.yml -f docker-compose.ci.yml up -d
 #
 
 services:

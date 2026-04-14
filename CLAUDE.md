@@ -120,7 +120,7 @@ src/
 ## Technology Stack
 
 **Backend:** Python 3.11+, FastAPI, PydanticAI, docling-serve (sidecar), pypdfium2, Microsoft Presidio, AWS Bedrock (Claude Haiku)
-**Infrastructure:** Docker, Redis, AWS S3, AWS ECS, LocalStack, Prometheus + Grafana
+**Infrastructure (local dev):** Docker, Redis, AWS S3 (via LocalStack), Prometheus + Grafana
 **Testing:** pytest, pytest-asyncio, pytest-xdist, pytest-cov, testcontainers
 
 ## Context7 Library IDs
@@ -141,4 +141,3 @@ For broader project documentation in `docs/`:
 - [Environment Setup](docs/environment-setup.md) - Complete setup guide
 - [CI/CD](docs/ci-cd.md) - GitHub Actions workflows
 - [Contributing](CONTRIBUTING.md) - Development workflow and code standards
-- [AWS Guide](docs/aws-guide.md) - AWS deployment and operations

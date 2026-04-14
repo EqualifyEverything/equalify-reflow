@@ -1,30 +1,21 @@
 #!/bin/bash
 
-# Equalify PDF Converter - Unified Health Check Script
-# Validates infrastructure health in both local and production environments
+# Equalify PDF Converter - Local Health Check Script
+# Validates infrastructure health for the local Docker environment.
 #
 # Usage:
-#   ./scripts/health-check.sh           # Check local Docker environment (default)
-#   ./scripts/health-check.sh --prod    # Check AWS production deployment
-#   ./scripts/health-check.sh --aws     # Same as --prod
+#   ./scripts/health-check.sh           # Check local Docker environment
 
 set -e
 
-# Parse command line arguments
 MODE="local"
 while [[ $# -gt 0 ]]; do
     case $1 in
-        --prod|--aws|--production)
-            MODE="prod"
-            shift
-            ;;
         --help|-h)
-            echo "Equalify PDF Converter - Health Check"
+            echo "Equalify PDF Converter - Local Health Check"
             echo ""
             echo "Usage:"
-            echo "  $0              Check local Docker environment (default)"
-            echo "  $0 --prod       Check AWS production deployment"
-            echo "  $0 --aws        Same as --prod"
+            echo "  $0              Check local Docker environment"
             echo "  $0 --help       Show this help message"
             exit 0
             ;;
@@ -409,205 +400,10 @@ check_local_health() {
 }
 
 # ============================================================================
-# Production/AWS Mode Functions
-# ============================================================================
-
-check_prod_health() {
-    print_header "Equalify PDF Converter - AWS Production Health Check"
-
-    print_info "Starting AWS health checks..."
-    print_info "Time: $(date)"
-    echo ""
-
-    # Set AWS profile for all AWS CLI commands (from environment or default)
-    export AWS_PROFILE=${AWS_PROFILE:-default}
-    print_info "Using AWS profile: $AWS_PROFILE"
-
-    # Check if terraform directory exists
-    if [ ! -d "terraform" ]; then
-        print_failure "Terraform directory not found. Run from project root."
-        exit 1
-    fi
-
-    cd terraform
-
-    # Get infrastructure outputs
-    print_section "Getting Infrastructure Details"
-
-    if ! terraform output > /dev/null 2>&1; then
-        print_failure "Terraform outputs not available. Run 'terraform apply' first."
-        cd ..
-        exit 1
-    fi
-
-    ECS_CLUSTER=$(terraform output -raw ecs_cluster_name 2>/dev/null)
-    ECS_SERVICE=$(terraform output -raw ecs_service_name 2>/dev/null)
-    ALB_URL=$(terraform output -raw alb_url 2>/dev/null)
-
-    if [ -z "$ECS_CLUSTER" ] || [ -z "$ECS_SERVICE" ] || [ -z "$ALB_URL" ]; then
-        print_failure "Could not retrieve terraform outputs"
-        cd ..
-        exit 1
-    fi
-
-    print_info "ECS Cluster: $ECS_CLUSTER"
-    print_info "ECS Service: $ECS_SERVICE"
-    print_info "ALB URL: $ALB_URL"
-
-    cd ..
-
-    # Check ECS Service Status
-    print_section "Checking ECS Service Status"
-    local service_info=$(aws ecs describe-services \
-        --cluster ${ECS_CLUSTER} \
-        --services ${ECS_SERVICE} \
-        --region us-east-1 \
-        --query 'services[0].{DesiredCount:desiredCount,RunningCount:runningCount,Status:status,Deployments:deployments[*].{Status:status,Running:runningCount,Desired:desiredCount,RolloutState:rolloutState}}' \
-        --output json 2>&1)
-
-    if [ $? -eq 0 ]; then
-        print_success "ECS service query successful"
-        echo "$service_info" | jq '.'
-    else
-        print_failure "Failed to query ECS service"
-        return 1
-    fi
-
-    # Check Task Details
-    print_section "Checking Task Details"
-    TASK_ARNS=$(aws ecs list-tasks \
-        --cluster ${ECS_CLUSTER} \
-        --service-name ${ECS_SERVICE} \
-        --region us-east-1 \
-        --query 'taskArns[*]' \
-        --output text 2>&1)
-
-    if [ -z "$TASK_ARNS" ]; then
-        print_failure "No tasks running!"
-    else
-        print_success "Found running tasks"
-        print_info "Tasks: $TASK_ARNS"
-
-        # Get first task ARN for detailed check
-        FIRST_TASK=$(echo $TASK_ARNS | awk '{print $1}')
-
-        print_section "Checking Task Health (first task)"
-        local task_info=$(aws ecs describe-tasks \
-            --cluster ${ECS_CLUSTER} \
-            --tasks ${FIRST_TASK} \
-            --region us-east-1 \
-            --query 'tasks[0].{LastStatus:lastStatus,HealthStatus:healthStatus,StoppedReason:stoppedReason,Containers:containers[*].{Name:name,Status:lastStatus,Health:healthStatus}}' \
-            --output json 2>&1)
-
-        if [ $? -eq 0 ]; then
-            print_success "Task health query successful"
-            echo "$task_info" | jq '.'
-        else
-            print_failure "Failed to query task health"
-        fi
-    fi
-
-    # Check CloudWatch Logs
-    print_section "Recent CloudWatch Logs (last 5 minutes)"
-
-    # Disable exit on error for this section
-    set +e
-    LOG_OUTPUT=$(aws logs tail /ecs/equalify-pdf \
-        --since 5m \
-        --region us-east-1 \
-        --format short 2>&1 | tail -30)
-    LOG_EXIT=$?
-    set -e
-
-    if [ $LOG_EXIT -eq 0 ]; then
-        echo "$LOG_OUTPUT"
-        print_success "CloudWatch logs retrieved"
-    else
-        print_warning "Could not retrieve CloudWatch logs"
-        print_info "Error: $LOG_OUTPUT"
-    fi
-
-    # Test Health Endpoint
-    print_section "Testing Health Endpoint"
-    print_info "URL: ${ALB_URL}/health"
-
-    # Disable exit on error for this section
-    set +e
-    RESPONSE=$(curl -s -w "\nHTTP_CODE:%{http_code}" ${ALB_URL}/health 2>&1)
-    CURL_EXIT=$?
-    set -e
-
-    if [ $CURL_EXIT -ne 0 ]; then
-        print_failure "Failed to connect to health endpoint (curl exit code: $CURL_EXIT)"
-        print_info "Response: $RESPONSE"
-    else
-        HTTP_CODE=$(echo "$RESPONSE" | grep "HTTP_CODE:" | cut -d: -f2 || echo "unknown")
-        BODY=$(echo "$RESPONSE" | grep -v "HTTP_CODE:" || echo "")
-
-        if [ "$HTTP_CODE" = "200" ]; then
-            print_success "Health endpoint returned 200 OK"
-            print_info "Response: $BODY"
-        elif [ "$HTTP_CODE" = "unknown" ]; then
-            print_failure "Could not parse HTTP status code"
-            print_info "Raw response: $RESPONSE"
-        else
-            print_failure "Health endpoint returned HTTP $HTTP_CODE"
-            print_info "Response: $BODY"
-        fi
-    fi
-
-    # Check ALB Target Health
-    print_section "Checking ALB Target Health"
-    cd terraform
-
-    # Disable exit on error for this section
-    set +e
-    TARGET_GROUP_ARN=$(terraform output -json deployment_info 2>/dev/null | jq -r '.alb_target_group // empty')
-    set -e
-
-    if [ -z "$TARGET_GROUP_ARN" ]; then
-        # Fallback: get target group from service
-        set +e
-        TARGET_GROUP_ARN=$(aws elbv2 describe-target-groups \
-            --region us-east-1 \
-            --query "TargetGroups[?TargetGroupName=='equalify-pdf-tg'].TargetGroupArn" \
-            --output text 2>/dev/null)
-        set -e
-    fi
-
-    if [ ! -z "$TARGET_GROUP_ARN" ]; then
-        set +e
-        local target_health=$(aws elbv2 describe-target-health \
-            --target-group-arn ${TARGET_GROUP_ARN} \
-            --region us-east-1 \
-            --query 'TargetHealthDescriptions[*].{Target:Target.Id,Port:Target.Port,State:TargetHealth.State,Reason:TargetHealth.Reason,Description:TargetHealth.Description}' \
-            --output json 2>&1)
-        local aws_exit=$?
-        set -e
-
-        if [ $aws_exit -eq 0 ]; then
-            print_success "Target health query successful"
-            echo "$target_health" | jq '.' 2>/dev/null || echo "$target_health"
-        else
-            print_failure "Failed to query target health"
-            print_info "Error: $target_health"
-        fi
-    else
-        print_warning "Could not find target group ARN"
-    fi
-
-    cd ..
-}
-
-# ============================================================================
 # Main Execution
 # ============================================================================
 
-if [ "$MODE" = "prod" ]; then
-    check_prod_health
-else
-    check_local_health
-fi
+check_local_health
 
 # Summary
 print_header "Health Check Summary"
@@ -627,18 +423,11 @@ else
     echo -e "${RED}Some checks failed!${NC}"
     echo -e "${RED}========================================${NC}"
     echo ""
-    if [ "$MODE" = "local" ]; then
-        echo -e "${YELLOW}Troubleshooting tips:${NC}"
-        echo "  1. Check container logs: docker logs <container-name>"
-        echo "  2. Restart services: docker-compose restart"
-        echo "  3. View full setup: docker-compose ps"
-        echo "  4. Check network: docker network inspect equalify-pdf-network"
-    else
-        echo -e "${YELLOW}Troubleshooting tips:${NC}"
-        echo "  1. Check ECS service: aws ecs describe-services --cluster $ECS_CLUSTER --services $ECS_SERVICE"
-        echo "  2. View logs: make aws-logs"
-        echo "  3. Check task definition: aws ecs describe-task-definition --task-definition equalify-pdf-task"
-    fi
+    echo -e "${YELLOW}Troubleshooting tips:${NC}"
+    echo "  1. Check container logs: docker logs <container-name>"
+    echo "  2. Restart services: docker-compose restart"
+    echo "  3. View full setup: docker-compose ps"
+    echo "  4. Check network: docker network inspect equalify-pdf-network"
     echo ""
     exit 1
 fi

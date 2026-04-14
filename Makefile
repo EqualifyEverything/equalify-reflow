@@ -1,4 +1,4 @@
-.PHONY: help dev dev-docker prod up down logs health test test-fast test-unit test-integration test-concurrent test-e2e test-large-files test-slow test-all clean build build-viewer build-viewer-dev shell test-docker logs-api grafana-url prometheus-url metrics-url coverage coverage-html coverage-report aws-health aws-logs aws-status aws-deploy aws-shell localstack-debug docling-native docling-native-stop docling-install
+.PHONY: help dev dev-docker up down logs health test test-fast test-unit test-integration test-concurrent test-e2e test-large-files test-slow test-all clean build build-viewer build-viewer-dev shell test-docker logs-api grafana-url prometheus-url metrics-url coverage coverage-html coverage-report localstack-debug docling-native docling-native-stop docling-install
 
 # Default target
 help:
@@ -33,9 +33,6 @@ help:
 	@echo "  make shell        - Access API container shell"
 	@echo "  make test-docker  - Run tests inside container"
 	@echo ""
-	@echo "Production:"
-	@echo "  make prod         - Start production environment"
-	@echo ""
 	@echo "Canvas LMS:"
 	@echo "  make canvas       - Start local Canvas LMS"
 	@echo "  make canvas-down  - Stop local Canvas LMS"
@@ -54,12 +51,6 @@ help:
 	@echo "  make grafana-url  - Open Grafana (http://localhost:3001)"
 	@echo "  make prometheus-url - Open Prometheus (http://localhost:9090)"
 	@echo "  make metrics-url  - Open API metrics (http://localhost:8080/metrics)"
-	@echo ""
-	@echo "AWS Operations (requires AWS_PROFILE=uic or aws sso login):"
-	@echo "  make aws-health   - Check AWS deployment health"
-	@echo "  make aws-logs     - Tail CloudWatch logs"
-	@echo "  make aws-status   - Show ECS service status"
-	@echo "  make aws-deploy   - Deploy to AWS (infrastructure + Docker)"
 	@echo ""
 	@echo "Debugging:"
 	@echo "  make localstack-debug - Debug LocalStack from host (rarely needed)"
@@ -181,14 +172,9 @@ docling-native-stop:
 build-viewer-dev:
 	@cd clients/viewer && pnpm install --silent 2>/dev/null && pnpm run build 2>/dev/null || echo "Viewer build skipped"
 
-# Production environment
-prod:
-	docker compose -f docker-compose.yml -f docker-compose.prod.yml up -d
-
 # Stop services
 down:
 	docker compose -f docker-compose.yml -f docker-compose.dev.yml down
-	docker compose -f docker-compose.yml -f docker-compose.prod.yml down
 	@# Stop native docling-serve if running
 	@if [ -f /tmp/docling-serve.pid ]; then \
 		PID=$$(cat /tmp/docling-serve.pid); \
@@ -308,7 +294,6 @@ logs-api:
 clean:
 	docker compose -f docker-compose.yml -f docker-compose.dev.yml down -v
 	docker compose -f docker-compose.yml -f docker-compose.dev.yml -f docker-compose.native-docling.yml down -v
-	docker compose -f docker-compose.yml -f docker-compose.prod.yml down -v
 
 # Observability URLs
 grafana-url:
@@ -361,91 +346,6 @@ canvas-logs:
 	@cd $(CANVAS_DIR) && docker compose logs -f web
 
 # ============================================================================
-# AWS Operations (uses AWS_PROFILE from environment or .env)
-# ============================================================================
-# Note: These commands use AWS CLI profiles from ~/.aws/config
-# Setup: 1) Set AWS_PROFILE in .env, 2) Configure profile in ~/.aws/config
-# Default profile: "default" (change AWS_PROFILE in .env to use a different profile)
-
-AWS_PROFILE ?= default
-
-aws-health:
-	@echo "Checking AWS deployment health..."
-	@AWS_PROFILE=$(AWS_PROFILE) ./scripts/health-check.sh --prod || \
-		(echo "\nCommand failed. Checking if SSO login needed..." && \
-		 AWS_PROFILE=$(AWS_PROFILE) aws sso login && \
-		 echo "Retrying health check..." && \
-		 AWS_PROFILE=$(AWS_PROFILE) ./scripts/health-check.sh --prod)
-
-aws-logs:
-	@echo "Tailing CloudWatch logs (Ctrl+C to exit)..."
-	@AWS_PROFILE=$(AWS_PROFILE) aws logs tail /ecs/equalify-pdf --follow --region us-east-1 || \
-		(echo "\nCommand failed. Checking if SSO login needed..." && \
-		 AWS_PROFILE=$(AWS_PROFILE) aws sso login && \
-		 echo "Retrying log tail..." && \
-		 AWS_PROFILE=$(AWS_PROFILE) aws logs tail /ecs/equalify-pdf --follow --region us-east-1)
-
-aws-status:
-	@echo "ECS Service Status:"
-	@AWS_PROFILE=$(AWS_PROFILE) aws ecs describe-services \
-		--cluster equalify-pdf-cluster \
-		--services equalify-pdf-service \
-		--region us-east-1 \
-		--query 'services[0].{Desired:desiredCount,Running:runningCount,Status:status,Deployment:deployments[0].rolloutState}' \
-		--output table || \
-		(echo "\nCommand failed. Checking if SSO login needed..." && \
-		 AWS_PROFILE=$(AWS_PROFILE) aws sso login && \
-		 echo "Retrying status check..." && \
-		 AWS_PROFILE=$(AWS_PROFILE) aws ecs describe-services \
-			--cluster equalify-pdf-cluster \
-			--services equalify-pdf-service \
-			--region us-east-1 \
-			--query 'services[0].{Desired:desiredCount,Running:runningCount,Status:status,Deployment:deployments[0].rolloutState}' \
-			--output table)
-
-aws-deploy:
-	@echo "Deploying to AWS..."
-	@./scripts/deploy-infrastructure.sh && ./scripts/deploy-app.sh
-
-aws-shell:
-	@echo "Connecting to ECS container..."
-	@if ! command -v session-manager-plugin >/dev/null 2>&1; then \
-		echo "Error: AWS Session Manager plugin not found."; \
-		echo ""; \
-		echo "Install with: brew install --cask session-manager-plugin"; \
-		echo ""; \
-		echo "More info: https://docs.aws.amazon.com/systems-manager/latest/userguide/session-manager-working-with-install-plugin.html"; \
-		exit 1; \
-	fi
-	@(TASK_ARN=$$(AWS_PROFILE=$(AWS_PROFILE) aws ecs list-tasks \
-		--cluster equalify-pdf-cluster \
-		--service-name equalify-pdf-service \
-		--region us-east-1 \
-		--query 'taskArns[0]' \
-		--output text) && \
-	AWS_PROFILE=$(AWS_PROFILE) aws ecs execute-command \
-		--cluster equalify-pdf-cluster \
-		--task $$TASK_ARN \
-		--container api-gateway \
-		--interactive \
-		--command "/bin/bash") || \
-		(echo "\nCommand failed. Checking if SSO login needed..." && \
-		 AWS_PROFILE=$(AWS_PROFILE) aws sso login && \
-		 echo "Retrying shell connection..." && \
-		 TASK_ARN=$$(AWS_PROFILE=$(AWS_PROFILE) aws ecs list-tasks \
-			--cluster equalify-pdf-cluster \
-			--service-name equalify-pdf-service \
-			--region us-east-1 \
-			--query 'taskArns[0]' \
-			--output text) && \
-		 AWS_PROFILE=$(AWS_PROFILE) aws ecs execute-command \
-			--cluster equalify-pdf-cluster \
-			--task $$TASK_ARN \
-			--container api-gateway \
-			--interactive \
-			--command "/bin/bash")
-
-# ============================================================================
 # LocalStack Debugging (from host)
 # ============================================================================
 # Note: Rarely needed - most debugging happens via app or docker exec
@@ -461,4 +361,4 @@ localstack-debug:
 	@echo "  AWS_PROFILE=localstack aws s3 ls s3://equalify-pdf-temp/"
 	@echo ""
 	@echo "Note: LocalStack must be running (make dev)"
-	@echo "Note: Requires ~/.aws/config with localstack profile (see .aws-config-example)"
+	@echo "Note: Requires ~/.aws/config with a 'localstack' profile (endpoint http://localhost:4566, dummy credentials)"

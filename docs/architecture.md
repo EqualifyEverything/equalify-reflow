@@ -10,7 +10,7 @@ The Equalify PDF Converter is a monolithic Python application with background ta
 - **Asynchronous Processing:** Redis task queues enable non-blocking API responses
 - **PII-First Design:** All documents undergo PII scanning before AI processing
 - **Resilient Storage:** S3 operations use circuit breakers and exponential backoff retry
-- **Containerized Everything:** Docker Compose for local development, AWS ECS for production
+- **Containerized Everything:** Docker Compose stack, same image shape across environments
 
 ## Technology Stack
 
@@ -53,13 +53,6 @@ The Equalify PDF Converter is a monolithic Python application with background ta
 - **testcontainers** - Real Redis/S3 for integration tests
 - **httpx** - Async HTTP client for API tests
 - **reportlab** - PDF generation for test fixtures
-
-### Deployment
-
-- **AWS ECS Fargate** - Container orchestration (production)
-- **AWS ElastiCache** - Managed Redis (production)
-- **AWS CloudWatch** - Logging and monitoring (production)
-- **Terraform** - Infrastructure as Code
 
 ## High-Level Architecture Diagram
 
@@ -395,7 +388,7 @@ FastAPI middleware executes in reverse order of registration (last added = first
 
 2. **`middleware/logging_middleware.py`** - Request/response logging
    - Log request method, path, status, duration
-   - Structured JSON logging for CloudWatch
+   - Structured JSON logging to stdout
 
 3. **`middleware/rate_limit.py`** - Rate limiting enforcement
    - Check rate limits before processing request
@@ -1076,30 +1069,11 @@ equalify-pdf-results/
 - Versioning enabled (support document updates)
 - Server-side encryption (AES-256)
 
-## Infrastructure: Local vs Production
-
-### Comparison Table
-
-| Component | Local Development | Production (AWS) |
-|-----------|------------------|------------------|
-| **Redis** | Docker container (`redis:latest`) | AWS ElastiCache (Redis 7.x, cluster mode) |
-| **S3** | LocalStack container (port 4566) | AWS S3 (multi-region replication) |
-| **AI Provider** | AWS Bedrock (us-east-1) OR Anthropic API | AWS Bedrock (us-east-1, production account) |
-| **Monitoring** | Prometheus + Grafana (Docker) | AWS CloudWatch Logs + Metrics + Alarms |
-| **Orchestration** | Docker Compose | AWS ECS Fargate (spot instances for cost) |
-| **Networking** | Docker bridge network | AWS VPC with private subnets |
-| **Load Balancer** | None (direct container access) | AWS ALB with health checks |
-| **Secrets** | `.env` file (NOT committed) | AWS Secrets Manager |
-| **IAM** | Static credentials (test/test) | ECS Task Role (no credentials in code) |
-| **Logs** | Container stdout/stderr | CloudWatch Logs with structured JSON |
-| **Domains** | localhost:8080 | equalify-pdf.uic.edu (Route 53) |
-| **SSL/TLS** | None (local HTTP) | ACM certificate + ALB HTTPS termination |
-
-### Local Development Setup
+## Local Development Infrastructure
 
 **Prerequisites:**
 
-- Docker Desktop
+- Docker (Desktop or Engine)
 - 8GB+ RAM (for LocalStack + containers)
 - 20GB+ disk space
 
@@ -1107,16 +1081,14 @@ equalify-pdf-results/
 
 ```bash
 make dev
-# Equivalent to:
-# docker-compose -f docker-compose.yml -f docker-compose.dev.yml up -d
 ```
 
 **Services started:**
 
 - **api-gateway** (port 8080) - FastAPI application
 - **redis** (port 6379) - Task queues and state
-- **localstack** (port 4566) - Local AWS emulation
-- **demo-ui** (port 5173) - React demo frontend
+- **localstack** (port 4566) - Local AWS (S3) emulation
+- **docling-serve** (port 5001) - Document parsing (native on Apple Silicon, Docker elsewhere)
 - **prometheus** (port 9090) - Metrics collection
 - **grafana** (port 3001) - Metrics visualization
 - **redis-exporter** (port 9121) - Redis metrics
@@ -1126,7 +1098,6 @@ make dev
 - API: <http://localhost:8080>
 - API Docs: <http://localhost:8080/docs>
 - Metrics: <http://localhost:8080/metrics>
-- Demo UI: <http://localhost:5173>
 - Grafana: <http://localhost:3001> (admin/admin)
 - Prometheus: <http://localhost:9090>
 
@@ -1136,35 +1107,7 @@ make dev
 - Uvicorn `--reload` watches for changes
 - Tests mounted for containerized test runs
 
-**Detailed setup:** See [docs/environment-setup-simplified.md](environment-setup-simplified.md)
-
-### Production Deployment (AWS)
-
-**Architecture:**
-
-- **ECS Fargate:** Single task definition (API + workers), spot instances
-- **ElastiCache:** Redis cluster (multi-AZ, automatic failover)
-- **S3:** Two buckets (temp, results) with lifecycle policies
-- **ALB:** Application Load Balancer with health checks
-- **CloudWatch:** Logs, metrics, alarms
-- **Secrets Manager:** API keys, database credentials
-
-**Deployment process:**
-
-1. Build Docker image with production target
-2. Push to AWS ECR (Elastic Container Registry)
-3. Update ECS task definition with new image tag
-4. ECS performs rolling update (zero-downtime)
-5. Health checks validate new tasks before switching traffic
-
-**Infrastructure as Code:** See [scripts/deploy-aws.sh](../scripts/deploy-aws.sh) and [docs/aws-guide.md](aws-guide.md)
-
-**Monitoring:**
-
-- **CloudWatch Logs:** Structured JSON logs from containers
-- **CloudWatch Metrics:** Custom metrics (queue depths, processing times)
-- **CloudWatch Alarms:** Alert on error rates, queue backlogs, high latency
-- **ECS Service Metrics:** CPU, memory, task health
+**Detailed setup:** See [docs/environment-setup.md](environment-setup.md)
 
 ## Resilience Patterns
 
@@ -1328,7 +1271,7 @@ await asyncio.wait_for(worker_task, timeout=30)  # Max 30s grace period
 
 #### Shutdown Sequence
 
-1. Receive SIGTERM (Kubernetes/ECS termination)
+1. Receive SIGTERM from the container runtime
 2. Set shutdown event (workers stop accepting new jobs)
 3. Wait for current jobs to complete (max 30 seconds)
 4. Force cancel if timeout exceeded
@@ -1353,7 +1296,7 @@ await asyncio.wait_for(worker_task, timeout=30)  # Max 30s grace period
 **Trade-offs:**
 
 - Less flexible scaling (can't scale PII worker independently)
-- Single point of failure (but ECS auto-restarts)
+- Single point of failure (container runtime auto-restarts on crash)
 - Future migration path: Extract workers into separate services if needed
 
 ### Why Sorted Sets for Timeouts?
@@ -1471,10 +1414,9 @@ s3_operation_duration_seconds{operation="upload"} 0.123
 
 ## Related Documentation
 
-- **[Environment Setup](environment-setup-simplified.md)** - Local development setup guide
-- **[AWS Deployment Guide](aws-guide.md)** - Production deployment on AWS ECS
+- **[Environment Setup](environment-setup.md)** - Local development setup guide
 - **[Rate Limiting](rate-limiting.md)** - Rate limiting implementation details
-- **[CI/CD](ci-cd.md)** - GitHub Actions workflows and deployment automation
+- **[CI/CD](ci-cd.md)** - GitHub Actions workflows
 - **[CLAUDE.md](../CLAUDE.md)** - AI agent development guide and patterns
 
 ## Version History

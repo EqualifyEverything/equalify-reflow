@@ -126,9 +126,6 @@ credentials/
 *.cer
 *.der
 
-# Terraform (see terraform/.gitignore for detailed rules)
-terraform/.terraform/
-
 # Node.js (for future frontend)
 node_modules/
 npm-debug.log

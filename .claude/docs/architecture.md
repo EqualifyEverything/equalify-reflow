@@ -128,17 +128,19 @@ services:
       - AWS_EC2_METADATA_DISABLED=true
 ```
 
-### Getting AWS Credentials
+### Getting AWS Credentials (for Bedrock in local dev)
 
 ```bash
-# 1. Configure AWS SSO profile (one-time setup)
-#    See .aws-config-example for UIC profile configuration
+# 1. Configure an AWS SSO profile in ~/.aws/config (one-time setup).
+#    Any profile name works; the Makefile defaults to `uic` and can be
+#    overridden with AWS_PROFILE=<name> make dev.
 
 # 2. Login via AWS SSO
-aws sso login --profile uic
+aws sso login --profile <your-profile>
 
-# 3. Start services with credentials
-./restart-and-test.sh  # Loads credentials from SSO and restarts services
+# 3. Start services — the Makefile exports SSO credentials into the
+#    api-gateway container for Bedrock calls.
+make dev
 ```
 
 ### How It Works

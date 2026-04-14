@@ -109,24 +109,6 @@ sleep 30
 ./scripts/health-check.sh
 ```
 
-### Setup Production Environment
-
-```bash
-# 1. Configure AWS credentials
-export AWS_ACCESS_KEY_ID=your-key
-export AWS_SECRET_ACCESS_KEY=your-secret
-export AWS_DEFAULT_REGION=us-east-1
-
-# 2. Create production resources
-./scripts/setup-aws.sh prod
-
-# 3. Start production services
-docker-compose -f docker-compose.yml -f docker-compose.prod.yml up -d
-
-# 4. Verify (skip LocalStack checks)
-./scripts/health-check.sh
-```
-
 ### Debug Issues
 
 ```bash

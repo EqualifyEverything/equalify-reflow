@@ -16,7 +16,7 @@ import httpx
 # Configuration
 # ---------------------------------------------------------------------------
 
-API_URL = os.environ.get("BATCH_API_URL", "https://pdf.equalify.uic.edu")
+API_URL = os.environ.get("BATCH_API_URL", "http://localhost:8080")
 API_KEY = os.environ.get("BATCH_API_KEY", "")
 CONCURRENCY = int(os.environ.get("BATCH_CONCURRENCY", "2"))
 POLL_INTERVAL = 10  # seconds

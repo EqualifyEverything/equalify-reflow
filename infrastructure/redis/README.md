@@ -43,9 +43,9 @@ The Equalify PDF Converter uses the following Redis data structures:
 
 ### Memory Management
 
-- Configured via environment variables in production
+- Configured via environment variables
 - LRU eviction policy for cache-like behavior
-- Memory limits set in docker-compose.prod.yml
+- Memory limits set via Docker Compose resource constraints
 
 ### Performance
 

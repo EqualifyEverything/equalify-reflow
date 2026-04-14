@@ -41,7 +41,7 @@ make test-e2e     # or: make test-slow
 make test-all     # Runs in Docker
 ```
 - **What**: Complete test suite (591 tests)
-- **When**: Final verification before deployment
+- **When**: Final verification before merging to main
 - **Requires**: `make dev` (Docker stack running)
 - **CI Trigger**: Manual or scheduled
 
@@ -88,7 +88,7 @@ uv run pytest -m requires_s3     # S3-dependent tests
 ### [test-e2e.yml](.github/workflows/test-e2e.yml)
 **Trigger:** Merges to main branch
 
-**Purpose:** Comprehensive validation before deployment
+**Purpose:** Comprehensive validation of merges to main
 
 **Tests:** E2E tests with full workflows (~63 tests)
 

@@ -246,15 +246,4 @@ make docling-native-stop
 - `docker-compose.dev.yml` sets AWS credentials for containers
 - LocalStack runs inside Docker network
 
-### AWS Operations
-
-- Use AWS profiles from `~/.aws/config` (see `.aws-config-example`)
-- Makefile commands handle profiles automatically:
-
-```bash
-make aws-health   # Check deployment
-make aws-logs     # View CloudWatch logs
-make aws-status   # ECS service status
-```
-
 **Never:** Source `.env` manually in your shell - it's for Docker Compose only

@@ -38,7 +38,3 @@ Companion integration test for `test_chained_analysis.py` — exercises the same
 ## Running scripts
 
 Scripts run via `uv run` from the repo root. Do not run Python directly on the host — use `uv run script.py` for one-offs, or run inside the dev container with `docker compose -f docker-compose.yml -f docker-compose.dev.yml exec api-gateway uv run scripts/<name>`.
-
-## Infrastructure scripts
-
-Historically this directory also contained `setup-aws.sh`, `deploy-app.sh`, and `deploy-infrastructure.sh`. Those have been removed — Terraform and deployment now live in the separate deploy repo (see [AGENTS.md](../AGENTS.md) for repo layout).

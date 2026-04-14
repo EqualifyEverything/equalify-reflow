@@ -1,6 +1,6 @@
-# Equalify PDF Converter - Scripts
+# Equalify Reflow - Scripts
 
-This directory contains utility scripts for managing the Equalify PDF Converter infrastructure.
+This directory contains utility scripts for managing the Equalify Reflow infrastructure.
 
 ## Available Scripts
 
@@ -59,7 +59,7 @@ Validates that all infrastructure components are running correctly.
 **Output**:
 ```
 ========================================
-Equalify PDF Converter - Infrastructure Health Check
+Equalify Reflow - Infrastructure Health Check
 ========================================
 
 >>> Checking Prerequisites

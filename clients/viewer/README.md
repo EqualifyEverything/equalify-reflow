@@ -1,10 +1,10 @@
-# Equalify PDF Converter - Demo UI
+# Equalify Reflow - Demo UI
 
 **⚠️ IMPORTANT: This is a DEMO/DEVELOPER TOOL only, NOT the production interface.**
 
 ## Overview
 
-Browser-based demo interface for testing the Equalify PDF Converter REST API and demonstrating document processing workflows to stakeholders. The production interface will use Canvas LMS integration.
+Browser-based demo interface for testing the Equalify Reflow REST API and demonstrating document processing workflows to stakeholders. The production interface will use Canvas LMS integration.
 
 **Purpose:**
 - Developer testing during implementation

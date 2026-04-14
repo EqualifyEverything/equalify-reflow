@@ -4,7 +4,7 @@
 apiVersion: 1
 
 providers:
-  - name: 'Equalify PDF Converter'
+  - name: 'Equalify Reflow'
     orgId: 1
     folder: 'Equalify'
     type: file

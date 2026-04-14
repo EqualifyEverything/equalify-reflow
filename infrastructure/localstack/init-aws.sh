@@ -1,13 +1,13 @@
 #!/bin/bash
 
-# Equalify PDF Converter - LocalStack Initialization Script
+# Equalify Reflow - LocalStack Initialization Script
 # This script runs automatically when LocalStack starts (ready.d hook)
 # Creates S3 buckets and configures initial AWS resources
 
 set -e
 
 echo "=========================================="
-echo "Initializing LocalStack for Equalify PDF Converter"
+echo "Initializing LocalStack for Equalify Reflow"
 echo "=========================================="
 
 # Configuration

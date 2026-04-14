@@ -1,4 +1,4 @@
-# Equalify PDF Converter - Infrastructure Services
+# Equalify Reflow - Infrastructure Services
 #
 # Architecture: Monolith with Background Workers
 # - Single Python application runs FastAPI + background worker threads

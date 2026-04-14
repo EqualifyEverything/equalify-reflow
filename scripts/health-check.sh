@@ -1,6 +1,6 @@
 #!/bin/bash
 
-# Equalify PDF Converter - Local Health Check Script
+# Equalify Reflow - Local Health Check Script
 # Validates infrastructure health for the local Docker environment.
 #
 # Usage:
@@ -12,7 +12,7 @@ MODE="local"
 while [[ $# -gt 0 ]]; do
     case $1 in
         --help|-h)
-            echo "Equalify PDF Converter - Local Health Check"
+            echo "Equalify Reflow - Local Health Check"
             echo ""
             echo "Usage:"
             echo "  $0              Check local Docker environment"
@@ -316,7 +316,7 @@ test_volumes() {
 }
 
 check_local_health() {
-    print_header "Equalify PDF Converter - Local Health Check"
+    print_header "Equalify Reflow - Local Health Check"
 
     print_info "Starting health checks..."
     print_info "Time: $(date)"

@@ -1,6 +1,6 @@
 # Redis Configuration
 
-This directory contains Redis configuration for the Equalify PDF Converter message queue and caching system.
+This directory contains Redis configuration for the Equalify Reflow message queue and caching system.
 
 ## Files
 
@@ -8,7 +8,7 @@ This directory contains Redis configuration for the Equalify PDF Converter messa
 
 ## Redis Data Structures
 
-The Equalify PDF Converter uses the following Redis data structures:
+Equalify Reflow uses the following Redis data structures:
 
 ### Queues (Lists)
 

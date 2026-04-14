@@ -1,7 +1,7 @@
 {
   "id": null,
   "uid": "equalify-worker-health",
-  "title": "Equalify PDF Converter - Worker Health",
+  "title": "Equalify Reflow - Worker Health",
   "tags": ["equalify", "workers", "health"],
   "timezone": "browser",
   "schemaVersion": 38,

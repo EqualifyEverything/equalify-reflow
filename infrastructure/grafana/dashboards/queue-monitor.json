@@ -1,7 +1,7 @@
 {
   "id": null,
   "uid": "equalify-queue-monitor",
-  "title": "Equalify PDF Converter - Queue Monitor",
+  "title": "Equalify Reflow - Queue Monitor",
   "tags": ["equalify", "queues", "monitoring"],
   "timezone": "browser",
   "schemaVersion": 38,

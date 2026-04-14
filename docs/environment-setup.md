@@ -1,6 +1,6 @@
 # Environment Setup
 
-Local development setup for the Equalify PDF Converter.
+Local development setup for the Equalify Reflow.
 
 ## TL;DR
 

@@ -2,7 +2,7 @@
 
 # Default target
 help:
-	@echo "Equalify PDF Converter - Makefile Commands"
+	@echo "Equalify Reflow - Makefile Commands"
 	@echo ""
 	@echo "Essential:"
 	@echo "  make dev          - Start development (auto-detects native GPU docling)"

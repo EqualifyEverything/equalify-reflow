@@ -10,32 +10,41 @@ class Settings(BaseSettings):
     model_config = SettingsConfigDict(env_file=".env", extra="ignore")
 
     # AWS Configuration (boto3 reads AWS_ENDPOINT_URL_S3 from environment automatically)
-    aws_region: str = "us-east-1"
+    aws_region: str = Field(default="us-east-1", description="AWS region for S3 and Bedrock clients")
     # Public S3 URL for client-facing links (localhost:4566 in dev, real S3 URL in prod)
-    s3_public_url: str | None = None  # e.g., "http://localhost:4566" for dev
-    aws_access_key_id: str | None = None  # Uses IAM role in production, "test" for local dev
-    aws_secret_access_key: str | None = None  # Uses IAM role in production, "test" for local dev
+    s3_public_url: str | None = Field(
+        default=None,
+        description="Public S3 base URL for client-facing links (e.g., 'http://localhost:4566' in dev, real S3 URL in prod)",
+    )
+    aws_access_key_id: str | None = Field(
+        default=None,
+        description="AWS access key ID (secret); leave unset to use IAM role in production, 'test' for local dev",
+    )
+    aws_secret_access_key: str | None = Field(
+        default=None,
+        description="AWS secret access key (secret); leave unset to use IAM role in production, 'test' for local dev",
+    )
 
     # S3 Buckets
-    s3_temp_bucket: str = "equalify-temp"
-    s3_results_bucket: str = "equalify-results"
+    s3_temp_bucket: str = Field(default="equalify-temp", description="S3 bucket name for temporary PDF uploads")
+    s3_results_bucket: str = Field(default="equalify-results", description="S3 bucket name for processed results and figures")
 
     # Redis Configuration
-    redis_url: str = "redis://redis:6379"
-    redis_max_connections: int = Field(ge=1, le=1000, default=10)
+    redis_url: str = Field(default="redis://redis:6379", description="Redis URL for job state, queues, and rate limiting")
+    redis_max_connections: int = Field(ge=1, le=1000, default=10, description="Maximum connections in the Redis client pool")
 
     # Queue Configuration (align with shared/constants/queues.py)
-    pii_queue_name: str = "eq-pdf:queue:pii"
-    timeout_queue_name: str = "eq-pdf:timeouts:approval"
+    pii_queue_name: str = Field(default="eq-pdf:queue:pii", description="Redis list key for the PII scan worker queue")
+    timeout_queue_name: str = Field(default="eq-pdf:timeouts:approval", description="Redis sorted set key for approval timeout deadlines")
 
     # Job Status Configuration
-    job_status_prefix: str = "eq-pdf:job:"
+    job_status_prefix: str = Field(default="eq-pdf:job:", description="Redis key prefix for per-job status hashes")
 
     # API Configuration
-    api_host: str = "0.0.0.0"
-    api_port: int = Field(ge=1, le=65535, default=8080)
-    log_level: str = "INFO"
-    environment: str = "production"  # "dev" or "production"
+    api_host: str = Field(default="0.0.0.0", description="Host interface the FastAPI server binds to")
+    api_port: int = Field(ge=1, le=65535, default=8080, description="Port the FastAPI server listens on")
+    log_level: str = Field(default="INFO", description="Application log level (DEBUG, INFO, WARNING, ERROR)")
+    environment: str = Field(default="production", description="Runtime environment label ('dev' or 'production')")
 
     # API Key Authentication Configuration
     enable_api_key_auth: bool = Field(default=True, description="Enable API key authentication for API endpoints")
@@ -48,15 +57,30 @@ class Settings(BaseSettings):
     docs_password: SecretStr | None = Field(default=None, description="Password for Swagger UI authentication")
 
     # Metrics Configuration
-    enable_metrics: bool = True
-    metrics_port: int = Field(ge=1, le=65535, default=8001)
+    enable_metrics: bool = Field(default=True, description="Enable Prometheus metrics collection and /metrics endpoint")
+    metrics_port: int = Field(ge=1, le=65535, default=8001, description="Port for the Prometheus metrics server")
 
     # Application Settings
-    max_upload_size: int = Field(gt=0, le=1024 * 1024 * 1024, default=100 * 1024 * 1024)  # 100MB, max 1GB
-    max_file_size_mb: int = Field(gt=0, le=1000, default=100)
+    max_upload_size: int = Field(
+        gt=0,
+        le=1024 * 1024 * 1024,
+        default=100 * 1024 * 1024,
+        description="Maximum upload size in bytes (default 100MB, hard cap 1GB)",
+    )  # 100MB, max 1GB
+    max_file_size_mb: int = Field(
+        gt=0,
+        le=1000,
+        default=100,
+        description="Maximum PDF file size in megabytes (default 100MB, hard cap 1000MB)",
+    )
 
     # Processing Configuration
-    estimated_processing_minutes: int = Field(ge=1, le=60, default=5)
+    estimated_processing_minutes: int = Field(
+        ge=1,
+        le=60,
+        default=5,
+        description="User-facing estimate of processing duration in minutes (shown in API responses)",
+    )
     pipeline_timeout_seconds: int = Field(
         ge=60, le=7200, default=1800, description="Global timeout for pipeline processing (seconds)"
     )
@@ -99,35 +123,75 @@ class Settings(BaseSettings):
 
 
     # Timeout Worker Configuration
-    approval_timeout_hours: int = Field(ge=1, le=168, default=4)  # Approval deadline (hours), max 1 week
-    approval_check_interval_seconds: int = Field(ge=10, le=3600, default=30)  # Check for expired approvals every 30s
-    temp_cleanup_interval_hours: int = Field(ge=1, le=168, default=1)  # Clean temp files every hour
-    orphan_cleanup_interval_hours: int = Field(ge=1, le=168, default=4)  # Check for orphaned jobs every 4 hours
-    metrics_cleanup_interval_hours: int = Field(ge=1, le=168, default=24)  # Clean old metrics daily
+    approval_timeout_hours: int = Field(
+        ge=1, le=168, default=4, description="PII approval deadline in hours before a job is auto-denied (max 1 week)"
+    )  # Approval deadline (hours), max 1 week
+    approval_check_interval_seconds: int = Field(
+        ge=10, le=3600, default=30, description="How often the timeout worker checks for expired approvals (seconds)"
+    )  # Check for expired approvals every 30s
+    temp_cleanup_interval_hours: int = Field(
+        ge=1, le=168, default=1, description="Interval in hours between temp-file cleanup sweeps"
+    )  # Clean temp files every hour
+    orphan_cleanup_interval_hours: int = Field(
+        ge=1, le=168, default=4, description="Interval in hours between orphaned-job cleanup sweeps"
+    )  # Check for orphaned jobs every 4 hours
+    metrics_cleanup_interval_hours: int = Field(
+        ge=1, le=168, default=24, description="Interval in hours between old-metrics cleanup sweeps"
+    )  # Clean old metrics daily
 
     # Retention Policies
-    temp_file_retention_hours: int = Field(ge=1, le=720, default=24)  # Delete temp files after 24 hours, max 30 days
+    temp_file_retention_hours: int = Field(
+        ge=1, le=720, default=24, description="Hours to retain temporary files in S3 before cleanup (max 30 days)"
+    )  # Delete temp files after 24 hours, max 30 days
     debug_artifact_retention_hours: int = Field(
-        ge=1, le=168, default=24
+        ge=1, le=168, default=24, description="Hours to retain debug artifacts before cleanup (max 7 days)"
     )  # Delete debug artifacts after 24 hours, max 7 days
-    job_retention_days: int = Field(ge=1, le=365, default=30)  # Keep completed/failed jobs for 30 days
-    metrics_retention_days: int = Field(ge=1, le=730, default=90)  # Keep metrics for 90 days, max 2 years
-    max_processing_hours: int = Field(ge=1, le=24, default=2)  # Mark jobs as stuck after 2 hours in processing
+    job_retention_days: int = Field(
+        ge=1, le=365, default=30, description="Days to retain completed and failed jobs before cleanup"
+    )  # Keep completed/failed jobs for 30 days
+    metrics_retention_days: int = Field(
+        ge=1, le=730, default=90, description="Days to retain metrics history (max 2 years)"
+    )  # Keep metrics for 90 days, max 2 years
+    max_processing_hours: int = Field(
+        ge=1, le=24, default=2, description="Hours after which an in-flight job is marked stuck"
+    )  # Mark jobs as stuck after 2 hours in processing
 
     # PII Detection Configuration
-    pii_confidence_threshold: float = Field(ge=0.0, le=1.0, default=0.85)  # Minimum confidence score for PII detection
+    pii_confidence_threshold: float = Field(
+        ge=0.0, le=1.0, default=0.85, description="Minimum Presidio confidence score required to flag a PII match"
+    )  # Minimum confidence score for PII detection
 
 
     # Redis TTL Configuration (in seconds)
     # TTL ensures job hashes auto-expire to prevent Redis memory exhaustion
     # Active jobs: 7 days (min 1 hour, max 30 days)
-    job_ttl_active: int = Field(ge=3600, le=30 * 24 * 3600, default=7 * 24 * 3600)
+    job_ttl_active: int = Field(
+        ge=3600,
+        le=30 * 24 * 3600,
+        default=7 * 24 * 3600,
+        description="Redis TTL in seconds for active job hashes (default 7 days, max 30 days)",
+    )
     # Completed jobs: 30 days (min 1 hour, max 1 year)
-    job_ttl_completed: int = Field(ge=3600, le=365 * 24 * 3600, default=30 * 24 * 3600)
+    job_ttl_completed: int = Field(
+        ge=3600,
+        le=365 * 24 * 3600,
+        default=30 * 24 * 3600,
+        description="Redis TTL in seconds for completed job hashes (default 30 days, max 1 year)",
+    )
     # Failed jobs: 30 days (min 1 hour, max 1 year)
-    job_ttl_failed: int = Field(ge=3600, le=365 * 24 * 3600, default=30 * 24 * 3600)
+    job_ttl_failed: int = Field(
+        ge=3600,
+        le=365 * 24 * 3600,
+        default=30 * 24 * 3600,
+        description="Redis TTL in seconds for failed job hashes (default 30 days, max 1 year)",
+    )
     # Denied jobs: 7 days (min 1 hour, max 30 days)
-    job_ttl_denied: int = Field(ge=3600, le=30 * 24 * 3600, default=7 * 24 * 3600)
+    job_ttl_denied: int = Field(
+        ge=3600,
+        le=30 * 24 * 3600,
+        default=7 * 24 * 3600,
+        description="Redis TTL in seconds for denied job hashes (default 7 days, max 30 days)",
+    )
 
     # Worker Queue Configuration
     pii_worker_queue_timeout_seconds: int = Field(
@@ -144,7 +208,9 @@ class Settings(BaseSettings):
     )
 
     # Testing Configuration
-    disable_workers: bool = False  # Set to True to disable background workers (for testing)
+    disable_workers: bool = Field(
+        default=False, description="Disable background workers (PII, timeout) for testing scenarios"
+    )  # Set to True to disable background workers (for testing)
 
     # Telemetry Configuration (OpenTelemetry)
     telemetry_enabled: bool = Field(default=False, description="Enable OpenTelemetry tracing and metrics")
@@ -161,9 +227,15 @@ class Settings(BaseSettings):
     logfire_token: str = Field(default="", description="Logfire API token")
 
     # Feedback service (optional)
-    feedback_enabled: bool = False
-    feedback_service_url: str | None = None
-    feedback_service_api_key: SecretStr | None = None
+    feedback_enabled: bool = Field(
+        default=False, description="Enable forwarding of user feedback to the external feedback service"
+    )
+    feedback_service_url: str | None = Field(
+        default=None, description="Base URL of the external feedback aggregation service"
+    )
+    feedback_service_api_key: SecretStr | None = Field(
+        default=None, description="API key for the external feedback service (secret)"
+    )
 
 
 settings = Settings()

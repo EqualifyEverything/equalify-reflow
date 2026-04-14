@@ -1,6 +1,6 @@
 # Environment Setup
 
-Local development setup for the Equalify Reflow.
+Local development setup for Equalify Reflow.
 
 ## TL;DR
 
@@ -14,7 +14,7 @@ The stack (API Gateway, Redis, LocalStack-as-S3, docling-serve, observability) r
 
 - Docker (Desktop or Engine)
 - `uv` (Python package manager) — `curl -LsSf https://astral.sh/uv/install.sh | sh`
-- Optional: AWS SSO profile for Bedrock access (see "AI / Bedrock" below)
+- Optional: AWS credentials for the current Bedrock-backed AI path (see "AI Model Backend" below). A provider-abstraction effort is in progress that will let you run against Anthropic direct or other backends instead; until that lands, Bedrock is the only exercised code path.
 
 ## Daily Workflow
 
@@ -48,21 +48,25 @@ make dev          # Auto-detects native docling if installed, falls back to Dock
 
 `make dev-docker` forces the CPU-only Docker path regardless.
 
-## LocalStack
+## Storage (LocalStack)
 
-LocalStack provides a local S3 (and related AWS APIs) inside the Docker network. The app talks to it at `localstack:4566` automatically. You almost never need to interact with LocalStack directly — the app and tests handle it.
+The current default for local S3 is LocalStack, running inside the Docker network. The app talks to it at `localstack:4566` automatically. You almost never need to interact with LocalStack directly — the app and tests handle it.
 
 For occasional host-side debugging, see `make localstack-debug` for AWS CLI examples against LocalStack.
 
-## AI / Bedrock
+LocalStack is the current implementation, not a hard requirement of the design. A provider-abstraction effort is in progress that will introduce a `StorageProvider` interface and a local-filesystem backend so contributors can run the stack without LocalStack at all. Once that lands, LocalStack becomes opt-in (via an override compose file) rather than the default.
 
-The pipeline uses AWS Bedrock (Claude Haiku) for text correction. For local dev against real Bedrock:
+## AI Model Backend
 
-1. Configure an AWS SSO profile locally (any name works — the Makefile defaults to `uic`, override with `AWS_PROFILE=<name> make dev`).
+The pipeline currently uses AWS Bedrock (Claude Haiku 4.5) for text correction and structure analysis. Bedrock is the current implementation — a provider-abstraction effort is in progress that will introduce an `AIProvider` interface, making Anthropic direct and other backends pluggable at startup via environment variables.
+
+For local dev against real Bedrock today:
+
+1. Configure an AWS SSO profile locally. The Makefile's historical default profile name is `uic`; override with `AWS_PROFILE=<name> make dev` to use any other profile.
 2. Run `aws sso login --profile <name>` when your token expires.
 3. `make dev` exports the credentials into the API container automatically.
 
-If Bedrock credentials are not available, the stack still starts but LLM-dependent code paths will fail.
+If Bedrock credentials are not available, the stack still starts but LLM-dependent code paths will fail until the Anthropic-direct provider lands.
 
 ## Environment Variables
 

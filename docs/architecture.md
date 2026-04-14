@@ -2,7 +2,7 @@
 
 ## Overview
 
-Equalify Reflow is a monolithic Python application with background task queuing that transforms PDF course materials into accessible, semantic HTML for University of Illinois Chicago (UIC). The system enforces a strict architectural boundary: **course materials only** — no student records or personally identifiable information (PII) should reach processing stages.
+Equalify Reflow is a monolithic Python application with background task queuing that transforms PDF documents into accessible, semantic markdown. Originally built with the University of Illinois Chicago (UIC) for course-material accessibility, the project is now maintained as an open source project for any organisation that needs accessible document conversion. The system enforces a strict architectural boundary: **course materials only** — no student records or personally identifiable information (PII) should reach processing stages.
 
 **Architecture Pattern:** Monolith with Background Task Queue
 
@@ -25,7 +25,7 @@ Equalify Reflow is a monolithic Python application with background task queuing 
 ### AI/ML Processing
 
 - **PydanticAI 1.0+** - Multi-agent AI orchestration framework
-- **AWS Bedrock** - Claude AI models via AWS Bedrock
+- **AWS Bedrock** - Current default for Claude AI model access. Pluggable: the provider-abstraction roadmap (in progress) will allow running against Anthropic direct or other backends without editing agent call sites.
 - **IBM Docling 2.55+** - PDF to Markdown conversion with OCR
 - **Microsoft Presidio 2.2+** - PII detection and entity recognition
 - **spaCy 3.7** - NLP models for Presidio (en_core_web_sm)
@@ -33,8 +33,8 @@ Equalify Reflow is a monolithic Python application with background task queuing 
 ### Infrastructure
 
 - **Redis 5.0+** - Task queues, job state, rate limiting, distributed locks
-- **AWS S3** - Object storage for PDFs and results
-- **LocalStack** - Local AWS emulation for development
+- **AWS S3** - Current default for object storage (PDFs, pipeline artefacts, results). Pluggable: the provider-abstraction roadmap (in progress) will add a local filesystem option for simpler deployments.
+- **LocalStack** - Local S3 emulation used by the default dev stack; an override file for real AWS also exists. Once the filesystem storage provider lands, LocalStack becomes opt-in rather than required.
 - **Docker & Docker Compose** - Containerized services
 
 ### Monitoring & Observability
@@ -1291,7 +1291,7 @@ await asyncio.wait_for(worker_task, timeout=30)  # Max 30s grace period
 - **Shared state:** Direct access to Redis and S3 clients (no network overhead)
 - **Development velocity:** Faster iteration, no inter-service communication
 - **Resource efficiency:** Lower overhead than multiple containers
-- **Sufficient scale:** UIC use case (<1000 documents/day, not Netflix-scale)
+- **Sufficient scale:** original UIC use case (<1000 documents/day, not Netflix-scale) — a monolith handles this comfortably on modest hardware
 
 **Trade-offs:**
 

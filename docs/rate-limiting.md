@@ -6,7 +6,8 @@ Equalify Reflow implements **Redis-based sliding window rate limiting** to preve
 
 ## Use Case Context
 
-- **Primary Users**: UIC faculty and accessibility team (NOT public API)
+The rate-limit defaults below were calibrated for the original UIC faculty and accessibility-team deployment — a small, trusted user population uploading course materials in batches. They are **not** tuned for a public API with unknown traffic. Anyone deploying Reflow for a different user population should revisit these numbers.
+
 - **Traffic Pattern**: Batch uploads of course materials
 - **Cost Sensitivity**: ~$0.20/document AI processing cost
 - **Processing Time**: 2-8 minutes per document

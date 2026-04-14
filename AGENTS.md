@@ -200,10 +200,10 @@ Reuse fixtures from `tests/conftest_fixtures/` rather than inventing new ones.
 | [docs/environment-setup.md](docs/environment-setup.md) | Full local setup guide |
 | [docs/ci-cd.md](docs/ci-cd.md) | GitHub Actions, test tiers, CI gates |
 | [docs/rate-limiting.md](docs/rate-limiting.md) | Rate-limit configuration |
-| [.claude/docs/authentication.md](.claude/docs/authentication.md) | API key auth, docs auth, middleware stack |
-| [.claude/docs/s3-resilience.md](.claude/docs/s3-resilience.md) | Circuit breakers, retry logic, metrics |
-| [.claude/docs/testing.md](.claude/docs/testing.md) | Test strategy, fixtures, markers |
-| [.claude/docs/development.md](.claude/docs/development.md) | Adding features, debugging, common issues |
+| [docs/authentication.md](docs/authentication.md) | API key auth, docs auth, middleware stack |
+| [docs/s3-resilience.md](docs/s3-resilience.md) | Circuit breakers, retry logic, metrics |
+| [docs/testing.md](docs/testing.md) | Test strategy, fixtures, markers |
+| [docs/development.md](docs/development.md) | Adding features, debugging, common issues |
 
 ## Context7 library IDs
 

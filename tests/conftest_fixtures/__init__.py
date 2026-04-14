@@ -1,5 +1,5 @@
 """
-Shared test fixtures for Equalify PDF Converter test suite.
+Shared test fixtures for Equalify Reflow test suite.
 
 This package provides canonical fixtures to eliminate duplication across
 the test suite. All fixtures use function scope by default unless specified.

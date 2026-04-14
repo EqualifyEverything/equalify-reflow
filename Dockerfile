@@ -1,4 +1,4 @@
-# Equalify PDF Converter
+# Equalify Reflow
 
 # ==============================================================================
 # Stage 1: Frontend - Build Pipeline Viewer

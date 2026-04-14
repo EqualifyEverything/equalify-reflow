@@ -4,7 +4,7 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
 
 ## Project Overview
 
-The Equalify PDF Converter transforms PDF documents into accessible, semantic markup for University of Illinois Chicago (UIC). System processes **course materials only** - strict architectural boundary against student records or PII.
+Equalify Reflow transforms PDF documents into accessible, semantic markup for University of Illinois Chicago (UIC). The system processes **course materials only** — strict architectural boundary against student records or PII.
 
 ## Essential Commands
 

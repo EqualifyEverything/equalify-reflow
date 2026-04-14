@@ -1,4 +1,4 @@
-"""Shared constants for Equalify PDF Converter.
+"""Shared constants for Equalify Reflow.
 
 This package provides application-wide constants including queue names,
 status enums, and Redis key patterns.

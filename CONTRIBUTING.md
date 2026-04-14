@@ -1,4 +1,4 @@
-# Contributing to Equalify PDF Converter
+# Contributing to Equalify Reflow
 
 Thank you for your interest in contributing! This document provides guidelines for contributing to the project.
 
@@ -513,4 +513,4 @@ Contributors are recognized in:
 - Release notes for significant contributions
 - Project documentation credits
 
-Thank you for contributing to Equalify PDF Converter! 🎉
+Thank you for contributing to Equalify Reflow! 🎉

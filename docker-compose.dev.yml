@@ -1,4 +1,4 @@
-# Equalify PDF Converter - Development Override Configuration
+# Equalify Reflow - Development Override Configuration
 # This file adds LocalStack and development-specific configurations
 # Usage: docker-compose -f docker-compose.yml -f docker-compose.dev.yml up
 

@@ -2,7 +2,7 @@
 
 ## Overview
 
-The Equalify PDF Converter implements **Redis-based sliding window rate limiting** to prevent abuse and control processing costs while maintaining system availability.
+Equalify Reflow implements **Redis-based sliding window rate limiting** to prevent abuse and control processing costs while maintaining system availability.
 
 ## Use Case Context
 

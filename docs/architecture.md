@@ -1,8 +1,8 @@
-# Equalify PDF Converter - Architecture Reference
+# Equalify Reflow - Architecture Reference
 
 ## Overview
 
-The Equalify PDF Converter is a monolithic Python application with background task queuing that transforms PDF course materials into accessible, semantic HTML for University of Illinois Chicago (UIC). The system enforces a strict architectural boundary: **course materials only** - no student records or personally identifiable information (PII) should reach processing stages.
+Equalify Reflow is a monolithic Python application with background task queuing that transforms PDF course materials into accessible, semantic HTML for University of Illinois Chicago (UIC). The system enforces a strict architectural boundary: **course materials only** — no student records or personally identifiable information (PII) should reach processing stages.
 
 **Architecture Pattern:** Monolith with Background Task Queue
 

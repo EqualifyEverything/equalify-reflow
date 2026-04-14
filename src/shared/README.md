@@ -1,6 +1,6 @@
-# Shared Data Models for Equalify PDF Converter
+# Shared Data Models for Equalify Reflow
 
-This package provides type-safe Pydantic models and constants for all microservices in the Equalify PDF Converter system.
+This package provides type-safe Pydantic models and constants for all microservices in the Equalify Reflow system.
 
 ## Installation
 
@@ -377,4 +377,4 @@ Current version: 0.1.0
 
 ## License
 
-Part of the Equalify PDF Converter project.
+Part of the Equalify Reflow project.

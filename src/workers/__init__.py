@@ -1,1 +1,1 @@
-"""Background worker threads for Equalify PDF Converter."""
+"""Background worker threads for Equalify Reflow."""

@@ -1,4 +1,4 @@
-"""Shared data models for Equalify PDF Converter.
+"""Shared data models for Equalify Reflow.
 
 This package provides type-safe Pydantic models for all data structures
 used across microservices including job tracking, queue payloads, PII

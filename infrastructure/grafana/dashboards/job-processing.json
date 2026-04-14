@@ -1,7 +1,7 @@
 {
   "id": null,
   "uid": "equalify-job-processing",
-  "title": "Equalify PDF Converter - Job Processing",
+  "title": "Equalify Reflow - Job Processing",
   "tags": ["equalify", "jobs", "processing"],
   "timezone": "browser",
   "schemaVersion": 38,

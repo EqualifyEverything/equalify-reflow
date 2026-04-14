@@ -138,7 +138,7 @@ async def lifespan(app: FastAPI) -> AsyncIterator[None]:
 
 # Create FastAPI app with lifespan
 app = FastAPI(
-    title="Equalify PDF Converter API",
+    title="Equalify Reflow API",
     description="API Gateway for PDF to accessible HTML conversion",
     version="0.1.0",
     docs_url="/docs",
@@ -221,7 +221,7 @@ app.openapi = custom_openapi  # type: ignore[method-assign]
 @app.get("/")
 async def root() -> dict[str, str]:
     """Root endpoint."""
-    return {"service": "Equalify PDF Converter API Gateway", "version": "0.1.0", "docs": "/docs"}
+    return {"service": "Equalify Reflow API Gateway", "version": "0.1.0", "docs": "/docs"}
 
 
 # Mount Pipeline Viewer (standalone viewer app)

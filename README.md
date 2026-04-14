@@ -1,8 +1,9 @@
 # Equalify Reflow
 
 [![CI](https://github.com/EqualifyEverything/equalify-reflow/actions/workflows/ci.yml/badge.svg)](https://github.com/EqualifyEverything/equalify-reflow/actions/workflows/ci.yml)
+[![Licence: AGPL-3.0-or-later](https://img.shields.io/badge/licence-AGPL--3.0--or--later-blue.svg)](https://www.gnu.org/licenses/agpl-3.0.html)
 
-Equalify Reflow frees content trapped inside PDFs. It takes a PDF and produces semantic, reflowable markdown -- content that works on any screen size, with any assistive technology, and with AI tools. Built for the University of Illinois Chicago (UIC) to make course materials work better for everyone.
+Equalify Reflow is an open source project that frees content trapped inside PDFs. It takes a PDF and produces semantic, reflowable markdown — content that works on any screen size, with any assistive technology, and with AI tools. Originally built with the University of Illinois Chicago (UIC) to make course materials work better for everyone, the project is now available for any organisation that needs accessible document conversion.
 
 ## What It Is
 
@@ -93,6 +94,14 @@ make health            # Verify infrastructure
 
 Run `make help` for all commands.
 
+## API Documentation
+
+The FastAPI app exposes interactive API documentation at `/docs` (Swagger UI) and `/redoc` (ReDoc).
+
+- **Local development:** http://localhost:8080/docs (default credentials: `dase` / `a11y`)
+- **OpenAPI schema:** http://localhost:8080/openapi.json
+- **Endpoints overview:** all application endpoints are prefixed with `/api/v1/`. See the Swagger UI for the complete list, request/response shapes, and authentication requirements.
+
 ## Project Structure
 
 ```
@@ -122,7 +131,7 @@ docs/                       # Architecture, guides
 
 ## Technology Stack
 
-**Backend:** Python 3.11+, FastAPI, PydanticAI, IBM Docling, Microsoft Presidio, AWS Bedrock (Claude Haiku)
+**Backend:** Python 3.11+, FastAPI, PydanticAI, IBM Docling, Microsoft Presidio. AI model backend is pluggable — currently AWS Bedrock (Claude Haiku); Anthropic direct and other providers planned.
 
 **Infrastructure (local dev):** Docker, Redis, AWS S3 (via LocalStack), Prometheus + Grafana
 

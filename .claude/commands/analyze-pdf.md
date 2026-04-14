@@ -24,11 +24,11 @@ Parse the arguments: `$ARGUMENTS`
 2. Everything after is the optional analysis question
 3. If no PDF path provided, ask the user for one
 
-Validate the PDF exists. Use a path relative to the project root at `/Users/dylanisaac/Projects/equalify-pdf-converter/` if not absolute.
+Validate the PDF exists. Use a path relative to the project root at `/Users/dylanisaac/Projects/equalify-reflow/` if not absolute.
 
 ### Stage 2: Load Configuration
 
-Read the API key from `/Users/dylanisaac/Projects/equalify-pdf-converter/.env`:
+Read the API key from `/Users/dylanisaac/Projects/equalify-reflow/.env`:
 - Look for `API_KEYS=` line
 - Extract the first key (before any comma if multiple)
 

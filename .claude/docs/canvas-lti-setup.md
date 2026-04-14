@@ -39,7 +39,7 @@ Wait for Canvas to be accessible at `http://localhost:3000`.
 ### Step 2: Start PDF Converter
 
 ```bash
-cd ~/Projects/equalify-pdf-converter
+cd ~/Projects/equalify-reflow
 make dev
 ```
 
@@ -284,7 +284,7 @@ Canvas needs to fetch `https://YOUR-NGROK-URL/lti/jwks` to verify JWT signatures
 ```bash
 # Start everything
 cd ~/Projects/equalify-reflow-canvas/canvas-lms && docker compose up -d
-cd ~/Projects/equalify-pdf-converter && make dev
+cd ~/Projects/equalify-reflow && make dev
 ngrok http 8080
 
 # Get ngrok URL

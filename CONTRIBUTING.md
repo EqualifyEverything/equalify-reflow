@@ -15,7 +15,7 @@ Thank you for your interest in contributing! This document provides guidelines f
 1. **Fork and clone the repository:**
    ```bash
    git clone <your-fork-url>
-   cd equalify-pdf-converter
+   cd equalify-reflow
    ```
 
 2. **Start the development environment:**

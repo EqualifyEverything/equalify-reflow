@@ -1,6 +1,6 @@
 # Equalify Reflow
 
-[![CI](https://github.com/EqualifyEverything/equalify-pdf-converter/actions/workflows/ci.yml/badge.svg)](https://github.com/EqualifyEverything/equalify-pdf-converter/actions/workflows/ci.yml)
+[![CI](https://github.com/EqualifyEverything/equalify-reflow/actions/workflows/ci.yml/badge.svg)](https://github.com/EqualifyEverything/equalify-reflow/actions/workflows/ci.yml)
 
 Equalify Reflow frees content trapped inside PDFs. It takes a PDF and produces semantic, reflowable markdown -- content that works on any screen size, with any assistive technology, and with AI tools. Built for the University of Illinois Chicago (UIC) to make course materials work better for everyone.
 

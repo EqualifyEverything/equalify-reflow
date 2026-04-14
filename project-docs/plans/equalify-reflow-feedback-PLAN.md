@@ -4,7 +4,7 @@
 
 A standalone feedback collection service (`equalify-reflow-feedback`) that aggregates user-reported issues and document edits from across the Equalify ecosystem. Stores feedback in a persistent database, exposes a REST API for collection, and uses Metabase for dashboarding.
 
-**Clients:** equalify-pdf-converter (Pipeline Viewer), equalify-reflow-wp (WordPress plugin), future apps.
+**Clients:** equalify-reflow (Pipeline Viewer), equalify-reflow-wp (WordPress plugin), future apps.
 
 **Not replacing:** The pdf-converter's in-session edit/comment feedback loop stays as-is. This service captures the *persistent record* of what users found wrong and what they fixed.
 
@@ -17,7 +17,7 @@ A standalone feedback collection service (`equalify-reflow-feedback`) that aggre
 ### 1.1 Repository Setup
 
 - [ ] Create `equalify-reflow-feedback` repo on GitHub (EqualifyEverything org)
-- [ ] Clone to `/Users/dylanisaac/Projects/equalify-reflow-feedback`
+- [ ] Clone to `~/Projects/equalify-reflow-feedback`
 
 **Files to create:**
 
@@ -383,7 +383,7 @@ For production: Consider using the same EFS mount for Metabase's config DB so it
 
 **Goal:** Add optional feedback forwarding from pdf-converter to the feedback service.
 
-### 3.1 Configuration (in equalify-pdf-converter)
+### 3.1 Configuration (in equalify-reflow)
 
 Add to `src/config.py`:
 
@@ -403,7 +403,7 @@ FEEDBACK_SERVICE_URL=http://feedback:8090
 FEEDBACK_SERVICE_API_KEY=pdf-converter-key-here
 ```
 
-### 3.2 Feedback Client (in equalify-pdf-converter)
+### 3.2 Feedback Client (in equalify-reflow)
 
 Create `src/services/feedback_client.py`:
 
@@ -427,7 +427,7 @@ Key design:
 - Errors logged, never raised
 - No-op when `feedback_enabled=False`
 
-### 3.3 Integration Points (in equalify-pdf-converter)
+### 3.3 Integration Points (in equalify-reflow)
 
 Hook into existing feedback flow in `src/api/pipeline_feedback.py`:
 

@@ -64,21 +64,28 @@ Results available via API or pipeline viewer UI
 
 - Docker (v20.10+)
 - Docker Compose (v2.0+)
+- An Anthropic API key — get one at [console.anthropic.com/settings/keys](https://console.anthropic.com/settings/keys). Alternatively, bring your own AWS credentials with Bedrock access.
 
 ### Get Running
 
 ```bash
-# Start all services
+# 1. Copy the env template and add your API key
+cp .env.example .env
+# Edit .env and set ANTHROPIC_API_KEY=sk-ant-...
+
+# 2. Start all services
 make dev
 
-# Verify
+# 3. Verify
 curl http://localhost:8080/health
 
-# View API docs (username: dase, password: a11y)
+# 4. View API docs (username: dase, password: a11y)
 open http://localhost:8080/docs
 ```
 
 The API runs at http://localhost:8080 with hot reload enabled. Edit code in `src/` and changes reload automatically inside the container.
+
+The pipeline's AI backend auto-detects from your environment: if `ANTHROPIC_API_KEY` is set, it uses Anthropic direct; otherwise it falls back to AWS Bedrock. Set `AI_PROVIDER=anthropic` or `AI_PROVIDER=bedrock` to force a specific backend. See [`.env.example`](.env.example) for the full list of settings.
 
 ### Essential Commands
 

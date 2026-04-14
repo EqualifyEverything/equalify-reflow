@@ -989,9 +989,9 @@ class PipelineViewerService:
         """
         from pydantic_ai import Agent
         from pydantic_ai.messages import BinaryContent
-        from pydantic_ai.models.bedrock import BedrockConverseModel
+        from ..agents.model_factory import get_model_for_tier
 
-        from ..agents.model_tiers import MODEL_TIER_MAP, ModelTier
+        from ..agents.model_tiers import ModelTier
         from ..agents.prompts.structure_analysis import (
             STRUCTURE_SYSTEM_PROMPT,
             build_structure_user_message,
@@ -999,7 +999,7 @@ class PipelineViewerService:
 
         step_start = time.time()
 
-        model = BedrockConverseModel(MODEL_TIER_MAP[ModelTier.EFFICIENT])
+        model = get_model_for_tier(ModelTier.EFFICIENT)
         agent: Agent[None, StructurePageOutput] = Agent(
             model=model,
             output_type=StructurePageOutput,
@@ -1138,9 +1138,9 @@ class PipelineViewerService:
             Updated StructureResult with reconciled outline.
         """
         from pydantic_ai import Agent
-        from pydantic_ai.models.bedrock import BedrockConverseModel
+        from ..agents.model_factory import get_model_for_tier
 
-        from ..agents.model_tiers import MODEL_TIER_MAP, ModelTier
+        from ..agents.model_tiers import ModelTier
         from ..agents.prompts.heading_reconciliation import (
             HEADING_RECONCILIATION_SYSTEM_PROMPT,
             build_heading_reconciliation_message,
@@ -1173,7 +1173,7 @@ class PipelineViewerService:
                 "reasoning": entry.reasoning or f"Assigned h{entry.level} on page {entry.page}",
             })
 
-        model = BedrockConverseModel(MODEL_TIER_MAP[ModelTier.EFFICIENT])
+        model = get_model_for_tier(ModelTier.EFFICIENT)
         agent: Agent[None, HeadingReconciliationOutput] = Agent(
             model=model,
             output_type=HeadingReconciliationOutput,
@@ -1759,9 +1759,9 @@ class PipelineViewerService:
         """
         from pydantic_ai import Agent
         from pydantic_ai.messages import BinaryContent
-        from pydantic_ai.models.bedrock import BedrockConverseModel
+        from ..agents.model_factory import get_model_for_tier
 
-        from ..agents.model_tiers import MODEL_TIER_MAP, ModelTier
+        from ..agents.model_tiers import ModelTier
         from ..agents.prompts.image_description import (
             IMAGE_DESCRIBER_SYSTEM_PROMPT,
             build_describer_user_message,
@@ -1810,7 +1810,7 @@ class PipelineViewerService:
         )
         user_parts.append(user_message)
 
-        model = BedrockConverseModel(MODEL_TIER_MAP[ModelTier.EFFICIENT])
+        model = get_model_for_tier(ModelTier.EFFICIENT)
         describer_agent: Agent[None, ImageDescriptionResult] = Agent(
             model=model,
             output_type=ImageDescriptionResult,
@@ -1858,9 +1858,9 @@ class PipelineViewerService:
         """
         from pydantic_ai import Agent
         from pydantic_ai.messages import BinaryContent
-        from pydantic_ai.models.bedrock import BedrockConverseModel
+        from ..agents.model_factory import get_model_for_tier
 
-        from ..agents.model_tiers import MODEL_TIER_MAP, ModelTier
+        from ..agents.model_tiers import ModelTier
         from ..agents.prompts.table_reconstruction import (
             TABLE_RECONSTRUCTOR_SYSTEM_PROMPT,
             build_table_user_message,
@@ -1900,7 +1900,7 @@ class PipelineViewerService:
         )
 
         # Create and run subagent
-        model = BedrockConverseModel(MODEL_TIER_MAP[ModelTier.EFFICIENT])
+        model = get_model_for_tier(ModelTier.EFFICIENT)
         reconstructor_agent: Agent[None, TableReconstructionResult] = Agent(
             model=model,
             output_type=TableReconstructionResult,
@@ -1959,9 +1959,9 @@ class PipelineViewerService:
         """
         from pydantic_ai import Agent
         from pydantic_ai.messages import BinaryContent
-        from pydantic_ai.models.bedrock import BedrockConverseModel
+        from ..agents.model_factory import get_model_for_tier
 
-        from ..agents.model_tiers import MODEL_TIER_MAP, ModelTier
+        from ..agents.model_tiers import ModelTier
         from ..agents.prompts.list_reconstruction import (
             LIST_RECONSTRUCTOR_SYSTEM_PROMPT,
             build_list_user_message,
@@ -1988,7 +1988,7 @@ class PipelineViewerService:
         )
 
         # Create and run subagent
-        model = BedrockConverseModel(MODEL_TIER_MAP[ModelTier.EFFICIENT])
+        model = get_model_for_tier(ModelTier.EFFICIENT)
         reconstructor_agent: Agent[None, ListReconstructionResult] = Agent(
             model=model,
             output_type=ListReconstructionResult,
@@ -2205,9 +2205,9 @@ class PipelineViewerService:
         """
         from pydantic_ai import Agent
         from pydantic_ai.messages import BinaryContent
-        from pydantic_ai.models.bedrock import BedrockConverseModel
+        from ..agents.model_factory import get_model_for_tier
 
-        from ..agents.model_tiers import MODEL_TIER_MAP, ModelTier
+        from ..agents.model_tiers import ModelTier
 
         # Compose procedure from page attributes
         page_attrs = structure.page_attributes.get(page_num)
@@ -2284,7 +2284,7 @@ class PipelineViewerService:
         )
 
         # Create agent with tools
-        model = BedrockConverseModel(MODEL_TIER_MAP[ModelTier.EFFICIENT])
+        model = get_model_for_tier(ModelTier.EFFICIENT)
         agent: Agent[None, None] = Agent(
             model=model,
             output_type=None,  # output comes through tool calls
@@ -2807,15 +2807,15 @@ class PipelineViewerService:
             Tuple of (updated document, changes, issues, input_tokens, output_tokens).
         """
         from pydantic_ai import Agent
-        from pydantic_ai.models.bedrock import BedrockConverseModel
+        from ..agents.model_factory import get_model_for_tier
 
-        from ..agents.model_tiers import MODEL_TIER_MAP, ModelTier
+        from ..agents.model_tiers import ModelTier
         from ..agents.prompts.boundary_fix import (
             BOUNDARY_FIX_SYSTEM_PROMPT,
             build_boundary_user_message,
         )
 
-        model = BedrockConverseModel(MODEL_TIER_MAP[ModelTier.EFFICIENT])
+        model = get_model_for_tier(ModelTier.EFFICIENT)
 
         current_document = document
         changes: list[DocumentChange] = []
@@ -2906,15 +2906,15 @@ class PipelineViewerService:
             Tuple of (updated document, changes, issues, input_tokens, output_tokens).
         """
         from pydantic_ai import Agent
-        from pydantic_ai.models.bedrock import BedrockConverseModel
+        from ..agents.model_factory import get_model_for_tier
 
-        from ..agents.model_tiers import MODEL_TIER_MAP, ModelTier
+        from ..agents.model_tiers import ModelTier
         from ..agents.prompts.footnote_relocation import (
             FOOTNOTE_RELOCATION_SYSTEM_PROMPT,
             build_footnote_user_message,
         )
 
-        model = BedrockConverseModel(MODEL_TIER_MAP[ModelTier.EFFICIENT])
+        model = get_model_for_tier(ModelTier.EFFICIENT)
 
         current_document = document
         changes: list[DocumentChange] = []

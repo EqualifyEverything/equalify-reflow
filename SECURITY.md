@@ -6,10 +6,13 @@ Equalify Reflow is currently in beta. The `main` branch is the only supported ve
 
 ## Reporting a Vulnerability
 
-If you believe you've found a security vulnerability in Equalify Reflow, please **do not** open a public GitHub issue. Instead, report it privately via one of:
+If you believe you've found a security vulnerability in Equalify Reflow, please **do not** open a public GitHub issue — doing so would disclose the vulnerability to attackers before a fix exists.
 
-- **GitHub Security Advisory:** https://github.com/EqualifyEverything/equalify-reflow/security/advisories/new
-- **Email the maintainers:** `security@equalify.app`  *(TODO: operator to confirm or replace before repo goes public)*
+Instead, report it privately through GitHub's built-in Security Advisories feature:
+
+**https://github.com/EqualifyEverything/equalify-reflow/security/advisories/new**
+
+Private advisories are routed directly to the maintainers and are not visible to the public until we publish them alongside a fix. No account setup or prior coordination is required — any GitHub user can open one.
 
 We aim to acknowledge reports within 3 business days and to provide a remediation timeline within 7 business days for confirmed issues.
 

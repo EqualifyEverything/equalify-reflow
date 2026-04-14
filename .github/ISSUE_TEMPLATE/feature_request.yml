@@ -1,0 +1,28 @@
+name: Feature request
+description: Suggest a new feature or enhancement
+labels: ["enhancement"]
+body:
+  - type: textarea
+    id: problem
+    attributes:
+      label: What problem does this solve?
+      description: Describe the user-facing problem or limitation. "It would be nice if..." is a start, but get to the "because...".
+    validations:
+      required: true
+  - type: textarea
+    id: proposal
+    attributes:
+      label: Proposed solution
+      description: How would the feature work? What would the API look like?
+    validations:
+      required: true
+  - type: textarea
+    id: alternatives
+    attributes:
+      label: Alternatives considered
+      description: What else did you consider? Why did you reject those alternatives?
+  - type: textarea
+    id: scope
+    attributes:
+      label: Scope notes
+      description: Any context about out-of-scope items, compatibility concerns, or migration impact.

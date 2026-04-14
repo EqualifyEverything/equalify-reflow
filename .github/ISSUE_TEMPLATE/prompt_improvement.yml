@@ -1,0 +1,57 @@
+name: Prompt / agent improvement
+description: Improve accuracy or behaviour of an AI agent in the pipeline
+labels: ["prompt", "agents"]
+body:
+  - type: markdown
+    attributes:
+      value: |
+        Equalify Reflow's pipeline uses eight PydanticAI agents for structure analysis, heading reconciliation, page content correction, boundary repair, code tagging, footnote relocation, and more. See [AGENTS.md](../../AGENTS.md) for the full list and how to iterate on them.
+
+        Use this template if you have a concrete example where a pipeline step produced an incorrect or suboptimal output and you want to propose a prompt change.
+  - type: dropdown
+    id: agent
+    attributes:
+      label: Which agent / pipeline phase?
+      options:
+        - Structure analysis (Phase 2)
+        - Heading reconciliation (Phase 3)
+        - Heading levels (Phase 4)
+        - Page content corrections (Phase 5) — main
+        - Page content corrections (Phase 5) — table subagent
+        - Page content corrections (Phase 5) — list subagent
+        - Page content corrections (Phase 5) — image subagent
+        - Code block languages (Phase 6)
+        - Cross-page boundary fixes (Phase 7) — main
+        - Cross-page boundary fixes (Phase 7) — footnote relocation
+        - Other / unsure
+    validations:
+      required: true
+  - type: textarea
+    id: input
+    attributes:
+      label: Input (document or excerpt)
+      description: What was the input? A public-domain PDF or an anonymised excerpt is ideal.
+    validations:
+      required: true
+  - type: textarea
+    id: actual
+    attributes:
+      label: Actual output
+      description: What did the pipeline produce?
+      render: markdown
+    validations:
+      required: true
+  - type: textarea
+    id: expected
+    attributes:
+      label: Expected output
+      description: What should it have produced, and why?
+      render: markdown
+    validations:
+      required: true
+  - type: textarea
+    id: prompt_change
+    attributes:
+      label: Proposed prompt change
+      description: Optional. If you have already drafted a prompt change, share it here. Otherwise leave blank and the maintainers will iterate.
+      render: text

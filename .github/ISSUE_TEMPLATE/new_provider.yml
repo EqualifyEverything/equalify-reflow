@@ -1,0 +1,44 @@
+name: New provider proposal
+description: Propose a new storage, AI, or other provider integration
+labels: ["provider", "enhancement"]
+body:
+  - type: markdown
+    attributes:
+      value: |
+        Equalify Reflow is transitioning to a provider-abstracted architecture. New storage backends (local filesystem, S3, GCS, MinIO) and new AI backends (Anthropic direct, Bedrock, Vertex, etc.) should go through this template so we can track integration status.
+  - type: dropdown
+    id: category
+    attributes:
+      label: Provider category
+      options:
+        - Storage (document and figure files)
+        - AI model (text correction, structure analysis)
+        - Other
+    validations:
+      required: true
+  - type: input
+    id: name
+    attributes:
+      label: Provider name
+    validations:
+      required: true
+  - type: textarea
+    id: motivation
+    attributes:
+      label: Why this provider?
+      description: Who benefits, and why is the existing option insufficient?
+    validations:
+      required: true
+  - type: textarea
+    id: api_shape
+    attributes:
+      label: Provider API overview
+      description: Key methods, auth model, failure modes, cost envelope.
+  - type: checkboxes
+    id: willingness
+    attributes:
+      label: Contribution interest
+      options:
+        - label: I'm willing to contribute the implementation
+        - label: I can help test
+        - label: I'm only proposing, not implementing

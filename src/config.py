@@ -1,5 +1,7 @@
 """Configuration management for API Gateway Service."""
 
+from typing import Literal
+
 from pydantic import Field, SecretStr
 from pydantic_settings import BaseSettings, SettingsConfigDict
 
@@ -23,6 +25,19 @@ class Settings(BaseSettings):
     aws_secret_access_key: str | None = Field(
         default=None,
         description="AWS secret access key (secret); leave unset to use IAM role in production, 'test' for local dev",
+    )
+
+    # AI Provider Configuration
+    # Selects which backend serves AI agent calls in the versioned pipeline.
+    # Leave ai_provider unset to auto-detect: if anthropic_api_key is set, use Anthropic
+    # direct; otherwise fall back to AWS Bedrock with ambient AWS credentials.
+    ai_provider: Literal["anthropic", "bedrock"] | None = Field(
+        default=None,
+        description="AI model backend for pipeline agents ('anthropic' or 'bedrock'); auto-detected from ANTHROPIC_API_KEY presence when unset",
+    )
+    anthropic_api_key: SecretStr | None = Field(
+        default=None,
+        description="Anthropic API key (secret); required when ai_provider=anthropic and enables auto-detect into the Anthropic path when ai_provider is unset",
     )
 
     # S3 Buckets

@@ -146,13 +146,25 @@ Both tiers resolve to Bedrock inference profile IDs (the `us.` prefix is require
 
 1. Create a new module under `src/agents/` with your system prompt constant and Pydantic output model.
 2. Add a call site in the appropriate `_step_*` method in `src/services/pipeline_viewer.py`.
-3. Resolve the model through `MODEL_TIER_MAP[ModelTier.EFFICIENT]` — do not hardcode model IDs.
+3. Resolve the model through `get_model_for_tier(ModelTier.EFFICIENT)` from `src/agents/model_factory.py` — do not hardcode model IDs or instantiate backend-specific classes directly.
 4. Add unit tests (mock the model response) and integration tests (real agent against a small fixture).
 5. Update the pipeline table above.
 
-## Provider abstraction (in progress)
+## AI backend selection
 
-Today every call site uses `BedrockConverseModel(MODEL_TIER_MAP[ModelTier.EFFICIENT])` directly. A `src/providers/ai/` abstraction is planned that introduces an `AIProvider` protocol so contributors can run the pipeline against Anthropic direct, Bedrock, or other providers without editing agent call sites. Until that lands, new agent work should follow the existing pattern — the rewrite will touch all call sites in a single pass.
+All agent call sites in `src/services/pipeline_viewer.py` resolve their model through `get_model_for_tier(tier)` in `src/agents/model_factory.py`. The factory picks a backend at call time:
+
+- **`AI_PROVIDER=bedrock`** — force AWS Bedrock (production default via the ECS task definition)
+- **`AI_PROVIDER=anthropic`** — force Anthropic direct (requires `ANTHROPIC_API_KEY`)
+- **`AI_PROVIDER` unset** — auto-detect: Anthropic if `ANTHROPIC_API_KEY` is set, else Bedrock
+
+Tier-to-model mapping lives in `src/agents/model_tiers.py` as two dicts: `BEDROCK_TIER_MAP` (inference profile IDs) and `ANTHROPIC_TIER_MAP` (direct API IDs), pinned to the same model generation for output parity between backends.
+
+**What contributors see:** drop an `ANTHROPIC_API_KEY` into `.env` and `make dev` runs the full pipeline against Anthropic direct. No AWS account needed.
+
+**What production sees:** no changes. Production's ECS task definition has no `ANTHROPIC_API_KEY` and sets `AI_PROVIDER=bedrock` (or lets auto-detect fall back to Bedrock), so it continues using Bedrock exactly as before.
+
+Storage still requires S3 (with LocalStack for local emulation) — a storage provider abstraction is planned but out of scope for the AI backend work.
 
 ## Running tests
 

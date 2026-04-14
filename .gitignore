@@ -166,5 +166,6 @@ static/viewer/
 .ralphy/
 docs/prd/
 CLAUDE.local.md
+.claude/settings.local.json
 .claude/worktrees/
 clients/docs/

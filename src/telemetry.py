@@ -24,7 +24,7 @@ _tracer: trace.Tracer | None = None
 _initialized: bool = False
 
 
-def get_tracer(name: str = "equalify-pdf-converter") -> trace.Tracer:
+def get_tracer(name: str = "equalify-reflow") -> trace.Tracer:
     """Get a tracer instance.
 
     Args:
@@ -57,7 +57,7 @@ def init_telemetry(app: "FastAPI | None" = None) -> None:
 
     # Create resource with service info
     resource = Resource.create({
-        SERVICE_NAME: "equalify-pdf-converter",
+        SERVICE_NAME: "equalify-reflow",
         "service.version": "1.0.0",
         "deployment.environment": settings.environment,
     })

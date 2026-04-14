@@ -6,7 +6,7 @@ global:
   evaluation_interval: 15s     # Evaluate rules every 15 seconds
   external_labels:
     environment: 'dev'
-    service: 'equalify-pdf-converter'
+    service: 'equalify-reflow'
 
 # Scrape configurations
 scrape_configs:

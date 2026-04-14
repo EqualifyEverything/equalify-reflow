@@ -263,7 +263,7 @@ test-all:
 
 # Redis CLI
 redis-cli:
-	docker exec -it equalify-pdf-redis redis-cli
+	docker exec -it equalify-reflow-redis redis-cli
 
 # Build Docker images
 build:

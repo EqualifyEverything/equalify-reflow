@@ -18,7 +18,7 @@ services:
       context: .
       dockerfile: Dockerfile
       target: production  # Default to production stage
-    container_name: equalify-pdf-api-gateway
+    container_name: equalify-reflow-api-gateway
     restart: unless-stopped
     ports:
       - "8080:8080"
@@ -45,7 +45,7 @@ services:
   # Provides async communication between FastAPI endpoints and background workers
   redis:
     image: redis:7-alpine
-    container_name: equalify-pdf-redis
+    container_name: equalify-reflow-redis
     restart: unless-stopped
     ports:
       - "6379:6379"
@@ -65,7 +65,7 @@ services:
   # Provides deterministic pre-analysis for PDF accessibility issues
   # verapdf:
   #   image: verapdf/rest:latest
-  #   container_name: equalify-pdf-verapdf
+  #   container_name: equalify-reflow-verapdf
   #   restart: unless-stopped
   #   ports:
   #     - "8081:8080"
@@ -84,9 +84,9 @@ services:
 
 networks:
   equalify-network:
-    name: equalify-pdf-network
+    name: equalify-reflow-network
     driver: bridge
 
 volumes:
   redis-data:
-    name: equalify-pdf-redis-data
+    name: equalify-reflow-redis-data

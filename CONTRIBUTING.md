@@ -81,10 +81,10 @@ Thank you for your interest in contributing! This document provides guidelines f
 - **Package Management:** ALL Python development uses `uv`
   ```bash
   # Add dependencies
-  docker exec -it equalify-pdf-api-gateway uv add <package>
+  docker exec -it equalify-reflow-api-gateway uv add <package>
 
   # Install dev dependencies
-  docker exec -it equalify-pdf-api-gateway uv add --dev <package>
+  docker exec -it equalify-reflow-api-gateway uv add --dev <package>
   ```
 
 - **Code Style:**
@@ -442,13 +442,13 @@ See [CI/CD Documentation](docs/ci-cd.md) for detailed information.
 
 ```bash
 # Add new dependency
-docker exec -it equalify-pdf-api-gateway uv add <package>
+docker exec -it equalify-reflow-api-gateway uv add <package>
 
 # Update existing dependency
-docker exec -it equalify-pdf-api-gateway uv add <package>@latest
+docker exec -it equalify-reflow-api-gateway uv add <package>@latest
 
 # Remove dependency
-docker exec -it equalify-pdf-api-gateway uv remove <package>
+docker exec -it equalify-reflow-api-gateway uv remove <package>
 ```
 
 ## Troubleshooting

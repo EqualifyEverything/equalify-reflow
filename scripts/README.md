@@ -116,8 +116,8 @@ sleep 30
 ./scripts/health-check.sh
 
 # Check specific container logs
-docker logs equalify-pdf-redis
-docker logs equalify-pdf-localstack
+docker logs equalify-reflow-redis
+docker logs equalify-reflow-localstack
 
 # Recreate resources
 ./scripts/setup-aws.sh dev
@@ -191,7 +191,7 @@ Common causes:
 curl http://localhost:4566/_localstack/health
 
 # Check logs
-docker logs equalify-pdf-localstack
+docker logs equalify-reflow-localstack
 
 # Restart LocalStack
 docker-compose -f docker-compose.yml -f docker-compose.dev.yml restart localstack

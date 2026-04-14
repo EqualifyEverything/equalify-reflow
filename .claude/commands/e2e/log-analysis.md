@@ -22,7 +22,7 @@ TAIL="${tail:-500}"
 JOB_FILTER="${job:-}"
 
 # Collect logs
-docker logs equalify-pdf-api-gateway --since $SINCE 2>&1 | tail -$TAIL | tee /tmp/e2e_logs.txt
+docker logs equalify-reflow-api-gateway --since $SINCE 2>&1 | tail -$TAIL | tee /tmp/e2e_logs.txt
 ```
 
 If `--job=UUID` specified, filter:

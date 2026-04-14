@@ -1,108 +1,220 @@
-# Agents and Prompts in Equalify Reflow
+# Equalify Reflow — Agent Guide
 
-Equalify Reflow's accuracy is driven by a small number of AI agents embedded in a versioned pipeline. This file is the canonical reference for those agents: what they do, where they live, how to iterate on prompts, and how to evaluate changes. If you are working on anything in `src/agents/` or touching agent call sites in `src/services/pipeline_viewer.py`, read this file first.
+> **`CLAUDE.md` is a symlink to this file.** Edit `AGENTS.md` (the real file) and both update. Keep it under ~220 lines so it stays cheap to load into an agent's context.
 
-## 1. The pipeline at a glance
+Equalify Reflow is an open-source FastAPI monolith that converts PDF documents into accessible, semantic markdown. It combines IBM Docling extraction with a multi-agent PydanticAI correction pipeline — currently AWS Bedrock + Claude Haiku 4.5; a provider abstraction is in progress. Originally built with the University of Illinois Chicago for course-material accessibility; now maintained for any organisation that needs accessible document conversion.
 
-The pipeline runs in `src/services/pipeline_viewer.py`. Each phase reads the previous version's markdown and produces a new version, so any single phase can be re-run without reprocessing from scratch. Phases marked "AI" instantiate a PydanticAI `Agent` backed by a Claude model on AWS Bedrock.
+**Domain constraint:** course materials only. Do not add features that process student records or PII beyond the existing Presidio scan.
 
-| Phase | Name | AI? | Purpose |
-|---|---|---|---|
-| 1 | Docling extraction | No | PDF → markdown + page images via IBM Docling |
-| 1a | Docling OCR re-extraction | No | Conditional: re-run Docling with Tesseract OCR when the classifier flags a scanned document |
-| 2 | Structure analysis | Yes | Identify headings, footnotes, page types, and document structure |
-| 3 | Heading reconciliation | Yes | Reconcile heading candidates against the document outline |
-| 4 | Heading levels | Yes | Normalise heading hierarchy (H1 → H2 → H3) |
-| 5 | Page content corrections | Yes | Per-page corrections with layout/content/quality prompt fragments; vision on demand |
-| 6 | Code block languages | Yes | Identify programming languages in fenced code blocks |
-| 7 | Cross-page boundary fixes | Yes | Rejoin split content across page breaks and relocate footnotes |
-| 8 | Final cleanup | No | Normalise whitespace, lint markdown |
+## Essential commands
 
-Within the page-content phase there are **subagents** that handle specific content types:
+| Command | Purpose |
+|---|---|
+| `make dev` | Start the full dev stack (auto-detects GPU for docling) |
+| `make dev-docker` | Start with CPU-only docling |
+| `make down` | Stop all services |
+| `make test-fast` | Unit tests, ~30s — run before every commit |
+| `make test-integration` | Integration tests, ~2min — run before PRs |
+| `make test-e2e` | End-to-end tests, ~5min — run before merges |
+| `make logs-api` | Tail api-gateway logs |
+| `make shell` | Bash inside the api-gateway container |
+| `make redis-cli` | Redis CLI inside the redis container |
+| `make health` | Verify infrastructure is up |
+| `make coverage` | Tests with coverage report |
+| `make help` | All available targets |
 
-- **Image describer** — alt text and figure descriptions (`src/agents/image_description.py`)
-- **Table reconstructor** — table structure, headers, alt descriptions (`src/agents/table_reconstruction.py`)
-- **List reconstructor** — ordered/unordered list reconstruction (`src/agents/list_reconstruction.py`)
+Everything runs in Docker. Run Python or pytest through `make` or `docker compose exec api-gateway uv run <cmd>` — never directly on the host.
 
-The boundary phase invokes two further agents:
+## Ports and URLs
 
-- **Boundary fix** — cross-page content rejoin (`src/agents/boundary_fix.py`)
-- **Footnote relocation** — lifts footnotes to the correct anchor (`src/agents/footnote_relocation.py`)
+| Service | URL | Notes |
+|---|---|---|
+| API Gateway | http://localhost:8080 | FastAPI app |
+| Swagger UI | http://localhost:8080/docs | User: `dase`, pass: `a11y` |
+| Reflow Viewer | http://localhost:8080/viewer | Pipeline viewer SPA |
+| Redis | localhost:6379 | In-app code uses `redis:6379` |
+| LocalStack | localhost:4566 | S3 + CloudWatch emulation |
+| Prometheus | http://localhost:9090 | Metrics scraping |
+| Grafana | http://localhost:3001 | Dashboards, `admin/admin` |
+| Jaeger | http://localhost:16686 | Distributed tracing |
+| Native Docling | localhost:5001 | Only when using `make dev-gpu` |
 
-That is eight distinct `Agent(...)` call sites in `pipeline_viewer.py`, each backed by a system prompt in `src/agents/`.
+## Never do
 
-## 2. Where the code lives
+- Do not use `localhost:6379` or `localhost:4566` in source code — services reach each other via Docker network hostnames (`redis:6379`, `localstack:4566`)
+- Do not run `uv run uvicorn`, `python`, `pytest`, or `uv sync` on the host — everything runs in containers
+- Do not reference private infrastructure repos, internal hostnames, AWS account IDs, or operator absolute paths in any tracked file — this is the public repo
+- Do not rename AWS resources — they stay `equalify-pdf-*` on purpose
+- Do not add features that process student records or PII beyond the existing Presidio scan
 
-- **Prompt modules:** `src/agents/` — one file per agent, with the system prompt exported as a module-level constant (e.g. `STRUCTURE_SYSTEM_PROMPT`, `BOUNDARY_FIX_SYSTEM_PROMPT`). Pydantic output models live next to the prompts they produce.
-- **Prompt fragments for page correction:** `src/agents/prompts/procedures/page_correction/` — composable `.md` fragments selected at runtime based on page attributes (layout, content type, quality). See `_compose_page_prompt` in `pipeline_viewer.py`.
-- **Pipeline orchestration:** `src/services/pipeline_viewer.py` — each phase is an `async def _step_*` method. Agent instantiations live inside those methods.
-- **Shared model config:** `src/agents/model_tiers.py` — defines the `ModelTier` enum and `MODEL_TIER_MAP` that every agent resolves through. Today every call site uses `BedrockConverseModel(MODEL_TIER_MAP[ModelTier.EFFICIENT])`; the provider-abstraction work in §6 is what will replace the direct Bedrock coupling.
+## Architecture at a glance
 
-## 3. Model tier selection
+FastAPI monolith. A PDF enters at `POST /api/v1/documents/submit`, gets PII-scanned with Microsoft Presidio, then runs through `PipelineViewerService` — a versioned pipeline that alternates deterministic extraction (Docling, pypdfium2) with AI correction (PydanticAI agents on AWS Bedrock). Each phase writes a new version of the document; prior versions are preserved in S3 so any phase can be re-run without reprocessing from scratch. Job state and rate-limiting live in Redis; progress streams to clients over SSE.
 
-The project defines two tiers in `src/agents/model_tiers.py`:
+See [docs/architecture.md](docs/architecture.md) for the full service diagram, data flows, circuit-breaker strategy, and Bedrock setup.
 
-- **`ModelTier.EFFICIENT`** — Claude Haiku 4.5. Default for every agent call site today. Fast, cheap, and validated against the integration fixtures for structure, correction, and tagging work.
-- **`ModelTier.REASONING`** — Claude Sonnet 4.5. Reserved for heavier analysis or auto-correction work. Not wired into pipeline call sites today; available for new agents that measurably benefit from it.
+### Code layout
 
-Both tiers resolve to AWS Bedrock inference profile IDs (the `us.` prefix is required for Claude 4.5 models). Pricing comments in `model_tiers.py` are the canonical cost reference.
+```
+src/
+├── main.py                    # FastAPI app, middleware stack, lifespan
+├── config.py                  # Settings (env vars, validators)
+├── dependencies.py            # DI factories
+├── api/                       # REST endpoints — all /api/v1/*
+├── services/                  # Business logic
+│   ├── pipeline_viewer.py     # Versioned pipeline + all agent call sites
+│   ├── document_processing_service.py   # Pipeline orchestration
+│   ├── storage_service.py     # S3 upload/download with circuit breakers
+│   ├── s3_url_service.py      # URL generation (LocalStack vs AWS)
+│   ├── s3_cleanup_service.py  # File deletion, best-effort
+│   ├── job_service.py         # Redis job state (Lua scripts)
+│   ├── queue_service.py       # Redis queues
+│   ├── pii_service.py         # Presidio PII detection
+│   ├── approval_service.py    # Token-based PII approval
+│   ├── pdf_classifier.py      # Scanned/digital/malformed classification
+│   └── metrics_service.py     # Prometheus metrics
+├── agents/                    # PydanticAI prompt modules + output models
+│   ├── model_tiers.py         # ModelTier enum + Bedrock inference profile IDs
+│   ├── structure_analysis.py, heading_reconciliation.py
+│   ├── boundary_fix.py, footnote_relocation.py
+│   ├── table_reconstruction.py, list_reconstruction.py, image_description.py
+│   └── prompts/procedures/    # Composable prompt fragments for page correction
+├── workers/                   # Background tasks (PII scan, timeout checks)
+├── middleware/                # Auth, logging, rate limit, metrics, CORS
+├── shared/                    # Constants and data models
+└── utils/                     # Retry logic, circuit breakers, tokens
 
-The rationale for defaulting to Efficient is that the pipeline is versioned — each phase's output is persisted — so a wrong answer on a specific page or section can be re-run on Reasoning without reprocessing the whole document. Start on Efficient; promote to Reasoning only when fixtures prove it's needed.
-
-## 4. Iterating on a prompt
-
-1. **Find the prompt.** Each agent's system prompt lives in `src/agents/*.py` as a module-level constant. Grep for the constant name or the `Agent(` call site in `pipeline_viewer.py`.
-2. **Reproduce the failing case.** The pipeline viewer at `http://localhost:8080/viewer` accepts a PDF upload and renders per-phase output with version diffs. Use a small PDF from `tests/` or a public-domain document.
-3. **Edit the prompt locally.** Hot reload picks up changes inside the running dev container (started with `make dev`).
-4. **Re-run the pipeline.** Because each phase is versioned, you can resubmit a document and inspect the diff for just the phase you changed.
-5. **Compare versions.** The pipeline viewer shows the v(n-1) → v(n) diff for every phase. Use this to confirm your prompt change fixed the failing case and to scan for regressions elsewhere in the document.
-6. **Run the test suites.**
-   - `make test-fast` — unit tests (prompts mocked). Quickest signal.
-   - `make test-integration` — exercises services against fixtures.
-   - `make test-e2e` — exercises the full pipeline end to end. Slower, but the strongest regression signal.
-   If a prompt change breaks tests, the fix is usually a coordinated update to both the prompt and the fixtures — the fixtures are regression detectors, not oracles.
-7. **Open a PR.** Include the before/after markdown diff (or a link to a pipeline-viewer session) in the PR body so reviewers can see the behaviour change.
-
-## 5. Adding a new agent
-
-1. Create a new module under `src/agents/` with your system prompt constant and any Pydantic output models.
-2. Add a call site in the appropriate `_step_*` method in `src/services/pipeline_viewer.py`.
-3. Resolve the model through `MODEL_TIER_MAP[ModelTier.EFFICIENT]` (or `REASONING` if justified) — do **not** hardcode model IDs.
-4. Add unit tests that mock the model response.
-5. Add integration tests that exercise the real agent against a small fixture.
-6. Update the table in §1 of this file so contributors can find your agent.
-
-## 6. Provider abstraction (in progress)
-
-Today every agent call site imports `BedrockConverseModel` directly and instantiates it with a Bedrock inference profile ID:
-
-```python
-from pydantic_ai.models.bedrock import BedrockConverseModel
-from ..agents.model_tiers import MODEL_TIER_MAP, ModelTier
-
-model = BedrockConverseModel(MODEL_TIER_MAP[ModelTier.EFFICIENT])
+tests/
+├── unit/                      # @pytest.mark.unit — no network, mocked I/O
+├── integration/               # @pytest.mark.integration — real Redis + LocalStack
+├── e2e/                       # @pytest.mark.slow — full stack + real fixtures
+└── conftest_fixtures/         # Shared fixtures (clients, data, redis)
 ```
 
-A provider-abstraction effort is planned that will introduce an `AIProvider` protocol so contributors can run the pipeline against Anthropic direct, Bedrock, or other providers without editing agent call sites. Until that effort lands, new agent work should keep using the pattern above; the rewrite will touch all call sites in a single pass.
+### Key files to know
 
-## 7. Prompt engineering conventions
+| File | Why it matters |
+|---|---|
+| `src/main.py` | FastAPI app construction, middleware order, lifespan — startup behaviour |
+| `src/services/pipeline_viewer.py` | Every pipeline phase and every `Agent(...)` call site — the core |
+| `src/agents/model_tiers.py` | `ModelTier` enum → Bedrock inference profile IDs (single source of truth) |
+| `src/agents/prompts/procedures/page_correction/` | Composable prompt fragments for per-page correction |
+| `src/config.py` | All env-var-driven settings + validators |
+| `src/dependencies.py` | DI factories (storage, job, queue) |
+| `Makefile` | Every dev command worth knowing |
+| `docker-compose.yml` + `docker-compose.dev.yml` | Stack definition; hot reload via `./src` bind mount |
+| `tests/conftest_fixtures/` | Shared pytest fixtures — reuse, don't reinvent |
+| `pyproject.toml` | Dependencies, pytest markers, coverage config |
 
-- **System prompts are terse.** State the role, the input contract, and the output contract. No padding.
-- **Structured outputs via Pydantic.** Every agent uses PydanticAI's `output_type=...` with a Pydantic model; contributors should not parse free-text from agent responses.
-- **Temperature is model-default** unless a specific phase has a documented reason to override (none currently do).
-- **Vision is opt-in.** Page content corrections can attach a rendered page image when text-only correction is insufficient. Other phases use text only.
-- **No hidden state.** Each agent call is self-contained. Agents do not share memory across phases — state lives in the versioned pipeline outputs that each phase reads and writes.
-- **Prompt fragments compose.** For page correction, the prompt is assembled from a base fragment plus layout/content/quality fragments under `src/agents/prompts/procedures/page_correction/`. Prefer adding or editing a fragment over hardcoding variants.
+## The pipeline
 
-## 8. Debugging prompt issues
+The pipeline runs in `src/services/pipeline_viewer.py`. Each phase is an `async def _step_*` method that reads the previous version's markdown and writes a new one.
 
-- **Check the traces.** Logfire is wired into PydanticAI in `src/main.py` behind the `LOGFIRE_ENABLED` flag. With it enabled you can see every agent call with full input/output.
-- **Check the pipeline viewer.** Per-phase markdown and JSON outputs for every job, with inter-version diffs.
-- **Check the integration tests.** `tests/integration/` and `tests/e2e/` hold "correct" expectations to compare your output against.
-- **Check the ledger.** `GET /api/v1/documents/{job_id}/ledger` returns the change ledger for a completed job — useful for seeing exactly which corrections an agent applied.
+| # | Phase | AI? | Purpose |
+|---|---|---|---|
+| 1 | Docling extraction | No | PDF → markdown + page images via IBM Docling |
+| 1a | Docling OCR re-extraction | No | Conditional: re-run with Tesseract when classifier flags a scanned document |
+| 2 | Structure analysis | Yes | Identify headings, footnotes, page types, document structure |
+| 3 | Heading reconciliation | Yes | Reconcile heading candidates against the outline |
+| 4 | Heading levels | Yes | Normalise heading hierarchy (H1 → H2 → H3) |
+| 5 | Page content corrections | Yes | Per-page corrections; invokes **table**, **list**, and **image** subagents |
+| 6 | Code block languages | Yes | Identify programming languages in fenced code blocks |
+| 7 | Cross-page boundary fixes | Yes | Rejoin split content; invokes **footnote relocation** subagent |
+| 8 | Final cleanup | No | Normalise whitespace, lint markdown |
 
-## 9. Related documentation
+Eight distinct `Agent(...)` call sites total, each backed by a system prompt in `src/agents/`.
 
-- [docs/architecture.md](docs/architecture.md) — overall system design, data flow, service layer, and Bedrock setup
-- [CONTRIBUTING.md](CONTRIBUTING.md) — how to develop locally, test tiers, and submit changes
-- [CLAUDE.md](CLAUDE.md) — Claude Code session conventions (essential commands, never-do-these, default ports, Context7 library IDs) for contributors using the Claude Code CLI
+## Model tiers
+
+Two tiers defined in `src/agents/model_tiers.py`:
+
+- **`ModelTier.EFFICIENT`** — Claude Haiku 4.5. Default for every call site today. Fast, cheap, validated against integration fixtures.
+- **`ModelTier.REASONING`** — Claude Sonnet 4.5. Reserved for heavier analysis. Not wired into pipeline call sites yet; available for new agents that measurably benefit.
+
+Both tiers resolve to Bedrock inference profile IDs (the `us.` prefix is required for Claude 4.5 models). Default to Efficient; promote to Reasoning only when fixtures prove it's needed.
+
+## Iterating on a prompt
+
+1. **Find the prompt.** Each agent's system prompt lives in `src/agents/*.py` as a module-level constant. Grep for the constant name or the `Agent(` call site in `pipeline_viewer.py`.
+2. **Reproduce the failing case.** Start the stack with `make dev`, upload a small PDF via the pipeline viewer at http://localhost:8080/viewer, and step through per-phase output.
+3. **Edit the prompt.** Hot reload picks up changes inside the running container.
+4. **Re-run the pipeline.** Because each phase is versioned, you can resubmit the same document and inspect the diff for just the phase you changed.
+5. **Run the tests.** `make test-fast` for quick signal, `make test-integration` for behaviour parity, `make test-e2e` for regression safety. If a prompt change breaks tests, the fix is usually a coordinated update to both the prompt and the fixtures.
+6. **Include the diff in the PR body.** Reviewers should see the before/after markdown change, not just the prompt change.
+
+## Adding a new agent
+
+1. Create a new module under `src/agents/` with your system prompt constant and Pydantic output model.
+2. Add a call site in the appropriate `_step_*` method in `src/services/pipeline_viewer.py`.
+3. Resolve the model through `MODEL_TIER_MAP[ModelTier.EFFICIENT]` — do not hardcode model IDs.
+4. Add unit tests (mock the model response) and integration tests (real agent against a small fixture).
+5. Update the pipeline table above.
+
+## Provider abstraction (in progress)
+
+Today every call site uses `BedrockConverseModel(MODEL_TIER_MAP[ModelTier.EFFICIENT])` directly. A `src/providers/ai/` abstraction is planned that introduces an `AIProvider` protocol so contributors can run the pipeline against Anthropic direct, Bedrock, or other providers without editing agent call sites. Until that lands, new agent work should follow the existing pattern — the rewrite will touch all call sites in a single pass.
+
+## Running tests
+
+Three tiers, each with a pytest marker defined in `pyproject.toml`:
+
+- **`make test-fast`** → `@pytest.mark.unit` — no network, all external I/O mocked, parallelized (`-n auto`), <100ms per test. ~30s total.
+- **`make test-integration`** → `@pytest.mark.integration` — real Redis + LocalStack S3, AI responses still mocked. ~2min.
+- **`make test-e2e`** → `@pytest.mark.slow` — full stack with real Bedrock calls against small fixtures. ~5min.
+
+Reuse fixtures from `tests/conftest_fixtures/` rather than inventing new ones.
+
+## Conventions
+
+- **Python tooling:** `uv` only. Never `pip` or system `python`. `uv run script.py` for scripts; `uvx tool-name` for tools.
+- **Commits:** semantic prefixes (`feat:`, `fix:`, `chore:`, `docs:`, `test:`) — history uses these consistently.
+- **Prose:** British `licence` when referring to the AGPL LICENCE file (matches PRD docs). No emojis in source or docs.
+- **Async everywhere:** every FastAPI endpoint and service method that touches I/O is `async`. Do not block the event loop.
+- **Structured outputs:** every agent uses `output_type=<PydanticModel>` — never parse free text from agent responses.
+- **No hidden state:** agents do not share memory across phases. State lives in versioned pipeline outputs.
+- **Security:** never log API keys, PII, or full user content. Redaction happens in middleware.
+
+## Debugging quick-reference
+
+| Problem | First thing to try |
+|---|---|
+| Stack seems broken | `make health`, then `make logs-api` |
+| Redis state looks wrong | `make redis-cli`, inspect `eq-pdf:*` keys |
+| S3 upload failing | Check circuit breaker state in Grafana; search api-gateway logs for `circuit` |
+| Test fails only in CI | Run `make test-integration` locally against LocalStack — often an ordering issue |
+| Container won't start | `docker compose ps`, then `docker compose logs <service>` |
+| Stale container from pre-rename squatting on ports | `docker compose -p equalify-pdf-converter down --remove-orphans` |
+| Agent returning garbage | `GET /api/v1/documents/{job_id}/ledger` shows raw agent output |
+| Prompt regression hunt | Enable Logfire (`LOGFIRE_ENABLED=true`) for full agent traces |
+
+## Documentation index
+
+| Doc | Purpose |
+|---|---|
+| [README.md](README.md) | Project overview, quick start, features |
+| [CONTRIBUTING.md](CONTRIBUTING.md) | Dev workflow, branch strategy, PR conventions |
+| [CODE_OF_CONDUCT.md](CODE_OF_CONDUCT.md) | Community standards |
+| [SECURITY.md](SECURITY.md) | Vulnerability reporting |
+| [LICENSE](LICENSE) | AGPL-3.0-or-later |
+| [docs/architecture.md](docs/architecture.md) | Service diagram, data flows, service layer |
+| [docs/environment-setup.md](docs/environment-setup.md) | Full local setup guide |
+| [docs/ci-cd.md](docs/ci-cd.md) | GitHub Actions, test tiers, CI gates |
+| [docs/rate-limiting.md](docs/rate-limiting.md) | Rate-limit configuration |
+| [.claude/docs/authentication.md](.claude/docs/authentication.md) | API key auth, docs auth, middleware stack |
+| [.claude/docs/s3-resilience.md](.claude/docs/s3-resilience.md) | Circuit breakers, retry logic, metrics |
+| [.claude/docs/testing.md](.claude/docs/testing.md) | Test strategy, fixtures, markers |
+| [.claude/docs/development.md](.claude/docs/development.md) | Adding features, debugging, common issues |
+
+## Context7 library IDs
+
+For MCP context7 lookups:
+
+| Library | ID |
+|---|---|
+| PydanticAI | `/pydantic/pydantic-ai` |
+| FastAPI | `/tiangolo/fastapi` |
+| LocalStack | `/localstack/localstack` |
+| Boto3 | `/boto/boto3` |
+| Microsoft Presidio | `/microsoft/presidio` |
+| Docling | `/docling-project/docling` |
+| Redis | `/redis/redis-py` |

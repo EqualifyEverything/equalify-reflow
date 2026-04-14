@@ -136,7 +136,7 @@ LTI_PUBLIC_KEY_PATH=keys/lti_public.pem
 - `LTI_ISSUER` is `https://canvas.instructure.com` even for local Canvas. This is the issuer value Canvas puts in its JWTs (configured in Canvas's `config/security.yml`).
 - **Browser vs Container URLs:** `LTI_AUTH_LOGIN_URL` uses `localhost:3000` because the *browser* follows this redirect. Server-to-server URLs (`LTI_AUTH_TOKEN_URL`, `LTI_JWKS_URL`, `CANVAS_API_URL`) use the Canvas container hostname (`canvas-lms-web-1`) via Docker network. The `CANVAS_HOST_HEADER` setting ensures all server-to-server requests send the correct `Host: localhost:3000` header that Canvas requires for authentication.
 - **Canvas API networking:** `CANVAS_API_URL` uses the Canvas container hostname (`canvas-lms-web-1`) directly via Docker network. This avoids port conflicts on the host (e.g., if another service uses port 3000). `CANVAS_HOST_HEADER` tells the client to send `Host: localhost:3000` on all requests, which Canvas requires for authentication. The client also rewrites Canvas-generated `localhost:3000` URLs (e.g., file download links) to the container hostname.
-- The `docker-compose.dev.yml` connects the api-gateway to the `canvas-lms_default` network and uses `REDIS_URL=redis://equalify-pdf-redis:6379` to avoid DNS collision with Canvas's own Redis service on the shared network.
+- The `docker-compose.dev.yml` connects the api-gateway to the `canvas-lms_default` network and uses `REDIS_URL=redis://equalify-reflow-redis:6379` to avoid DNS collision with Canvas's own Redis service on the shared network.
 
 ## LTI 1.3 Launch Flow (Detailed)
 
@@ -192,7 +192,7 @@ Browser                  Canvas (localhost:3000)         ngrok          PDF Conv
 If keys are missing or need regeneration:
 
 ```bash
-docker exec equalify-pdf-api-gateway uv run python -m src.lti.keys generate
+docker exec equalify-reflow-api-gateway uv run python -m src.lti.keys generate
 ```
 
 Or from the host (keys are volume-mounted):
@@ -262,7 +262,7 @@ Canvas validates the `Host` header on API requests. Ensure `CANVAS_HOST_HEADER=l
 
 ### Redis DNS collision with Canvas
 
-When the api-gateway is on both the equalify and Canvas Docker networks, the hostname `redis` becomes ambiguous (both projects have a Redis service). The `docker-compose.dev.yml` overrides `REDIS_URL` to use the explicit container name `equalify-pdf-redis` to avoid this. If you see unexpected empty data from Redis, verify the container is connecting to the correct Redis instance.
+When the api-gateway is on both the equalify and Canvas Docker networks, the hostname `redis` becomes ambiguous (both projects have a Redis service). The `docker-compose.dev.yml` overrides `REDIS_URL` to use the explicit container name `equalify-reflow-redis` to avoid this. If you see unexpected empty data from Redis, verify the container is connecting to the correct Redis instance.
 
 ### LTI endpoints return 404
 

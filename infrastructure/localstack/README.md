@@ -74,14 +74,14 @@ curl http://localhost:4566/equalify-pdf-temp/test.txt
 
 ## Persistence
 
-LocalStack data is persisted in the Docker volume `equalify-pdf-localstack-data`. To reset LocalStack:
+LocalStack data is persisted in the Docker volume `equalify-reflow-localstack-data`. To reset LocalStack:
 
 ```bash
 # Stop and remove containers
 docker-compose -f docker-compose.yml -f docker-compose.dev.yml down
 
 # Remove LocalStack volume
-docker volume rm equalify-pdf-localstack-data
+docker volume rm equalify-reflow-localstack-data
 
 # Restart (will re-initialize)
 docker-compose -f docker-compose.yml -f docker-compose.dev.yml up
@@ -93,7 +93,7 @@ docker-compose -f docker-compose.yml -f docker-compose.dev.yml up
 
 Check LocalStack logs:
 ```bash
-docker logs equalify-pdf-localstack
+docker logs equalify-reflow-localstack
 ```
 
 ### Connection refused
@@ -109,5 +109,5 @@ curl http://localhost:4566/_localstack/health
 The init script runs automatically via LocalStack's `ready.d` hook. If it doesn't run:
 
 1. Check script is executable: `ls -l infrastructure/localstack/init-aws.sh`
-2. Check script is mounted: `docker exec equalify-pdf-localstack ls -l /etc/localstack/init/ready.d/`
-3. Manually run: `docker exec equalify-pdf-localstack /etc/localstack/init/ready.d/init-aws.sh`
+2. Check script is mounted: `docker exec equalify-reflow-localstack ls -l /etc/localstack/init/ready.d/`
+3. Manually run: `docker exec equalify-reflow-localstack /etc/localstack/init/ready.d/init-aws.sh`

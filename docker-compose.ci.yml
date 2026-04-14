@@ -3,7 +3,7 @@
 
 services:
   api-gateway:
-    image: equalify-pdf-converter:ci
+    image: equalify-reflow:ci
     build:
       target: development
     volumes:
@@ -37,7 +37,7 @@ services:
 
   docling-serve:
     image: quay.io/docling-project/docling-serve-cpu:latest
-    container_name: equalify-pdf-docling-serve
+    container_name: equalify-reflow-docling-serve
     environment:
       - DOCLING_SERVE_LOAD_MODELS_AT_BOOT=true
       - DOCLING_SERVE_ENG_LOC_SHARE_MODELS=true
@@ -52,7 +52,7 @@ services:
 
   localstack:
     image: localstack/localstack:4.12.0
-    container_name: equalify-pdf-localstack
+    container_name: equalify-reflow-localstack
     ports:
       - "4566:4566"
     environment:

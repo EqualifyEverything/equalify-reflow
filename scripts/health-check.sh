@@ -155,7 +155,7 @@ test_redis() {
     print_section "Testing Redis Connectivity"
 
     # Test ping
-    if docker exec equalify-pdf-redis redis-cli ping > /dev/null 2>&1; then
+    if docker exec equalify-reflow-redis redis-cli ping > /dev/null 2>&1; then
         print_success "Redis ping successful"
     else
         print_failure "Redis ping failed"
@@ -163,14 +163,14 @@ test_redis() {
     fi
 
     # Test basic operations
-    if docker exec equalify-pdf-redis redis-cli SET test-key "test-value" > /dev/null 2>&1; then
+    if docker exec equalify-reflow-redis redis-cli SET test-key "test-value" > /dev/null 2>&1; then
         print_success "Redis write operation successful"
     else
         print_failure "Redis write operation failed"
         return 1
     fi
 
-    local value=$(docker exec equalify-pdf-redis redis-cli GET test-key 2>/dev/null | tr -d '\r')
+    local value=$(docker exec equalify-reflow-redis redis-cli GET test-key 2>/dev/null | tr -d '\r')
     if [ "$value" = "test-value" ]; then
         print_success "Redis read operation successful"
     else
@@ -178,17 +178,17 @@ test_redis() {
         return 1
     fi
 
-    docker exec equalify-pdf-redis redis-cli DEL test-key > /dev/null 2>&1
+    docker exec equalify-reflow-redis redis-cli DEL test-key > /dev/null 2>&1
 
     # Test queue operations
-    if docker exec equalify-pdf-redis redis-cli LPUSH eq-pdf:test-queue "test-job" > /dev/null 2>&1; then
+    if docker exec equalify-reflow-redis redis-cli LPUSH eq-pdf:test-queue "test-job" > /dev/null 2>&1; then
         print_success "Redis queue push successful"
     else
         print_failure "Redis queue push failed"
         return 1
     fi
 
-    local job=$(docker exec equalify-pdf-redis redis-cli RPOP eq-pdf:test-queue 2>/dev/null | tr -d '\r')
+    local job=$(docker exec equalify-reflow-redis redis-cli RPOP eq-pdf:test-queue 2>/dev/null | tr -d '\r')
     if [ "$job" = "test-job" ]; then
         print_success "Redis queue pop successful"
     else
@@ -197,9 +197,9 @@ test_redis() {
     fi
 
     # Show Redis info
-    print_info "Redis version: $(docker exec equalify-pdf-redis redis-cli INFO SERVER | grep redis_version | cut -d: -f2 | tr -d '\r')"
-    print_info "Redis memory usage: $(docker exec equalify-pdf-redis redis-cli INFO MEMORY | grep used_memory_human | cut -d: -f2 | tr -d '\r')"
-    print_info "Redis uptime: $(docker exec equalify-pdf-redis redis-cli INFO SERVER | grep uptime_in_seconds | cut -d: -f2 | tr -d '\r') seconds"
+    print_info "Redis version: $(docker exec equalify-reflow-redis redis-cli INFO SERVER | grep redis_version | cut -d: -f2 | tr -d '\r')"
+    print_info "Redis memory usage: $(docker exec equalify-reflow-redis redis-cli INFO MEMORY | grep used_memory_human | cut -d: -f2 | tr -d '\r')"
+    print_info "Redis uptime: $(docker exec equalify-reflow-redis redis-cli INFO SERVER | grep uptime_in_seconds | cut -d: -f2 | tr -d '\r') seconds"
 
     return 0
 }
@@ -274,15 +274,15 @@ test_network() {
     print_section "Testing Docker Network"
 
     # Check if network exists
-    if docker network ls | grep -q equalify-pdf-network; then
-        print_success "Docker network (equalify-pdf-network) exists"
+    if docker network ls | grep -q equalify-reflow-network; then
+        print_success "Docker network (equalify-reflow-network) exists"
     else
-        print_failure "Docker network (equalify-pdf-network) not found"
+        print_failure "Docker network (equalify-reflow-network) not found"
         return 1
     fi
 
     # Check network connectivity between containers
-    if docker exec equalify-pdf-redis ping -c 1 localstack > /dev/null 2>&1; then
+    if docker exec equalify-reflow-redis ping -c 1 localstack > /dev/null 2>&1; then
         print_success "Network connectivity: Redis -> LocalStack"
     else
         print_warning "Network connectivity test skipped (expected if LocalStack not running)"
@@ -295,18 +295,18 @@ test_volumes() {
     print_section "Testing Docker Volumes"
 
     # Check Redis data volume
-    if docker volume ls | grep -q equalify-pdf-redis-data; then
+    if docker volume ls | grep -q equalify-reflow-redis-data; then
         print_success "Redis data volume exists"
-        local size=$(docker volume inspect equalify-pdf-redis-data --format '{{ .Name }}' 2>/dev/null)
+        local size=$(docker volume inspect equalify-reflow-redis-data --format '{{ .Name }}' 2>/dev/null)
         if [ -n "$size" ]; then
-            print_info "Redis volume: equalify-pdf-redis-data"
+            print_info "Redis volume: equalify-reflow-redis-data"
         fi
     else
         print_failure "Redis data volume not found"
     fi
 
     # Check LocalStack data volume (if dev environment)
-    if docker volume ls | grep -q equalify-pdf-localstack-data; then
+    if docker volume ls | grep -q equalify-reflow-localstack-data; then
         print_success "LocalStack data volume exists"
     else
         print_warning "LocalStack data volume not found (expected in dev environment only)"
@@ -342,46 +342,42 @@ check_local_health() {
     # Check container status
     print_section "Checking Container Status"
 
-    check_container "equalify-pdf-redis" "Redis"
-    check_container "equalify-pdf-api-gateway" "API Gateway (includes all workers)"
+    check_container "equalify-reflow-redis" "Redis"
+    check_container "equalify-reflow-api-gateway" "API Gateway (includes all workers)"
 
     # Check dev environment containers (optional)
-    if docker ps --format '{{.Names}}' | grep -q equalify-pdf-localstack; then
-        check_container "equalify-pdf-localstack" "LocalStack"
+    if docker ps --format '{{.Names}}' | grep -q equalify-reflow-localstack; then
+        check_container "equalify-reflow-localstack" "LocalStack"
     fi
 
-    if docker ps --format '{{.Names}}' | grep -q equalify-pdf-demo-ui; then
-        check_container "equalify-pdf-demo-ui" "Demo UI"
+    if docker ps --format '{{.Names}}' | grep -q equalify-reflow-prometheus; then
+        check_container "equalify-reflow-prometheus" "Prometheus"
     fi
 
-    if docker ps --format '{{.Names}}' | grep -q equalify-pdf-prometheus; then
-        check_container "equalify-pdf-prometheus" "Prometheus"
+    if docker ps --format '{{.Names}}' | grep -q equalify-reflow-grafana; then
+        check_container "equalify-reflow-grafana" "Grafana"
     fi
 
-    if docker ps --format '{{.Names}}' | grep -q equalify-pdf-grafana; then
-        check_container "equalify-pdf-grafana" "Grafana"
-    fi
-
-    if docker ps --format '{{.Names}}' | grep -q equalify-pdf-redis-exporter; then
-        check_container "equalify-pdf-redis-exporter" "Redis Exporter"
+    if docker ps --format '{{.Names}}' | grep -q equalify-reflow-redis-exporter; then
+        check_container "equalify-reflow-redis-exporter" "Redis Exporter"
     fi
 
     # Check container health
     print_section "Checking Container Health"
 
-    check_container_health "equalify-pdf-redis" "Redis"
-    check_container_health "equalify-pdf-api-gateway" "API Gateway"
+    check_container_health "equalify-reflow-redis" "Redis"
+    check_container_health "equalify-reflow-api-gateway" "API Gateway"
 
-    if docker ps --format '{{.Names}}' | grep -q equalify-pdf-localstack; then
-        check_container_health "equalify-pdf-localstack" "LocalStack"
+    if docker ps --format '{{.Names}}' | grep -q equalify-reflow-localstack; then
+        check_container_health "equalify-reflow-localstack" "LocalStack"
     fi
 
-    if docker ps --format '{{.Names}}' | grep -q equalify-pdf-prometheus; then
-        check_container_health "equalify-pdf-prometheus" "Prometheus"
+    if docker ps --format '{{.Names}}' | grep -q equalify-reflow-prometheus; then
+        check_container_health "equalify-reflow-prometheus" "Prometheus"
     fi
 
-    if docker ps --format '{{.Names}}' | grep -q equalify-pdf-grafana; then
-        check_container_health "equalify-pdf-grafana" "Grafana"
+    if docker ps --format '{{.Names}}' | grep -q equalify-reflow-grafana; then
+        check_container_health "equalify-reflow-grafana" "Grafana"
     fi
 
     # Test services
@@ -391,7 +387,7 @@ check_local_health() {
     test_volumes
 
     # Test LocalStack if running
-    if docker ps --format '{{.Names}}' | grep -q equalify-pdf-localstack; then
+    if docker ps --format '{{.Names}}' | grep -q equalify-reflow-localstack; then
         test_localstack
     else
         print_section "LocalStack Tests"
@@ -427,7 +423,7 @@ else
     echo "  1. Check container logs: docker logs <container-name>"
     echo "  2. Restart services: docker-compose restart"
     echo "  3. View full setup: docker-compose ps"
-    echo "  4. Check network: docker network inspect equalify-pdf-network"
+    echo "  4. Check network: docker network inspect equalify-reflow-network"
     echo ""
     exit 1
 fi

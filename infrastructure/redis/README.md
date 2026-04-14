@@ -59,7 +59,7 @@ Equalify Reflow uses the following Redis data structures:
 
 ```bash
 # Using redis-cli in the Redis container
-docker exec -it equalify-pdf-redis redis-cli
+docker exec -it equalify-reflow-redis redis-cli
 
 # From another container in the network
 redis-cli -h redis -p 6379
@@ -138,7 +138,7 @@ redis-cli zrange eq-pdf:timeouts:approval 0 -1 WITHSCORES
 
 ## Data Persistence
 
-Redis data is persisted in the Docker volume `equalify-pdf-redis-data`:
+Redis data is persisted in the Docker volume `equalify-reflow-redis-data`:
 
 - **RDB file**: `/data/dump.rdb`
 - **AOF file**: `/data/appendonly.aof`
@@ -147,10 +147,10 @@ Redis data is persisted in the Docker volume `equalify-pdf-redis-data`:
 
 ```bash
 # Create backup
-docker exec equalify-pdf-redis redis-cli BGSAVE
+docker exec equalify-reflow-redis redis-cli BGSAVE
 
 # Copy RDB file
-docker cp equalify-pdf-redis:/data/dump.rdb ./backup-$(date +%Y%m%d).rdb
+docker cp equalify-reflow-redis:/data/dump.rdb ./backup-$(date +%Y%m%d).rdb
 ```
 
 ### Restore
@@ -160,7 +160,7 @@ docker cp equalify-pdf-redis:/data/dump.rdb ./backup-$(date +%Y%m%d).rdb
 docker-compose -f docker-compose.yml -f docker-compose.dev.yml stop redis
 
 # Copy backup file
-docker cp ./backup.rdb equalify-pdf-redis:/data/dump.rdb
+docker cp ./backup.rdb equalify-reflow-redis:/data/dump.rdb
 
 # Start Redis
 docker-compose -f docker-compose.yml -f docker-compose.dev.yml start redis
@@ -202,10 +202,10 @@ REDIS_URL=redis://:your-strong-password-here@redis:6379
 docker ps | grep redis
 
 # Check Redis logs
-docker logs equalify-pdf-redis
+docker logs equalify-reflow-redis
 
 # Test connection
-docker exec equalify-pdf-redis redis-cli ping
+docker exec equalify-reflow-redis redis-cli ping
 ```
 
 ### Memory issues

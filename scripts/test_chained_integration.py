@@ -7,7 +7,7 @@ Tests the chained analysis on a sample PDF to verify:
 3. Two-column layout is detected correctly
 
 Usage:
-    docker exec equalify-pdf-api-gateway python scripts/test_chained_integration.py
+    docker exec equalify-reflow-api-gateway python scripts/test_chained_integration.py
 """
 
 import asyncio

@@ -146,16 +146,16 @@ ALL Python development uses `uv`:
 
 ```bash
 # Add dependency (from inside container)
-docker exec -it equalify-pdf-api-gateway uv add <package>
+docker exec -it equalify-reflow-api-gateway uv add <package>
 
 # Add dev dependency
-docker exec -it equalify-pdf-api-gateway uv add --dev <package>
+docker exec -it equalify-reflow-api-gateway uv add --dev <package>
 
 # Remove dependency
-docker exec -it equalify-pdf-api-gateway uv remove <package>
+docker exec -it equalify-reflow-api-gateway uv remove <package>
 
 # Update dependency
-docker exec -it equalify-pdf-api-gateway uv add <package>@latest
+docker exec -it equalify-reflow-api-gateway uv add <package>@latest
 ```
 
 ## Debugging
@@ -165,7 +165,7 @@ docker exec -it equalify-pdf-api-gateway uv add <package>@latest
 ```bash
 make logs           # All services
 make logs-api       # API only
-docker logs equalify-pdf-redis -f
+docker logs equalify-reflow-redis -f
 ```
 
 ### Access Container Shell
@@ -234,7 +234,7 @@ make docling-native-stop
 
 ### Container not starting
 
-- Check logs: `docker logs equalify-pdf-api-gateway`
+- Check logs: `docker logs equalify-reflow-api-gateway`
 - Verify `.env` file exists
 - Clean and rebuild: `make clean && make build && make dev`
 

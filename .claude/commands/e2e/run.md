@@ -142,7 +142,7 @@ curl -s -H "X-API-Key: {API_KEY}" "http://localhost:8080/api/documents/{JOB_ID}"
 
 **If taking >2 minutes, check progress:**
 ```bash
-docker logs equalify-pdf-api-gateway --tail 15 2>&1 | grep -E "Phase|Agent|complete|cost"
+docker logs equalify-reflow-api-gateway --tail 15 2>&1 | grep -E "Phase|Agent|complete|cost"
 ```
 
 **If status is `failed`:**

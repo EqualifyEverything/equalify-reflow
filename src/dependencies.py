@@ -27,7 +27,7 @@ def _get_s3_client_singleton() -> Any:
     """Create singleton S3 client for connection reuse across requests.
 
     In production AWS: Uses IAM role credentials (no keys needed)
-    In local dev: Uses LocalStack endpoint with test credentials
+    In local dev: Uses Floci endpoint with test credentials
     """
     retry_config = Config(
         retries={
@@ -39,8 +39,8 @@ def _get_s3_client_singleton() -> Any:
         max_pool_connections=50,
     )
 
-    # boto3 automatically reads AWS_ENDPOINT_URL_S3 from environment for LocalStack
-    # In production, it uses IAM role credentials automatically
+    # boto3 automatically reads AWS_ENDPOINT_URL_S3 from environment (points
+    # at Floci in dev/CI). In production, it uses IAM role credentials.
 
     # Clear empty AWS_PROFILE to prevent boto3 profile lookup error
     import os
@@ -57,7 +57,7 @@ def _get_s3_client_singleton() -> Any:
 
 # Client dependencies with proper resource cleanup
 async def get_s3_client() -> AsyncGenerator[Any, None]:
-    """Get S3 client (LocalStack or AWS) with optimized retry configuration.
+    """Get S3 client (Floci or AWS) with optimized retry configuration.
 
     Configures boto3 with:
     - Adaptive retry mode (intelligent throttling and backoff)

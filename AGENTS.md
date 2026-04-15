@@ -33,7 +33,7 @@ Everything runs in Docker. Run Python or pytest through `make` or `docker compos
 | API Gateway | http://localhost:8080/api/v1/* | FastAPI app |
 | Swagger UI | http://localhost:8080/docs | User: `dase`, pass: `a11y` |
 | Redis | localhost:6379 | In-app code uses `redis:6379` |
-| LocalStack | localhost:4566 | S3 + CloudWatch emulation |
+| Floci | localhost:4566 | S3 + CloudWatch emulation (replaces LocalStack) |
 | Prometheus | http://localhost:9090 | Metrics scraping |
 | Grafana | http://localhost:3001 | Dashboards, `admin/admin` |
 | Jaeger | http://localhost:16686 | Distributed tracing |
@@ -41,7 +41,7 @@ Everything runs in Docker. Run Python or pytest through `make` or `docker compos
 
 ## Never do
 
-- Do not use `localhost:6379` or `localhost:4566` in source code — services reach each other via Docker network hostnames (`redis:6379`, `localstack:4566`)
+- Do not use `localhost:6379` or `localhost:4566` in source code — services reach each other via Docker network hostnames (`redis:6379`, `floci:4566`)
 - Do not run `uv run uvicorn`, `python`, `pytest`, or `uv sync` on the host — everything runs in containers
 - Do not reference private infrastructure repos, internal hostnames, AWS account IDs, or operator absolute paths in any tracked file — this is the public repo
 - Do not rename AWS resources — they stay `equalify-pdf-*` on purpose
@@ -65,7 +65,7 @@ src/
 │   ├── pipeline_viewer.py     # Versioned pipeline + all agent call sites
 │   ├── document_processing_service.py   # Pipeline orchestration
 │   ├── storage_service.py     # S3 upload/download with circuit breakers
-│   ├── s3_url_service.py      # URL generation (LocalStack vs AWS)
+│   ├── s3_url_service.py      # URL generation (Floci vs AWS)
 │   ├── s3_cleanup_service.py  # File deletion, best-effort
 │   ├── job_service.py         # Redis job state (Lua scripts)
 │   ├── queue_service.py       # Redis queues
@@ -86,7 +86,7 @@ src/
 
 tests/
 ├── unit/                      # @pytest.mark.unit — no network, mocked I/O
-├── integration/               # @pytest.mark.integration — real Redis + LocalStack
+├── integration/               # @pytest.mark.integration — real Redis + Floci
 ├── e2e/                       # @pytest.mark.slow — full stack + real fixtures
 └── conftest_fixtures/         # Shared fixtures (clients, data, redis)
 ```
@@ -164,14 +164,14 @@ Tier-to-model mapping lives in `src/agents/model_tiers.py` as two dicts: `BEDROC
 
 **What production sees:** no changes. Production's ECS task definition has no `ANTHROPIC_API_KEY` and sets `AI_PROVIDER=bedrock` (or lets auto-detect fall back to Bedrock), so it continues using Bedrock exactly as before.
 
-Storage still requires S3 (with LocalStack for local emulation) — a storage provider abstraction is planned but out of scope for the AI backend work.
+Storage still requires S3 (with [Floci](https://github.com/floci-io/floci) for local emulation) — a storage provider abstraction is planned but out of scope for the AI backend work.
 
 ## Running tests
 
 Three tiers, each with a pytest marker defined in `pyproject.toml`:
 
 - **`make test-fast`** → `@pytest.mark.unit` — no network, all external I/O mocked, parallelized (`-n auto`), <100ms per test. ~30s total.
-- **`make test-integration`** → `@pytest.mark.integration` — real Redis + LocalStack S3, AI responses still mocked. ~2min.
+- **`make test-integration`** → `@pytest.mark.integration` — real Redis + Floci S3, AI responses still mocked. ~2min.
 - **`make test-e2e`** → `@pytest.mark.slow` — full stack with real Bedrock calls against small fixtures. ~5min.
 
 Reuse fixtures from `tests/conftest_fixtures/` rather than inventing new ones.
@@ -193,7 +193,7 @@ Reuse fixtures from `tests/conftest_fixtures/` rather than inventing new ones.
 | Stack seems broken | `make health`, then `make logs-api` |
 | Redis state looks wrong | `make redis-cli`, inspect `eq-pdf:*` keys |
 | S3 upload failing | Check circuit breaker state in Grafana; search api-gateway logs for `circuit` |
-| Test fails only in CI | Run `make test-integration` locally against LocalStack — often an ordering issue |
+| Test fails only in CI | Run `make test-integration` locally against Floci — often an ordering issue |
 | Container won't start | `docker compose ps`, then `docker compose logs <service>` |
 | Stale container from pre-rename squatting on ports | `docker compose -p equalify-pdf-converter down --remove-orphans` |
 | Agent returning garbage | `GET /api/v1/documents/{job_id}/ledger` shows raw agent output |
@@ -225,7 +225,7 @@ For MCP context7 lookups:
 |---|---|
 | PydanticAI | `/pydantic/pydantic-ai` |
 | FastAPI | `/tiangolo/fastapi` |
-| LocalStack | `/localstack/localstack` |
+| Floci | `/floci-io/floci` |
 | Boto3 | `/boto/boto3` |
 | Microsoft Presidio | `/microsoft/presidio` |
 | Docling | `/docling-project/docling` |

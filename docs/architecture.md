@@ -34,7 +34,7 @@ Equalify Reflow is a monolithic Python application with background task queuing 
 
 - **Redis 5.0+** - Task queues, job state, rate limiting, distributed locks
 - **AWS S3** - Current default for object storage (PDFs, pipeline artefacts, results). Pluggable: the provider-abstraction roadmap (in progress) will add a local filesystem option for simpler deployments.
-- **LocalStack** - Local S3 emulation used by the default dev stack; an override file for real AWS also exists. Once the filesystem storage provider lands, LocalStack becomes opt-in rather than required.
+- **Floci** - Lightweight (~72 MB, ~26 ms startup, MIT licensed) local AWS emulator used by the default dev stack. Replaces LocalStack — same wire protocol, same port (4566). Once the filesystem storage provider lands, Floci becomes opt-in rather than required.
 - **Docker & Docker Compose** - Containerized services
 
 ### Monitoring & Observability
@@ -1074,7 +1074,7 @@ equalify-pdf-results/
 **Prerequisites:**
 
 - Docker (Desktop or Engine)
-- 8GB+ RAM (for LocalStack + containers)
+- 8GB+ RAM (for containers)
 - 20GB+ disk space
 
 **Start services:**
@@ -1087,7 +1087,7 @@ make dev
 
 - **api-gateway** (port 8080) - FastAPI application
 - **redis** (port 6379) - Task queues and state
-- **localstack** (port 4566) - Local AWS (S3) emulation
+- **floci** (port 4566) - Local AWS emulation (S3 + CloudWatch; replaces LocalStack)
 - **docling-serve** (port 5001) - Document parsing (native on Apple Silicon, Docker elsewhere)
 - **prometheus** (port 9090) - Metrics collection
 - **grafana** (port 3001) - Metrics visualization

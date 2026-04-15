@@ -38,7 +38,7 @@ class TestClientLifecycle:
             try:
                 await client.ping()
             except Exception:
-                # LocalStack Redis might not be running in test context
+                # Redis might not be running in test context
                 pass
             break
 

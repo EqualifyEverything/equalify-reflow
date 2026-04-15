@@ -80,9 +80,9 @@ class TestBuildPublicUrl:
     """Tests for build_public_url method."""
 
     @pytest.mark.asyncio
-    async def test_build_public_url_localstack(self, url_service, monkeypatch):
-        """Test URL generation for LocalStack environment."""
-        # Mock LocalStack environment
+    async def test_build_public_url_dev(self, url_service, monkeypatch):
+        """Test URL generation for dev environment (Floci path-style URLs)."""
+        # Mock dev environment with S3_PUBLIC_URL set (points at Floci host port)
         monkeypatch.setattr(settings, "s3_public_url", "http://localhost:4566")
 
         url = url_service.build_public_url("results-bucket", "results/abc-123.md")
@@ -133,9 +133,9 @@ class TestGenerateUrl:
     """Tests for generate_url method (API Refactoring Phase 1)."""
 
     @pytest.mark.asyncio
-    async def test_generate_url_localstack(self, url_service, monkeypatch):
-        """Test URL generation for LocalStack environment."""
-        # Mock LocalStack environment
+    async def test_generate_url_dev(self, url_service, monkeypatch):
+        """Test URL generation for dev environment (Floci path-style URLs)."""
+        # Mock dev environment with S3_PUBLIC_URL set (points at Floci host port)
         monkeypatch.setattr(settings, "s3_public_url", "http://localhost:4566")
 
         url = await url_service.generate_url("results/abc-123.md")
@@ -145,8 +145,8 @@ class TestGenerateUrl:
         assert "results/abc-123.md" in url
 
     @pytest.mark.asyncio
-    async def test_generate_url_localstack_with_custom_bucket(self, url_service, monkeypatch):
-        """Test URL generation for LocalStack with custom bucket."""
+    async def test_generate_url_dev_with_custom_bucket(self, url_service, monkeypatch):
+        """Test URL generation for dev environment with a custom bucket."""
         monkeypatch.setattr(settings, "s3_public_url", "http://localhost:4566")
 
         url = await url_service.generate_url(

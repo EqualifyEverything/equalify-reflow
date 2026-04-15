@@ -24,7 +24,8 @@ from src.services.s3_url_service import S3URLService
 from src.services.storage_service import StorageService
 from src.shared.models.pii import PIIFinding
 from src.workers.pii_worker import PIIWorker
-from testcontainers.localstack import LocalStackContainer
+from testcontainers.core.container import DockerContainer
+from testcontainers.core.waiting_utils import wait_for_logs
 from testcontainers.redis import RedisContainer
 
 # ============================================================================
@@ -63,16 +64,22 @@ def redis_container():
 
 
 @pytest.fixture(scope="session")
-def localstack_container():
-    """Session-scoped LocalStack container via testcontainers.
+def floci_container():
+    """Session-scoped Floci container via testcontainers.
 
-    Container starts once per test session, providing isolated S3 service.
+    Floci is a lightweight AWS emulator (replaces LocalStack). Uses the
+    generic DockerContainer helper since testcontainers has no first-class
+    Floci module; we wait for the "Emulator Ready" banner instead of a
+    health endpoint because Floci doesn't expose /_localstack/health.
     """
-    with LocalStackContainer(image="localstack/localstack:4.12.0").with_env(
-        "LOCALSTACK_ACKNOWLEDGE_ACCOUNT_REQUIREMENT", "1"
-    ) as localstack:
-        localstack.with_services("s3")
-        yield localstack
+    container = (
+        DockerContainer("hectorvent/floci:1.5.3")
+        .with_exposed_ports(4566)
+        .with_env("FLOCI_DEFAULT_REGION", "us-east-1")
+    )
+    with container:
+        wait_for_logs(container, "=== AWS Local Emulator Ready ===", timeout=30)
+        yield container
 
 
 # ============================================================================
@@ -105,15 +112,15 @@ async def real_redis_client(redis_container) -> AsyncGenerator[aioredis.Redis, N
 
 
 @pytest.fixture
-def real_s3_client(localstack_container):
-    """Real S3 client connected to LocalStack testcontainer with per-test cleanup.
+def real_s3_client(floci_container):
+    """Real S3 client connected to Floci testcontainer with per-test cleanup.
 
     Each test gets a fresh S3 environment with buckets pre-created.
     Testcontainers handles container lifecycle and cleanup.
     """
-    # Build LocalStack endpoint URL from testcontainer
-    host = localstack_container.get_container_host_ip()
-    port = localstack_container.get_exposed_port(4566)
+    # Build Floci endpoint URL from testcontainer
+    host = floci_container.get_container_host_ip()
+    port = floci_container.get_exposed_port(4566)
     endpoint_url = f"http://{host}:{port}"
 
     # Create S3 client (no AWS_PROFILE issues with testcontainers)
@@ -152,7 +159,7 @@ def real_s3_client(localstack_container):
 
 @pytest_asyncio.fixture
 async def storage_service(real_s3_client):
-    """Create StorageService with REAL S3 (testcontainer LocalStack)."""
+    """Create StorageService with REAL S3 (testcontainer Floci)."""
     return StorageService(
         s3_client=real_s3_client,
         temp_bucket=settings.s3_temp_bucket,
@@ -174,7 +181,7 @@ async def job_service(real_redis_client):
 
 @pytest_asyncio.fixture
 async def s3_url_service(real_s3_client):
-    """Create S3URLService with REAL S3 (testcontainer LocalStack)."""
+    """Create S3URLService with REAL S3 (testcontainer Floci)."""
     return S3URLService(
         s3_client=real_s3_client,
         temp_bucket=settings.s3_temp_bucket,

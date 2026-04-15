@@ -1,36 +1,51 @@
 # Equalify Reflow - Development Override Configuration
-# This file adds LocalStack and development-specific configurations
+# This file adds Floci (local AWS emulator) and development-specific configurations
 # Usage: docker-compose -f docker-compose.yml -f docker-compose.dev.yml up
 
 services:
-  # LocalStack - Local AWS cloud stack for development
-  localstack:
-    image: localstack/localstack:4.12.0
-    container_name: equalify-reflow-localstack
+  # Floci - Local AWS emulator for development (replaces LocalStack)
+  # ~72 MB image, ~26 ms startup, MIT licensed, S3 + CloudWatch + friends
+  floci:
+    image: hectorvent/floci:1.5.3
+    container_name: equalify-reflow-floci
     restart: unless-stopped
     ports:
-      - "4566:4566" # LocalStack edge port
-      - "4510-4559:4510-4559" # External service port range
+      - "4566:4566"
     environment:
-      - SERVICES=s3,cloudwatch
-      - DEBUG=${DEBUG:-0}
-      - DATA_DIR=/tmp/localstack/data
-      - DOCKER_HOST=unix:///var/run/docker.sock
-      - AWS_ACCESS_KEY_ID=test
-      - AWS_SECRET_ACCESS_KEY=test
-      - AWS_DEFAULT_REGION=us-east-1
-      - SKIP_SSL_CERT_DOWNLOAD=1
-      - LOCALSTACK_ACKNOWLEDGE_ACCOUNT_REQUIREMENT=1
-      - TMPDIR=/tmp/localstack
+      - FLOCI_DEFAULT_REGION=us-east-1
+      - FLOCI_STORAGE_MODE=persistent
+      - FLOCI_STORAGE_PERSISTENT_PATH=/app/data
+      - FLOCI_HOSTNAME=floci
     volumes:
-      - ./infrastructure/localstack/init-aws.sh:/etc/localstack/init/ready.d/init-aws.sh:ro
-      - localstack-data:/tmp/localstack
-      - /var/run/docker.sock:/var/run/docker.sock
+      - floci-data:/app/data
     healthcheck:
-      test: [ "CMD", "curl", "-f", "http://localhost:4566/_localstack/health" ]
+      # Floci has no dedicated /health endpoint; GET / returns 200 with
+      # ListAllMyBucketsResult XML and is cheap + deterministic.
+      test: ["CMD-SHELL", "curl -sf http://localhost:4566/ || exit 1"]
       interval: 10s
       timeout: 5s
       retries: 5
+    networks:
+      - equalify-network
+
+  # Floci init sidecar - creates S3 buckets + CORS/policy/versioning/lifecycle.
+  # Runs once after Floci reports healthy, then exits. boto3/awscli read
+  # AWS_ENDPOINT_URL automatically so the init script uses plain `aws`
+  # commands against Floci.
+  floci-init:
+    image: amazon/aws-cli:latest
+    container_name: equalify-reflow-floci-init
+    entrypoint: ["/bin/sh", "/init-aws.sh"]
+    environment:
+      - AWS_ACCESS_KEY_ID=test
+      - AWS_SECRET_ACCESS_KEY=test
+      - AWS_DEFAULT_REGION=us-east-1
+      - AWS_ENDPOINT_URL=http://floci:4566
+    volumes:
+      - ./infrastructure/floci/init-aws.sh:/init-aws.sh:ro
+    depends_on:
+      floci:
+        condition: service_healthy
     networks:
       - equalify-network
 
@@ -82,14 +97,14 @@ services:
       # Mount built pipeline viewer (run `make build-viewer` to update)
       - ./clients/viewer/dist:/app/static/viewer:ro
     environment:
-      # AWS Hybrid Configuration - LocalStack for S3/CloudWatch, Real AWS for Bedrock
+      # AWS Hybrid Configuration - Floci for S3/CloudWatch, Real AWS for Bedrock
       # Use service-specific endpoints (no global endpoint to avoid bedrock conflicts)
-      - AWS_ENDPOINT_URL_S3=http://localstack:4566
-      - AWS_ENDPOINT_URL_CLOUDWATCH=http://localstack:4566
+      - AWS_ENDPOINT_URL_S3=http://floci:4566
+      - AWS_ENDPOINT_URL_CLOUDWATCH=http://floci:4566
       # AWS_ENDPOINT_URL_BEDROCK_RUNTIME not set → uses real AWS
       # Real AWS credentials from host environment (for Bedrock API access)
-      # These override the LocalStack test credentials for services that need real AWS
-      # Fallback to 'test' for LocalStack when real credentials aren't available
+      # These override the Floci test credentials for services that need real AWS
+      # Fallback to 'test' for Floci when real credentials aren't available
       - AWS_ACCESS_KEY_ID=${AWS_ACCESS_KEY_ID:-test}
       - AWS_SECRET_ACCESS_KEY=${AWS_SECRET_ACCESS_KEY:-test}
       - AWS_SESSION_TOKEN=${AWS_SESSION_TOKEN:-}
@@ -121,12 +136,12 @@ services:
     command: [ "uv", "run", "uvicorn", "src.main:app", "--reload", "--host", "0.0.0.0", "--port", "8080", "--proxy-headers", "--forwarded-allow-ips", "*" ]
     networks:
       equalify-network:
-        # Default network — redis, localstack hostnames resolve here
+        # Default network — redis, floci hostnames resolve here
     depends_on:
       redis:
         condition: service_healthy
-      localstack:
-        condition: service_healthy
+      floci-init:
+        condition: service_completed_successfully
       docling-serve:
         condition: service_healthy
 
@@ -233,8 +248,8 @@ networks:
     external: false
 
 volumes:
-  localstack-data:
-    name: equalify-reflow-localstack-data
+  floci-data:
+    name: equalify-reflow-floci-data
   prometheus-data:
     name: equalify-reflow-prometheus-data
   grafana-data:

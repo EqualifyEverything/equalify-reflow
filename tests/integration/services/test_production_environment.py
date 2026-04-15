@@ -75,16 +75,16 @@ class TestStorageUrlGenerationProduction:
             assert url == "https://equalify-results.s3.us-east-1.amazonaws.com/job789.html"
             assert "us-east-1" in url  # Should default to us-east-1
 
-    def test_get_result_url_localstack_development(self, s3_url_service):
-        """Test result URL generation for LocalStack (development)."""
+    def test_get_result_url_dev(self, s3_url_service):
+        """Test result URL generation for dev environment (Floci path-style)."""
         with patch('src.services.s3_url_service.settings') as mock_settings:
-            mock_settings.s3_public_url = "http://localstack:4566"  # LocalStack
+            mock_settings.s3_public_url = "http://floci:4566"  # Floci
             mock_settings.aws_region = "us-east-1"
 
             url = s3_url_service.get_result_url("job-dev", "html")
 
-            assert url == "http://localstack:4566/equalify-results/job-dev.html"
-            assert "localstack" in url
+            assert url == "http://floci:4566/equalify-results/job-dev.html"
+            assert "floci" in url
             assert not url.startswith("https://")
 
     def test_get_result_url_various_regions(self, s3_url_service):
@@ -129,12 +129,12 @@ class TestStorageUrlGenerationProduction:
             assert "None" not in key
 
     @pytest.mark.asyncio
-    async def test_upload_result_localstack_url(self, storage_service, mock_s3_client):
+    async def test_upload_result_dev_url(self, storage_service, mock_s3_client):
         """Test upload_result returns S3 key (Phase 3: stores keys not URLs)."""
         mock_s3_client.put_object.return_value = None
 
         with patch('src.services.storage_service.settings') as mock_settings:
-            mock_settings.aws_endpoint_url = "http://localstack:4566"
+            mock_settings.aws_endpoint_url = "http://floci:4566"
             mock_settings.aws_region = "us-east-1"
 
             key = await storage_service.upload_result(
@@ -283,11 +283,11 @@ class TestProductionConfigurationScenarios:
             # Simulate production environment
             assert True  # Placeholder - actual config validation
 
-    def test_dev_config_has_localstack_endpoint(self):
-        """Test that development configuration sets LocalStack endpoint."""
+    def test_dev_config_has_floci_endpoint(self):
+        """Test that development configuration sets the Floci endpoint."""
         # In development, settings.aws_endpoint_url should be set
         # This test documents the expected behavior
-        with patch.dict('os.environ', {'AWS_ENDPOINT_URL': 'http://localstack:4566'}, clear=False):
+        with patch.dict('os.environ', {'AWS_ENDPOINT_URL': 'http://floci:4566'}, clear=False):
             # Simulate dev environment
             assert True  # Placeholder - actual config validation
 
@@ -307,10 +307,10 @@ class TestProductionConfigurationScenarios:
 
         # Test development
         with patch('src.services.s3_url_service.settings') as mock_settings:
-            mock_settings.s3_public_url = "http://localstack:4566"
+            mock_settings.s3_public_url = "http://floci:4566"
             mock_settings.aws_region = "us-east-1"
             dev_url = s3_url_service.get_result_url("test", "html")
-            assert dev_url.startswith("http://localstack")
+            assert dev_url.startswith("http://floci")
 
 
 class TestS3UrlFormats:
@@ -337,15 +337,15 @@ class TestS3UrlFormats:
             assert url == "https://test-results.s3.us-west-2.amazonaws.com/doc123.html"
             assert url.count('/') == 3  # https://bucket.s3.region.amazonaws.com/key
 
-    def test_path_style_url_for_localstack(self, s3_url_service):
-        """Test path-style URL format for LocalStack."""
+    def test_path_style_url_for_dev(self, s3_url_service):
+        """Test path-style URL format for dev environment (Floci)."""
         with patch('src.services.s3_url_service.settings') as mock_settings:
-            mock_settings.s3_public_url = "http://localstack:4566"
+            mock_settings.s3_public_url = "http://floci:4566"
 
             url = s3_url_service.get_result_url("doc456", "mdx")
 
             # Path-style: http://<endpoint>/<bucket>/<key>
-            assert url == "http://localstack:4566/test-results/doc456.mdx"
+            assert url == "http://floci:4566/test-results/doc456.mdx"
 
     def test_url_accessibility(self, s3_url_service):
         """Test that generated URLs are well-formed and accessible."""

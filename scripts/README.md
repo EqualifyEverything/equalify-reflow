@@ -6,7 +6,7 @@ Small utility and exploration scripts that live alongside the main application. 
 
 ### `health-check.sh`
 
-Validates that the local dev stack is running correctly. Checks Docker / Compose installation, container status, Redis connectivity, LocalStack S3 accessibility, Docker network connectivity, and volume persistence.
+Validates that the local dev stack is running correctly. Checks Docker / Compose installation, container status, Redis connectivity, Floci S3 accessibility, Docker network connectivity, and volume persistence.
 
 ```bash
 ./scripts/health-check.sh

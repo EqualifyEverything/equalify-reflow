@@ -136,4 +136,4 @@ with pytest.raises(CircuitBreakerOpen):
 
 ### Integration Tests
 
-Use testcontainers with LocalStack to simulate real S3 behavior. See `tests/unit/utils/test_circuit_breaker.py` and `tests/unit/services/test_storage_service.py` for examples.
+Use testcontainers with Floci to simulate real S3 behavior. See `tests/unit/utils/test_circuit_breaker.py` and `tests/unit/services/test_storage_service.py` for examples.

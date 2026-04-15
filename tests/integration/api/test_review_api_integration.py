@@ -13,7 +13,7 @@ Previous test coverage included:
 - Edit workflow (with and without 'after')
 - Review summary and listing endpoints
 
-These tests used real LocalStack S3 and Redis (no mocking of infrastructure).
+These tests used real Floci S3 and Redis (no mocking of infrastructure).
 """
 
 import pytest

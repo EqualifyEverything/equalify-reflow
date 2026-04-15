@@ -204,28 +204,26 @@ test_redis() {
     return 0
 }
 
-test_localstack() {
-    print_section "Testing LocalStack S3"
+test_floci() {
+    print_section "Testing Floci S3"
 
-    # Determine which command to use
+    # Floci doesn't ship an `awslocal` wrapper — use standard `aws` with
+    # the Floci endpoint via env vars.
     local AWS_CMD=""
-    if check_command awslocal; then
-        AWS_CMD="awslocal"
-        print_info "Using awslocal CLI wrapper"
-    elif check_command aws; then
+    if check_command aws; then
         AWS_CMD="AWS_ACCESS_KEY_ID=test AWS_SECRET_ACCESS_KEY=test AWS_DEFAULT_REGION=us-east-1 aws --endpoint-url=http://localhost:4566"
-        print_info "Using AWS CLI with LocalStack endpoint"
+        print_info "Using AWS CLI with Floci endpoint"
     else
-        print_warning "Neither awslocal nor aws CLI found"
-        print_info "Skipping LocalStack S3 tests (install AWS CLI to enable)"
+        print_warning "aws CLI not found"
+        print_info "Skipping Floci S3 tests (install AWS CLI to enable)"
         return 0  # Warning, not a failure
     fi
 
     # Test S3 connection
     if eval $AWS_CMD s3 ls > /dev/null 2>&1; then
-        print_success "LocalStack S3 connection successful"
+        print_success "Floci S3 connection successful"
     else
-        print_failure "LocalStack S3 connection failed"
+        print_failure "Floci S3 connection failed"
         return 1
     fi
 
@@ -282,10 +280,10 @@ test_network() {
     fi
 
     # Check network connectivity between containers
-    if docker exec equalify-reflow-redis ping -c 1 localstack > /dev/null 2>&1; then
-        print_success "Network connectivity: Redis -> LocalStack"
+    if docker exec equalify-reflow-redis ping -c 1 floci > /dev/null 2>&1; then
+        print_success "Network connectivity: Redis -> Floci"
     else
-        print_warning "Network connectivity test skipped (expected if LocalStack not running)"
+        print_warning "Network connectivity test skipped (expected if Floci not running)"
     fi
 
     return 0
@@ -305,11 +303,11 @@ test_volumes() {
         print_failure "Redis data volume not found"
     fi
 
-    # Check LocalStack data volume (if dev environment)
-    if docker volume ls | grep -q equalify-reflow-localstack-data; then
-        print_success "LocalStack data volume exists"
+    # Check Floci data volume (if dev environment)
+    if docker volume ls | grep -q equalify-reflow-floci-data; then
+        print_success "Floci data volume exists"
     else
-        print_warning "LocalStack data volume not found (expected in dev environment only)"
+        print_warning "Floci data volume not found (expected in dev environment only)"
     fi
 
     return 0
@@ -346,8 +344,8 @@ check_local_health() {
     check_container "equalify-reflow-api-gateway" "API Gateway (includes all workers)"
 
     # Check dev environment containers (optional)
-    if docker ps --format '{{.Names}}' | grep -q equalify-reflow-localstack; then
-        check_container "equalify-reflow-localstack" "LocalStack"
+    if docker ps --format '{{.Names}}' | grep -q equalify-reflow-floci; then
+        check_container "equalify-reflow-floci" "Floci"
     fi
 
     if docker ps --format '{{.Names}}' | grep -q equalify-reflow-prometheus; then
@@ -368,8 +366,8 @@ check_local_health() {
     check_container_health "equalify-reflow-redis" "Redis"
     check_container_health "equalify-reflow-api-gateway" "API Gateway"
 
-    if docker ps --format '{{.Names}}' | grep -q equalify-reflow-localstack; then
-        check_container_health "equalify-reflow-localstack" "LocalStack"
+    if docker ps --format '{{.Names}}' | grep -q equalify-reflow-floci; then
+        check_container_health "equalify-reflow-floci" "Floci"
     fi
 
     if docker ps --format '{{.Names}}' | grep -q equalify-reflow-prometheus; then
@@ -386,12 +384,12 @@ check_local_health() {
     test_network
     test_volumes
 
-    # Test LocalStack if running
-    if docker ps --format '{{.Names}}' | grep -q equalify-reflow-localstack; then
-        test_localstack
+    # Test Floci if running
+    if docker ps --format '{{.Names}}' | grep -q equalify-reflow-floci; then
+        test_floci
     else
-        print_section "LocalStack Tests"
-        print_warning "LocalStack not running (production mode?)"
+        print_section "Floci Tests"
+        print_warning "Floci not running (production mode?)"
     fi
 }
 

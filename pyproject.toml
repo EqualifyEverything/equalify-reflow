@@ -68,7 +68,7 @@ markers = [
     "integration: Integration tests (medium <5s, real Redis/S3, mocked AI)",
     "slow: Slow E2E tests (>5s, full workflows with minimal mocking)",
     "requires_redis: Needs Redis service",
-    "requires_s3: Needs S3/LocalStack service",
+    "requires_s3: Needs S3/Floci service",
     "requires_ai: Needs Anthropic API (usually mocked)",
     "verapdf: Requires VeraPDF Docker container for PDF/UA validation",
     "performance: Load and stress tests (weekly runs)",
@@ -176,7 +176,7 @@ dev = [
     "pytest-xdist>=3.8.0",
     "reportlab>=4.4.4",
     "ruff>=0.8.0",
-    "testcontainers[localstack,redis]>=4.8.0",
+    "testcontainers[redis]>=4.8.0",
     "types-pyyaml>=6.0.12.20250915",
     "types-redis>=4.6.0.20241004",
 ]

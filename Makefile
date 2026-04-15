@@ -1,4 +1,4 @@
-.PHONY: help dev dev-docker up down logs health test test-fast test-unit test-integration test-concurrent test-e2e test-large-files test-slow test-all clean build build-viewer build-viewer-dev shell test-docker logs-api grafana-url prometheus-url metrics-url coverage coverage-html coverage-report localstack-debug docling-native docling-native-stop docling-install
+.PHONY: help dev dev-docker up down logs health test test-fast test-unit test-integration test-concurrent test-e2e test-large-files test-slow test-all clean build build-viewer build-viewer-dev shell test-docker logs-api grafana-url prometheus-url metrics-url coverage coverage-html coverage-report floci-debug docling-native docling-native-stop docling-install
 
 # Default target
 help:
@@ -53,7 +53,7 @@ help:
 	@echo "  make metrics-url  - Open API metrics (http://localhost:8080/metrics)"
 	@echo ""
 	@echo "Debugging:"
-	@echo "  make localstack-debug - Debug LocalStack from host (rarely needed)"
+	@echo "  make floci-debug    - Debug Floci from host (rarely needed)"
 	@echo ""
 
 # Development environment
@@ -354,19 +354,27 @@ canvas-logs:
 	@cd $(CANVAS_DIR) && docker compose logs -f web
 
 # ============================================================================
-# LocalStack Debugging (from host)
+# Floci Debugging (from host)
 # ============================================================================
 # Note: Rarely needed - most debugging happens via app or docker exec
-# This uses AWS CLI from your host machine against LocalStack
+# Floci speaks the same AWS wire protocol, so the standard `aws` CLI works
+# when AWS_ENDPOINT_URL points at it.
 
-localstack-debug:
-	@echo "LocalStack debugging commands (from host):"
+floci-debug:
+	@echo "Floci debugging commands (from host):"
+	@echo ""
+	@echo "Set the endpoint once in your shell:"
+	@echo "  export AWS_ENDPOINT_URL=http://localhost:4566"
+	@echo "  export AWS_ACCESS_KEY_ID=test AWS_SECRET_ACCESS_KEY=test"
+	@echo "  export AWS_DEFAULT_REGION=us-east-1"
 	@echo ""
 	@echo "List S3 buckets:"
-	@echo "  AWS_PROFILE=localstack aws s3 ls"
+	@echo "  aws s3 ls"
 	@echo ""
 	@echo "List objects in temp bucket:"
-	@echo "  AWS_PROFILE=localstack aws s3 ls s3://equalify-pdf-temp/"
+	@echo "  aws s3 ls s3://equalify-pdf-temp/"
 	@echo ""
-	@echo "Note: LocalStack must be running (make dev)"
-	@echo "Note: Requires ~/.aws/config with a 'localstack' profile (endpoint http://localhost:4566, dummy credentials)"
+	@echo "Health check (returns ListAllMyBucketsResult XML):"
+	@echo "  curl -sf http://localhost:4566/"
+	@echo ""
+	@echo "Note: Floci must be running (make dev)"

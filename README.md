@@ -132,7 +132,7 @@ src/
 
 clients/viewer/             # React pipeline viewer (Vite + TypeScript + Tailwind)
 tests/                      # Unit, integration, and E2E tests
-infrastructure/             # Prometheus, Grafana, LocalStack configs
+infrastructure/             # Prometheus, Grafana, Floci configs
 docs/                       # Architecture, guides
 ```
 
@@ -140,7 +140,7 @@ docs/                       # Architecture, guides
 
 **Backend:** Python 3.11+, FastAPI, PydanticAI, IBM Docling, Microsoft Presidio. AI model backend is pluggable — currently AWS Bedrock (Claude Haiku); Anthropic direct and other providers planned.
 
-**Infrastructure (local dev):** Docker, Redis, AWS S3 (via LocalStack), Prometheus + Grafana
+**Infrastructure (local dev):** Docker, Redis, AWS S3 (via [Floci](https://github.com/floci-io/floci) — a lightweight MIT-licensed emulator), Prometheus + Grafana
 
 **Monitoring:** Prometheus, Grafana, Jaeger (OpenTelemetry)
 
@@ -154,7 +154,7 @@ docs/                       # Architecture, guides
 |---|---|---|
 | API Gateway | http://localhost:8080 | Main application, API docs, pipeline viewer |
 | Redis | localhost:6379 | Job state, queues, rate limiting |
-| LocalStack | localhost:4566 | S3 and CloudWatch emulation |
+| Floci | localhost:4566 | S3 + CloudWatch emulation (replaces LocalStack) |
 | Prometheus | http://localhost:9090 | Metrics collection |
 | Grafana | http://localhost:3001 | Metrics dashboards (admin/admin) |
 | Jaeger | http://localhost:16686 | Distributed tracing |

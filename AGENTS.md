@@ -29,9 +29,9 @@ Everything runs in Docker. Run Python or pytest through `make` or `docker compos
 
 | Service | URL | Notes |
 |---|---|---|
-| Reflow Viewer | http://localhost:8080/ | Pipeline viewer SPA (Basic Auth: `dase` / `a11y`) |
-| API Gateway | http://localhost:8080/api/v1/* | FastAPI app |
-| Swagger UI | http://localhost:8080/docs | User: `dase`, pass: `a11y` |
+| Reflow Viewer | http://localhost:8080/ | Pipeline viewer SPA (publicly accessible, no auth) |
+| API Gateway | http://localhost:8080/api/v1/* | FastAPI app (requires `X-API-Key` header for external clients) |
+| Swagger UI | http://localhost:8080/docs | Public — OpenAPI reference |
 | Redis | localhost:6379 | In-app code uses `redis:6379` |
 | Floci | localhost:4566 | S3 + CloudWatch emulation (replaces LocalStack) |
 | Prometheus | http://localhost:9090 | Metrics scraping |

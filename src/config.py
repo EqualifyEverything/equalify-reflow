@@ -66,11 +66,6 @@ class Settings(BaseSettings):
     api_key_header_name: str = Field(default="X-API-Key", description="Header name for API key authentication")
     api_keys: SecretStr | None = Field(default=None, description="Comma-separated list of valid API keys")
 
-    # Swagger/OpenAPI Documentation Authentication (HTTP Basic)
-    enable_docs_auth: bool = Field(default=False, description="Enable HTTP Basic auth for /docs and /openapi.json")
-    docs_username: str = Field(default="admin", description="Username for Swagger UI authentication")
-    docs_password: SecretStr | None = Field(default=None, description="Password for Swagger UI authentication")
-
     # Metrics Configuration
     enable_metrics: bool = Field(default=True, description="Enable Prometheus metrics collection and /metrics endpoint")
     metrics_port: int = Field(ge=1, le=65535, default=8001, description="Port for the Prometheus metrics server")

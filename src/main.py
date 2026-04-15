@@ -16,7 +16,6 @@ from .config import settings
 from .dependencies import get_redis_client
 from .middleware import (
     APIKeyAuthMiddleware,
-    DocsAuthMiddleware,
     ErrorHandlerMiddleware,
     LoggingMiddleware,
     RateLimitMiddleware,
@@ -162,10 +161,6 @@ setup_metrics(app)
 if settings.enable_api_key_auth:
     app.add_middleware(APIKeyAuthMiddleware)
     logger.info("✅ API key authentication enabled")
-
-if settings.enable_docs_auth:
-    app.add_middleware(DocsAuthMiddleware)
-    logger.info("✅ Documentation authentication enabled")
 
 app.add_middleware(ErrorHandlerMiddleware)  # Catch all errors
 app.add_middleware(RateLimitMiddleware)  # Rate limit before processing

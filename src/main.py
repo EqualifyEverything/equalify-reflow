@@ -10,7 +10,6 @@ from typing import Any
 
 from fastapi import FastAPI
 from fastapi.openapi.utils import get_openapi
-from fastapi.staticfiles import StaticFiles
 
 from .api import approval, documents, health
 from .config import settings
@@ -228,30 +227,74 @@ def custom_openapi() -> dict[str, object]:
 app.openapi = custom_openapi  # type: ignore[method-assign]
 
 
-@app.get("/")
-async def root() -> dict[str, str]:
-    """Root endpoint."""
-    return {"service": "Equalify Reflow API Gateway", "version": "0.1.0b1", "docs": "/docs"}
+# ---------------------------------------------------------------------------
+# Pipeline Viewer — served at root
+# ---------------------------------------------------------------------------
+# The viewer React SPA is mounted at `/`. Registration order matters: all API
+# routers (health, documents, approval, pipeline_viewer, ...) are included
+# earlier in this file so they claim their paths first. The catch-all below
+# only matches paths no router handled, serving either a real static asset
+# from disk or falling back to index.html for React Router deep links.
+#
+# Legacy `/viewer` and `/viewer/*` paths are permanently 301-redirected to
+# their root equivalents, preserving path and query string so bookmarks and
+# published references keep working.
 
-
-# Mount Pipeline Viewer (standalone viewer app)
 _viewer_path = Path(__file__).parent.parent / "static" / "viewer"
 if _viewer_path.exists():
-    from fastapi.responses import FileResponse
+    from fastapi import HTTPException, Request
+    from fastapi.responses import FileResponse, RedirectResponse
 
     @app.get("/viewer/{full_path:path}")
-    async def serve_viewer_spa(full_path: str) -> FileResponse:
-        """Serve index.html for Pipeline Viewer routes (SPA fallback)."""
-        if "." in full_path.split("/")[-1]:
-            file_path = _viewer_path / full_path
-            if file_path.exists():
-                return FileResponse(file_path)
-        return FileResponse(_viewer_path / "index.html")
+    async def redirect_legacy_viewer_path(full_path: str, request: Request) -> RedirectResponse:
+        """Permanent redirect from /viewer/<path> to /<path>, preserving query."""
+        query = f"?{request.url.query}" if request.url.query else ""
+        return RedirectResponse(url=f"/{full_path}{query}", status_code=301)
 
     @app.get("/viewer")
+    async def redirect_legacy_viewer_root(request: Request) -> RedirectResponse:
+        """Permanent redirect from /viewer to /, preserving query."""
+        query = f"?{request.url.query}" if request.url.query else ""
+        return RedirectResponse(url=f"/{query}", status_code=301)
+
+    @app.get("/")
     async def serve_viewer_root() -> FileResponse:
-        """Serve Pipeline Viewer root."""
+        """Serve the viewer's index.html at the site root."""
         return FileResponse(_viewer_path / "index.html")
 
-    app.mount("/viewer", StaticFiles(directory=_viewer_path, html=True), name="pipeline-viewer")
-    logger.info("✅ Pipeline Viewer mounted at /viewer")
+    @app.get("/{full_path:path}")
+    async def serve_viewer_spa(full_path: str) -> FileResponse:
+        """Serve viewer static files, falling back to index.html for SPA deep links.
+
+        Unknown API/docs/health paths get a JSON 404 instead of being shadowed
+        by the SPA fallback — programmatic clients deserve the right content type.
+        """
+        if (
+            full_path.startswith("api/")
+            or full_path.startswith("health")
+            or full_path.startswith("lti/")
+            or full_path.startswith("metrics")
+            or full_path in ("docs", "redoc", "openapi.json")
+        ):
+            raise HTTPException(status_code=404, detail="Not Found")
+
+        file_path = _viewer_path / full_path
+        if file_path.is_file():
+            return FileResponse(file_path)
+
+        return FileResponse(_viewer_path / "index.html")
+
+    logger.info("✅ Pipeline Viewer mounted at / (legacy /viewer paths redirect here)")
+else:
+
+    @app.get("/")
+    async def serve_root_placeholder() -> dict[str, str]:
+        """Fallback when the viewer hasn't been built."""
+        return {
+            "service": "Equalify Reflow API Gateway",
+            "version": app.version,
+            "docs": "/docs",
+            "note": "Viewer not built — run `cd clients/viewer && pnpm run build`",
+        }
+
+    logger.warning("⚠️  Pipeline Viewer dist not found; only the API is served")

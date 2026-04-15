@@ -269,14 +269,14 @@ redis-cli:
 build:
 	docker compose -f docker-compose.yml -f docker-compose.dev.yml build
 
-# Build pipeline viewer (standalone viewer at /viewer)
+# Build pipeline viewer (served at the site root /)
 build-viewer:
 	@echo "Building pipeline viewer..."
 	cd clients/viewer && pnpm install && pnpm run build
 	@echo ""
 	@echo "✅ Pipeline viewer built to clients/viewer/dist/"
 	@echo "   Restart with: make down && make dev"
-	@echo "   Then access: http://localhost:8080/viewer"
+	@echo "   Then access: http://localhost:8080/"
 
 # Access API container shell for debugging
 shell:

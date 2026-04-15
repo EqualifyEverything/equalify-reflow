@@ -97,67 +97,57 @@ class APIKeyAuthMiddleware(BaseHTTPMiddleware):
 
     def _is_public_endpoint(self, request: Request) -> bool:
         """
-        Check if endpoint is public (no auth required).
+        Check if endpoint is exempt from API key auth.
 
-        Public endpoints:
-        - /health, /metrics (monitoring)
-        - /docs, /openapi.json, /redoc (documentation - has separate HTTP Basic auth)
-        - /demo/* (demo UI - has separate HTTP Basic auth)
-        - /api/dev/monitoring/* (development monitoring, only in dev mode)
-        - Same-origin requests from demo UI (no X-API-Key header, has Referer from /demo)
+        Only `/api/*` paths require an API key — everything else is served by
+        the viewer, the docs middleware (Basic Auth), the LTI JWT flow, or is
+        a public health check. API routes themselves have three carve-outs:
+
+        - Development-only endpoints under /api/dev/monitoring, /api/dev/minimal,
+          /api/dev/pipeline-viewer are public when settings.environment == "dev"
+        - Same-origin requests from the viewer (or legacy demo UI) are
+          exempt via `_is_demo_ui_request` (checks Referer, Origin, and
+          Sec-Fetch-Site) so the viewer's JS can call the API without the
+          browser having to inject an X-API-Key header
+        - SSE stream endpoints with a `?token=` query parameter bypass API
+          key auth and validate the token in the endpoint handler instead
 
         Args:
             request: Incoming request
 
         Returns:
-            True if endpoint is public
+            True if the request is exempt from API key auth
         """
         path = request.url.path
 
-        # Health and metrics endpoints (always public)
-        public_paths = ["/health", "/health/ready", "/metrics", "/"]
-        if path in public_paths:
-            return True
+        # API routes are the only ones gated by API key auth.
+        if path.startswith("/api/"):
+            # Dev-only endpoints are exempt when running in dev
+            if settings.environment == "dev" and (
+                path.startswith("/api/dev/monitoring")
+                or path.startswith("/api/dev/minimal")
+                or path.startswith("/api/dev/pipeline-viewer")
+            ):
+                return True
+            # Same-origin requests from the viewer or demo UI
+            if self._is_demo_ui_request(request):
+                return True
+            # SSE stream endpoints authenticate via ?token= query param
+            if self._is_stream_token_request(request):
+                return True
+            return False
 
-        # Documentation endpoints (have separate HTTP Basic auth)
-        docs_paths = ["/docs", "/openapi.json", "/redoc"]
-        if path in docs_paths:
-            return True
-
-        # Demo UI static files (have separate HTTP Basic auth)
-        if path == "/demo" or path.startswith("/demo/"):
-            return True
-
-        # Viewer static files (have separate HTTP Basic auth)
-        if path == "/viewer" or path.startswith("/viewer/"):
-            return True
-
-        # LTI 1.3 endpoints (use JWT authentication from Canvas)
-        if path.startswith("/lti/"):
-            return True
-
-        # Dashboard static assets (CSS, images served by StaticFiles mount)
-        if path.startswith("/static/canvas/"):
-            return True
-
-        # Development-only endpoints (public only in dev environment)
-        if settings.environment == "dev" and (
-            path.startswith("/api/dev/monitoring")
-            or path.startswith("/api/dev/minimal")
-            or path.startswith("/api/dev/pipeline-viewer")
-        ):
-            return True
-
-        # Allow same-origin requests from demo UI (protected by Basic Auth at /demo)
-        if self._is_demo_ui_request(request):
-            return True
-
-        # Allow stream endpoints with token query parameter
-        # Token validation happens in the endpoint handler
-        if self._is_stream_token_request(request):
-            return True
-
-        return False
+        # Everything outside /api/ is exempt from API key auth:
+        #   - / and every SPA deep link → viewer HTML (auth via DocsAuthMiddleware)
+        #   - /viewer, /viewer/* → legacy redirect handlers (same Basic Auth)
+        #   - /health, /health/ready → public health checks
+        #   - /docs, /openapi.json, /redoc → Basic Auth via DocsAuthMiddleware
+        #   - /demo, /demo/* → Basic Auth via DocsAuthMiddleware (if present)
+        #   - /lti/* → Canvas JWT auth
+        #   - /static/canvas/* → dashboard assets
+        #   - /metrics → Prometheus
+        #   - /assets/*, favicons, fonts, etc. → public viewer static files
+        return True
 
     def _is_demo_ui_request(self, request: Request) -> bool:
         """

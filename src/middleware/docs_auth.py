@@ -94,13 +94,31 @@ class DocsAuthMiddleware(BaseHTTPMiddleware):
 
     def _is_docs_endpoint(self, request: Request) -> bool:
         """
-        Check if endpoint is a protected endpoint.
+        Check if endpoint requires HTTP Basic Auth.
 
-        Protected endpoints:
+        Protected paths:
         - /docs (Swagger UI)
         - /openapi.json (OpenAPI schema)
         - /redoc (ReDoc alternative UI)
         - /demo/* (Demo UI)
+        - The Pipeline Viewer HTML at `/` and any SPA deep link below it
+        - Legacy /viewer and /viewer/* (redirect handlers, but still gated
+          so anyone hitting the old URL gets prompted for credentials
+          before the 301 takes them to the root)
+
+        Public paths (no Basic Auth):
+        - /api/* (protected by API key middleware)
+        - /health, /health/ready (load-balancer checks)
+        - /lti/* (Canvas JWT auth)
+        - /static/canvas/* (dashboard assets)
+        - Viewer static assets (JS, CSS, fonts, images) anywhere in the tree,
+          so the browser can load them after the initial gated HTML request.
+          /openapi.json is the one exception — it's a docs endpoint even
+          though its extension matches, so the explicit-check block above
+          catches it before the extension check below runs.
+
+        To make the viewer public later, change the final `return True` to
+        `return False` — nothing else in this function needs to move.
 
         Args:
             request: Incoming request
@@ -109,21 +127,47 @@ class DocsAuthMiddleware(BaseHTTPMiddleware):
             True if endpoint requires docs auth
         """
         path = request.url.path
-        # Exact match paths
-        exact_paths = ["/docs", "/openapi.json", "/redoc"]
-        if path in exact_paths:
+
+        # Explicit docs endpoints — checked first so /openapi.json is not
+        # mistaken for a viewer JSON asset by the extension check below.
+        if path in ("/docs", "/openapi.json", "/redoc"):
             return True
-        # Prefix match for demo UI (includes /demo, /demo/, /demo/assets/*, etc.)
+
+        # Demo UI (if still present)
         if path == "/demo" or path.startswith("/demo/"):
             return True
-        # Prefix match for viewer - but allow static assets without auth
-        # (favicon, JS, CSS files should load without requiring credentials)
+
+        # Paths that never require docs auth
+        if path.startswith("/api/"):
+            return False
+        if path.startswith("/health"):
+            return False
+        if path.startswith("/lti/"):
+            return False
+        if path.startswith("/static/canvas/"):
+            return False
+        if path.startswith("/metrics"):
+            return False
+
+        # Viewer static assets — the browser loads these on every viewer page
+        # visit, so they're public. The initial HTML request is already gated
+        # above, so there's no practical attack surface from public assets.
+        static_exts = (
+            ".js", ".css", ".svg", ".ico", ".png", ".jpg", ".jpeg",
+            ".woff", ".woff2", ".map", ".webp", ".gif", ".ttf", ".otf",
+        )
+        if any(path.endswith(ext) for ext in static_exts):
+            return False
+
+        # Legacy /viewer HTML paths — still gated during transition so the
+        # auth prompt fires before the 301 redirect hops to the new root.
         if path == "/viewer" or path.startswith("/viewer/"):
-            # Allow static assets without auth (files with common extensions)
-            if any(path.endswith(ext) for ext in ['.js', '.css', '.svg', '.ico', '.png', '.jpg', '.woff', '.woff2']):
-                return False
             return True
-        return False
+
+        # Default: root path and every SPA deep link is a viewer HTML page
+        # and requires Basic Auth. Flip to `return False` to make the
+        # viewer publicly accessible.
+        return True
 
     def _decode_credentials(self, auth_header: str) -> tuple[str, str] | None:
         """

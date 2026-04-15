@@ -29,9 +29,9 @@ Everything runs in Docker. Run Python or pytest through `make` or `docker compos
 
 | Service | URL | Notes |
 |---|---|---|
-| API Gateway | http://localhost:8080 | FastAPI app |
+| Reflow Viewer | http://localhost:8080/ | Pipeline viewer SPA (Basic Auth: `dase` / `a11y`) |
+| API Gateway | http://localhost:8080/api/v1/* | FastAPI app |
 | Swagger UI | http://localhost:8080/docs | User: `dase`, pass: `a11y` |
-| Reflow Viewer | http://localhost:8080/viewer | Pipeline viewer SPA |
 | Redis | localhost:6379 | In-app code uses `redis:6379` |
 | LocalStack | localhost:4566 | S3 + CloudWatch emulation |
 | Prometheus | http://localhost:9090 | Metrics scraping |
@@ -136,7 +136,7 @@ Both tiers resolve to Bedrock inference profile IDs (the `us.` prefix is require
 ## Iterating on a prompt
 
 1. **Find the prompt.** Each agent's system prompt lives in `src/agents/*.py` as a module-level constant. Grep for the constant name or the `Agent(` call site in `pipeline_viewer.py`.
-2. **Reproduce the failing case.** Start the stack with `make dev`, upload a small PDF via the pipeline viewer at http://localhost:8080/viewer, and step through per-phase output.
+2. **Reproduce the failing case.** Start the stack with `make dev`, upload a small PDF via the pipeline viewer at http://localhost:8080/, and step through per-phase output.
 3. **Edit the prompt.** Hot reload picks up changes inside the running container.
 4. **Re-run the pipeline.** Because each phase is versioned, you can resubmit the same document and inspect the diff for just the phase you changed.
 5. **Run the tests.** `make test-fast` for quick signal, `make test-integration` for behaviour parity, `make test-e2e` for regression safety. If a prompt change breaks tests, the fix is usually a coordinated update to both the prompt and the fixtures.

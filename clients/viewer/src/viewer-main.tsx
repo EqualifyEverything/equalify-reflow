@@ -6,7 +6,8 @@ import { MinimalPage } from '@/pages/MinimalPage'
 import './index.css'
 
 // Pipeline Viewer app
-// Served at /viewer
+// Served at the root (/) by FastAPI in both dev and prod. basename is
+// derived from Vite's base config via import.meta.env.BASE_URL.
 
 const basename = import.meta.env.BASE_URL.replace(/\/$/, '') || '/'
 

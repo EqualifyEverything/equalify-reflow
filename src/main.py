@@ -144,7 +144,7 @@ app = FastAPI(
         "AI text correction. Designed to be provider-agnostic (AWS Bedrock "
         "today, Anthropic direct and other providers in progress)."
     ),
-    version="0.1.0b1",
+    version="0.1.0b2",
     docs_url="/docs",
     redoc_url="/redoc",
     license_info={

@@ -11,10 +11,10 @@
 
 ### Integration Tests (`tests/integration/`)
 
-- **Uses:** Python testcontainers library (redis:7-alpine, localstack)
+- **Uses:** Python testcontainers library (redis:7-alpine, floci)
 - **Execution:** Host machine via `make test-integration` (not inside Docker)
 - **Isolation:** Fresh containers per test session, true test isolation
-- **Services:** Real Redis + Real S3 (LocalStack), AI/ML mocked
+- **Services:** Real Redis + Real S3 (Floci), AI/ML mocked
 - **Speed:** ~2 minutes total
 - **Benefits:** Catches serialization bugs, race conditions, Redis atomicity
 
@@ -84,7 +84,7 @@ Use pytest markers for selective execution:
 @pytest.mark.integration         # Integration test (testcontainers)
 @pytest.mark.slow                # E2E test (>5s)
 @pytest.mark.requires_redis      # Needs Redis
-@pytest.mark.requires_s3         # Needs S3/LocalStack
+@pytest.mark.requires_s3         # Needs S3/Floci
 @pytest.mark.requires_ai         # Needs AI/Bedrock
 @pytest.mark.performance         # Performance tests
 @pytest.mark.resilience          # Resilience/fault tolerance tests

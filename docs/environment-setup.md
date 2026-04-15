@@ -8,7 +8,7 @@ Local development setup for Equalify Reflow.
 make dev          # Everything just works
 ```
 
-The stack (API Gateway, Redis, LocalStack-as-S3, docling-serve, observability) runs in Docker Compose and hot-reloads on source changes.
+The stack (API Gateway, Redis, Floci-as-S3, docling-serve, observability) runs in Docker Compose and hot-reloads on source changes.
 
 ## Prerequisites
 
@@ -48,13 +48,13 @@ make dev          # Auto-detects native docling if installed, falls back to Dock
 
 `make dev-docker` forces the CPU-only Docker path regardless.
 
-## Storage (LocalStack)
+## Storage (Floci)
 
-The current default for local S3 is LocalStack, running inside the Docker network. The app talks to it at `localstack:4566` automatically. You almost never need to interact with LocalStack directly — the app and tests handle it.
+The current default for local S3 is [Floci](https://github.com/floci-io/floci) — a lightweight (~72 MB, ~26 ms startup, MIT-licensed) AWS emulator that replaced LocalStack. It speaks the same wire protocol and listens on the same port (4566). The app talks to it at `floci:4566` automatically inside the Docker network. You almost never need to interact with Floci directly — the app and tests handle it.
 
-For occasional host-side debugging, see `make localstack-debug` for AWS CLI examples against LocalStack.
+For occasional host-side debugging, `make floci-debug` prints AWS CLI examples that target the Floci endpoint.
 
-LocalStack is the current implementation, not a hard requirement of the design. A provider-abstraction effort is in progress that will introduce a `StorageProvider` interface and a local-filesystem backend so contributors can run the stack without LocalStack at all. Once that lands, LocalStack becomes opt-in (via an override compose file) rather than the default.
+Floci is the current implementation, not a hard requirement of the design. A provider-abstraction effort is in progress that will introduce a `StorageProvider` interface and a local-filesystem backend so contributors can run the stack without any S3 emulator at all. Once that lands, Floci becomes opt-in (via an override compose file) rather than the default.
 
 ## AI Model Backend
 
@@ -72,11 +72,11 @@ If Bedrock credentials are not available, the stack still starts but LLM-depende
 
 The app reads configuration via Pydantic Settings (see `src/config.py`). The Docker Compose files wire sensible defaults for local dev; you generally don't need a `.env` file unless you want to override something.
 
-**Never source `.env` into your shell** — it's Docker Compose-only. `AWS_ENDPOINT_URL=http://localstack:4566` only resolves inside the Docker network.
+**Never source `.env` into your shell** — it's Docker Compose-only. `AWS_ENDPOINT_URL=http://floci:4566` only resolves inside the Docker network.
 
 ## Troubleshooting
 
-- **"Could not connect to endpoint URL: http://localstack:4566"** — you're running a command from the host that expects Docker DNS. Use `docker exec` or the `localstack` profile mapped to `http://localhost:4566`.
+- **"Could not connect to endpoint URL: http://floci:4566"** — you're running a command from the host that expects Docker DNS. Use `docker exec` or set `AWS_ENDPOINT_URL=http://localhost:4566` on the host.
 - **Bedrock calls failing** — SSO token expired. `aws sso login --profile <name>` and restart the stack.
 - **Dependency changes not picked up** — `make clean && make dev` rebuilds the image.
 

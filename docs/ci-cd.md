@@ -172,7 +172,7 @@ env:
 Integration and E2E workflows use GitHub Actions service containers:
 
 - **Redis:** `redis:7-alpine`
-- **LocalStack:** `localstack/localstack:latest`
+- **Floci:** `hectorvent/floci:1.5.3` (replaces LocalStack)
 
 ## Local CI Simulation
 

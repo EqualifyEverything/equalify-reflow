@@ -96,13 +96,12 @@ jobs:
         ports:
           - 6379:6379
 
-      localstack:
-        image: localstack/localstack:3.0
+      floci:
+        image: hectorvent/floci:1.5.3
         env:
-          SERVICES: s3
-          DEBUG: "0"
+          FLOCI_DEFAULT_REGION: us-east-1
         options: >-
-          --health-cmd "curl -f http://localhost:4566/_localstack/health || exit 1"
+          --health-cmd "curl -sf http://localhost:4566/ || exit 1"
           --health-interval 10s
           --health-timeout 5s
           --health-retries 10
@@ -135,6 +134,20 @@ jobs:
         run: |
           pip install uv
           uv sync --all-extras
+
+      - name: Initialize S3 buckets on Floci
+        # GitHub Actions service containers can't run init sidecars, so the
+        # same init-aws.sh that docker-compose.dev.yml uses is invoked here
+        # against the floci service container. AWS_ENDPOINT_URL routes every
+        # `aws` command to Floci; see infrastructure/floci/init-aws.sh.
+        env:
+          AWS_ACCESS_KEY_ID: test
+          AWS_SECRET_ACCESS_KEY: test
+          AWS_DEFAULT_REGION: us-east-1
+          AWS_ENDPOINT_URL: http://localhost:4566
+        run: |
+          pip install awscli
+          bash infrastructure/floci/init-aws.sh
 
       - name: Run integration tests
         env:

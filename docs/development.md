@@ -244,6 +244,6 @@ make docling-native-stop
 
 - `.env` contains application config (NO AWS credentials)
 - `docker-compose.dev.yml` sets AWS credentials for containers
-- LocalStack runs inside Docker network
+- Floci runs inside Docker network
 
 **Never:** Source `.env` manually in your shell - it's for Docker Compose only

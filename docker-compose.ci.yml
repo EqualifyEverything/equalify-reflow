@@ -11,8 +11,8 @@ services:
       - ./pytest.ini:/app/pytest.ini:ro
       - ./pyproject.toml:/app/pyproject.toml:ro
     environment:
-      - AWS_ENDPOINT_URL_S3=http://localstack:4566
-      - AWS_ENDPOINT_URL_CLOUDWATCH=http://localstack:4566
+      - AWS_ENDPOINT_URL_S3=http://floci:4566
+      - AWS_ENDPOINT_URL_CLOUDWATCH=http://floci:4566
       - AWS_ACCESS_KEY_ID=test
       - AWS_SECRET_ACCESS_KEY=test
       - AWS_PROFILE=
@@ -30,8 +30,8 @@ services:
     depends_on:
       redis:
         condition: service_healthy
-      localstack:
-        condition: service_healthy
+      floci-init:
+        condition: service_completed_successfully
       docling-serve:
         condition: service_healthy
 
@@ -50,25 +50,38 @@ services:
     networks:
       - equalify-network
 
-  localstack:
-    image: localstack/localstack:4.12.0
-    container_name: equalify-reflow-localstack
+  # Floci - Local AWS emulator for CI (replaces LocalStack). In-memory mode;
+  # CI runs are ephemeral so no persistent volume is needed.
+  floci:
+    image: hectorvent/floci:1.5.3
+    container_name: equalify-reflow-floci
     ports:
       - "4566:4566"
     environment:
-      - SERVICES=s3,cloudwatch
-      - DEBUG=0
-      - AWS_ACCESS_KEY_ID=test
-      - AWS_SECRET_ACCESS_KEY=test
-      - AWS_DEFAULT_REGION=us-east-1
-      - SKIP_SSL_CERT_DOWNLOAD=1
-      - LOCALSTACK_ACKNOWLEDGE_ACCOUNT_REQUIREMENT=1
-    volumes:
-      - ./infrastructure/localstack/init-aws.sh:/etc/localstack/init/ready.d/init-aws.sh:ro
+      - FLOCI_DEFAULT_REGION=us-east-1
+      - FLOCI_HOSTNAME=floci
     healthcheck:
-      test: ["CMD", "curl", "-f", "http://localhost:4566/_localstack/health"]
+      test: ["CMD-SHELL", "curl -sf http://localhost:4566/ || exit 1"]
       interval: 10s
       timeout: 5s
       retries: 5
+    networks:
+      - equalify-network
+
+  # Floci init sidecar - creates S3 buckets once Floci reports healthy.
+  floci-init:
+    image: amazon/aws-cli:latest
+    container_name: equalify-reflow-floci-init
+    entrypoint: ["/bin/sh", "/init-aws.sh"]
+    environment:
+      - AWS_ACCESS_KEY_ID=test
+      - AWS_SECRET_ACCESS_KEY=test
+      - AWS_DEFAULT_REGION=us-east-1
+      - AWS_ENDPOINT_URL=http://floci:4566
+    volumes:
+      - ./infrastructure/floci/init-aws.sh:/init-aws.sh:ro
+    depends_on:
+      floci:
+        condition: service_healthy
     networks:
       - equalify-network

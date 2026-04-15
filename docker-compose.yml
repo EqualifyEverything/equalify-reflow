@@ -3,7 +3,7 @@
 # Architecture: Monolith with Background Workers
 # - Single Python application runs FastAPI + background worker threads
 # - Redis provides task queues for async background processing
-# - LocalStack provides S3 for local development
+# - Floci provides S3 for local development (see docker-compose.dev.yml)
 #
 # Usage:
 #   Development: docker-compose -f docker-compose.yml -f docker-compose.dev.yml up -d
@@ -27,7 +27,7 @@ services:
     environment:
       - REDIS_URL=redis://redis:6379
       # AWS endpoints configured per-environment:
-      # - Development: docker-compose.dev.yml adds LocalStack endpoints
+      # - Development: docker-compose.dev.yml adds Floci endpoints
       # - Production: Uses real AWS (no endpoint overrides needed)
     depends_on:
       redis:

@@ -24,7 +24,7 @@ make dev
 curl http://localhost:8080/health
 ```
 
-`make dev` starts the API, Redis, LocalStack (S3 emulation), Docling, Prometheus, Grafana, and Jaeger. Code in `src/` hot-reloads automatically inside the container.
+`make dev` starts the API, Redis, Floci (S3 + CloudWatch emulation), Docling, Prometheus, Grafana, and Jaeger. Code in `src/` hot-reloads automatically inside the container.
 
 Open the Swagger UI at http://localhost:8080/docs (user: `dase`, password: `a11y`) and the Pipeline Viewer at http://localhost:8080/ (same credentials).
 
@@ -73,7 +73,7 @@ python ...
 pytest ...
 ```
 
-Service hostnames inside the Docker network are `redis`, `localstack`, `api-gateway`, etc. Never hardcode `localhost:6379` or `localhost:4566` in source code — use the Docker hostnames (`redis:6379`, `localstack:4566`) so tests and production both work.
+Service hostnames inside the Docker network are `redis`, `floci`, `api-gateway`, etc. Never hardcode `localhost:6379` or `localhost:4566` in source code — use the Docker hostnames (`redis:6379`, `floci:4566`) so tests and production both work.
 
 ## Testing
 
@@ -82,7 +82,7 @@ The project uses a three-tier test strategy with pytest markers. Every new test 
 | Tier | Command | When to run | Notes |
 |---|---|---|---|
 | Unit | `make test-fast` | Before every commit | No network, all external I/O mocked. <100ms per test. Parallelized. |
-| Integration | `make test-integration` | Before opening a PR | Real Redis + LocalStack S3; AI responses still mocked. |
+| Integration | `make test-integration` | Before opening a PR | Real Redis + Floci S3; AI responses still mocked. |
 | E2E | `make test-e2e` | Before merge for pipeline changes | Full stack with real Bedrock calls against small fixtures. |
 
 ### Shared fixtures
@@ -189,7 +189,7 @@ Once the abstraction lands, implementations will live in `src/providers/storage/
 
 ### Tests failing locally but passing in CI (or vice versa)
 
-Usually an ordering or fixture-state issue. `make test-integration` locally against LocalStack is the closest mirror of CI.
+Usually an ordering or fixture-state issue. `make test-integration` locally against Floci is the closest mirror of CI.
 
 ### Container won't start
 

@@ -103,7 +103,7 @@ class S3URLService:
     ) -> str:
         """Generate URL from S3 key.
 
-        For LocalStack: Returns path-style URL (http://localstack:4566/bucket/key)
+        For Floci (dev): Returns path-style URL (http://floci:4566/bucket/key)
         For AWS: Returns virtual-hosted style URL (https://bucket.s3.region.amazonaws.com/key)
 
         Args:
@@ -117,7 +117,7 @@ class S3URLService:
         Example:
             >>> url_service = S3URLService(s3_client, "temp-bucket", "results-bucket")
             >>> url = await url_service.generate_url("results/abc-123.md")
-            >>> # LocalStack: http://localstack:4566/results-bucket/results/abc-123.md
+            >>> # Floci (dev): http://floci:4566/results-bucket/results/abc-123.md
             >>> # AWS: https://results-bucket.s3.us-east-1.amazonaws.com/results/abc-123.md
         """
         bucket = bucket or self.results_bucket

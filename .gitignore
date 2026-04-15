@@ -90,8 +90,8 @@ temp/
 dump.rdb
 appendonly.aof
 
-# LocalStack
-.localstack/
+# Floci (local AWS emulator)
+.floci/
 
 # Test files
 test-*.txt

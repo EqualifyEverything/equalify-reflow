@@ -9,7 +9,7 @@ import { PIPELINE_STAGES, REVIEW_STAGE } from '@/types/pipeline-viewer';
 import { ChangesModal } from '@/components/pipeline-viewer/ChangesModal';
 import { StructureMetadataModal } from '@/components/pipeline-viewer/StructureMetadataModal';
 import { WarningsBanner } from '@/components/pipeline-viewer/WarningsBanner';
-import { KeyboardShortcuts } from '@/components/pipeline-viewer/KeyboardShortcuts';
+import { KeyboardShortcuts, type FocusRegion } from '@/components/pipeline-viewer/KeyboardShortcuts';
 import { ClassificationError } from '@/components/pipeline-viewer/ClassificationError';
 import { usePipelineViewer } from '@/hooks/usePipelineViewer';
 import {
@@ -308,6 +308,59 @@ export function PipelineViewerPage() {
   const [metadataModalOpen, setMetadataModalOpen] = useState(false);
 
   const fileInputRef = useRef<HTMLInputElement>(null);
+  const skipNavRef = useRef<HTMLElement>(null);
+  const loadingStatusRef = useRef<HTMLDivElement>(null);
+
+  const hasClassificationError = !!(
+    result &&
+    Object.keys(result.versions).length === 0 &&
+    result.steps.some((s) => s.name === 'classification' && s.error)
+  );
+
+  // Coarse view state drives the skip-nav targets so screen reader users get
+  // the right landing spot for whichever screen they're looking at.
+  const viewState: 'idle' | 'uploading' | 'error' | 'result' = uploading
+    ? 'uploading'
+    : error || hasClassificationError
+      ? 'error'
+      : result
+        ? 'result'
+        : 'idle';
+
+  // Single polite live region copy — drives the aria-live announcement.
+  const liveAnnouncement = useMemo(() => {
+    if (error) return `Error: ${error}`;
+    if (uploading && !processing) return 'Uploading document. Extracting content.';
+    if (processing && currentStepName) return `Processing step: ${currentStepName}.`;
+    if (processing) return 'Document received. Processing pipeline started.';
+    if (result && Object.keys(result.versions).length > 0) return 'Processing complete.';
+    return '';
+  }, [uploading, processing, currentStepName, error, result]);
+
+  // Move focus to the loading status region the moment the upload starts so
+  // a blind user knows the stream is live and has a live-region neighbour.
+  useEffect(() => {
+    if (uploading && loadingStatusRef.current) {
+      loadingStatusRef.current.focus();
+    }
+  }, [uploading]);
+
+  // When processing starts, move focus off the (now-unmounted) loading region
+  // and onto the active stage tab — prefer the one the pipeline flagged as
+  // currently processing, falling back to the first (Extraction) tab so the
+  // user has a deterministic anchor before any step has streamed in.
+  useEffect(() => {
+    if (!processing) return;
+    requestAnimationFrame(() => {
+      const stagesRoot = document.getElementById('region-stages');
+      if (!stagesRoot) return;
+      const target =
+        stagesRoot.querySelector<HTMLButtonElement>('button[aria-current="step"]') ??
+        stagesRoot.querySelector<HTMLButtonElement>('button:not([disabled])') ??
+        stagesRoot.querySelector<HTMLButtonElement>('button');
+      target?.focus();
+    });
+  }, [processing]);
 
   // Auto-advance to newest step tab as steps stream in
   const stepsLength = result?.steps.length ?? 0;
@@ -449,7 +502,12 @@ export function PipelineViewerPage() {
   );
 
   // Focus a landmark region by ID with a visible focus ring
-  const handleFocusRegion = useCallback((region: 'pages' | 'stages' | 'preview' | 'changes') => {
+  const handleFocusRegion = useCallback((region: FocusRegion) => {
+    if (region === 'skip') {
+      const firstLink = skipNavRef.current?.querySelector<HTMLAnchorElement>('a');
+      firstLink?.focus();
+      return;
+    }
     const idMap = { pages: 'region-pages', stages: 'region-stages', preview: 'region-preview', changes: 'region-changes' };
     const el = document.getElementById(idMap[region]);
     if (el) {
@@ -469,28 +527,60 @@ export function PipelineViewerPage() {
 
   return (
     <div className="flex flex-col h-screen bg-gray-50">
-      {/* Skip navigation menu */}
-      <nav aria-label="Skip navigation" className="sr-only focus-within:not-sr-only focus-within:absolute focus-within:z-[60] focus-within:top-0 focus-within:left-0 focus-within:bg-white focus-within:border focus-within:rounded-md focus-within:shadow-lg focus-within:p-3">
+      {/* Skip navigation menu — targets change with view state */}
+      <nav
+        ref={skipNavRef}
+        aria-label="Skip navigation"
+        className="sr-only focus-within:not-sr-only focus-within:absolute focus-within:z-[60] focus-within:top-0 focus-within:left-0 focus-within:bg-white focus-within:border focus-within:rounded-md focus-within:shadow-lg focus-within:p-3"
+      >
         <ul className="flex flex-col gap-1">
-          <li><a href="#region-preview" className="text-sm text-uic-blue underline focus:outline-2 focus:outline-uic-blue px-2 py-1 block rounded hover:bg-uic-blue/5">Skip to Rendered Preview</a></li>
-          <li><a href="#region-stages" className="text-sm text-uic-blue underline focus:outline-2 focus:outline-uic-blue px-2 py-1 block rounded hover:bg-uic-blue/5">Skip to Stage Picker</a></li>
-          <li><a href="#region-pages" className="text-sm text-uic-blue underline focus:outline-2 focus:outline-uic-blue px-2 py-1 block rounded hover:bg-uic-blue/5">Skip to Page Picker</a></li>
-          <li><a href="#region-changes" className="text-sm text-uic-blue underline focus:outline-2 focus:outline-uic-blue px-2 py-1 block rounded hover:bg-uic-blue/5">Skip to Changes Panel</a></li>
+          {viewState === 'idle' && (
+            <li><a href="#region-upload" className="text-sm text-uic-blue underline focus:outline-2 focus:outline-uic-blue px-2 py-1 block rounded hover:bg-uic-blue/5">Skip to PDF upload</a></li>
+          )}
+          {viewState === 'uploading' && (
+            <li><a href="#region-status" className="text-sm text-uic-blue underline focus:outline-2 focus:outline-uic-blue px-2 py-1 block rounded hover:bg-uic-blue/5">Skip to processing status</a></li>
+          )}
+          {viewState === 'error' && (
+            <li><a href="#region-error" className="text-sm text-uic-blue underline focus:outline-2 focus:outline-uic-blue px-2 py-1 block rounded hover:bg-uic-blue/5">Skip to error message</a></li>
+          )}
+          {viewState === 'result' && (
+            <>
+              <li><a href="#region-preview" className="text-sm text-uic-blue underline focus:outline-2 focus:outline-uic-blue px-2 py-1 block rounded hover:bg-uic-blue/5">Skip to Rendered Preview</a></li>
+              <li><a href="#region-stages" className="text-sm text-uic-blue underline focus:outline-2 focus:outline-uic-blue px-2 py-1 block rounded hover:bg-uic-blue/5">Skip to Stage Picker</a></li>
+              <li><a href="#region-pages" className="text-sm text-uic-blue underline focus:outline-2 focus:outline-uic-blue px-2 py-1 block rounded hover:bg-uic-blue/5">Skip to Page Picker</a></li>
+              <li><a href="#region-changes" className="text-sm text-uic-blue underline focus:outline-2 focus:outline-uic-blue px-2 py-1 block rounded hover:bg-uic-blue/5">Skip to Changes Panel</a></li>
+            </>
+          )}
         </ul>
       </nav>
+
+      {/* Polite live region — announces upload / pipeline state transitions
+          to assistive technology without moving focus. */}
+      <div className="sr-only" role="status" aria-live="polite" aria-atomic="true">
+        {liveAnnouncement}
+      </div>
 
       <KeyboardShortcuts onFocusRegion={handleFocusRegion} />
 
       {/* Header */}
       <header className="flex items-center px-6 py-3 bg-white border-b shadow-sm">
-        <h1 className="text-lg font-bold text-uic-blue">Equalify Reflow Viewer</h1>
+        <h1 className="text-lg font-bold text-uic-blue flex items-center gap-2">
+          Equalify Reflow
+          <span
+            className="text-[10px] font-semibold uppercase tracking-wider bg-uic-blue/10 text-uic-blue border border-uic-blue/20 px-2 py-0.5 rounded-full"
+          >
+            Beta
+          </span>
+        </h1>
       </header>
 
       {/* Classification error — document was rejected before processing */}
       {result && Object.keys(result.versions).length === 0 && (() => {
         const classStep = result.steps.find((s) => s.name === 'classification' && s.error);
         return classStep ? (
-          <ClassificationError step={classStep} onReset={reset} />
+          <div id="region-error" tabIndex={-1} className="outline-none">
+            <ClassificationError step={classStep} onReset={reset} />
+          </div>
         ) : null;
       })()}
 
@@ -518,27 +608,34 @@ export function PipelineViewerPage() {
           {!result && (
             <div className="flex-1 flex items-center justify-center p-8">
               {uploading ? (
-                <div className="flex flex-col items-center gap-4">
-                  <Loader2 className="w-10 h-10 animate-spin text-uic-blue" />
+                <div
+                  id="region-status"
+                  ref={loadingStatusRef}
+                  tabIndex={-1}
+                  className="flex flex-col items-center gap-4 outline-none focus:outline-2 focus:outline-uic-blue focus:outline-offset-4 rounded-md"
+                >
+                  <Loader2 className="w-10 h-10 animate-spin text-uic-blue" aria-hidden="true" />
                   <p className="text-muted-foreground">Extracting document content...</p>
                   {statusMessage ? (
                     <div className="bg-amber-50 border border-amber-200 rounded-lg px-4 py-3 max-w-md text-center">
-                      <p className="text-sm text-amber-800">{statusMessage}</p>
+                      <p className="text-sm text-amber-900">{statusMessage}</p>
                     </div>
                   ) : (
                     <p className="text-xs text-muted-foreground">Processing time depends on document length and complexity</p>
                   )}
                 </div>
               ) : error ? (
-                <div className="max-w-md text-center">
-                  <p className="text-red-600 font-medium mb-2">Processing Error</p>
+                <div id="region-error" tabIndex={-1} className="max-w-md text-center outline-none">
+                  <p className="text-red-700 font-medium mb-2">Processing Error</p>
                   <p className="text-sm text-muted-foreground mb-4">{error}</p>
                   <Button variant="outline" onClick={reset}>
                     Try Again
                   </Button>
                 </div>
               ) : (
-                <div
+                <button
+                  id="region-upload"
+                  type="button"
                   onDragOver={(e) => {
                     e.preventDefault();
                     setDragOver(true);
@@ -546,13 +643,14 @@ export function PipelineViewerPage() {
                   onDragLeave={() => setDragOver(false)}
                   onDrop={handleDrop}
                   className={cn(
-                    'w-full max-w-lg border-2 border-dashed rounded-xl p-12 text-center transition-colors cursor-pointer',
-                    dragOver ? 'border-uic-blue bg-uic-blue/5' : 'border-gray-300 hover:border-gray-400',
+                    'w-full max-w-lg border-2 border-dashed rounded-xl p-12 text-center transition-colors cursor-pointer bg-transparent focus:outline-2 focus:outline-uic-blue focus:outline-offset-2',
+                    dragOver ? 'border-uic-blue bg-uic-blue/5' : 'border-gray-400 hover:border-uic-blue',
                   )}
                   onClick={() => fileInputRef.current?.click()}
+                  aria-label="Upload a PDF: press Enter or Space to open a file picker, or drop a file here"
                 >
-                  <Upload className="w-12 h-12 mx-auto mb-4 text-gray-400" />
-                  <p className="text-lg font-medium text-gray-700 mb-1">
+                  <Upload className="w-12 h-12 mx-auto mb-4 text-gray-500" aria-hidden="true" />
+                  <p className="text-lg font-medium text-gray-800 mb-1">
                     Drop a PDF here or click to upload
                   </p>
                   <p className="text-sm text-muted-foreground">
@@ -565,7 +663,7 @@ export function PipelineViewerPage() {
                     className="hidden"
                     onChange={handleFileSelect}
                   />
-                </div>
+                </button>
               )}
             </div>
           )}

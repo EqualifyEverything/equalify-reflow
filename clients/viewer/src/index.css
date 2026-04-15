@@ -21,8 +21,10 @@
     --secondary-foreground: 222 47% 11%;
 
     /* Muted */
+    /* muted-foreground lightness lowered from 47% to 35% so text-muted-foreground
+       clears WCAG AA at 14px (the 47% value measured ~4.46:1 on white). */
     --muted: 210 40% 96%;
-    --muted-foreground: 215 16% 47%;
+    --muted-foreground: 215 20% 35%;
 
     /* Accent */
     --accent: 210 40% 96%;

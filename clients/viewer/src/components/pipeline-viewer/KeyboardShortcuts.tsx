@@ -13,6 +13,7 @@ interface ShortcutDef {
 }
 
 const SHORTCUTS: ShortcutDef[] = [
+  { keys: `${MOD_LABEL}+0`, label: 'Skip Menu', description: 'Open the skip-navigation menu' },
   { keys: `${MOD_LABEL}+1`, label: 'Page Picker', description: 'Jump to the page navigation sidebar' },
   { keys: `${MOD_LABEL}+2`, label: 'Stage Picker', description: 'Jump to the pipeline stage tabs' },
   { keys: `${MOD_LABEL}+3`, label: 'Rendered Preview', description: 'Jump to the rendered markdown preview' },
@@ -20,12 +21,19 @@ const SHORTCUTS: ShortcutDef[] = [
   { keys: `${MOD_LABEL}+/`, label: 'Keyboard Shortcuts', description: 'Open this help dialog' },
 ];
 
+export type FocusRegion = 'skip' | 'pages' | 'stages' | 'preview' | 'changes';
+
 interface KeyboardShortcutsProps {
-  onFocusRegion: (region: 'pages' | 'stages' | 'preview' | 'changes') => void;
+  onFocusRegion: (region: FocusRegion) => void;
 }
 
 export function KeyboardShortcuts({ onFocusRegion }: KeyboardShortcutsProps) {
   const [helpOpen, setHelpOpen] = useState(false);
+
+  useHotkey('Mod+0', (e) => {
+    e.preventDefault();
+    onFocusRegion('skip');
+  });
 
   useHotkey('Mod+1', (e) => {
     e.preventDefault();
@@ -81,11 +89,6 @@ export function KeyboardShortcuts({ onFocusRegion }: KeyboardShortcutsProps) {
                 </kbd>
               </div>
             ))}
-          </div>
-          <div className="px-6 py-3 border-t bg-gray-50 rounded-b-xl">
-            <p className="text-[10px] text-muted-foreground">
-              These shortcuts are designed to avoid conflicts with screen readers (JAWS, NVDA, VoiceOver).
-            </p>
           </div>
         </Modal>
       )}

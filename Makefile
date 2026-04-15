@@ -270,13 +270,21 @@ build:
 	docker compose -f docker-compose.yml -f docker-compose.dev.yml build
 
 # Build pipeline viewer (served at the site root /)
+# Restarts api-gateway because Vite's emptyOutDir wipes clients/viewer/dist
+# and macOS Docker bind mounts hold the stale inode otherwise — the container
+# ends up serving index.html for /assets/* and Chrome rejects the MIME type.
 build-viewer:
 	@echo "Building pipeline viewer..."
 	cd clients/viewer && pnpm install && pnpm run build
 	@echo ""
 	@echo "✅ Pipeline viewer built to clients/viewer/dist/"
-	@echo "   Restart with: make down && make dev"
-	@echo "   Then access: http://localhost:8080/"
+	@if docker compose ps --services --status running 2>/dev/null | grep -q '^api-gateway$$'; then \
+		echo "   Restarting api-gateway to pick up new assets..."; \
+		docker compose restart api-gateway >/dev/null 2>&1 && echo "   ✅ api-gateway restarted"; \
+	else \
+		echo "   (api-gateway not running — start with: make dev)"; \
+	fi
+	@echo "   Access at: http://localhost:8080/"
 
 # Access API container shell for debugging
 shell:

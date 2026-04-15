@@ -189,6 +189,7 @@ export function StageTabs({
           const lastStep = lastIdx != null ? steps[lastIdx] : null;
           const canDownload = lastStep?.version_after && !lastStep.error;
 
+          const isActiveProcessing = stage.status === 'active';
           return (
             <div key={stage.definition.name} className="flex items-center">
               <button
@@ -198,7 +199,9 @@ export function StageTabs({
                     onSelectStep(lastIdx);
                   }
                 }}
-                disabled={!hasSteps}
+                disabled={!hasSteps && !isActiveProcessing}
+                aria-current={isActiveProcessing ? 'step' : undefined}
+                data-stage-name={stage.definition.name}
                 className={cn(
                   'flex items-center gap-1.5 px-3 py-1.5 rounded-md text-xs font-medium transition-colors',
                   isActiveStage

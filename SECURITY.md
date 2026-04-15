@@ -2,7 +2,7 @@
 
 ## Supported Versions
 
-Equalify Reflow is currently in beta. The `main` branch is the only supported version. Tagged releases (e.g. `v0.1.0-beta.3`) are snapshots for reference; fixes land on `main`.
+Equalify Reflow is currently in beta. The `main` branch is the only supported version. Tagged releases (e.g. `v0.1.0-beta.4`) are snapshots for reference; fixes land on `main`.
 
 ## Reporting a Vulnerability
 

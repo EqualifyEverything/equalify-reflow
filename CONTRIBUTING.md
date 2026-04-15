@@ -26,7 +26,7 @@ curl http://localhost:8080/health
 
 `make dev` starts the API, Redis, Floci (S3 + CloudWatch emulation), Docling, Prometheus, Grafana, and Jaeger. Code in `src/` hot-reloads automatically inside the container.
 
-Open the Swagger UI at http://localhost:8080/docs (user: `dase`, password: `a11y`) and the Pipeline Viewer at http://localhost:8080/ (same credentials).
+Open the Swagger UI at http://localhost:8080/docs and the Pipeline Viewer at http://localhost:8080/ — both are publicly accessible (no auth).
 
 ### Verify your environment
 

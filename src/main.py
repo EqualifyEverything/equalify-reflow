@@ -16,7 +16,6 @@ from .config import settings
 from .dependencies import get_redis_client
 from .middleware import (
     APIKeyAuthMiddleware,
-    DocsAuthMiddleware,
     ErrorHandlerMiddleware,
     LoggingMiddleware,
     RateLimitMiddleware,
@@ -144,7 +143,7 @@ app = FastAPI(
         "AI text correction. Designed to be provider-agnostic (AWS Bedrock "
         "today, Anthropic direct and other providers in progress)."
     ),
-    version="0.1.0b3",
+    version="0.1.0b4",
     docs_url="/docs",
     redoc_url="/redoc",
     license_info={
@@ -162,10 +161,6 @@ setup_metrics(app)
 if settings.enable_api_key_auth:
     app.add_middleware(APIKeyAuthMiddleware)
     logger.info("✅ API key authentication enabled")
-
-if settings.enable_docs_auth:
-    app.add_middleware(DocsAuthMiddleware)
-    logger.info("✅ Documentation authentication enabled")
 
 app.add_middleware(ErrorHandlerMiddleware)  # Catch all errors
 app.add_middleware(RateLimitMiddleware)  # Rate limit before processing

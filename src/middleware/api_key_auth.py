@@ -100,15 +100,15 @@ class APIKeyAuthMiddleware(BaseHTTPMiddleware):
         Check if endpoint is exempt from API key auth.
 
         Only `/api/*` paths require an API key — everything else is served by
-        the viewer, the docs middleware (Basic Auth), the LTI JWT flow, or is
-        a public health check. API routes themselves have three carve-outs:
+        the (public) viewer, the LTI JWT flow, or is a public health check.
+        API routes themselves have three carve-outs:
 
         - Development-only endpoints under /api/dev/monitoring, /api/dev/minimal,
           /api/dev/pipeline-viewer are public when settings.environment == "dev"
-        - Same-origin requests from the viewer (or legacy demo UI) are
-          exempt via `_is_demo_ui_request` (checks Referer, Origin, and
-          Sec-Fetch-Site) so the viewer's JS can call the API without the
-          browser having to inject an X-API-Key header
+        - Same-origin requests from the viewer are exempt via
+          `_is_demo_ui_request` (checks Referer, Origin, and Sec-Fetch-Site)
+          so the viewer's JS can call the API without the browser having to
+          inject an X-API-Key header
         - SSE stream endpoints with a `?token=` query parameter bypass API
           key auth and validate the token in the endpoint handler instead
 
@@ -138,11 +138,10 @@ class APIKeyAuthMiddleware(BaseHTTPMiddleware):
             return False
 
         # Everything outside /api/ is exempt from API key auth:
-        #   - / and every SPA deep link → viewer HTML (auth via DocsAuthMiddleware)
-        #   - /viewer, /viewer/* → legacy redirect handlers (same Basic Auth)
+        #   - / and every SPA deep link → viewer HTML (public)
+        #   - /viewer, /viewer/* → legacy 301 redirects to /
         #   - /health, /health/ready → public health checks
-        #   - /docs, /openapi.json, /redoc → Basic Auth via DocsAuthMiddleware
-        #   - /demo, /demo/* → Basic Auth via DocsAuthMiddleware (if present)
+        #   - /docs, /openapi.json, /redoc → public API documentation
         #   - /lti/* → Canvas JWT auth
         #   - /static/canvas/* → dashboard assets
         #   - /metrics → Prometheus
@@ -151,40 +150,38 @@ class APIKeyAuthMiddleware(BaseHTTPMiddleware):
 
     def _is_demo_ui_request(self, request: Request) -> bool:
         """
-        Check if request originates from the demo UI.
+        Check if request is a same-origin browser fetch from the viewer SPA.
 
-        The demo UI is served at /demo and protected by HTTP Basic Auth.
-        Requests from the demo UI are same-origin and don't include an X-API-Key
-        header. We identify them by checking the Referer header.
+        The viewer is served at `/` and is now publicly accessible. Its JS
+        calls /api/v1/* from the same origin without an X-API-Key header.
+        We identify these requests by the combination of:
 
-        This is secure because:
-        1. The demo UI itself requires Basic Auth to access
-        2. CORS prevents external sites from making requests with our Referer
-        3. External API clients will use X-API-Key (not Referer-based auth)
+        - No X-API-Key header (external clients always send one)
+        - Sec-Fetch-Site: same-origin (set by the browser for genuinely
+          same-origin fetches, unforgeable by external callers)
+
+        This is safe because:
+        1. CORS prevents external sites from forging the Origin or reading
+           the response
+        2. External API clients must send X-API-Key, which takes the
+           normal-auth branch in dispatch() above before this code runs
+        3. Sec-Fetch-Site is a browser-controlled header — page scripts
+           cannot set or spoof it
 
         Args:
             request: Incoming request
 
         Returns:
-            True if request appears to come from demo UI
+            True if request appears to be a same-origin viewer fetch
         """
         # If request has an API key, it's an external client - use normal auth
         if request.headers.get(settings.api_key_header_name):
             return False
 
-        # Check Referer header for demo UI or viewer origin
-        referer = request.headers.get("Referer", "")
-        if "/demo" in referer or "/viewer" in referer:
-            return True
-
-        # Check Origin header as fallback (for some browsers/requests)
-        origin = request.headers.get("Origin", "")
-        # Origin header doesn't include path, so we check Sec-Fetch-Site
-        # for same-origin requests combined with absence of API key
+        # Same-origin fetch from the viewer SPA — trust the browser-set
+        # Sec-Fetch-Site header combined with absence of API key.
         sec_fetch_site = request.headers.get("Sec-Fetch-Site", "")
-        if origin and sec_fetch_site == "same-origin":
-            # Same-origin request without API key - likely from demo UI
-            # This is safe because external clients must use API key
+        if sec_fetch_site == "same-origin":
             return True
 
         return False

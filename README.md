@@ -79,7 +79,7 @@ make dev
 # 3. Verify
 curl http://localhost:8080/health
 
-# 4. View API docs (username: dase, password: a11y)
+# 4. View API docs (publicly accessible)
 open http://localhost:8080/docs
 ```
 
@@ -105,8 +105,8 @@ Run `make help` for all commands.
 
 The FastAPI app exposes interactive API documentation at `/docs` (Swagger UI) and `/redoc` (ReDoc).
 
-- **Local development:** http://localhost:8080/docs (default credentials: `dase` / `a11y`)
-- **OpenAPI schema:** http://localhost:8080/openapi.json
+- **Local development:** http://localhost:8080/docs (public — no auth)
+- **OpenAPI schema:** http://localhost:8080/openapi.json (public)
 - **Endpoints overview:** all application endpoints are prefixed with `/api/v1/`. See the Swagger UI for the complete list, request/response shapes, and authentication requirements.
 
 ## Project Structure

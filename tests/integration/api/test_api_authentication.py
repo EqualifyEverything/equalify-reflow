@@ -1,6 +1,5 @@
 """Integration tests for API authentication."""
 
-import base64
 import os
 from unittest.mock import AsyncMock, MagicMock, patch
 
@@ -21,24 +20,6 @@ def enable_api_key_auth():
         yield mock_settings
 
 
-@pytest.fixture
-def enable_docs_auth():
-    """Enable docs authentication for tests."""
-    with patch("src.middleware.docs_auth.settings") as mock_settings:
-        mock_settings.docs_username = "admin"
-        mock_settings.docs_password = MagicMock()
-        mock_settings.docs_password.get_secret_value.return_value = "secret123"
-        mock_settings.enable_docs_auth = True
-        yield mock_settings
-
-
-def create_basic_auth_header(username: str, password: str) -> str:
-    """Create HTTP Basic auth header value."""
-    credentials = f"{username}:{password}"
-    encoded = base64.b64encode(credentials.encode("utf-8")).decode("utf-8")
-    return f"Basic {encoded}"
-
-
 @pytest.mark.integration
 @pytest.mark.asyncio
 @pytest.mark.skipif(
@@ -55,7 +36,6 @@ async def test_api_key_required_for_protected_endpoint(enable_api_key_auth):
 
         # Configure main settings
         main_settings.enable_api_key_auth = True
-        main_settings.enable_docs_auth = False
         main_settings.api_key_header_name = "X-API-Key"
         main_settings.environment = "production"
         main_settings.api_keys = MagicMock()
@@ -137,7 +117,6 @@ async def test_health_endpoint_bypasses_api_key_auth(enable_api_key_auth):
     try:
         with patch("src.main.settings") as main_settings:
             main_settings.enable_api_key_auth = True
-            main_settings.enable_docs_auth = False
             main_settings.environment = "production"
 
             async with AsyncClient(
@@ -210,107 +189,45 @@ async def test_multiple_api_keys_supported(enable_api_key_auth):
 
 @pytest.mark.integration
 @pytest.mark.asyncio
-async def test_docs_endpoint_requires_basic_auth(enable_docs_auth):
-    """Test that /docs endpoint requires HTTP Basic authentication."""
-    from src.config import settings as app_settings
+async def test_docs_endpoint_is_public():
+    """Test that /docs is publicly accessible (no Basic Auth)."""
+    async with AsyncClient(
+        transport=ASGITransport(app=app),
+        base_url="http://test"
+    ) as client:
+        response = await client.get("/docs")
 
-    # Skip if docs auth not enabled at app startup (middleware won't be loaded)
-    if not app_settings.enable_docs_auth:
-        pytest.skip("Docs authentication not enabled in this environment")
-
-    with patch("src.main.settings") as main_settings:
-        main_settings.enable_api_key_auth = False
-        main_settings.enable_docs_auth = True
-        main_settings.docs_username = "admin"
-        main_settings.docs_password = MagicMock()
-        main_settings.docs_password.get_secret_value.return_value = "secret123"
-
-        async with AsyncClient(
-            transport=ASGITransport(app=app),
-            base_url="http://test"
-        ) as client:
-            # Test without auth
-            response = await client.get("/docs")
-
-            # Should be rejected
-            assert response.status_code == 401
-            assert "WWW-Authenticate" in response.headers
-            assert "Basic" in response.headers["WWW-Authenticate"]
+        # Should succeed without any credentials
+        assert response.status_code == 200
+        assert "WWW-Authenticate" not in response.headers
 
 
 @pytest.mark.integration
 @pytest.mark.asyncio
-async def test_docs_valid_credentials_allow_access(enable_docs_auth):
-    """Test that valid credentials allow access to docs."""
-    with patch("src.main.settings") as main_settings:
-        main_settings.enable_api_key_auth = False
-        main_settings.enable_docs_auth = True
-        main_settings.docs_username = "admin"
-        main_settings.docs_password = MagicMock()
-        main_settings.docs_password.get_secret_value.return_value = "secret123"
+async def test_openapi_json_is_public():
+    """Test that /openapi.json is publicly accessible."""
+    async with AsyncClient(
+        transport=ASGITransport(app=app),
+        base_url="http://test"
+    ) as client:
+        response = await client.get("/openapi.json")
 
-        auth_header = create_basic_auth_header("admin", "secret123")
-
-        async with AsyncClient(
-            transport=ASGITransport(app=app),
-            base_url="http://test",
-            headers={"Authorization": auth_header}
-        ) as client:
-            # Test with valid credentials
-            response = await client.get("/docs")
-
-            # Should succeed
-            assert response.status_code == 200
+        # Should succeed and return valid OpenAPI schema
+        assert response.status_code == 200
+        assert response.json().get("openapi")
 
 
 @pytest.mark.integration
 @pytest.mark.asyncio
-async def test_openapi_json_requires_auth(enable_docs_auth):
-    """Test that /openapi.json requires authentication when docs auth enabled."""
-    from src.config import settings as app_settings
-
-    # Skip if docs auth not enabled at app startup (middleware won't be loaded)
-    if not app_settings.enable_docs_auth:
-        pytest.skip("Docs authentication not enabled in this environment")
-
-    with patch("src.main.settings") as main_settings:
-        main_settings.enable_api_key_auth = False
-        main_settings.enable_docs_auth = True
-        main_settings.docs_username = "admin"
-        main_settings.docs_password = MagicMock()
-        main_settings.docs_password.get_secret_value.return_value = "secret123"
-
-        async with AsyncClient(
-            transport=ASGITransport(app=app),
-            base_url="http://test"
-        ) as client:
-            # Test without auth
-            response = await client.get("/openapi.json")
-
-            # Should be rejected
-            assert response.status_code == 401
-
-
-@pytest.mark.integration
-@pytest.mark.asyncio
-async def test_both_auth_methods_work_together():
-    """Test that API key and docs auth can be enabled simultaneously."""
-    # Import middleware to patch validation methods
+async def test_api_key_auth_unaffected_by_public_docs():
+    """Test that API key auth on /api/* still works after docs became public."""
     from src.middleware.api_key_auth import APIKeyAuthMiddleware
-    from src.middleware.docs_auth import DocsAuthMiddleware
 
     with patch("src.dependencies.get_job_service") as mock_job_service_dep:
-        # Patch validation methods instead of instance attributes
         def mock_is_valid_key(self, provided_key: str) -> bool:
             return provided_key == "api-key-123"
 
-        def mock_is_valid_credentials(self, username: str, password: str) -> bool:
-            return username == "admin" and password == "doc-pass"
-
-        with patch.object(APIKeyAuthMiddleware, '_is_valid_key', mock_is_valid_key), \
-             patch.object(DocsAuthMiddleware, '_is_valid_credentials', mock_is_valid_credentials):
-
-            # Mock job service
+        with patch.object(APIKeyAuthMiddleware, '_is_valid_key', mock_is_valid_key):
             mock_job_service = AsyncMock()
             mock_job_service.get_job.return_value = {
                 "job_id": "test-id",
@@ -322,15 +239,11 @@ async def test_both_auth_methods_work_together():
                 transport=ASGITransport(app=app),
                 base_url="http://test"
             ) as client:
-                # Test docs endpoint requires Basic auth (not API key)
-                docs_auth = create_basic_auth_header("admin", "doc-pass")
-                response = await client.get(
-                    "/docs",
-                    headers={"Authorization": docs_auth}
-                )
+                # /docs is public now — no auth header needed
+                response = await client.get("/docs")
                 assert response.status_code == 200
 
-                # Test API endpoint requires API key (not Basic auth)
+                # /api/v1/* still requires API key
                 response = await client.get(
                     "/api/v1/documents/test-id",
                     headers={"X-API-Key": "api-key-123"}
@@ -361,7 +274,6 @@ async def test_rate_limiting_still_works_with_auth():
     try:
         with patch("src.main.settings") as main_settings:
             main_settings.enable_api_key_auth = False  # Disable for this test
-            main_settings.enable_docs_auth = False
             main_settings.environment = "production"
 
             async with AsyncClient(

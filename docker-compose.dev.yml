@@ -132,7 +132,7 @@ services:
 
   # NOTE: Viewer is bundled into the API container
   # In development, run `make build-viewer` to rebuild the frontend
-  # Then access it at http://localhost:8080/viewer
+  # Then access it at http://localhost:8080/ (Basic Auth: dase / a11y)
 
   # Redis Exporter - Exposes Redis metrics to Prometheus
   redis-exporter:

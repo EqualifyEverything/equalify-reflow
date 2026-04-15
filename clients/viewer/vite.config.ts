@@ -4,12 +4,13 @@ import path from 'path'
 
 /**
  * Vite config for Pipeline Viewer
- * Builds to /viewer path for production
+ * Builds to the root path — the viewer is served at `/` by FastAPI.
  */
 export default defineConfig({
   plugins: [react()],
-  // Serve from /viewer/ in production, root in development
-  base: process.env.NODE_ENV === 'production' ? '/viewer/' : '/',
+  // Viewer is mounted at `/` in both dev and prod. React Router reads
+  // import.meta.env.BASE_URL dynamically from this setting.
+  base: '/',
   resolve: {
     alias: {
       '@': path.resolve(__dirname, './src'),

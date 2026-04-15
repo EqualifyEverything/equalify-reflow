@@ -26,7 +26,7 @@ curl http://localhost:8080/health
 
 `make dev` starts the API, Redis, LocalStack (S3 emulation), Docling, Prometheus, Grafana, and Jaeger. Code in `src/` hot-reloads automatically inside the container.
 
-Open the Swagger UI at http://localhost:8080/docs (user: `dase`, password: `a11y`) and the Pipeline Viewer at http://localhost:8080/viewer.
+Open the Swagger UI at http://localhost:8080/docs (user: `dase`, password: `a11y`) and the Pipeline Viewer at http://localhost:8080/ (same credentials).
 
 ### Verify your environment
 
@@ -162,7 +162,7 @@ When you open a PR, the template at [.github/PULL_REQUEST_TEMPLATE.md](.github/P
 The accuracy of Reflow is driven by a handful of PydanticAI agents in `src/agents/` and call sites in `src/services/pipeline_viewer.py`. The workflow is:
 
 1. **Find the prompt** as a module-level constant in `src/agents/*.py`.
-2. **Reproduce the failing case** via the Pipeline Viewer at http://localhost:8080/viewer.
+2. **Reproduce the failing case** via the Pipeline Viewer at http://localhost:8080/.
 3. **Edit the prompt** (hot reload picks up the change inside the container).
 4. **Re-run the pipeline** against the same document — each phase is versioned, so you can see the diff for just the phase you changed.
 5. **Run `make test-fast`**, then `make test-integration`, then `make test-e2e` if the change is material.

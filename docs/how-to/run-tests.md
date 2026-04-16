@@ -1,107 +1,71 @@
-# Testing Strategy
+# How to run the test suite
 
-## 3-Tier Testing Strategy
+Three commands cover the day-to-day cases. For the rationale behind the three tiers, see [testing strategy](../explanation/testing-strategy.md). For the full marker list, see [CI workflows reference](../reference/ci-workflows.md).
 
-### Unit Tests (`tests/unit/`)
+## Quick commands
 
-- Fully mocked dependencies
-- Fast (<100ms per test)
-- No Docker required
-- Tests business logic only
+```bash
+make test-fast          # Unit tests, ~30s — run before every commit
+make test-integration   # Integration tests, ~2min — run before PRs
+make test-e2e           # End-to-end with real Bedrock, ~5min — run before merges
+```
 
-### Integration Tests (`tests/integration/`)
+Everything runs in the Docker stack. Don't run `pytest` on the host.
 
-- **Uses:** Python testcontainers library (redis:7-alpine, floci)
-- **Execution:** Host machine via `make test-integration` (not inside Docker)
-- **Isolation:** Fresh containers per test session, true test isolation
-- **Services:** Real Redis + Real S3 (Floci), AI/ML mocked
-- **Speed:** ~2 minutes total
-- **Benefits:** Catches serialization bugs, race conditions, Redis atomicity
+## Run a specific test
 
-### E2E Tests (`tests/e2e/`)
+```bash
+# One file
+docker compose exec api-gateway uv run pytest tests/unit/services/test_storage_service.py -v
 
-- Full workflows with minimal mocking
-- Slow (<30s per test)
-- Validates complete processing pipeline
+# One test by name
+docker compose exec api-gateway uv run pytest tests/unit/services/test_storage_service.py::test_upload_retries -v
 
-## Shared Test Fixtures
+# Integration tests directly (testcontainers will spin up Redis + Floci)
+docker compose exec api-gateway uv run pytest tests/integration -m integration -v
+```
 
-**IMPORTANT:** Always use shared fixtures from `tests/conftest_fixtures/`:
+## Debug a failing test
+
+```bash
+# Verbose, show print output
+docker compose exec api-gateway uv run pytest tests/path/to/test.py -vvs
+
+# Drop into pdb on first failure
+docker compose exec api-gateway uv run pytest tests/path/to/test.py --pdb
+```
+
+If it fails in CI but passes locally, see [how to debug a CI failure](debug-ci-failures.md).
+
+## Shared fixtures
+
+Use fixtures from `tests/conftest_fixtures/` — don't re-invent them:
 
 ```python
-# Mock Clients
 from tests.conftest_fixtures.clients import (
-    mock_redis_client,      # AsyncMock for Redis
-    mock_s3_client,         # MagicMock for S3
-    mock_ai_service,        # AsyncMock for AI
-    mock_presidio_analyzer  # MagicMock for PII
+    mock_redis_client,      # AsyncMock
+    mock_s3_client,         # MagicMock
+    mock_ai_service,        # AsyncMock
+    mock_presidio_analyzer, # MagicMock
 )
-
-# Data Factories
 from tests.conftest_fixtures.data_factories import (
-    generate_job_id,                # Generate UUID
-    create_pii_queue_payload,       # Create queue message
-    create_test_pdf_content,        # Generate minimal PDF
-    create_test_upload_file         # Create FastAPI UploadFile
+    generate_job_id,
+    create_pii_queue_payload,
+    create_test_pdf_content,
+    create_test_upload_file,
 )
-
-# Test Helpers
 from tests.conftest_fixtures.helpers import (
-    assert_job_state,         # Assert job status
-    assert_s3_upload,         # Assert S3 called correctly
-    setup_redis_error         # Configure error scenarios
+    assert_job_state,
+    assert_s3_upload,
+    setup_redis_error,
 )
-```
-
-## Running Tests
-
-```bash
-# Fast feedback (before commit)
-make test-fast          # ~30s with parallelization
-
-# Before opening PR (requires Docker Desktop running)
-make test-integration   # ~2min with testcontainers
-
-# Before merging
-make test-e2e           # ~5min full workflows
-
-# Run specific test
-uv run pytest tests/unit/services/test_storage_service.py::test_name -v
-
-# Run integration tests directly
-uv run pytest tests/integration -m integration -v
-
-# Debug with verbose output
-uv run pytest tests/path/to/test.py -vvs
-```
-
-## Test Markers
-
-Use pytest markers for selective execution:
-
-```python
-@pytest.mark.unit                # Unit test (fast, mocked)
-@pytest.mark.integration         # Integration test (testcontainers)
-@pytest.mark.slow                # E2E test (>5s)
-@pytest.mark.requires_redis      # Needs Redis
-@pytest.mark.requires_s3         # Needs S3/Floci
-@pytest.mark.requires_ai         # Needs AI/Bedrock
-@pytest.mark.performance         # Performance tests
-@pytest.mark.resilience          # Resilience/fault tolerance tests
-@pytest.mark.edge_case           # Edge case coverage
-```
-
-Run specific markers:
-
-```bash
-pytest -m unit                   # Unit tests only
-pytest -m integration            # Integration tests only
-pytest -m "not slow"             # Skip slow tests
 ```
 
 ## Coverage
 
 ```bash
-make coverage       # Run tests with coverage
-make coverage-html  # Generate and open HTML report
+make coverage        # Run tests with coverage
+make coverage-html   # Generate + open HTML report locally
 ```
+
+CI publishes per-tier coverage as workflow artifacts on every run.

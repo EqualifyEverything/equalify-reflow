@@ -40,7 +40,7 @@ make test-e2e     # or: make test-slow
 ```bash
 make test-all     # Runs in Docker
 ```
-- **What**: Complete test suite (591 tests)
+- **What**: Complete test suite across all three tiers
 - **When**: Final verification before merging to main
 - **Requires**: `make dev` (Docker stack running)
 - **CI Trigger**: Manual or scheduled
@@ -118,7 +118,7 @@ uv run pytest -m requires_s3     # S3-dependent tests
 ## Test Coverage
 
 ### Current Coverage
-**Overall:** 82% (503/503 tests passing ✅)
+**Overall:** ~82% line coverage. For the current total test count and pass rate, see the CI workflow artifacts — the numbers fluctuate per PR, so we don't pin them in docs.
 
 ### Local Coverage Commands
 

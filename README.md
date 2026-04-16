@@ -27,14 +27,12 @@ PII scan (Microsoft Presidio)
   Fail: await instructor approval
          |
          v
-Versioned pipeline (7 steps):
-  1. Docling extraction (v0) -- PDF → markdown + page images
-  2. Structure analysis -- AI identifies headings, footnotes, page types
-  3. Heading level fix -- normalize heading hierarchy
-  4. Page content corrections (v1) -- AI fixes OCR errors per-page
-  5. Code block tagging -- identify programming languages
-  6. Cross-page boundary fixes (v2) -- rejoin split content, relocate footnotes
-  7. Final cleanup (v3) -- normalize whitespace and formatting
+Versioned pipeline (5 phases):
+  1. Extraction  -- PDF → markdown + page images (Docling, with OCR fallback for scanned PDFs)
+  2. Analysis    -- AI classifies pages and identifies headings, footnotes, code blocks
+  3. Headings    -- AI reconciles heading hierarchy and normalises levels
+  4. Translation -- AI fixes per-page content and tags code block languages
+  5. Assembly    -- Cross-page boundary fixes and final cleanup
          |
          v
 Semantic markdown + extracted figures stored in S3
@@ -56,7 +54,7 @@ Results available via API or pipeline viewer UI
 | **Authentication** -- API key auth, protected Swagger docs | Complete |
 | **Monitoring** -- Prometheus metrics, Grafana dashboards, Jaeger tracing | Complete |
 | **Pipeline viewer** -- React UI for upload, step-by-step review, version diff comparison | Complete |
-| **Testing** -- 1133 tests (unit, integration, E2E) | Complete |
+| **Testing** -- Three-tier suite (unit, integration, E2E) with coverage reports in CI | Complete |
 
 ## Quick Start
 

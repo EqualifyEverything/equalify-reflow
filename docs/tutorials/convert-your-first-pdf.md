@@ -255,6 +255,7 @@ make down
 | `{"detail": "Invalid API key"}` on your first request | Your shell lost the `API_KEY` variable. Re-run `export API_KEY=$(grep ...)` from step 3. |
 | Job stuck in `pii_scanning` for more than a minute | `make logs-api | grep pii` — the PII worker may have crashed. Restart with `make down && make dev`. |
 | Job completes but the markdown is empty or full of garbage | Open the viewer at `http://localhost:8080/`, find your job, and step through phases to see where the output went wrong. Grab the ledger (`/ledger`) for the raw agent output. |
+| Job finishes in seconds with `llm_cost.total_tokens: 0` | Expired AWS Bedrock or Anthropic credentials. The pipeline silently took a fast path without AI refinement. Refresh (`aws sso login --profile <name>` or re-export `ANTHROPIC_API_KEY`) and `make down && make dev`. |
 | `PDF has N pages, which exceeds the maximum of 50` | By design. Split the PDF externally and submit the pieces separately. |
 
 ## Where to go next

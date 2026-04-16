@@ -42,8 +42,9 @@ If the unit tests pass, you're good to start making changes.
 Before making a non-trivial change, skim these three documents — they'll save you from redoing work:
 
 - [README.md](README.md) — project overview, what Reflow does, what it doesn't
-- [docs/architecture.md](docs/architecture.md) — service diagram, data flows, pipeline phases, circuit-breaker strategy
-- [AGENTS.md](AGENTS.md) — the canonical guide for agents (human and AI) working on this repo. Covers commands, code layout, key files, pipeline phases, prompt iteration, conventions, and debugging
+- [docs/explanation/architecture.md](docs/explanation/architecture.md) — service diagram, data flows, pipeline phases, circuit-breaker strategy
+- [docs/reference/pipeline-phases.md](docs/reference/pipeline-phases.md) — canonical 5-public-phase ↔ internal-step mapping
+- [AGENTS.md](AGENTS.md) — orientation pointer file covering commands, code layout, and common workflows; sends you into `docs/` for depth
 
 `AGENTS.md` is the single source of truth for day-to-day conventions. `CLAUDE.md` is a symlink to it — editing `AGENTS.md` updates both.
 
@@ -168,7 +169,7 @@ The accuracy of Reflow is driven by a handful of PydanticAI agents in `src/agent
 5. **Run `make test-fast`**, then `make test-integration`, then `make test-e2e` if the change is material.
 6. **Include the before/after markdown diff in your PR body** so reviewers can evaluate the behaviour change.
 
-See the "Agents and prompts" section of [AGENTS.md](AGENTS.md) for the full guide, including model tiers and how to add a new agent.
+See [how to iterate on a prompt](docs/how-to/iterate-on-a-prompt.md) and [how to add a new agent](docs/how-to/add-a-new-agent.md) for the full recipes.
 
 ## Adding a new provider (storage or AI model)
 
@@ -183,7 +184,7 @@ Once the abstraction lands, implementations will live in `src/providers/storage/
 - **Async:** every FastAPI endpoint and service method that touches I/O is `async`. Don't block the event loop.
 - **Structured outputs:** every agent uses PydanticAI's `output_type=<PydanticModel>` — never parse free text from agent responses.
 - **Security:** never log API keys, PII, or full user content. Redaction happens in middleware.
-- **Documentation:** if your change touches user-visible behaviour, update `README.md`. If it touches architecture, update `docs/architecture.md`. If it touches dev workflow, update `AGENTS.md`.
+- **Documentation:** if your change touches user-visible behaviour, update `README.md`. If it touches architecture, update `docs/explanation/architecture.md`. If it touches dev workflow, update `AGENTS.md` or the relevant `docs/how-to/` page. See the "Improving these docs as you go" section in `AGENTS.md` for the standing expectation.
 
 ## Troubleshooting
 

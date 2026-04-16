@@ -1105,7 +1105,7 @@ make dev
 - Uvicorn `--reload` watches for changes
 - Tests mounted for containerized test runs
 
-**Detailed setup:** See [docs/environment-setup.md](environment-setup.md)
+**Detailed setup:** See [how to set up the dev environment](../how-to/set-up-dev-environment.md)
 
 ## Resilience Patterns
 

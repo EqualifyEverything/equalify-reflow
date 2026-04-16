@@ -63,12 +63,13 @@ echo "$API_KEY"
 
 ## 4. Submit a PDF
 
-The repo ships with sample PDFs under `project-docs/pdfs/`. Pick a small one — documents under ~10 pages complete in 2–4 minutes:
+Pick any PDF on your machine — a syllabus, a paper, a form. If you don't have one handy, the repo ships with samples under `project-docs/pdfs/`. Small documents (under ~10 pages, no emails or names) finish fastest.
 
 ```bash
+# Replace the path with your own PDF
 curl -s -X POST http://localhost:8080/api/v1/documents/submit \
   -H "X-API-Key: $API_KEY" \
-  -F "file=@project-docs/pdfs/14_watson_crick_dna.pdf" \
+  -F "file=@/path/to/your.pdf" \
   | tee /tmp/reflow_submit.json | python3 -m json.tool
 ```
 
@@ -76,10 +77,10 @@ Expected response:
 
 ```json
 {
-  "job_id": "8c53b1d7-da0e-44b0-acbe-9c46096d6527",
+  "job_id": "cd3efea4-bddf-4c49-9a1e-6bdaf6eab782",
   "status": "pii_scanning",
   "estimated_completion_minutes": 5,
-  "created_at": "2026-04-16T20:04:51.789757Z",
+  "created_at": "2026-04-16T20:13:29Z",
   "stream_url": null
 }
 ```
@@ -90,7 +91,7 @@ Capture the `job_id` for the next steps:
 export JOB_ID=$(python3 -c "import json; print(json.load(open('/tmp/reflow_submit.json'))['job_id'])")
 ```
 
-**File-size limits to know about:** the API rejects PDFs larger than **100 MB** up front (HTTP 413), and the pipeline itself refuses anything over **50 pages** — you'll get a `failed` status with an error telling you to split the document.
+**File-size limits:** the API rejects PDFs over **100 MB** up front (HTTP 413), and the pipeline itself refuses anything over **50 pages** — a job that oversteps returns `failed` with an error telling you to split the document.
 
 ## 5. Check PII scan status
 
@@ -104,21 +105,21 @@ curl -s -H "X-API-Key: $API_KEY" \
 
 Two possible outcomes:
 
-### No PII found → pipeline starts automatically
+### No PII detected → pipeline starts automatically
 
 ```json
 { "status": "processing", ... }
 ```
 
-Skip ahead to **Step 7**.
+If Presidio finds no emails, SSNs, phone numbers, or other sensitive entities in your document, the pipeline begins processing immediately. **Skip ahead to Step 7** and come back to Step 6 next time you upload a document that does trigger a flag.
 
-### PII found → job awaits approval
+### PII detected → job awaits approval
 
 ```json
 {
   "status": "awaiting_approval",
   "pii_findings": [
-    {"entity_type": "EMAIL_ADDRESS", "text": "probst@uni-mainz.de", "score": 1.0}
+    {"entity_type": "EMAIL_ADDRESS", "text": "example@institution.edu", "score": 1.0}
   ],
   "approval_token": "_aVnWJV7CCiHEs2XfAzk2h1bV9dY-IeW7fouls-7KoQ",
   "approval_url": "/api/v1/approval/_aVnWJV7.../decision",
@@ -128,7 +129,7 @@ Skip ahead to **Step 7**.
 
 The token is job-scoped, has a 4-hour TTL, and is consumed on first use. Reflow won't process the document until somebody makes an approve/deny decision.
 
-The Watson–Crick sample PDF reliably trips the email detector — that's by design for this tutorial.
+If your sample document didn't trip Presidio, you can still exercise the approval flow below by uploading something that contains an email address — most research papers with author contact info will do it.
 
 ## 6. Approve the PII-flagged job
 
@@ -180,7 +181,7 @@ You'll see the status progress through the 5 public phases — see [pipeline pha
 4. **Translation** — AI fixes per-page content and tags code blocks
 5. **Assembly** — Cross-page boundary fixes + cleanup
 
-Typical end-to-end time for a 9-page document: **2–4 minutes after approval.**
+Typical end-to-end time: **well under a minute for a clean short document, 2–5 minutes for something longer or one that took the approval detour.** Your mileage will vary with page count, PDF complexity, and whether the AI phases hit their semaphore limits.
 
 **Viewer option:** open `http://localhost:8080/` in a browser at any point during steps 4–7. Find your job in the list and click through to see the viewer step through each phase with live diffs between versions. It's the same pipeline; just a different UI.
 

@@ -178,7 +178,7 @@ export API_KEY=$(grep "^API_KEYS=" .env | cut -d= -f2 | cut -d, -f1)
 
 JOB_ID=$(curl -s -X POST http://localhost:8080/api/v1/documents/submit \
   -H "X-API-Key: $API_KEY" \
-  -F "file=@project-docs/pdfs/14_watson_crick_dna.pdf" \
+  -F "file=@/path/to/your.pdf" \
   | python3 -c "import sys,json; print(json.load(sys.stdin)['job_id'])")
 
 echo "Submitted: $JOB_ID"

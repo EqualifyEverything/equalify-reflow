@@ -108,21 +108,19 @@ tests/
 
 ## The pipeline
 
-The pipeline runs in `src/services/pipeline_viewer.py`. Each phase is an `async def _step_*` method that reads the previous version's markdown and writes a new one.
+The pipeline runs in `src/services/pipeline_viewer.py` as a sequence of `async def _step_*` methods. Consumers see **5 public phases**; internally those phases group **up to 10 step-level results**. The public→internal mapping is the single source of truth in `clients/viewer/src/types/pipeline-viewer.ts` (`PIPELINE_STAGES`):
 
-| # | Phase | AI? | Purpose |
+| Public phase | Internal steps | AI? | Purpose |
 |---|---|---|---|
-| 1 | Docling extraction | No | PDF → markdown + page images via IBM Docling |
-| 1a | Docling OCR re-extraction | No | Conditional: re-run with Tesseract when classifier flags a scanned document |
-| 2 | Structure analysis | Yes | Identify headings, footnotes, page types, document structure |
-| 3 | Heading reconciliation | Yes | Reconcile heading candidates against the outline |
-| 4 | Heading levels | Yes | Normalise heading hierarchy (H1 → H2 → H3) |
-| 5 | Page content corrections | Yes | Per-page corrections; invokes **table**, **list**, and **image** subagents |
-| 6 | Code block languages | Yes | Identify programming languages in fenced code blocks |
-| 7 | Cross-page boundary fixes | Yes | Rejoin split content; invokes **footnote relocation** subagent |
-| 8 | Final cleanup | No | Normalise whitespace, lint markdown |
+| 1. Extraction | `docling`, `docling_ocr` (conditional) | No | PDF → markdown + page images via IBM Docling. OCR re-extraction fires only when the classifier flags a scanned document. |
+| 2. Analysis | `classification`, `structure` | Yes | Classify the PDF (digital/scanned/malformed) and identify headings, footnotes, code blocks, page types. |
+| 3. Headings | `heading_reconciliation`, `heading_levels` | Yes | Reconcile heading candidates against the outline and normalise H1 → H2 → H3. |
+| 4. Translation | `page_content`, `code_blocks` | Yes | Per-page corrections (invokes table / list / image subagents) and programming-language tagging. |
+| 5. Assembly | `boundaries`, `cleanup` | Yes (boundaries) / No (cleanup) | Rejoin cross-page content and normalise whitespace / lint. |
 
-Eight distinct `Agent(...)` call sites total, each backed by a system prompt in `src/agents/`.
+Orphan steps (e.g. `revision_*`, `feedback_*`) surface in a dynamic **Review** stage in the viewer.
+
+Eight distinct `Agent(...)` call sites total, each backed by a system prompt in `src/agents/`. When you add or rename a step, update `PIPELINE_STAGES` in the viewer *and* this table — they must stay in lockstep.
 
 ## Model tiers
 

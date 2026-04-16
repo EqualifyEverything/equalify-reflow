@@ -133,7 +133,7 @@ src/
 │   ├── job_service.py              # Job state management (Redis hashes + TTL)
 │   ├── pii_service.py              # PII detection orchestration
 │   ├── pii_analyzer.py             # Microsoft Presidio wrapper
-│   ├── pipeline_viewer.py          # Core 7-step versioned processing pipeline
+│   ├── pipeline_viewer.py          # Core versioned pipeline (5 public phases; up to 10 internal step results)
 │   ├── document_processing_service.py # Pipeline orchestration + S3/Redis integration
 │   ├── pdf_extractor.py            # Docling text extraction
 │   ├── approval_service.py         # Approval workflow (token validation, state transitions)
@@ -354,7 +354,7 @@ src/
 
 - `DocumentProcessingService.process_document()` runs as background task
 - Downloads PDF from S3
-- `PipelineViewerService` runs 7-step versioned pipeline (Docling → Structure → Headings → Pages → Code Blocks → Boundaries → Cleanup)
+- `PipelineViewerService` runs the versioned pipeline — 5 public phases (Extraction → Analysis → Headings → Translation → Assembly), implemented by 9 internal `_step_*` methods
 - Stores final markdown + figures to S3 results bucket
 - Updates job state to "completed" with cost/token metadata
 
@@ -682,15 +682,13 @@ LOCK_PREFIX = "eq-pdf:lock:"
 
 1. `DocumentProcessingService.process_document()` runs as a background task
 2. Download PDF from S3 temp bucket
-3. **PipelineViewerService** runs 7-step versioned pipeline:
-   - **Step 1 - Docling extraction (v0):** PDF → markdown + page images (30-90s)
-   - **Step 2 - Structure analysis:** AI identifies headings, footnotes, page types per-page
-   - **Step 3 - Heading level fix:** Deterministic heading hierarchy normalization
-   - **Step 4 - Page content corrections (v1):** AI fixes OCR errors per-page (parallel, semaphore-limited)
-   - **Step 5 - Code block tagging:** Identify programming languages in code blocks
-   - **Step 6 - Cross-page boundary fixes (v2):** Rejoin split content, relocate footnotes
-   - **Step 7 - Final cleanup (v3):** Normalize whitespace and formatting
-4. Each step produces a versioned snapshot (v0, v1, v2, v3) with complete markdown for review
+3. **PipelineViewerService** runs the versioned pipeline. Consumers see **5 public phases**; internally these group up to 10 step-level results. The canonical public→internal mapping lives in `clients/viewer/src/types/pipeline-viewer.ts` (`PIPELINE_STAGES`):
+   - **Phase 1 — Extraction:** `docling` (+ conditional `docling_ocr` re-run for scanned PDFs) produces v0 markdown and page images (30–90s)
+   - **Phase 2 — Analysis:** `classification` (digital/scanned/malformed) and `structure` (headings, footnotes, code blocks, page types)
+   - **Phase 3 — Headings:** `heading_reconciliation` + `heading_levels` normalise the document outline
+   - **Phase 4 — Translation:** `page_content` (AI per-page corrections, parallel/semaphore-limited) and `code_blocks` (language tagging) produce v1
+   - **Phase 5 — Assembly:** `boundaries` (AI, cross-page rejoin + footnote relocation) produces v2; `cleanup` (deterministic whitespace/lint) produces v3
+4. Each step produces a versioned snapshot with complete markdown for review (v0 → v1 → v2 → v3)
 5. **Store results in S3:**
    - Upload final markdown + extracted figures to results bucket
    - Store change ledger (audit trail of all AI edits)

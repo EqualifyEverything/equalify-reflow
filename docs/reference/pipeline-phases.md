@@ -94,6 +94,7 @@ When you add, rename, or reclassify a step:
 
 1. Update `PIPELINE_STAGES` in `clients/viewer/src/types/pipeline-viewer.ts`
 2. Update `PIPELINE_STAGES` in `src/shared/pipeline_phases.py` to match (the alignment test will fail otherwise)
-3. Update the `nameMap` in `clients/viewer/src/components/pipeline-viewer/StageTabs.tsx` (used to infer which public phase a processing event belongs to)
-4. Update this table
-5. Update `AGENTS.md` (short summary of the 5 phases)
+3. Update this table
+4. Update `AGENTS.md` (short summary of the 5 phases)
+
+The viewer derives the active stage directly from the SSE `user_phase` field (see `clients/viewer/src/components/pipeline-viewer/StageTabs.tsx::isProcessingInStage`), so the old display-name `nameMap` no longer exists — adding a step is a one-line change in each `PIPELINE_STAGES` constant.

@@ -1,6 +1,6 @@
 # Tutorial: Convert your first PDF
 
-By the end of this walkthrough you will have run a PDF through the full Equalify Reflow pipeline on your own machine, approved a PII-flagged document, and downloaded the resulting accessible markdown. Plan for **~15 minutes of real time**, most of it waiting for the pipeline to finish.
+By the end of this walkthrough you will have run a PDF through the full Equalify Reflow pipeline on your own machine, approved a PII-flagged document, and downloaded the resulting accessible markdown. Plan for **~15 minutes of real time** (most of it waiting for the pipeline) and **roughly $0.50 in AI API cost** for a short document.
 
 This tutorial uses `curl` so every step is reproducible in a terminal. The viewer UI at `http://localhost:8080/` does the same thing in a browser — after you finish this, try it there too.
 
@@ -181,7 +181,9 @@ You'll see the status progress through the 5 public phases — see [pipeline pha
 4. **Translation** — AI fixes per-page content and tags code blocks
 5. **Assembly** — Cross-page boundary fixes + cleanup
 
-Typical end-to-end time: **well under a minute for a clean short document, 2–5 minutes for something longer or one that took the approval detour.** Your mileage will vary with page count, PDF complexity, and whether the AI phases hit their semaphore limits.
+Typical end-to-end time measured against a 6-page research paper on this author's laptop: **~3 minutes after approval, ~430k tokens total, roughly $0.50** in AI cost. Longer documents or ones with complex layouts scale roughly linearly. Your mileage varies with page count, PDF complexity, and whether the AI phases hit their semaphore limits.
+
+> **If your job finishes suspiciously fast (under a minute) with `llm_cost.total_tokens: 0`, your AWS Bedrock or Anthropic credentials have expired.** The pipeline silently takes a fast path that produces raw Docling output without AI refinement. Refresh credentials (`aws sso login --profile <name>` for Bedrock, or re-export `ANTHROPIC_API_KEY`) and restart with `make down && make dev` before trusting the output.
 
 **Viewer option:** open `http://localhost:8080/` in a browser at any point during steps 4–7. Find your job in the list and click through to see the viewer step through each phase with live diffs between versions. It's the same pipeline; just a different UI.
 

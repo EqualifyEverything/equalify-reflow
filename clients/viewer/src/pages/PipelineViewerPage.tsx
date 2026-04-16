@@ -565,6 +565,13 @@ export function PipelineViewerPage() {
       {/* Header */}
       <header className="flex items-center px-6 py-3 bg-white border-b shadow-sm">
         <h1 className="text-lg font-bold text-uic-blue flex items-center gap-2">
+          {import.meta.env.VITE_SHOW_UIC_LOGO === 'true' && (
+            <img
+              src="/uic-logo.png"
+              alt="University of Illinois Chicago"
+              className="h-7 w-7"
+            />
+          )}
           Equalify Reflow
           <span
             className="text-[10px] font-semibold uppercase tracking-wider bg-uic-blue/10 text-uic-blue border border-uic-blue/20 px-2 py-0.5 rounded-full"

@@ -163,7 +163,7 @@ Docs live under [`docs/`](docs/), organised in [Diátaxis](https://diataxis.fr/)
 
 | Mode | What's there |
 |---|---|
-| [Tutorials](docs/tutorials/) | Guided walkthroughs for first-time contributors |
+| [Tutorials](docs/tutorials/) | Guided walkthroughs: [convert your first PDF](docs/tutorials/convert-your-first-pdf.md), [add your first agent](docs/tutorials/add-your-first-agent.md) |
 | [How-to](docs/how-to/) | Task recipes: [set up dev environment](docs/how-to/set-up-dev-environment.md), [run tests](docs/how-to/run-tests.md), [iterate on a prompt](docs/how-to/iterate-on-a-prompt.md), [add a new agent](docs/how-to/add-a-new-agent.md), [add S3 operations](docs/how-to/add-s3-operations.md), [test rate limits](docs/how-to/test-rate-limits.md), [debug a CI failure](docs/how-to/debug-ci-failures.md), [add features](docs/how-to/add-features.md) |
 | [Reference](docs/reference/) | Authoritative lookups: [pipeline phases](docs/reference/pipeline-phases.md), [model tiers](docs/reference/model-tiers.md), [authentication](docs/reference/authentication.md), [rate limits](docs/reference/rate-limits.md), [CI workflows](docs/reference/ci-workflows.md) |
 | [Explanation](docs/explanation/) | Design rationale: [architecture](docs/explanation/architecture.md), [authentication design](docs/explanation/authentication-design.md), [rate limiting](docs/explanation/rate-limiting.md), [S3 resilience](docs/explanation/s3-resilience.md), [testing strategy](docs/explanation/testing-strategy.md) |

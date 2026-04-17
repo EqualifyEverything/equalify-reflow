@@ -39,6 +39,10 @@ class PipelineSession:
     new_event: asyncio.Event = field(default_factory=asyncio.Event)
     # Background pipeline task reference
     pipeline_task: asyncio.Task | None = None
+    # PII review gate — pipeline awaits this event when findings require a
+    # human decision. `pii_decision` holds "approved" or "denied" once set.
+    pii_decision_event: asyncio.Event = field(default_factory=asyncio.Event)
+    pii_decision: str | None = None
 
     def touch(self) -> None:
         """Update the last-accessed timestamp."""

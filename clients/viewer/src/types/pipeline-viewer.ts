@@ -41,12 +41,21 @@ export interface StageDefinition {
  * Steps not listed here (e.g. revision_*, feedback_*) go into a dynamic "Review" stage.
  */
 export const PIPELINE_STAGES: StageDefinition[] = [
+  { name: 'pii',         label: 'PII Review',    steps: ['pii_scan'] },
   { name: 'extraction',  label: 'Extraction',   steps: ['docling', 'docling_ocr'] },
   { name: 'analysis',    label: 'Analysis',      steps: ['classification', 'structure'] },
   { name: 'headings',    label: 'Headings',      steps: ['heading_levels', 'heading_reconciliation'] },
   { name: 'translation', label: 'Translation',   steps: ['page_content', 'code_blocks'] },
   { name: 'assembly',    label: 'Assembly',       steps: ['boundaries', 'cleanup'] },
 ];
+
+export interface PIIFinding {
+  entity_type: string;
+  start: number;
+  end: number;
+  score: number;
+  text: string;
+}
 
 /** Steps that don't belong to a known stage get grouped here. */
 export const REVIEW_STAGE: StageDefinition = {

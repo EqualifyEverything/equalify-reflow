@@ -1,5 +1,5 @@
 import { useState, useCallback, useRef } from 'react';
-import type { PipelineViewerResult, StepResult } from '@/types/pipeline-viewer';
+import type { PipelineViewerResult, StepResult, PIIFinding } from '@/types/pipeline-viewer';
 
 const API_URL = import.meta.env.VITE_API_URL ?? '';
 
@@ -69,6 +69,9 @@ export function usePipelineViewer() {
   const [statusMessage, setStatusMessage] = useState<string | null>(null);
   const [error, setError] = useState<string | null>(null);
   const [sessionId, setSessionId] = useState<string | null>(null);
+  const [piiFindings, setPiiFindings] = useState<PIIFinding[] | null>(null);
+  const [awaitingPiiDecision, setAwaitingPiiDecision] = useState(false);
+  const [piiDenied, setPiiDenied] = useState(false);
 
   const abortRef = useRef<AbortController | null>(null);
   // Reconnect state — refs to survive across renders without re-triggering effects
@@ -89,6 +92,31 @@ export function usePipelineViewer() {
       case 'session': {
         const { session_id } = event.data as { session_id: string };
         sessionIdRef.current = session_id;
+        setSessionId(session_id);
+        break;
+      }
+
+      case 'pii_scan': {
+        const { findings, awaiting_decision } = event.data as {
+          findings: PIIFinding[];
+          finding_count: number;
+          awaiting_decision: boolean;
+        };
+        setPiiFindings(findings);
+        setAwaitingPiiDecision(!!awaiting_decision);
+        setUploading(false);
+        if (!awaiting_decision) setProcessing(true);
+        break;
+      }
+
+      case 'pii_decision': {
+        const { decision } = event.data as { decision: 'approved' | 'denied'; reason?: string };
+        setAwaitingPiiDecision(false);
+        if (decision === 'denied') {
+          setPiiDenied(true);
+        } else {
+          setProcessing(true);
+        }
         break;
       }
 
@@ -259,6 +287,9 @@ export function usePipelineViewer() {
     setCurrentStepName(null);
     setError(null);
     setResult(null);
+    setPiiFindings(null);
+    setAwaitingPiiDecision(false);
+    setPiiDenied(false);
 
     try {
       const formData = new FormData();
@@ -333,6 +364,26 @@ export function usePipelineViewer() {
     [],
   );
 
+  const submitPiiDecision = useCallback(
+    async (decision: 'approved' | 'denied') => {
+      const sid = sessionIdRef.current;
+      if (!sid) return;
+      try {
+        await fetch(`${API_URL}/api/v1/pipeline/sessions/${sid}/pii-decision`, {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ decision }),
+        });
+        // Optimistic UI — the server will also emit pii_decision over SSE.
+        setAwaitingPiiDecision(false);
+        if (decision === 'denied') setPiiDenied(true);
+      } catch (err) {
+        console.warn('Failed to submit PII decision:', err);
+      }
+    },
+    [],
+  );
+
   const reset = useCallback(() => {
     abortRef.current?.abort();
     abortRef.current = null;
@@ -344,7 +395,25 @@ export function usePipelineViewer() {
     setCurrentStepName(null);
     setStatusMessage(null);
     setSessionId(null);
+    setPiiFindings(null);
+    setAwaitingPiiDecision(false);
+    setPiiDenied(false);
   }, []);
 
-  return { result, uploading, error, processing, currentStepName, statusMessage, processFile, reset, sessionId, updateVersion };
+  return {
+    result,
+    uploading,
+    error,
+    processing,
+    currentStepName,
+    statusMessage,
+    processFile,
+    reset,
+    sessionId,
+    updateVersion,
+    piiFindings,
+    awaitingPiiDecision,
+    piiDenied,
+    submitPiiDecision,
+  };
 }

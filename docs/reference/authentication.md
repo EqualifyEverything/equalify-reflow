@@ -7,13 +7,13 @@ For the rationale behind the same-origin bypass and stream-token flows, see [aut
 ## Configuration
 
 ```bash
-# .env
+# .env — match the style in .env.example
 ENABLE_API_KEY_AUTH=true
 API_KEY_HEADER_NAME=X-API-Key
-API_KEYS=uic-2bd2c716-bc67-4032-ba66-e4f35c441759
+API_KEYS=your-secret-key-here
 ```
 
-Multiple keys are supported via a comma-separated list. Keys are stored as `SecretStr` internally and compared with `secrets.compare_digest()` for constant-time comparison. The header name is configurable via `API_KEY_HEADER_NAME`.
+Generate a real value via the `uic-<uuid>` recipe at the bottom of this page, or follow whatever convention your deployment uses. Multiple keys are supported via a comma-separated list — useful for rolling rotations without downtime. Keys are stored as `SecretStr` internally and compared with `secrets.compare_digest()` for constant-time comparison. The header name is configurable via `API_KEY_HEADER_NAME`.
 
 Implementation: `src/middleware/api_key_auth.py`.
 

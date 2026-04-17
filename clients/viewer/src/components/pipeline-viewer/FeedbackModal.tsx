@@ -38,19 +38,14 @@ export function FeedbackModal({
   const [submitting, setSubmitting] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [success, setSuccess] = useState(false);
-  const successRef = useRef<HTMLDivElement>(null);
+  const successRef = useRef<HTMLHeadingElement>(null);
 
-  // When submission succeeds, move focus to the confirmation so keyboard
-  // users land somewhere meaningful, and rely on role="status" +
-  // aria-live="polite" to announce it to screen readers. Then auto-close
-  // after enough time for assistive tech to finish reading — Modal's
-  // unmount hook restores focus back to the Feedback button.
+  // On success, move focus to the confirmation. Screen readers announce
+  // the heading because focus landed on it; the user closes the dialog
+  // themselves.
   useEffect(() => {
-    if (!success) return;
-    successRef.current?.focus();
-    const t = setTimeout(onClose, 2500);
-    return () => clearTimeout(t);
-  }, [success, onClose]);
+    if (success) successRef.current?.focus();
+  }, [success]);
 
   const handleSubmit = async (e: FormEvent) => {
     e.preventDefault();
@@ -103,18 +98,21 @@ export function FeedbackModal({
       </div>
 
       {success ? (
-        <div
-          ref={successRef}
-          role="status"
-          aria-live="polite"
-          tabIndex={-1}
-          className="flex flex-col items-center gap-3 px-5 py-10 text-center outline-none focus:ring-2 focus:ring-uic-blue rounded-md"
-        >
+        <div className="flex flex-col items-center gap-3 px-5 py-10 text-center">
           <CheckCircle2 className="w-10 h-10 text-green-600" aria-hidden="true" />
-          <p className="text-sm font-medium text-gray-900">Thanks — feedback submitted.</p>
+          <h3
+            ref={successRef}
+            tabIndex={-1}
+            className="text-sm font-medium text-gray-900 outline-none focus:ring-2 focus:ring-uic-blue rounded"
+          >
+            Thanks — feedback submitted.
+          </h3>
           <p className="text-xs text-muted-foreground">
-            Reports like this help us prioritize pipeline improvements. This dialog will close shortly.
+            Reports like this help us prioritize pipeline improvements.
           </p>
+          <Button variant="outline" onClick={onClose} className="mt-2">
+            Close
+          </Button>
         </div>
       ) : (
         <form onSubmit={handleSubmit} className="px-5 py-4 space-y-4">

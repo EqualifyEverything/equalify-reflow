@@ -12,6 +12,7 @@ import { WarningsBanner } from '@/components/pipeline-viewer/WarningsBanner';
 import { KeyboardShortcuts, type FocusRegion } from '@/components/pipeline-viewer/KeyboardShortcuts';
 import { ClassificationError } from '@/components/pipeline-viewer/ClassificationError';
 import { FeedbackModal } from '@/components/pipeline-viewer/FeedbackModal';
+import { PiiReviewPanel } from '@/components/pipeline-viewer/PiiReviewPanel';
 import { usePipelineViewer } from '@/hooks/usePipelineViewer';
 import { useFeedbackConfig } from '@/hooks/useFeedbackConfig';
 import {
@@ -301,6 +302,10 @@ export function PipelineViewerPage() {
     processFile,
     reset,
     sessionId,
+    piiFindings,
+    awaitingPiiDecision,
+    piiDenied,
+    submitPiiDecision,
   } = usePipelineViewer();
   const feedbackEnabled = useFeedbackConfig();
 
@@ -378,6 +383,22 @@ export function PipelineViewerPage() {
 
   const totalPages = result?.total_pages ?? 0;
   const activeStep = result?.steps[activeStepIdx] ?? null;
+
+  const isPiiStepActive = activeStep?.name === 'pii_scan';
+  const piiPanelState: 'scanning' | 'awaiting' | 'approved' | 'denied' | 'clean' | 'error' | null =
+    !isPiiStepActive
+      ? null
+      : awaitingPiiDecision
+        ? 'awaiting'
+        : piiDenied
+          ? 'denied'
+          : activeStep?.error
+            ? 'error'
+            : (piiFindings && piiFindings.length > 0)
+              ? 'approved'
+              : piiFindings
+                ? 'clean'
+                : 'scanning';
   const stepVersion = activeStep?.version_after ?? 'v0';
 
   const activeVersion = stepVersion;
@@ -774,8 +795,21 @@ export function PipelineViewerPage() {
           </div>
           )}
 
-          {/* Main content area — only when we have results */}
-          {result && Object.keys(result.versions).length > 0 && (
+          {/* PII Review inline panel — takes over the main area when the
+              pii_scan step is active (scanning, awaiting decision, or done). */}
+          {result && piiPanelState && (
+            <div className="flex-1 min-h-0 overflow-hidden bg-white">
+              <PiiReviewPanel
+                state={piiPanelState}
+                findings={piiFindings ?? []}
+                error={activeStep?.error ?? null}
+                onDecision={submitPiiDecision}
+              />
+            </div>
+          )}
+
+          {/* Main content area — only when we have results and are not on pii */}
+          {!piiPanelState && result && Object.keys(result.versions).length > 0 && (
           <div className="flex-1 flex min-h-0 overflow-hidden">
             {/* Page sidebar */}
             {totalPages > 1 && (

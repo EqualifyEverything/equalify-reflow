@@ -1,5 +1,5 @@
 import { useState, useCallback, useRef } from 'react';
-import type { PipelineViewerResult, StepResult } from '@/types/pipeline-viewer';
+import type { PipelineViewerResult, StepResult, PIIFinding } from '@/types/pipeline-viewer';
 
 const API_URL = import.meta.env.VITE_API_URL ?? '';
 
@@ -69,6 +69,9 @@ export function usePipelineViewer() {
   const [statusMessage, setStatusMessage] = useState<string | null>(null);
   const [error, setError] = useState<string | null>(null);
   const [sessionId, setSessionId] = useState<string | null>(null);
+  const [piiFindings, setPiiFindings] = useState<PIIFinding[] | null>(null);
+  const [awaitingPiiDecision, setAwaitingPiiDecision] = useState(false);
+  const [piiDenied, setPiiDenied] = useState(false);
 
   const abortRef = useRef<AbortController | null>(null);
   // Reconnect state — refs to survive across renders without re-triggering effects
@@ -89,6 +92,70 @@ export function usePipelineViewer() {
       case 'session': {
         const { session_id } = event.data as { session_id: string };
         sessionIdRef.current = session_id;
+        setSessionId(session_id);
+        break;
+      }
+
+      case 'pii_scan': {
+        const { findings, awaiting_decision, elapsed_ms, error } = event.data as {
+          findings: PIIFinding[];
+          finding_count: number;
+          awaiting_decision: boolean;
+          elapsed_ms?: number;
+          error?: string | null;
+        };
+        setPiiFindings(findings);
+        setAwaitingPiiDecision(!!awaiting_decision);
+        setUploading(false);
+        setProcessing(true);
+        // Scan itself is done — clear the "Processing: PII Scan" status so
+        // the stage tab shows the completed state while we await the decision.
+        setCurrentStepName(null);
+        // Synthesize a skeleton result so the pipeline layout (with the
+        // PII Review stage) renders immediately — otherwise the page falls
+        // back to the upload form while waiting for docling's init event.
+        setResult((prev) => {
+          const piiStep: StepResult = {
+            name: 'pii_scan',
+            display_name: 'PII Scan',
+            version_before: null,
+            version_after: 'v0',
+            elapsed_ms: elapsed_ms ?? 0,
+            changes: [],
+            metadata: { findings, finding_count: findings.length },
+            skipped: false,
+            error: error ?? null,
+            input_tokens: 0,
+            output_tokens: 0,
+            cost_cents: 0,
+          };
+          if (prev) {
+            const withoutPii = prev.steps.filter((s) => s.name !== 'pii_scan');
+            return { ...prev, steps: [piiStep, ...withoutPii] };
+          }
+          return {
+            filename: '',
+            total_pages: 0,
+            versions: {},
+            page_images: {},
+            page_markdowns: {},
+            figures: [],
+            steps: [piiStep],
+            stats: {},
+            warnings: [],
+          };
+        });
+        break;
+      }
+
+      case 'pii_decision': {
+        const { decision } = event.data as { decision: 'approved' | 'denied'; reason?: string };
+        setAwaitingPiiDecision(false);
+        if (decision === 'denied') {
+          setPiiDenied(true);
+        } else {
+          setProcessing(true);
+        }
         break;
       }
 
@@ -131,6 +198,25 @@ export function usePipelineViewer() {
         const { display_name } = event.data as { step_name: string; display_name: string };
         setCurrentStepName(display_name);
         setStatusMessage(null);
+        setUploading(false);
+        setProcessing(true);
+        // Flip to the pipeline layout immediately so the status bar and
+        // stage tabs are visible during long-running steps (PII scan,
+        // docling) that don't emit an init/step event for a while.
+        setResult((prev) => {
+          if (prev) return prev;
+          return {
+            filename: '',
+            total_pages: 0,
+            versions: {},
+            page_images: {},
+            page_markdowns: {},
+            figures: [],
+            steps: [],
+            stats: {},
+            warnings: [],
+          };
+        });
         break;
       }
 
@@ -259,6 +345,9 @@ export function usePipelineViewer() {
     setCurrentStepName(null);
     setError(null);
     setResult(null);
+    setPiiFindings(null);
+    setAwaitingPiiDecision(false);
+    setPiiDenied(false);
 
     try {
       const formData = new FormData();
@@ -333,6 +422,26 @@ export function usePipelineViewer() {
     [],
   );
 
+  const submitPiiDecision = useCallback(
+    async (decision: 'approved' | 'denied') => {
+      const sid = sessionIdRef.current;
+      if (!sid) return;
+      try {
+        await fetch(`${API_URL}/api/v1/pipeline/sessions/${sid}/pii-decision`, {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ decision }),
+        });
+        // Optimistic UI — the server will also emit pii_decision over SSE.
+        setAwaitingPiiDecision(false);
+        if (decision === 'denied') setPiiDenied(true);
+      } catch (err) {
+        console.warn('Failed to submit PII decision:', err);
+      }
+    },
+    [],
+  );
+
   const reset = useCallback(() => {
     abortRef.current?.abort();
     abortRef.current = null;
@@ -344,7 +453,25 @@ export function usePipelineViewer() {
     setCurrentStepName(null);
     setStatusMessage(null);
     setSessionId(null);
+    setPiiFindings(null);
+    setAwaitingPiiDecision(false);
+    setPiiDenied(false);
   }, []);
 
-  return { result, uploading, error, processing, currentStepName, statusMessage, processFile, reset, sessionId, updateVersion };
+  return {
+    result,
+    uploading,
+    error,
+    processing,
+    currentStepName,
+    statusMessage,
+    processFile,
+    reset,
+    sessionId,
+    updateVersion,
+    piiFindings,
+    awaitingPiiDecision,
+    piiDenied,
+    submitPiiDecision,
+  };
 }

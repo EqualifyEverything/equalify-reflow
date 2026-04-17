@@ -5,15 +5,18 @@ import json
 import logging
 import time
 from collections.abc import AsyncGenerator
-from typing import Any
+from typing import Any, Literal
 
 from fastapi import APIRouter, File, Form, HTTPException, Query, UploadFile
 from fastapi.responses import StreamingResponse
+from pydantic import BaseModel
 
 import redis.asyncio as aioredis
 
 from ..services.feedback_client import feedback_client
 from ..services.pdf_classifier import classify_pdf, enrich_classification
+from ..services.pdf_extractor import PDFExtractionError, extract_pdf_text
+from ..services.pii_analyzer import get_pii_analyzer
 from ..services.pipeline_viewer import PipelineViewerService
 from ..services.pipeline_viewer_models import PipelineViewerResult, StepResult
 from ..config import settings
@@ -26,6 +29,11 @@ router = APIRouter(prefix="/api/v1/pipeline", tags=["Pipeline"])
 
 _HEARTBEAT_INTERVAL_SECONDS = 10
 _SSE_HEARTBEAT = ": heartbeat\n\n"
+
+# How long to wait for a human PII decision before aborting the pipeline.
+# The surrounding pipeline timeout still applies, but we bound the wait so a
+# forgotten tab doesn't hold a docling worker indefinitely.
+_PII_DECISION_TIMEOUT_SECONDS = 600  # 10 minutes
 
 
 def _sse_event(event_type: str, data: Any, event_id: int | None = None) -> str:
@@ -106,6 +114,7 @@ async def _run_pipeline(
     do_table_structure: bool,
     ocr_lang_list: list[str],
     doc_upload_task: asyncio.Task,
+    skip_pii_scan: bool = False,
 ) -> None:
     """Execute the full processing pipeline, writing events to the session buffer.
 
@@ -134,6 +143,7 @@ async def _run_pipeline(
             await _pipeline_steps(
                 session, content, filename, images_scale,
                 do_table_structure, ocr_lang_list, doc_upload_task, emit,
+                skip_pii_scan=skip_pii_scan,
             )
     except asyncio.CancelledError:
         logger.warning("Pipeline cancelled for session %s", session.session_id)
@@ -166,6 +176,8 @@ async def _pipeline_steps(
     ocr_lang_list: list[str],
     doc_upload_task: asyncio.Task,
     emit: Any,
+    *,
+    skip_pii_scan: bool = False,
 ) -> None:
     """Inner pipeline logic — extracted for clean exception handling."""
     pipeline_start = time.time()
@@ -202,7 +214,92 @@ async def _pipeline_steps(
 
     result.warnings = classification.warning_messages
 
+    # Step 0.5: PII scan — gate heavy processing on a human decision when
+    # Presidio flags potential PII. Uses a cheap text-only docling pass
+    # (no OCR/tables/images) so we don't pay for full extraction before the
+    # user has approved. If findings exist, the pipeline blocks on
+    # session.pii_decision_event until the decision endpoint sets it.
+    if skip_pii_scan:
+        emit("pii_scan", {
+            "findings": [],
+            "finding_count": 0,
+            "elapsed_ms": 0,
+            "error": None,
+            "awaiting_decision": False,
+            "skipped": True,
+        })
+    else:
+        emit("processing", {"step_name": "pii_scan", "display_name": "PII Scan"})
+        pii_start = time.time()
+        pii_findings: list[dict[str, Any]] = []
+        pii_error: str | None = None
+        try:
+            text_for_pii = await extract_pdf_text(content)
+            analyzer = get_pii_analyzer()
+            raw_findings = await asyncio.to_thread(analyzer.analyze_text, text_for_pii)
+            pii_findings = [f.model_dump() for f in raw_findings]
+        except PDFExtractionError as e:
+            logger.warning(f"PII pre-scan text extraction failed: {e}")
+            pii_error = f"Text extraction for PII scan failed: {e}"
+        except Exception as e:
+            logger.error(f"PII scan failed: {e}", exc_info=True)
+            pii_error = f"PII scan error: {e}"
+
+        pii_elapsed_ms = int((time.time() - pii_start) * 1000)
+        result.steps.append(
+            StepResult(
+                name="pii_scan",
+                display_name="PII Scan",
+                version_after="v0",
+                elapsed_ms=pii_elapsed_ms,
+                error=pii_error,
+                metadata={"findings": pii_findings, "finding_count": len(pii_findings)},
+            )
+        )
+
+        emit("pii_scan", {
+            "findings": pii_findings,
+            "finding_count": len(pii_findings),
+            "elapsed_ms": pii_elapsed_ms,
+            "error": pii_error,
+            "awaiting_decision": bool(pii_findings),
+        })
+
+        if pii_findings:
+            logger.info(
+                f"PII scan surfaced {len(pii_findings)} findings for session "
+                f"{session.session_id}; awaiting user decision"
+            )
+            try:
+                await asyncio.wait_for(
+                    session.pii_decision_event.wait(),
+                    timeout=_PII_DECISION_TIMEOUT_SECONDS,
+                )
+            except asyncio.TimeoutError:
+                emit("pii_decision", {"decision": "denied", "reason": "timeout"})
+                session.status = "completed"
+                emit("done", {
+                    "total_steps": 0,
+                    "total_elapsed_ms": int((time.time() - pipeline_start) * 1000),
+                    "pii_denied": True,
+                })
+                return
+
+            decision = session.pii_decision or "denied"
+            emit("pii_decision", {"decision": decision})
+            if decision == "denied":
+                logger.info(f"Session {session.session_id} denied after PII review")
+                session.status = "completed"
+                emit("done", {
+                    "total_steps": 0,
+                    "total_elapsed_ms": int((time.time() - pipeline_start) * 1000),
+                    "pii_denied": True,
+                })
+                return
+
     # Step 1: Docling extraction
+    emit("processing", {"step_name": "docling", "display_name": "Extraction"})
+
     def _on_cold_start() -> None:
         emit("status", {
             "message": "GPU service is starting up. This may take a few minutes...",
@@ -491,6 +588,10 @@ async def process_pdf_stream(
     file: UploadFile = File(...),
     images_scale: float = Form(default=2.0),
     do_table_structure: bool = Form(default=True),
+    skip_pii_scan: bool = Form(
+        default=False,
+        description="Skip the pre-extraction PII scan (faster, but no gate).",
+    ),
     ocr_languages: str = Form(
         default="eng",
         description="Comma-separated Tesseract OCR language codes (e.g. 'eng,deu')",
@@ -544,6 +645,7 @@ async def process_pdf_stream(
         _run_pipeline(
             session, content, filename, images_scale,
             do_table_structure, ocr_lang_list, doc_upload_task,
+            skip_pii_scan=skip_pii_scan,
         )
     )
 
@@ -552,6 +654,30 @@ async def process_pdf_stream(
         media_type="text/event-stream",
         headers=_SSE_HEADERS,
     )
+
+
+class PIIDecisionInput(BaseModel):
+    decision: Literal["approved", "denied"]
+
+
+@router.post("/sessions/{session_id}/pii-decision")
+async def submit_pii_decision(session_id: str, payload: PIIDecisionInput) -> dict[str, str]:
+    """Record the user's PII review decision and release the pipeline.
+
+    The pipeline task is awaiting ``session.pii_decision_event``; setting
+    the decision here unblocks it. Approved → docling + agents continue.
+    Denied → the pipeline emits a done event with ``pii_denied`` and stops.
+    """
+    session = session_store.get(session_id)
+    if session is None:
+        raise HTTPException(status_code=404, detail="Session not found or expired")
+
+    if session.pii_decision_event.is_set():
+        return {"status": "already_decided", "decision": session.pii_decision or ""}
+
+    session.pii_decision = payload.decision
+    session.pii_decision_event.set()
+    return {"status": "accepted", "decision": payload.decision}
 
 
 @router.get("/sessions/{session_id}/stream")

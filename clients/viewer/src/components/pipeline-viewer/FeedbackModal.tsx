@@ -1,4 +1,4 @@
-import { useState, type FormEvent } from 'react';
+import { useEffect, useRef, useState, type FormEvent } from 'react';
 import { Modal } from '@/components/ui/modal';
 import { Button } from '@/components/ui/button';
 import { Input } from '@/components/ui/input';
@@ -38,6 +38,19 @@ export function FeedbackModal({
   const [submitting, setSubmitting] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [success, setSuccess] = useState(false);
+  const successRef = useRef<HTMLDivElement>(null);
+
+  // When submission succeeds, move focus to the confirmation so keyboard
+  // users land somewhere meaningful, and rely on role="status" +
+  // aria-live="polite" to announce it to screen readers. Then auto-close
+  // after enough time for assistive tech to finish reading — Modal's
+  // unmount hook restores focus back to the Feedback button.
+  useEffect(() => {
+    if (!success) return;
+    successRef.current?.focus();
+    const t = setTimeout(onClose, 2500);
+    return () => clearTimeout(t);
+  }, [success, onClose]);
 
   const handleSubmit = async (e: FormEvent) => {
     e.preventDefault();
@@ -69,7 +82,6 @@ export function FeedbackModal({
       }
 
       setSuccess(true);
-      setTimeout(onClose, 1800);
     } catch (err) {
       setError(err instanceof Error ? err.message : 'Submission failed');
     } finally {
@@ -91,11 +103,17 @@ export function FeedbackModal({
       </div>
 
       {success ? (
-        <div className="flex flex-col items-center gap-3 px-5 py-10 text-center">
-          <CheckCircle2 className="w-10 h-10 text-green-600" />
+        <div
+          ref={successRef}
+          role="status"
+          aria-live="polite"
+          tabIndex={-1}
+          className="flex flex-col items-center gap-3 px-5 py-10 text-center outline-none focus:ring-2 focus:ring-uic-blue rounded-md"
+        >
+          <CheckCircle2 className="w-10 h-10 text-green-600" aria-hidden="true" />
           <p className="text-sm font-medium text-gray-900">Thanks — feedback submitted.</p>
           <p className="text-xs text-muted-foreground">
-            Reports like this help us prioritize pipeline improvements.
+            Reports like this help us prioritize pipeline improvements. This dialog will close shortly.
           </p>
         </div>
       ) : (

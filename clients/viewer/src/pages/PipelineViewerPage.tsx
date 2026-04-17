@@ -294,6 +294,7 @@ export function PipelineViewerPage() {
     error,
     processing,
     currentStepName,
+    currentUserPhase,
     statusMessage,
     processFile,
     reset,
@@ -601,6 +602,7 @@ export function PipelineViewerPage() {
             activeStepIdx={activeStepIdx}
             onSelectStep={setActiveStepIdx}
             processingStepName={processing ? currentStepName : null}
+            processingUserPhase={processing ? currentUserPhase : null}
             onDownloadVersion={handleDownloadVersion}
             onOpenChangesModal={() => setChangesModalOpen(true)}
           />

@@ -15,10 +15,17 @@ from pydantic import BaseModel
 
 
 class PipelinePhaseEvent(BaseModel):
-    """Emitted when a pipeline phase starts."""
+    """Emitted when a pipeline phase starts.
+
+    ``phase`` is the internal step name (e.g. ``structure``, ``heading_levels``).
+    ``user_phase`` is the public 5-phase contract name (``extraction``,
+    ``analysis``, ``headings``, ``translation``, ``assembly``, ``review``) and
+    is what consumer UIs should drive their progress display off.
+    """
 
     event_type: str = "pipeline:phase"
     phase: str
+    user_phase: str
     display_name: str
     step_number: int
     total_steps: int

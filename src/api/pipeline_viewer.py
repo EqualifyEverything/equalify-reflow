@@ -19,6 +19,7 @@ from ..services.pipeline_viewer_models import PipelineViewerResult, StepResult
 from ..config import settings
 from ..dependencies import _get_redis_pool
 from ..services.session_store import PipelineSession, session_store
+from ..shared.pipeline_phases import user_phase_for_step
 
 logger = logging.getLogger(__name__)
 
@@ -36,6 +37,27 @@ def _sse_event(event_type: str, data: Any, event_id: int | None = None) -> str:
     parts.append(f"event: {event_type}")
     parts.append(f"data: {json.dumps(data, default=str)}")
     return "\n".join(parts) + "\n\n"
+
+
+def _attach_user_phase(data: Any) -> Any:
+    """Inject ``user_phase`` into event data keyed off the internal step name.
+
+    Looks for the step name in ``data["step_name"]`` (processing/error events)
+    or ``data["step"]["name"]`` (step events). Leaves data untouched if no step
+    name is present or if ``user_phase`` has already been set by the caller.
+    Returns the same dict object (mutated) when possible so the caller doesn't
+    need to replace its reference.
+    """
+    if not isinstance(data, dict) or "user_phase" in data:
+        return data
+    step_name = data.get("step_name")
+    if step_name is None:
+        step = data.get("step")
+        if isinstance(step, dict):
+            step_name = step.get("name")
+    if isinstance(step_name, str):
+        data["user_phase"] = user_phase_for_step(step_name)
+    return data
 
 
 def _slim_init_payload(result: PipelineViewerResult) -> dict[str, Any]:
@@ -118,7 +140,7 @@ async def _run_pipeline(
         """Write an SSE event to the session buffer and notify readers."""
         eid = session.event_counter
         session.event_counter += 1
-        sse_text = _sse_event(event_type, data, event_id=eid)
+        sse_text = _sse_event(event_type, _attach_user_phase(data), event_id=eid)
         session.event_buffer.append(sse_text)
         session.new_event.set()
 

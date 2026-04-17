@@ -26,6 +26,7 @@ from ..agents.events import (
     unregister_event_bus,
 )
 from ..config import settings
+from ..shared.pipeline_phases import user_phase_for_step
 from .metrics_service import job_duration_seconds, jobs_completed_total
 from .pipeline_viewer import PipelineViewerService
 from .pipeline_viewer_models import FigureData, PipelineViewerResult
@@ -117,6 +118,7 @@ class DocumentProcessingService:
             def _on_phase(phase: str, display_name: str, step: int, total: int) -> None:
                 event_bus.publish(PipelinePhaseEvent(
                     phase=phase,
+                    user_phase=user_phase_for_step(phase),
                     display_name=display_name,
                     step_number=step,
                     total_steps=total,

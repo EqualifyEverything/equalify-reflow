@@ -10,6 +10,7 @@ import pytest
 from src.api.pipeline_viewer import (
     _HEARTBEAT_INTERVAL_SECONDS,
     _SSE_HEARTBEAT,
+    _attach_user_phase,
     _buffer_reader,
     _sse_event,
 )
@@ -146,6 +147,54 @@ class TestBufferReader:
             events.append(event)
 
         assert len(events) == 1
+
+
+# ---------------------------------------------------------------------------
+# _attach_user_phase tests
+# ---------------------------------------------------------------------------
+
+
+class TestAttachUserPhase:
+    """SSE events are enriched with a ``user_phase`` field derived from step name."""
+
+    def test_processing_event_gets_user_phase_from_step_name(self):
+        data = {"step_name": "structure", "display_name": "Structure Analysis"}
+        enriched = _attach_user_phase(data)
+        assert enriched["user_phase"] == "analysis"
+
+    def test_step_event_gets_user_phase_from_nested_step(self):
+        data = {
+            "step": {"name": "heading_reconciliation", "display_name": "Heading Reconciliation"},
+            "new_versions": {},
+            "new_page_markdowns": {},
+        }
+        enriched = _attach_user_phase(data)
+        assert enriched["user_phase"] == "headings"
+
+    def test_error_event_with_known_step_gets_phase(self):
+        data = {"step_name": "cleanup", "message": "boom"}
+        enriched = _attach_user_phase(data)
+        assert enriched["user_phase"] == "assembly"
+
+    def test_error_event_with_synthetic_pipeline_step_falls_back_to_review(self):
+        data = {"step_name": "pipeline", "message": "timeout"}
+        enriched = _attach_user_phase(data)
+        assert enriched["user_phase"] == "review"
+
+    def test_init_event_without_step_is_untouched(self):
+        """init/session/done/page_image payloads don't carry a step name."""
+        data = {"filename": "test.pdf", "total_pages": 3}
+        enriched = _attach_user_phase(data)
+        assert "user_phase" not in enriched
+
+    def test_caller_set_user_phase_is_not_overwritten(self):
+        data = {"step_name": "docling", "user_phase": "custom"}
+        enriched = _attach_user_phase(data)
+        assert enriched["user_phase"] == "custom"
+
+    def test_non_dict_data_is_returned_untouched(self):
+        assert _attach_user_phase("hello") == "hello"
+        assert _attach_user_phase(None) is None
 
 
 # ---------------------------------------------------------------------------

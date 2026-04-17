@@ -29,6 +29,7 @@ interface StageTabsProps {
   activeStepIdx: number;
   onSelectStep: (index: number) => void;
   processingStepName?: string | null;
+  processingUserPhase?: string | null;
   onDownloadVersion?: (stepIndex: number) => void;
   onOpenChangesModal?: () => void;
 }
@@ -46,7 +47,7 @@ interface ResolvedStage {
 
 function resolveStages(
   steps: StepResult[],
-  processingStepName: string | null,
+  processingUserPhase: string | null,
 ): ResolvedStage[] {
   const knownStepNames = new Set(PIPELINE_STAGES.flatMap((s) => s.steps));
   const resolved: ResolvedStage[] = [];
@@ -99,14 +100,10 @@ function resolveStages(
       : null;
 
     if (stageSteps.length === 0) {
-      // Check if processing step belongs to this stage
-      if (processingStepName) {
-        const processingBelongsHere = stage.definition.steps.length > 0 &&
-          isProcessingInStage(stage.definition, processingStepName, steps);
-        stage.status = processingBelongsHere ? 'active' : 'pending';
-      } else {
-        stage.status = 'pending';
-      }
+      const processingBelongsHere =
+        stage.definition.steps.length > 0 &&
+        isProcessingInStage(stage.definition, processingUserPhase);
+      stage.status = processingBelongsHere ? 'active' : 'pending';
     } else if (stageSteps.some((s) => s.error)) {
       stage.status = 'error';
     } else if (stageSteps.every((s) => s.skipped)) {
@@ -116,36 +113,23 @@ function resolveStages(
     }
 
     // Override to active if the current processing step belongs here
-    if (processingStepName && stage.status !== 'error') {
-      if (isProcessingInStage(stage.definition, processingStepName, steps)) {
-        stage.status = 'active';
-      }
+    if (stage.status !== 'error' && isProcessingInStage(stage.definition, processingUserPhase)) {
+      stage.status = 'active';
     }
   }
 
-  // Mark the stage containing activeStepIdx
-  // (used for visual highlight, not status)
   return resolved;
 }
 
 function isProcessingInStage(
   stage: StageDefinition,
-  processingStepName: string,
-  _steps: StepResult[],
+  processingUserPhase: string | null,
 ): boolean {
-  // Match by display name heuristic — the processing event sends display_name
-  const nameMap: Record<string, string[]> = {
-    extraction: ['Docling Extraction', 'OCR Re-extraction'],
-    analysis: ['PDF Classification', 'Structure Analysis'],
-    headings: ['Heading Levels', 'Heading Reconciliation'],
-    translation: ['Page Content Corrections', 'Code Block Languages'],
-    assembly: ['Cross-Page Fixes', 'Final Cleanup'],
-  };
-  const names = nameMap[stage.name];
-  if (names) return names.includes(processingStepName);
-  // Review stage — anything else
-  if (stage.name === 'review') return !Object.values(nameMap).flat().includes(processingStepName);
-  return false;
+  // Source-of-truth: SSE events carry a `user_phase` that is already resolved
+  // server-side from the same PIPELINE_STAGES mapping used here (see
+  // docs/reference/pipeline-phases.md).
+  if (!processingUserPhase) return false;
+  return stage.name === processingUserPhase;
 }
 
 function StageStatusIndicator({ status }: { status: ResolvedStage['status'] }) {
@@ -168,10 +152,11 @@ export function StageTabs({
   activeStepIdx,
   onSelectStep,
   processingStepName,
+  processingUserPhase,
   onDownloadVersion,
   onOpenChangesModal,
 }: StageTabsProps) {
-  const stages = resolveStages(steps, processingStepName ?? null);
+  const stages = resolveStages(steps, processingUserPhase ?? null);
 
   // Find which stage the active step belongs to
   const activeStageIdx = stages.findIndex((s) => s.stepIndices.includes(activeStepIdx));

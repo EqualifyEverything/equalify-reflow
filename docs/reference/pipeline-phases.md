@@ -59,13 +59,42 @@ Each phase that changes the markdown writes a new version to S3:
 
 Intermediate phases (Analysis, Headings) produce metadata (outlines, classifications) that feed into later phases; they don't bump the markdown version.
 
+## SSE `user_phase` field
+
+Every SSE event that references a pipeline step carries a `user_phase` field alongside the internal step name. Consumers should drive progress UI off `user_phase` — it is the public 5-phase contract made explicit in the payload. Internal tooling and tracing can keep reading the internal `step_name` / `step.name` for granular behaviour.
+
+**Valid values:** `extraction`, `analysis`, `headings`, `translation`, `assembly`, `review`.
+
+`review` is the catch-all fallback for any step not declared in `PIPELINE_STAGES` (e.g. `revision_*`, `feedback_*`, future custom steps). Synthetic names like pipeline-level error markers also fall back to `review`.
+
+**Where it is emitted:**
+
+| Stream | Endpoint | Event shape |
+|---|---|---|
+| Pipeline viewer | `POST /api/v1/pipeline/process/stream`, `GET /api/v1/pipeline/sessions/{session_id}/stream` | Field on `processing`, `step`, and `error` event data payloads |
+| Document processing | `GET /api/v1/documents/{job_id}/stream` | Field on `PipelinePhaseEvent` (`event_type: pipeline:phase`) |
+
+Example `processing` event payload from the pipeline-viewer stream:
+
+```json
+{
+  "step_name": "heading_reconciliation",
+  "display_name": "Heading Reconciliation",
+  "user_phase": "headings"
+}
+```
+
+**Server-side source of truth:** `src/shared/pipeline_phases.py` (`PIPELINE_STAGES`, `user_phase_for_step`). The SSE emitter in `src/api/pipeline_viewer.py` calls `_attach_user_phase` at event-emit time so every event with a recognised step name is enriched uniformly — call sites do not repeat the lookup.
+
+The client constant `PIPELINE_STAGES` in `clients/viewer/src/types/pipeline-viewer.ts` is the viewer's source of truth. `tests/unit/shared/test_pipeline_phases.py` parses that TypeScript file and asserts it stays structurally aligned with the Python mapping, so a one-sided rename breaks CI.
+
 ## Keeping this table in sync
 
 When you add, rename, or reclassify a step:
 
 1. Update `PIPELINE_STAGES` in `clients/viewer/src/types/pipeline-viewer.ts`
-2. Update the `nameMap` in `clients/viewer/src/components/pipeline-viewer/StageTabs.tsx` (used to infer which public phase a processing event belongs to)
+2. Update `PIPELINE_STAGES` in `src/shared/pipeline_phases.py` to match (the alignment test will fail otherwise)
 3. Update this table
 4. Update `AGENTS.md` (short summary of the 5 phases)
 
-There is an open issue to align the SSE stream's emitted phase names with the 5 public names so the WordPress plugin's hardcoded stage list stops drifting — see the repo issues.
+The viewer derives the active stage directly from the SSE `user_phase` field (see `clients/viewer/src/components/pipeline-viewer/StageTabs.tsx::isProcessingInStage`), so the old display-name `nameMap` no longer exists — adding a step is a one-line change in each `PIPELINE_STAGES` constant.

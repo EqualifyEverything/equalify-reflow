@@ -66,6 +66,7 @@ export function usePipelineViewer() {
   const [uploading, setUploading] = useState(false);
   const [processing, setProcessing] = useState(false);
   const [currentStepName, setCurrentStepName] = useState<string | null>(null);
+  const [currentUserPhase, setCurrentUserPhase] = useState<string | null>(null);
   const [statusMessage, setStatusMessage] = useState<string | null>(null);
   const [error, setError] = useState<string | null>(null);
   const [sessionId, setSessionId] = useState<string | null>(null);
@@ -128,8 +129,13 @@ export function usePipelineViewer() {
       }
 
       case 'processing': {
-        const { display_name } = event.data as { step_name: string; display_name: string };
+        const { display_name, user_phase } = event.data as {
+          step_name: string;
+          display_name: string;
+          user_phase?: string;
+        };
         setCurrentStepName(display_name);
+        setCurrentUserPhase(user_phase ?? null);
         setStatusMessage(null);
         break;
       }
@@ -165,6 +171,7 @@ export function usePipelineViewer() {
         }
         setProcessing(false);
         setCurrentStepName(null);
+        setCurrentUserPhase(null);
         return true;
       }
     }
@@ -257,6 +264,7 @@ export function usePipelineViewer() {
     setUploading(true);
     setProcessing(false);
     setCurrentStepName(null);
+    setCurrentUserPhase(null);
     setError(null);
     setResult(null);
 
@@ -313,6 +321,7 @@ export function usePipelineViewer() {
       setUploading(false);
       setProcessing(false);
       setCurrentStepName(null);
+      setCurrentUserPhase(null);
     }
   }, []);
 
@@ -342,9 +351,10 @@ export function usePipelineViewer() {
     setError(null);
     setProcessing(false);
     setCurrentStepName(null);
+    setCurrentUserPhase(null);
     setStatusMessage(null);
     setSessionId(null);
   }, []);
 
-  return { result, uploading, error, processing, currentStepName, statusMessage, processFile, reset, sessionId, updateVersion };
+  return { result, uploading, error, processing, currentStepName, currentUserPhase, statusMessage, processFile, reset, sessionId, updateVersion };
 }

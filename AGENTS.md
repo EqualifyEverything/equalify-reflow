@@ -114,6 +114,16 @@ tests/
 - Do not rename AWS resources — they stay `equalify-pdf-*` on purpose.
 - Do not add features that process student records or PII beyond the existing Presidio scan.
 
+## Releasing
+
+Release tags (`vX.Y.Z`) are immutable archaeological records of what shipped — they're used by downstream integrators and deploy pipelines, and stale tags cause very real confusion months later. Before pushing any release tag, a single release PR must land that:
+
+1. **Bumps the version string** in `pyproject.toml` *and* `src/main.py` (the FastAPI `version=` kwarg). These must agree — the FastAPI value is what `/docs` and the OpenAPI schema surface, so drift is user-visible.
+2. **Updates `docs/reference/pipeline-phases.md`** if any pipeline step was added, renamed, or reordered since the last release. The viewer's `PIPELINE_STAGES` constant is the source of truth; the reference doc must match.
+3. **Updates this file (`AGENTS.md`)** if a convention, port, command, or workflow changed. The pointer tables at the top are load-bearing — a stale row sends the next contributor to a dead file.
+
+Only after that PR merges do you `git tag -a vX.Y.Z` the merge commit and push the tag. Never tag a commit that still has a stale version string or missing phase docs. If you discover the drift after tagging, stop, fix it in a follow-up PR, and retag — don't push through with a known-broken artifact.
+
 ## Improving these docs as you go
 
 When you work through any of the above workflows, **leave the docs better than you found them**. This is a standing expectation, not a nice-to-have — docs drift fastest when nobody updates them during the work that proves them wrong.

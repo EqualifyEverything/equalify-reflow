@@ -159,7 +159,7 @@ docs/                       # Architecture, guides
 
 ## Documentation
 
-Docs live under [`docs/`](docs/), organised in [Diátaxis](https://diataxis.fr/) modes:
+Docs live under [`docs/`](docs/), grouped by what you're trying to do:
 
 | Mode | What's there |
 |---|---|

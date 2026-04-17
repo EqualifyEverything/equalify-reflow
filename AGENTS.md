@@ -12,7 +12,7 @@ Equalify Reflow is an open-source FastAPI monolith that converts PDF documents i
 
 ## Finding things
 
-Docs are organised in [Diátaxis](https://diataxis.fr/) modes under `docs/`:
+Docs are grouped under `docs/` by what you're trying to do:
 
 | Looking for | Go to |
 |---|---|

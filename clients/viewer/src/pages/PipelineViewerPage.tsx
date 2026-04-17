@@ -11,7 +11,9 @@ import { StructureMetadataModal } from '@/components/pipeline-viewer/StructureMe
 import { WarningsBanner } from '@/components/pipeline-viewer/WarningsBanner';
 import { KeyboardShortcuts, type FocusRegion } from '@/components/pipeline-viewer/KeyboardShortcuts';
 import { ClassificationError } from '@/components/pipeline-viewer/ClassificationError';
+import { FeedbackModal } from '@/components/pipeline-viewer/FeedbackModal';
 import { usePipelineViewer } from '@/hooks/usePipelineViewer';
+import { useFeedbackConfig } from '@/hooks/useFeedbackConfig';
 import {
   Upload,
   Loader2,
@@ -27,6 +29,7 @@ import {
   Play,
   Pause,
   Maximize2,
+  MessageSquarePlus,
 } from 'lucide-react';
 
 const FLAG_STYLES: Record<string, { bg: string; text: string; label: string }> = {
@@ -297,7 +300,9 @@ export function PipelineViewerPage() {
     statusMessage,
     processFile,
     reset,
+    sessionId,
   } = usePipelineViewer();
+  const feedbackEnabled = useFeedbackConfig();
 
   const [currentPage, setCurrentPage] = useState(1);
   const [activeStepIdx, setActiveStepIdx] = useState(0);
@@ -306,6 +311,7 @@ export function PipelineViewerPage() {
   const [autoAdvance, setAutoAdvance] = useState(true);
   const [changesModalOpen, setChangesModalOpen] = useState(false);
   const [metadataModalOpen, setMetadataModalOpen] = useState(false);
+  const [feedbackModalOpen, setFeedbackModalOpen] = useState(false);
 
   const fileInputRef = useRef<HTMLInputElement>(null);
   const skipNavRef = useRef<HTMLElement>(null);
@@ -724,6 +730,20 @@ export function PipelineViewerPage() {
 
             <div className="flex-1" />
 
+            {/* Feedback — only after pipeline finishes */}
+            {feedbackEnabled && !processing && (
+              <Button
+                variant="outline"
+                size="sm"
+                className="h-7 text-xs gap-1.5 text-uic-blue border-uic-blue/30 hover:bg-uic-blue/5"
+                onClick={() => setFeedbackModalOpen(true)}
+                title="Report an issue with this conversion"
+              >
+                <MessageSquarePlus className="w-3.5 h-3.5" />
+                Feedback
+              </Button>
+            )}
+
             {/* Auto-advance toggle */}
             <Button
               variant="outline"
@@ -902,6 +922,15 @@ export function PipelineViewerPage() {
         <StructureMetadataModal
           metadata={activeStep.metadata}
           onClose={() => setMetadataModalOpen(false)}
+        />
+      )}
+      {feedbackModalOpen && (
+        <FeedbackModal
+          onClose={() => setFeedbackModalOpen(false)}
+          sessionId={sessionId ?? null}
+          documentTitle={result?.filename ?? null}
+          currentPage={currentPage}
+          currentStage={activeStep?.display_name ?? null}
         />
       )}
     </div>

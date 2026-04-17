@@ -159,10 +159,17 @@ docs/                       # Architecture, guides
 
 ## Documentation
 
-| Document | What it covers |
+Docs live under [`docs/`](docs/), organised in [Diátaxis](https://diataxis.fr/) modes:
+
+| Mode | What's there |
 |---|---|
-| [Architecture](docs/architecture.md) | System design, data flows, service layer |
-| [Environment Setup](docs/environment-setup.md) | Complete setup guide |
-| [Testing](docs/ci-cd.md) | Test tiers, CI/CD, GitHub Actions |
-| [Contributing](CONTRIBUTING.md) | Development workflow and standards |
-| [CLAUDE.md](CLAUDE.md) | Instructions for AI-assisted development |
+| [Tutorials](docs/tutorials/) | Guided walkthroughs: [convert your first PDF](docs/tutorials/convert-your-first-pdf.md), [add your first agent](docs/tutorials/add-your-first-agent.md) |
+| [How-to](docs/how-to/) | Task recipes: [set up dev environment](docs/how-to/set-up-dev-environment.md), [run tests](docs/how-to/run-tests.md), [iterate on a prompt](docs/how-to/iterate-on-a-prompt.md), [add a new agent](docs/how-to/add-a-new-agent.md), [add S3 operations](docs/how-to/add-s3-operations.md), [test rate limits](docs/how-to/test-rate-limits.md), [debug a CI failure](docs/how-to/debug-ci-failures.md), [add features](docs/how-to/add-features.md) |
+| [Reference](docs/reference/) | Authoritative lookups: [pipeline phases](docs/reference/pipeline-phases.md), [model tiers](docs/reference/model-tiers.md), [authentication](docs/reference/authentication.md), [rate limits](docs/reference/rate-limits.md), [CI workflows](docs/reference/ci-workflows.md) |
+| [Explanation](docs/explanation/) | Design rationale: [architecture](docs/explanation/architecture.md), [authentication design](docs/explanation/authentication-design.md), [rate limiting](docs/explanation/rate-limiting.md), [S3 resilience](docs/explanation/s3-resilience.md), [testing strategy](docs/explanation/testing-strategy.md) |
+
+Also:
+
+- [CONTRIBUTING.md](CONTRIBUTING.md) — how to submit a change
+- [AGENTS.md](AGENTS.md) — orientation file for AI and human agents working on the repo (symlinked as `CLAUDE.md`)
+- **API reference** — runtime Swagger at `http://localhost:8080/docs` locally, or `https://reflow.equalify.uic.edu/docs` for the deployed instance

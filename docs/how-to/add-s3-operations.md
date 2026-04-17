@@ -65,7 +65,7 @@ except Exception:
     raise
 ```
 
-These metrics are exposed to Prometheus at `/metrics`. There is no dedicated Grafana dashboard for S3 operations yet — query them via PromQL in Grafana's Explore view, or scrape `/metrics` directly. Filing S3 dashboards is tracked as a follow-up.
+These metrics are exposed to Prometheus at `/metrics` (scraped every 15s) and are queryable in Grafana's Explore view. Add a panel to an existing dashboard if the question you care about recurs often enough to want a chart.
 
 ## 5. Test retry and circuit behaviour
 

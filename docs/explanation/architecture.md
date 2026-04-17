@@ -1388,14 +1388,14 @@ s3_operation_duration_seconds{operation="upload"} 0.123
 
 ### Grafana Dashboards
 
-Four dashboards ship under `infrastructure/grafana/dashboards/`, auto-provisioned when the stack starts:
+Four dashboards ship under `infrastructure/grafana/dashboards/` and are auto-provisioned when the stack starts:
 
-- **System Overview** — API health, Redis health, Total queue depth, HTTP request rate, HTTP error rate, HTTP response time (p95)
-- **Job Processing** — Jobs by status, Jobs per hour, Success rate, Processing duration by stage (p95)
-- **Queue Monitor** — Queue depths (real-time), Processing rate (jobs/min), Average queue wait time
-- **Worker Health** — PII / Processing / Timeout worker status, Worker errors (errors/min), Worker jobs processed (jobs/min), Redis operations (ops/s)
+- **System Overview** — API health, Redis health, total queue depth, HTTP request rate, HTTP error rate, HTTP response time (p95)
+- **Job Processing** — jobs by status, jobs per hour, success rate, processing duration by stage (p95)
+- **Queue Monitor** — queue depths (real-time), processing rate (jobs/min), average queue wait time
+- **Worker Health** — PII / Processing / Timeout worker status, worker errors (errors/min), jobs processed (jobs/min), Redis operations (ops/s)
 
-**Not yet dashboarded** (exposed to Prometheus, but no Grafana panel): S3 operations + circuit breaker state (`s3_operations_total`, `s3_circuit_breaker_state`, `s3_retry_attempts_total`), rate-limit tier state, LLM token cost per phase. Inspect via PromQL in Grafana's Explore view or scrape `/metrics` directly until these dashboards are added.
+These cover the day-to-day operational questions (is the stack up, are jobs moving, where's the backpressure). The FastAPI app also exposes a wider surface of metrics for deeper investigation — S3 operation counts and circuit-breaker state (`s3_operations_total`, `s3_circuit_breaker_state`, `s3_retry_attempts_total`), LLM token and cost counters (`llm_tokens_total`, `llm_cost_cents_total`, `llm_request_duration_seconds`), and per-stage duration histograms. These are all scraped by Prometheus and queryable in Grafana's Explore view; when a specific question recurs often, promote it into one of the four dashboards above.
 
 ## Related Documentation
 

@@ -12,7 +12,7 @@ import { WarningsBanner } from '@/components/pipeline-viewer/WarningsBanner';
 import { KeyboardShortcuts, type FocusRegion } from '@/components/pipeline-viewer/KeyboardShortcuts';
 import { ClassificationError } from '@/components/pipeline-viewer/ClassificationError';
 import { FeedbackModal } from '@/components/pipeline-viewer/FeedbackModal';
-import { PiiReviewModal } from '@/components/pipeline-viewer/PiiReviewModal';
+import { PiiReviewPanel } from '@/components/pipeline-viewer/PiiReviewPanel';
 import { usePipelineViewer } from '@/hooks/usePipelineViewer';
 import { useFeedbackConfig } from '@/hooks/useFeedbackConfig';
 import {
@@ -383,6 +383,22 @@ export function PipelineViewerPage() {
 
   const totalPages = result?.total_pages ?? 0;
   const activeStep = result?.steps[activeStepIdx] ?? null;
+
+  const isPiiStepActive = activeStep?.name === 'pii_scan';
+  const piiPanelState: 'scanning' | 'awaiting' | 'approved' | 'denied' | 'clean' | 'error' | null =
+    !isPiiStepActive
+      ? null
+      : awaitingPiiDecision
+        ? 'awaiting'
+        : piiDenied
+          ? 'denied'
+          : activeStep?.error
+            ? 'error'
+            : (piiFindings && piiFindings.length > 0)
+              ? 'approved'
+              : piiFindings
+                ? 'clean'
+                : 'scanning';
   const stepVersion = activeStep?.version_after ?? 'v0';
 
   const activeVersion = stepVersion;
@@ -592,20 +608,6 @@ export function PipelineViewerPage() {
         </h1>
       </header>
 
-      {/* PII denied — user cancelled after reviewing flagged content */}
-      {piiDenied && !result && (
-        <div className="max-w-2xl mx-auto mt-12 p-6 bg-amber-50 border border-amber-200 rounded-lg">
-          <h2 className="text-base font-semibold text-amber-900">Processing cancelled</h2>
-          <p className="text-sm text-amber-800 mt-1">
-            You cancelled processing after reviewing potentially sensitive content.
-            No document data was extracted or sent to the AI pipeline.
-          </p>
-          <div className="mt-4">
-            <Button variant="outline" onClick={reset}>Upload a different document</Button>
-          </div>
-        </div>
-      )}
-
       {/* Classification error — document was rejected before processing */}
       {result && Object.keys(result.versions).length === 0 && (() => {
         const classStep = result.steps.find((s) => s.name === 'classification' && s.error);
@@ -617,7 +619,7 @@ export function PipelineViewerPage() {
       })()}
 
       {/* Pipeline layout — always visible */}
-      {!(piiDenied && !result) && !(result && Object.keys(result.versions).length === 0 && result.steps.some((s) => s.name === 'classification' && s.error)) && (
+      {!(result && Object.keys(result.versions).length === 0 && result.steps.some((s) => s.name === 'classification' && s.error)) && (
         <div className="flex-1 flex flex-col min-h-0">
           {/* Step tabs */}
           <nav id="region-stages" tabIndex={-1} aria-label="Pipeline stages" className="outline-none rounded-sm">
@@ -793,8 +795,21 @@ export function PipelineViewerPage() {
           </div>
           )}
 
-          {/* Main content area — only when we have results */}
-          {result && Object.keys(result.versions).length > 0 && (
+          {/* PII Review inline panel — takes over the main area when the
+              pii_scan step is active (scanning, awaiting decision, or done). */}
+          {result && piiPanelState && (
+            <div className="flex-1 min-h-0 overflow-hidden bg-white">
+              <PiiReviewPanel
+                state={piiPanelState}
+                findings={piiFindings ?? []}
+                error={activeStep?.error ?? null}
+                onDecision={submitPiiDecision}
+              />
+            </div>
+          )}
+
+          {/* Main content area — only when we have results and are not on pii */}
+          {!piiPanelState && result && Object.keys(result.versions).length > 0 && (
           <div className="flex-1 flex min-h-0 overflow-hidden">
             {/* Page sidebar */}
             {totalPages > 1 && (
@@ -941,12 +956,6 @@ export function PipelineViewerPage() {
         <StructureMetadataModal
           metadata={activeStep.metadata}
           onClose={() => setMetadataModalOpen(false)}
-        />
-      )}
-      {awaitingPiiDecision && piiFindings && (
-        <PiiReviewModal
-          findings={piiFindings}
-          onDecision={(decision) => submitPiiDecision(decision)}
         />
       )}
       {feedbackModalOpen && (

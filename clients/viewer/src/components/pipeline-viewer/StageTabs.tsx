@@ -11,11 +11,13 @@ import {
   Languages,
   Merge,
   MessageSquareDot,
+  ShieldCheck,
 } from 'lucide-react';
 import type { StepResult, StageDefinition } from '@/types/pipeline-viewer';
 import { PIPELINE_STAGES, REVIEW_STAGE } from '@/types/pipeline-viewer';
 
 const STAGE_ICONS: Record<string, React.ComponentType<{ className?: string }>> = {
+  pii: ShieldCheck,
   extraction: FileInput,
   analysis: Search,
   headings: Heading,
@@ -135,7 +137,8 @@ function isProcessingInStage(
 ): boolean {
   // Match by display name heuristic — the processing event sends display_name
   const nameMap: Record<string, string[]> = {
-    extraction: ['Docling Extraction', 'OCR Re-extraction'],
+    pii: ['PII Scan'],
+    extraction: ['Docling Extraction', 'OCR Re-extraction', 'Extraction'],
     analysis: ['PDF Classification', 'Structure Analysis'],
     headings: ['Heading Levels', 'Heading Reconciliation'],
     translation: ['Page Content Corrections', 'Code Block Languages'],

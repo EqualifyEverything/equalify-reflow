@@ -108,6 +108,9 @@ export function usePipelineViewer() {
         setAwaitingPiiDecision(!!awaiting_decision);
         setUploading(false);
         setProcessing(true);
+        // Scan itself is done — clear the "Processing: PII Scan" status so
+        // the stage tab shows the completed state while we await the decision.
+        setCurrentStepName(null);
         // Synthesize a skeleton result so the pipeline layout (with the
         // PII Review stage) renders immediately — otherwise the page falls
         // back to the upload form while waiting for docling's init event.

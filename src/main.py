@@ -11,7 +11,7 @@ from typing import Any
 from fastapi import FastAPI
 from fastapi.openapi.utils import get_openapi
 
-from .api import approval, documents, health
+from .api import approval, documents, feedback, health
 from .config import settings
 from .dependencies import get_redis_client
 from .middleware import (
@@ -172,6 +172,7 @@ add_cors_middleware(app)  # CORS headers
 app.include_router(health.router)
 app.include_router(documents.router)
 app.include_router(approval.router)
+app.include_router(feedback.router)
 
 # Pipeline viewer — always available (primary processing API)
 from .api import pipeline_viewer  # noqa: E402

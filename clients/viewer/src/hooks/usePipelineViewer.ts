@@ -97,15 +97,51 @@ export function usePipelineViewer() {
       }
 
       case 'pii_scan': {
-        const { findings, awaiting_decision } = event.data as {
+        const { findings, awaiting_decision, elapsed_ms, error } = event.data as {
           findings: PIIFinding[];
           finding_count: number;
           awaiting_decision: boolean;
+          elapsed_ms?: number;
+          error?: string | null;
         };
         setPiiFindings(findings);
         setAwaitingPiiDecision(!!awaiting_decision);
         setUploading(false);
-        if (!awaiting_decision) setProcessing(true);
+        setProcessing(true);
+        // Synthesize a skeleton result so the pipeline layout (with the
+        // PII Review stage) renders immediately — otherwise the page falls
+        // back to the upload form while waiting for docling's init event.
+        setResult((prev) => {
+          const piiStep: StepResult = {
+            name: 'pii_scan',
+            display_name: 'PII Scan',
+            version_before: null,
+            version_after: 'v0',
+            elapsed_ms: elapsed_ms ?? 0,
+            changes: [],
+            metadata: { findings, finding_count: findings.length },
+            skipped: false,
+            error: error ?? null,
+            input_tokens: 0,
+            output_tokens: 0,
+            cost_cents: 0,
+          };
+          if (prev) {
+            const withoutPii = prev.steps.filter((s) => s.name !== 'pii_scan');
+            return { ...prev, steps: [piiStep, ...withoutPii] };
+          }
+          return {
+            filename: '',
+            total_pages: 0,
+            versions: {},
+            page_images: {},
+            page_markdowns: {},
+            figures: [],
+            steps: [piiStep],
+            stats: {},
+            warnings: [],
+          };
+        });
         break;
       }
 
@@ -159,6 +195,25 @@ export function usePipelineViewer() {
         const { display_name } = event.data as { step_name: string; display_name: string };
         setCurrentStepName(display_name);
         setStatusMessage(null);
+        setUploading(false);
+        setProcessing(true);
+        // Flip to the pipeline layout immediately so the status bar and
+        // stage tabs are visible during long-running steps (PII scan,
+        // docling) that don't emit an init/step event for a while.
+        setResult((prev) => {
+          if (prev) return prev;
+          return {
+            filename: '',
+            total_pages: 0,
+            versions: {},
+            page_images: {},
+            page_markdowns: {},
+            figures: [],
+            steps: [],
+            stats: {},
+            warnings: [],
+          };
+        });
         break;
       }
 

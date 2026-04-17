@@ -229,6 +229,7 @@ async def _pipeline_steps(
             "skipped": True,
         })
     else:
+        emit("processing", {"step_name": "pii_scan", "display_name": "PII Scan"})
         pii_start = time.time()
         pii_findings: list[dict[str, Any]] = []
         pii_error: str | None = None
@@ -297,6 +298,8 @@ async def _pipeline_steps(
                 return
 
     # Step 1: Docling extraction
+    emit("processing", {"step_name": "docling", "display_name": "Extraction"})
+
     def _on_cold_start() -> None:
         emit("status", {
             "message": "GPU service is starting up. This may take a few minutes...",

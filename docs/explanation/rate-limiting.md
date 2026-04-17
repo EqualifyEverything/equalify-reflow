@@ -26,7 +26,7 @@ When Redis is unavailable, the rate limiter **allows the request** rather than b
 - **Rate limiter should not be a single point of failure.** If Redis goes down, the AI pipeline still works (S3 + Bedrock are independent). Blocking at the rate limit when the rest of the system is healthy is a self-inflicted outage.
 - **Cost protection has other layers.** Global quotas alert separately; CloudWatch watches for 429 storms. Even a Redis outage can't cause infinite cost overrun — processing is slow enough (2–8 min/doc) that the pipeline itself is rate-limiting.
 
-Monitoring (Grafana, CloudWatch) alerts the oncall when the rate limiter is failing open for more than a few minutes. The fail-open behaviour is visible, not hidden.
+The fail-open path logs a WARN line in the api-gateway when Redis is unreachable, and the underlying Redis health shows up in the existing Grafana dashboards (System Overview, Worker Health). There is no dedicated rate-limiter dashboard yet — if you're running Reflow in a context where fail-open windows matter, wire an alert off the WARN log line (or a Prometheus counter if you add one) before relying on fail-open as a safety valve.
 
 For a different deployment with a less trusted user population or tighter cost controls, invert this: return 503 when Redis is unreachable and configure stricter limits. The code path is in `src/middleware/rate_limit.py`; the exception catch is the hook.
 

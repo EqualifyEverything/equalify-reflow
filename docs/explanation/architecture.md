@@ -1388,34 +1388,23 @@ s3_operation_duration_seconds{operation="upload"} 0.123
 
 ### Grafana Dashboards
 
-**Overview dashboard:**
+Four dashboards ship under `infrastructure/grafana/dashboards/`, auto-provisioned when the stack starts:
 
-- Jobs submitted (rate per minute)
-- Jobs completed (rate per minute)
-- Success rate (completed / submitted)
-- Queue depths (real-time)
-- Worker health (up/down)
+- **System Overview** — API health, Redis health, Total queue depth, HTTP request rate, HTTP error rate, HTTP response time (p95)
+- **Job Processing** — Jobs by status, Jobs per hour, Success rate, Processing duration by stage (p95)
+- **Queue Monitor** — Queue depths (real-time), Processing rate (jobs/min), Average queue wait time
+- **Worker Health** — PII / Processing / Timeout worker status, Worker errors (errors/min), Worker jobs processed (jobs/min), Redis operations (ops/s)
 
-**Performance dashboard:**
-
-- P50/P95/P99 processing times
-- API latency distribution
-- S3 operation latency
-- Redis operation latency
-
-**Errors dashboard:**
-
-- Error rate by type
-- Failed jobs by reason
-- Circuit breaker trips
-- Retry attempts
+**Not yet dashboarded** (exposed to Prometheus, but no Grafana panel): S3 operations + circuit breaker state (`s3_operations_total`, `s3_circuit_breaker_state`, `s3_retry_attempts_total`), rate-limit tier state, LLM token cost per phase. Inspect via PromQL in Grafana's Explore view or scrape `/metrics` directly until these dashboards are added.
 
 ## Related Documentation
 
-- **[Environment Setup](environment-setup.md)** - Local development setup guide
-- **[Rate Limiting](rate-limiting.md)** - Rate limiting implementation details
-- **[CI/CD](ci-cd.md)** - GitHub Actions workflows
-- **[CLAUDE.md](../CLAUDE.md)** - AI agent development guide and patterns
+- **[Set up the dev environment](../how-to/set-up-dev-environment.md)** — local development setup
+- **[Rate limiting design](rate-limiting.md)** — why fail-open, why sliding window, why three tiers
+- **[S3 resilience design](s3-resilience.md)** — retry + circuit breaker rationale
+- **[Testing strategy](testing-strategy.md)** — why three test tiers
+- **[CI workflows reference](../reference/ci-workflows.md)** — GitHub Actions workflows and markers
+- **[AGENTS.md](../../AGENTS.md)** — orientation pointer for AI and human agents working on the repo
 
 ## Version History
 

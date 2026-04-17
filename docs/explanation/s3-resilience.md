@@ -47,7 +47,7 @@ The metrics service exposes these to Prometheus:
 - `s3_circuit_breaker_state{circuit_name}` — 0=closed, 1=half-open, 2=open
 - `s3_retry_attempts_total{operation, attempt}` — retry attempt counters
 
-Grafana's "S3 Operations" dashboard reads from these. Inspect raw values via:
+These metrics are scraped by Prometheus at `/metrics`. There is no dedicated Grafana dashboard for S3 operations today — inspect raw values directly via Prometheus, or graph them in Grafana's Explore view:
 
 ```bash
 curl http://localhost:8080/metrics | grep s3_operations_total
@@ -58,7 +58,7 @@ curl http://localhost:8080/metrics | grep s3_circuit_breaker_state
 
 The common failure modes, in order of likelihood:
 
-1. **Floci container restart in local dev** — circuit opens, 60s later closes as Floci recovers. Visible in Grafana as a short spike.
+1. **Floci container restart in local dev** — circuit opens, 60s later closes as Floci recovers. Visible as a `s3_circuit_breaker_state` spike in Prometheus (`/metrics`) or in the `circuit` log lines on the api-gateway container.
 2. **ECS IAM role drift in production** — manifests as `AccessDenied` (non-retriable), surfaces as user-visible errors. Check CloudWatch for the IAM event.
 3. **Region-wide S3 throttling** — very rare but catastrophic. Circuit breakers keep the service up in read-only mode while you coordinate with AWS support.
 

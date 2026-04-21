@@ -181,8 +181,8 @@ export function StageTabs({
 
   return (
     <div className="bg-white border-b">
-      {/* Stage row — parent tabs only */}
-      <div className="flex items-center gap-0.5 px-4 py-1.5">
+      {/* Stage row — parent tabs only. Horizontally scrolls on narrow viewports. */}
+      <div className="flex items-center gap-0.5 px-4 py-1.5 overflow-x-auto flex-nowrap whitespace-nowrap">
         {stages.map((stage, stageIdx) => {
           const Icon = STAGE_ICONS[stage.definition.name] ?? FileInput;
           const isActiveStage = stageIdx === activeStageIdx;

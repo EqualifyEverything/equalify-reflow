@@ -2,6 +2,8 @@ import { useState, useCallback, useRef, useEffect, useMemo } from 'react';
 import { Panel, Group as PanelGroup, Separator as PanelResizeHandle } from 'react-resizable-panels';
 import { cn } from '@/lib/utils';
 import { buildMarkdownBundle, triggerBlobDownload } from '@/lib/bundleDownload';
+import { useMediaQuery } from '@/hooks/useMediaQuery';
+import { CollapsibleRegion } from '@/components/ui/CollapsibleRegion';
 import { Button } from '@/components/ui/button';
 import { MarkdownViewer } from '@/components/viewer/MarkdownViewer';
 import { StageTabs } from '@/components/pipeline-viewer/StageTabs';
@@ -24,6 +26,8 @@ import {
   BarChart3,
   ChevronDown,
   ChevronUp,
+  ChevronLeft,
+  ChevronRight,
   Copy,
   Check,
   DollarSign,
@@ -318,6 +322,7 @@ export function PipelineViewerPage() {
   const [changesModalOpen, setChangesModalOpen] = useState(false);
   const [metadataModalOpen, setMetadataModalOpen] = useState(false);
   const [feedbackModalOpen, setFeedbackModalOpen] = useState(false);
+  const isDesktop = useMediaQuery('(min-width: 1024px)');
 
   const fileInputRef = useRef<HTMLInputElement>(null);
   const skipNavRef = useRef<HTMLElement>(null);
@@ -714,7 +719,7 @@ export function PipelineViewerPage() {
           {result && Object.keys(result.versions).length > 0 && (
           <section
             aria-labelledby="region-stats-heading"
-            className="flex items-center gap-6 px-6 py-2 bg-white border-b text-sm"
+            className="flex flex-wrap items-center gap-x-6 gap-y-2 px-6 py-2 bg-white border-b text-sm"
           >
             <h2 id="region-stats-heading" className="sr-only">Document stats and controls</h2>
             <div className="flex items-center gap-3 text-xs text-muted-foreground">
@@ -824,141 +829,223 @@ export function PipelineViewerPage() {
             </section>
           )}
 
-          {/* Main content area — only when we have results and are not on pii */}
-          {!piiPanelState && result && Object.keys(result.versions).length > 0 && (
-          <div className="flex-1 flex min-h-0 overflow-hidden">
-            {/* Page sidebar */}
-            {totalPages > 1 && (
-              <nav id="region-pages" tabIndex={-1} aria-labelledby="region-pages-heading" className="w-16 border-r bg-white overflow-y-auto flex-shrink-0 outline-none rounded-sm">
-                <h2 id="region-pages-heading" className="sr-only">Page navigation</h2>
-                {Array.from({ length: totalPages }, (_, i) => i + 1).map((p) => (
-                  <button
-                    key={p}
-                    onClick={() => setCurrentPage(p)}
-                    aria-label={`Page ${p}`}
-                    aria-current={p === currentPage ? 'page' : undefined}
-                    className={cn(
-                      'w-full py-2 text-xs font-medium border-b transition-colors',
-                      p === currentPage
-                        ? 'bg-uic-blue/10 text-uic-blue border-l-2 border-l-uic-blue'
-                        : 'text-muted-foreground hover:bg-gray-50',
-                    )}
-                  >
-                    {p}
-                  </button>
-                ))}
-              </nav>
-            )}
-
-            {/* Split view */}
-            <PanelGroup orientation="horizontal" className="flex-1 min-w-0 overflow-hidden">
-              <Panel defaultSize={45} minSize={20}>
-                <div className="h-full flex flex-col">
-                  {pageImage && (
-                    <div className="flex items-center justify-between px-4 py-2 border-b bg-gray-50">
-                      <span className="text-sm font-medium text-muted-foreground">
-                        Page {currentPage} Image
-                      </span>
-                      <Button
-                        variant="ghost"
-                        size="sm"
-                        onClick={handleCopyImage}
-                        title="Copy page image"
-                        className={cn(
-                          'gap-1.5',
-                          copiedImage
-                            ? 'text-green-600 hover:text-green-700 hover:bg-green-50'
-                            : 'text-muted-foreground hover:text-foreground',
-                        )}
-                      >
-                        {copiedImage ? (
-                          <Check className="w-4 h-4" />
-                        ) : (
-                          <Copy className="w-4 h-4" />
-                        )}
-                        <span className="text-xs">{copiedImage ? 'Copied' : 'Copy Image'}</span>
-                      </Button>
-                    </div>
-                  )}
-                  <div className="flex-1 overflow-auto bg-gray-100 flex items-start justify-center p-4">
-                    {pageImage ? (
-                      <img
-                        src={`data:image/png;base64,${pageImage}`}
-                        alt={`Page ${currentPage}`}
-                        className="max-w-full shadow-lg rounded"
-                      />
-                    ) : processing || uploading ? (
-                      <div className="flex flex-col items-center gap-2 mt-20 text-muted-foreground">
-                        <Loader2 className="w-6 h-6 animate-spin" />
-                        <span className="text-sm">Loading page image...</span>
-                      </div>
-                    ) : (
-                      <div className="text-muted-foreground text-sm mt-20">
-                        No image available
-                      </div>
-                    )}
-                  </div>
-                </div>
-              </Panel>
-
-              <PanelResizeHandle className="w-1.5 bg-gray-200 hover:bg-uic-blue/30 transition-colors cursor-col-resize" />
-
-              <Panel defaultSize={55} minSize={20}>
-                <main id="region-preview" tabIndex={-1} aria-labelledby="region-preview-heading" className="h-full outline-none rounded-sm">
-                <h2 id="region-preview-heading" className="sr-only">Document preview</h2>
-                <MarkdownViewer
-                  content={pageMarkdown}
-                  figureMap={figureMap}
-                  isComplete={true}
-                  onDownloadMarkdown={handleDownloadCurrentMarkdown}
-                  onCopy={() => {
-                    navigator.clipboard.writeText(pageMarkdown);
-                  }}
-                />
-                </main>
-              </Panel>
-            </PanelGroup>
-
-            {/* Right sidebar */}
-            <aside id="region-changes" tabIndex={-1} aria-labelledby="region-changes-heading" className="flex-shrink-0 outline-none rounded-sm">
-            <h2 id="region-changes-heading" className="sr-only">Changes and metadata</h2>
-            {activeStep?.name === 'structure' && activeStep.metadata ? (
-              <StructureMetadataPanel metadata={activeStep.metadata} onExpand={() => setMetadataModalOpen(true)} />
-            ) : (
-              <div className="w-64 flex-shrink-0 border-l bg-white flex flex-col">
-                <div className="px-4 py-3 border-b">
-                  <h3 className="text-sm font-medium text-muted-foreground">Changes</h3>
-                </div>
-                {stageChanges.length === 0 ? (
-                  <div className="flex-1 flex items-center justify-center p-4">
-                    <p className="text-xs text-muted-foreground text-center">
-                      No changes in this stage.
-                      <br />
-                      Docling produces v0 from scratch.
-                    </p>
-                  </div>
-                ) : (
-                  <div className="flex-1 flex flex-col items-center justify-center p-4 gap-3">
-                    <span className="text-2xl font-bold text-amber-700">{stageChanges.length}</span>
-                    <p className="text-xs text-muted-foreground text-center">
-                      change{stageChanges.length !== 1 ? 's' : ''} in this stage
-                    </p>
+          {/* Main content area — only when we have results and are not on pii.
+              Desktop: horizontal split with resize handles + sidebars.
+              Mobile (<lg): preview is the main event; page image and changes
+              become collapsible disclosures above and below it. */}
+          {!piiPanelState && result && Object.keys(result.versions).length > 0 && (() => {
+            const pageImageBody = (
+              <div className="h-full flex flex-col">
+                {pageImage && (
+                  <div className="flex items-center justify-between px-4 py-2 border-b bg-gray-50">
+                    <span className="text-sm font-medium text-muted-foreground">
+                      Page {currentPage} Image
+                    </span>
                     <Button
-                      variant="outline"
+                      variant="ghost"
                       size="sm"
-                      className="text-xs gap-1.5"
-                      onClick={() => setChangesModalOpen(true)}
+                      onClick={handleCopyImage}
+                      title="Copy page image"
+                      className={cn(
+                        'gap-1.5',
+                        copiedImage
+                          ? 'text-green-600 hover:text-green-700 hover:bg-green-50'
+                          : 'text-muted-foreground hover:text-foreground',
+                      )}
                     >
-                      <Maximize2 className="w-3.5 h-3.5" />
-                      View Details
+                      {copiedImage ? (
+                        <Check className="w-4 h-4" />
+                      ) : (
+                        <Copy className="w-4 h-4" />
+                      )}
+                      <span className="text-xs">{copiedImage ? 'Copied' : 'Copy Image'}</span>
                     </Button>
                   </div>
                 )}
+                <div className="flex-1 overflow-auto bg-gray-100 flex items-start justify-center p-4">
+                  {pageImage ? (
+                    <img
+                      src={`data:image/png;base64,${pageImage}`}
+                      alt={`Page ${currentPage}`}
+                      className="max-w-full shadow-lg rounded"
+                    />
+                  ) : processing || uploading ? (
+                    <div className="flex flex-col items-center gap-2 mt-20 text-muted-foreground">
+                      <Loader2 className="w-6 h-6 animate-spin" />
+                      <span className="text-sm">Loading page image...</span>
+                    </div>
+                  ) : (
+                    <div className="text-muted-foreground text-sm mt-20">
+                      No image available
+                    </div>
+                  )}
+                </div>
               </div>
-            )}
-            </aside>
-          </div>
-          )}
+            );
+
+            const previewBody = (
+              <MarkdownViewer
+                content={pageMarkdown}
+                figureMap={figureMap}
+                isComplete={true}
+                onDownloadMarkdown={handleDownloadCurrentMarkdown}
+                onCopy={() => {
+                  navigator.clipboard.writeText(pageMarkdown);
+                }}
+              />
+            );
+
+            const changesBody =
+              activeStep?.name === 'structure' && activeStep.metadata ? (
+                <StructureMetadataPanel
+                  metadata={activeStep.metadata}
+                  onExpand={() => setMetadataModalOpen(true)}
+                />
+              ) : (
+                <div className="flex flex-col">
+                  <div className="px-4 py-3 border-b">
+                    <h3 className="text-sm font-medium text-muted-foreground">Changes</h3>
+                  </div>
+                  {stageChanges.length === 0 ? (
+                    <div className="flex items-center justify-center p-4">
+                      <p className="text-xs text-muted-foreground text-center">
+                        No changes in this stage.
+                        <br />
+                        Docling produces v0 from scratch.
+                      </p>
+                    </div>
+                  ) : (
+                    <div className="flex flex-col items-center justify-center p-4 gap-3">
+                      <span className="text-2xl font-bold text-amber-700">{stageChanges.length}</span>
+                      <p className="text-xs text-muted-foreground text-center">
+                        change{stageChanges.length !== 1 ? 's' : ''} in this stage
+                      </p>
+                      <Button
+                        variant="outline"
+                        size="sm"
+                        className="text-xs gap-1.5"
+                        onClick={() => setChangesModalOpen(true)}
+                      >
+                        <Maximize2 className="w-3.5 h-3.5" />
+                        View Details
+                      </Button>
+                    </div>
+                  )}
+                </div>
+              );
+
+            return isDesktop ? (
+              <div className="flex-1 flex min-h-0 overflow-hidden">
+                {/* Page sidebar */}
+                {totalPages > 1 && (
+                  <nav id="region-pages" tabIndex={-1} aria-labelledby="region-pages-heading" className="w-16 border-r bg-white overflow-y-auto flex-shrink-0 outline-none rounded-sm">
+                    <h2 id="region-pages-heading" className="sr-only">Page navigation</h2>
+                    {Array.from({ length: totalPages }, (_, i) => i + 1).map((p) => (
+                      <button
+                        key={p}
+                        onClick={() => setCurrentPage(p)}
+                        aria-label={`Page ${p}`}
+                        aria-current={p === currentPage ? 'page' : undefined}
+                        className={cn(
+                          'w-full py-2 text-xs font-medium border-b transition-colors',
+                          p === currentPage
+                            ? 'bg-uic-blue/10 text-uic-blue border-l-2 border-l-uic-blue'
+                            : 'text-muted-foreground hover:bg-gray-50',
+                        )}
+                      >
+                        {p}
+                      </button>
+                    ))}
+                  </nav>
+                )}
+
+                {/* Split view */}
+                <PanelGroup orientation="horizontal" className="flex-1 min-w-0 overflow-hidden">
+                  <Panel defaultSize={45} minSize={20}>
+                    {pageImageBody}
+                  </Panel>
+
+                  <PanelResizeHandle className="w-1.5 bg-gray-200 hover:bg-uic-blue/30 transition-colors cursor-col-resize" />
+
+                  <Panel defaultSize={55} minSize={20}>
+                    <main id="region-preview" tabIndex={-1} aria-labelledby="region-preview-heading" className="h-full outline-none rounded-sm">
+                      <h2 id="region-preview-heading" className="sr-only">Document preview</h2>
+                      {previewBody}
+                    </main>
+                  </Panel>
+                </PanelGroup>
+
+                {/* Right sidebar */}
+                <aside id="region-changes" tabIndex={-1} aria-labelledby="region-changes-heading" className="w-64 flex-shrink-0 border-l bg-white outline-none rounded-sm">
+                  <h2 id="region-changes-heading" className="sr-only">Changes and metadata</h2>
+                  {changesBody}
+                </aside>
+              </div>
+            ) : (
+              <div className="flex-1 flex flex-col min-h-0 overflow-hidden">
+                {/* Compact page picker: prev / "Page N of M" / next */}
+                {totalPages > 1 && (
+                  <nav
+                    id="region-pages"
+                    aria-labelledby="region-pages-heading"
+                    className="flex items-center justify-between gap-2 px-4 py-2 border-b bg-white"
+                  >
+                    <h2 id="region-pages-heading" className="sr-only">Page navigation</h2>
+                    <Button
+                      variant="outline"
+                      size="sm"
+                      onClick={() => setCurrentPage(Math.max(1, currentPage - 1))}
+                      disabled={currentPage === 1}
+                      aria-label="Previous page"
+                      className="gap-1"
+                    >
+                      <ChevronLeft className="w-4 h-4" />
+                      Prev
+                    </Button>
+                    <span className="text-sm text-muted-foreground" aria-live="polite">
+                      Page {currentPage} of {totalPages}
+                    </span>
+                    <Button
+                      variant="outline"
+                      size="sm"
+                      onClick={() => setCurrentPage(Math.min(totalPages, currentPage + 1))}
+                      disabled={currentPage === totalPages}
+                      aria-label="Next page"
+                      className="gap-1"
+                    >
+                      Next
+                      <ChevronRight className="w-4 h-4" />
+                    </Button>
+                  </nav>
+                )}
+
+                {/* Page image — collapsed by default; preview is the main event */}
+                <CollapsibleRegion
+                  id="region-page-image"
+                  title={`Page ${currentPage} image`}
+                  bodyClassName="max-h-[50vh] overflow-hidden"
+                >
+                  <div className="h-[50vh]">{pageImageBody}</div>
+                </CollapsibleRegion>
+
+                {/* Rendered document — fills remaining space */}
+                <main
+                  id="region-preview"
+                  tabIndex={-1}
+                  aria-labelledby="region-preview-heading"
+                  className="flex-1 min-h-0 overflow-hidden outline-none"
+                >
+                  <h2 id="region-preview-heading" className="sr-only">Document preview</h2>
+                  {previewBody}
+                </main>
+
+                {/* Changes / metadata — collapsed by default */}
+                <CollapsibleRegion id="region-changes" title="Changes and metadata">
+                  {changesBody}
+                </CollapsibleRegion>
+              </div>
+            );
+          })()}
 
         </div>
       )}

@@ -11,7 +11,11 @@ export function WarningsBanner({ warnings }: WarningsBannerProps) {
   if (dismissed || warnings.length === 0) return null;
 
   return (
-    <div className="flex items-start gap-3 px-6 py-3 bg-amber-50 border-b border-amber-200 text-sm text-amber-800">
+    <section
+      aria-labelledby="region-warnings-heading"
+      className="flex items-start gap-3 px-6 py-3 bg-amber-50 border-b border-amber-200 text-sm text-amber-800"
+    >
+      <h2 id="region-warnings-heading" className="sr-only">Warnings</h2>
       <AlertTriangle className="w-4 h-4 mt-0.5 flex-shrink-0 text-amber-600" />
       <div className="flex-1 min-w-0">
         {warnings.length === 1 ? (
@@ -31,6 +35,6 @@ export function WarningsBanner({ warnings }: WarningsBannerProps) {
       >
         <X className="w-3.5 h-3.5 text-amber-600" />
       </button>
-    </div>
+    </section>
   );
 }

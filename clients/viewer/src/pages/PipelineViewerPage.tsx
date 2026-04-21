@@ -1,6 +1,7 @@
 import { useState, useCallback, useRef, useEffect, useMemo } from 'react';
 import { Panel, Group as PanelGroup, Separator as PanelResizeHandle } from 'react-resizable-panels';
 import { cn } from '@/lib/utils';
+import { buildMarkdownBundle, triggerBlobDownload } from '@/lib/bundleDownload';
 import { Button } from '@/components/ui/button';
 import { MarkdownViewer } from '@/components/viewer/MarkdownViewer';
 import { StageTabs } from '@/components/pipeline-viewer/StageTabs';
@@ -459,42 +460,31 @@ export function PipelineViewerPage() {
     }
   }, [pageImage, currentPage, base64ToBlob]);
 
-  /** Trigger a browser download for a markdown string. */
-  const downloadMarkdown = useCallback((markdown: string, filename: string) => {
-    const blob = new Blob([markdown], { type: 'text/markdown;charset=utf-8' });
-    const url = URL.createObjectURL(blob);
-    const a = document.createElement('a');
-    a.href = url;
-    a.download = filename;
-    document.body.appendChild(a);
-    a.click();
-    document.body.removeChild(a);
-    URL.revokeObjectURL(url);
-  }, []);
+  /**
+   * Download a zip containing the version's markdown and a `figures/` folder
+   * of PNGs. Markdown already uses `figures/{ref_id}.png` relative paths, so
+   * the bundle is self-contained without any path rewriting.
+   */
+  const downloadBundle = useCallback(async (version: string) => {
+    if (!result?.versions[version]) return;
+    const baseName = result.filename.replace(/\.pdf$/i, '');
+    const blob = await buildMarkdownBundle(result, version, baseName);
+    triggerBlobDownload(blob, `${baseName}-${version}.zip`);
+  }, [result]);
 
-  /** Download the markdown version for a given step index. */
   const handleDownloadVersion = useCallback(
     (stepIndex: number) => {
       if (!result) return;
       const step = result.steps[stepIndex];
       if (!step?.version_after) return;
-      const version = step.version_after;
-      const markdown = result.versions[version];
-      if (!markdown) return;
-      const baseName = result.filename.replace(/\.pdf$/i, '');
-      downloadMarkdown(markdown, `${baseName}-${version}.md`);
+      void downloadBundle(step.version_after);
     },
-    [result, downloadMarkdown],
+    [result, downloadBundle],
   );
 
-  /** Download the currently active version's markdown. */
   const handleDownloadCurrentMarkdown = useCallback(() => {
-    if (!result) return;
-    const markdown = result.versions[activeVersion];
-    if (!markdown) return;
-    const baseName = result.filename.replace(/\.pdf$/i, '');
-    downloadMarkdown(markdown, `${baseName}-${activeVersion}.md`);
-  }, [result, activeVersion, downloadMarkdown]);
+    void downloadBundle(activeVersion);
+  }, [activeVersion, downloadBundle]);
 
   const handleProcess = useCallback(
     async (file: File) => {

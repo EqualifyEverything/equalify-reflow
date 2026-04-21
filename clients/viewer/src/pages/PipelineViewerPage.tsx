@@ -580,8 +580,8 @@ export function PipelineViewerPage() {
       <KeyboardShortcuts onFocusRegion={handleFocusRegion} />
 
       {/* Header */}
-      <header className="flex items-center px-6 py-3 bg-white border-b shadow-sm">
-        <h1 className="text-lg font-bold text-uic-blue flex items-center gap-2">
+      <header aria-labelledby="region-header-heading" className="flex items-center px-6 py-3 bg-white border-b shadow-sm">
+        <h1 id="region-header-heading" className="text-lg font-bold text-uic-blue flex items-center gap-2">
           {import.meta.env.VITE_SHOW_UIC_LOGO === 'true' && (
             <img
               src="/uic-logo.png"
@@ -602,9 +602,15 @@ export function PipelineViewerPage() {
       {result && Object.keys(result.versions).length === 0 && (() => {
         const classStep = result.steps.find((s) => s.name === 'classification' && s.error);
         return classStep ? (
-          <div id="region-error" tabIndex={-1} className="outline-none">
+          <section
+            id="region-error"
+            tabIndex={-1}
+            aria-labelledby="region-error-heading"
+            className="outline-none"
+          >
+            <h2 id="region-error-heading" className="sr-only">Classification error</h2>
             <ClassificationError step={classStep} onReset={reset} />
-          </div>
+          </section>
         ) : null;
       })()}
 
@@ -612,7 +618,8 @@ export function PipelineViewerPage() {
       {!(result && Object.keys(result.versions).length === 0 && result.steps.some((s) => s.name === 'classification' && s.error)) && (
         <div className="flex-1 flex flex-col min-h-0">
           {/* Step tabs */}
-          <nav id="region-stages" tabIndex={-1} aria-label="Pipeline stages" className="outline-none rounded-sm">
+          <nav id="region-stages" tabIndex={-1} aria-labelledby="region-stages-heading" className="outline-none rounded-sm">
+          <h2 id="region-stages-heading" className="sr-only">Pipeline stages</h2>
           <StageTabs
             steps={result?.steps ?? []}
             activeStepIdx={activeStepIdx}
@@ -632,12 +639,14 @@ export function PipelineViewerPage() {
           {!result && (
             <div className="flex-1 flex items-center justify-center p-8">
               {uploading ? (
-                <div
+                <section
                   id="region-status"
                   ref={loadingStatusRef}
                   tabIndex={-1}
+                  aria-labelledby="region-status-heading"
                   className="flex flex-col items-center gap-4 outline-none focus:outline-2 focus:outline-uic-blue focus:outline-offset-4 rounded-md"
                 >
+                  <h2 id="region-status-heading" className="sr-only">Processing status</h2>
                   <Loader2 className="w-10 h-10 animate-spin text-uic-blue" aria-hidden="true" />
                   <p className="text-muted-foreground">Extracting document content...</p>
                   {statusMessage ? (
@@ -647,16 +656,24 @@ export function PipelineViewerPage() {
                   ) : (
                     <p className="text-xs text-muted-foreground">Processing time depends on document length and complexity</p>
                   )}
-                </div>
+                </section>
               ) : error ? (
-                <div id="region-error" tabIndex={-1} className="max-w-md text-center outline-none">
+                <section
+                  id="region-error"
+                  tabIndex={-1}
+                  aria-labelledby="region-error-inline-heading"
+                  className="max-w-md text-center outline-none"
+                >
+                  <h2 id="region-error-inline-heading" className="sr-only">Processing error</h2>
                   <p className="text-red-700 font-medium mb-2">Processing Error</p>
                   <p className="text-sm text-muted-foreground mb-4">{error}</p>
                   <Button variant="outline" onClick={reset}>
                     Try Again
                   </Button>
-                </div>
+                </section>
               ) : (
+                <section aria-labelledby="region-upload-heading">
+                <h2 id="region-upload-heading" className="sr-only">Upload a document</h2>
                 <button
                   id="region-upload"
                   type="button"
@@ -688,13 +705,18 @@ export function PipelineViewerPage() {
                     onChange={handleFileSelect}
                   />
                 </button>
+                </section>
               )}
             </div>
           )}
 
           {/* Stats bar — only when we have results */}
           {result && Object.keys(result.versions).length > 0 && (
-          <div className="flex items-center gap-6 px-6 py-2 bg-white border-b text-sm">
+          <section
+            aria-labelledby="region-stats-heading"
+            className="flex items-center gap-6 px-6 py-2 bg-white border-b text-sm"
+          >
+            <h2 id="region-stats-heading" className="sr-only">Document stats and controls</h2>
             <div className="flex items-center gap-3 text-xs text-muted-foreground">
               <span className="flex items-center gap-1">
                 <FileText className="w-3.5 h-3.5" />
@@ -782,20 +804,24 @@ export function PipelineViewerPage() {
               <Upload className="w-3.5 h-3.5 mr-1" />
               New PDF
             </Button>
-          </div>
+          </section>
           )}
 
           {/* PII Review inline panel — takes over the main area when the
               pii_scan step is active (scanning, awaiting decision, or done). */}
           {result && piiPanelState && (
-            <div className="flex-1 min-h-0 overflow-hidden bg-white">
+            <section
+              aria-labelledby="region-pii-heading"
+              className="flex-1 min-h-0 overflow-hidden bg-white"
+            >
+              <h2 id="region-pii-heading" className="sr-only">PII review</h2>
               <PiiReviewPanel
                 state={piiPanelState}
                 findings={piiFindings ?? []}
                 error={activeStep?.error ?? null}
                 onDecision={submitPiiDecision}
               />
-            </div>
+            </section>
           )}
 
           {/* Main content area — only when we have results and are not on pii */}
@@ -803,7 +829,8 @@ export function PipelineViewerPage() {
           <div className="flex-1 flex min-h-0 overflow-hidden">
             {/* Page sidebar */}
             {totalPages > 1 && (
-              <nav id="region-pages" tabIndex={-1} aria-label="Page navigation" className="w-16 border-r bg-white overflow-y-auto flex-shrink-0 outline-none rounded-sm">
+              <nav id="region-pages" tabIndex={-1} aria-labelledby="region-pages-heading" className="w-16 border-r bg-white overflow-y-auto flex-shrink-0 outline-none rounded-sm">
+                <h2 id="region-pages-heading" className="sr-only">Page navigation</h2>
                 {Array.from({ length: totalPages }, (_, i) => i + 1).map((p) => (
                   <button
                     key={p}
@@ -877,7 +904,8 @@ export function PipelineViewerPage() {
               <PanelResizeHandle className="w-1.5 bg-gray-200 hover:bg-uic-blue/30 transition-colors cursor-col-resize" />
 
               <Panel defaultSize={55} minSize={20}>
-                <main id="region-preview" tabIndex={-1} aria-label="Rendered document preview" className="h-full outline-none rounded-sm">
+                <main id="region-preview" tabIndex={-1} aria-labelledby="region-preview-heading" className="h-full outline-none rounded-sm">
+                <h2 id="region-preview-heading" className="sr-only">Document preview</h2>
                 <MarkdownViewer
                   content={pageMarkdown}
                   figureMap={figureMap}
@@ -892,7 +920,8 @@ export function PipelineViewerPage() {
             </PanelGroup>
 
             {/* Right sidebar */}
-            <aside id="region-changes" tabIndex={-1} aria-label="Changes and metadata panel" className="flex-shrink-0 outline-none rounded-sm">
+            <aside id="region-changes" tabIndex={-1} aria-labelledby="region-changes-heading" className="flex-shrink-0 outline-none rounded-sm">
+            <h2 id="region-changes-heading" className="sr-only">Changes and metadata</h2>
             {activeStep?.name === 'structure' && activeStep.metadata ? (
               <StructureMetadataPanel metadata={activeStep.metadata} onExpand={() => setMetadataModalOpen(true)} />
             ) : (

@@ -722,7 +722,7 @@ export function PipelineViewerPage() {
             className="flex flex-wrap items-center gap-x-6 gap-y-2 px-6 py-2 bg-white border-b text-sm"
           >
             <h2 id="region-stats-heading" className="sr-only">Document stats and controls</h2>
-            <div className="flex items-center gap-3 text-xs text-muted-foreground">
+            <div className="flex flex-wrap items-center gap-x-3 gap-y-1 text-xs text-muted-foreground [&>span]:whitespace-nowrap">
               <span className="flex items-center gap-1">
                 <FileText className="w-3.5 h-3.5" />
                 {result.total_pages} pages

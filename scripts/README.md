@@ -16,11 +16,15 @@ Exit code `0` when all critical checks pass, `1` otherwise. Run it after `make d
 
 ### `batch_run.py`
 
-Batch-submits a directory of PDFs to a running Equalify Reflow API and collects the results. Useful for regression-testing pipeline changes against a fixture set, benchmarking, or building a quick dataset of pipeline outputs.
+Batch-submits PDFs to a running Equalify Reflow API and collects the results. Supports two modes: a **manifest file** (reproducible benchmark corpora) or a **directory glob** (ad-hoc fixture runs). Full usage in [`docs/how-to/run-the-benchmark.md`](../docs/how-to/run-the-benchmark.md).
 
 ```bash
-# Requires a running API (make dev) and a valid API key.
-uv run scripts/batch_run.py --help
+# Reproduce a published benchmark (PDFs placed beside the manifest):
+BATCH_API_KEY=... uv run scripts/batch_run.py \
+    --manifest docs/reference/benchmarks/v0.1.0-beta.6-pilot/manifest.txt
+
+# Ad-hoc run over a local directory:
+BATCH_API_KEY=... uv run scripts/batch_run.py --pdf-dir ~/pdfs/
 ```
 
 ### `test_chained_analysis.py`

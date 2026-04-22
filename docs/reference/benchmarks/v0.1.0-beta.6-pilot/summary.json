@@ -1,0 +1,312 @@
+{
+  "timestamp": "2026-03-17T16-58-08",
+  "api_url": "https://pdf.equalify.uic.edu",
+  "concurrency": 2,
+  "total": 30,
+  "completed": 30,
+  "failed": 0,
+  "total_cost": 12.987835,
+  "total_tokens": 10422111,
+  "results": [
+    {
+      "file": "083_SHARE WITH STUDENTS_ Spring 2022 RELS 225 New course_ &#8220;Jews in Islamic Lands&#8221; (Field_ in_ecbd8260.pdf",
+      "status": "completed",
+      "job_id": "5ccb893b-26f9-41c6-a763-c7bbebd0d574",
+      "pages": 1,
+      "cost": 0.041461000000000005,
+      "tokens": 33281,
+      "elapsed": 61.08655891699891,
+      "edits": 5
+    },
+    {
+      "file": "048_Language data_ What is it_ How do we analyze it_ What can it tell us_ (Field_ description)_c122ac35.pdf",
+      "status": "completed",
+      "job_id": "b23da452-d0ea-4753-8d58-445a94e3d2eb",
+      "pages": 1,
+      "cost": 0.05140000000000001,
+      "tokens": 39584,
+      "elapsed": 45.66261062500416,
+      "edits": 3
+    },
+    {
+      "file": "038_Policies &amp; Guidelines (Field_ intro_text_body)_10bd7d0d.pdf",
+      "status": "completed",
+      "job_id": "5947b2e4-7633-40e3-8ced-8bf0e464d1f5",
+      "pages": 15,
+      "cost": 0.643811,
+      "tokens": 515683,
+      "elapsed": 288.3017505000025,
+      "edits": 87
+    },
+    {
+      "file": "081_Cite in ICMJE style (Field_ intro_text_body)_8f4ad8a2.pdf",
+      "status": "completed",
+      "job_id": "d71fc171-2218-41cb-a532-29d50cda3499",
+      "pages": 20,
+      "cost": 1.744082,
+      "tokens": 1411894,
+      "elapsed": 459.1840572499932,
+      "edits": 316
+    },
+    {
+      "file": "082_PROFESSIONAL DEVELOPMENT_ November TT Advisor Common Reading Discussion &quot;Advising Millenials&qu_9ccab0f9.pdf",
+      "status": "completed",
+      "job_id": "f35562f7-b28c-4d49-a74b-62a303167554",
+      "pages": 10,
+      "cost": 0.48935300000000004,
+      "tokens": 383605,
+      "elapsed": 166.30641858300078,
+      "edits": 112
+    },
+    {
+      "file": "036_Meeting Notes (Field_ intro_text_body)_ff7e956a.pdf",
+      "status": "completed",
+      "job_id": "891ea7c2-c49a-4ac2-a7d0-0924a85c4870",
+      "pages": 1,
+      "cost": 0.06226000000000001,
+      "tokens": 48096,
+      "elapsed": 45.849552917003166,
+      "edits": 5
+    },
+    {
+      "file": "062_Professional Licensure Disclosures (Field_ intro_text_body)_5c971797.pdf",
+      "status": "completed",
+      "job_id": "6969bbdf-0715-4acd-8197-2a8a2c459c6b",
+      "pages": 8,
+      "cost": 0.37920300000000007,
+      "tokens": 321407,
+      "elapsed": 116.01722316700034,
+      "edits": 17
+    },
+    {
+      "file": "078_University of Illinois Hospital and Clinics Patient Complaint and Grievance Management_ff7385fb.pdf",
+      "status": "completed",
+      "job_id": "2cb0cc86-028d-45f6-9eb0-335b242ac63c",
+      "pages": 6,
+      "cost": 0.272504,
+      "tokens": 215260,
+      "elapsed": 136.83712783399096,
+      "edits": 30
+    },
+    {
+      "file": "032_Early Retirement Incentives_ Weighing the Risks for State and Local Governments (Field_ intro_text_b_5bf06bca.pdf",
+      "status": "completed",
+      "job_id": "4542cc40-04ce-4b4a-8e76-1ecada72fb3d",
+      "pages": 3,
+      "cost": 0.215653,
+      "tokens": 161353,
+      "elapsed": 125.76453287500772,
+      "edits": 25
+    },
+    {
+      "file": "031_Academic Research (Field_ intro_text_body)_10b5bc23.pdf",
+      "status": "completed",
+      "job_id": "f654cb4f-4dae-43d7-af6b-bdfcc6cece13",
+      "pages": 9,
+      "cost": 1.3301720000000004,
+      "tokens": 1106928,
+      "elapsed": 410.1368181660073,
+      "edits": 74
+    },
+    {
+      "file": "089_Australia\u2019s Price of Energy_ A Deregulated Grid (Field_ intro_text_body)_001e4506.pdf",
+      "status": "completed",
+      "job_id": "df69be0c-9e2f-4a47-9ebf-2ccf51c2a7a7",
+      "pages": 16,
+      "cost": 1.368526,
+      "tokens": 1139622,
+      "elapsed": 319.2609767499962,
+      "edits": 67
+    },
+    {
+      "file": "049_Understanding Social Transformation through Mesoamerican Archaeology (Field_ description)_940ed569.pdf",
+      "status": "completed",
+      "job_id": "de0ed3f4-7f9d-41a7-bd4e-75bf4f4bd1c4",
+      "pages": 1,
+      "cost": 0.08052000000000001,
+      "tokens": 60944,
+      "elapsed": 66.36746008398768,
+      "edits": 7
+    },
+    {
+      "file": "030_Senate Democrats want answers on dangerous Amazon delivery system (Field_ intro_text_body)_0ac1493c.pdf",
+      "status": "completed",
+      "job_id": "ab94cd9a-c199-49b3-a371-f8e5bc34dd8d",
+      "pages": 3,
+      "cost": 0.186349,
+      "tokens": 137669,
+      "elapsed": 127.03699187500752,
+      "edits": 26
+    },
+    {
+      "file": "076_State Infrastructure Program as a Countercyclical Tool, by Yonghong Wu (Field_ abstract)_dff0813e.pdf",
+      "status": "completed",
+      "job_id": "416b8ff9-66b8-42bb-b070-da5b8df1dbe5",
+      "pages": 4,
+      "cost": 0.12921,
+      "tokens": 110750,
+      "elapsed": 76.58062137498928,
+      "edits": 7
+    },
+    {
+      "file": "026_SHARE WITH STUDENTS_ UIC Wellness Center Mental Health Toolkit and Utilities Assistance Resources (F_ebd39c5a.pdf",
+      "status": "completed",
+      "job_id": "482fac21-7aac-49f8-a937-3dce37e9ee94",
+      "pages": 2,
+      "cost": 0.11532499999999998,
+      "tokens": 85765,
+      "elapsed": 66.60728312499123,
+      "edits": 5
+    },
+    {
+      "file": "061_SHARE WITH STUDENTS_ Summer Research Program &#8211; Institute for Public Health at Washington Unive_2140f68b.pdf",
+      "status": "completed",
+      "job_id": "b37edd78-628a-4ac1-bf41-aa524c91dbde",
+      "pages": 4,
+      "cost": 0.382005,
+      "tokens": 307717,
+      "elapsed": 120.21676462500182,
+      "edits": 27
+    },
+    {
+      "file": "025_Curriculum for Taking up the Cause of the Working Class_ The Education of Alice Hamilton (Field_ int_c0b70a56.pdf",
+      "status": "completed",
+      "job_id": "d13db5c0-f679-4977-b81c-842d6add8aa7",
+      "pages": 7,
+      "cost": 0.321528,
+      "tokens": 263296,
+      "elapsed": 135.8869543329929,
+      "edits": 25
+    },
+    {
+      "file": "024_The Refugee Crisis_ A Conference (Field_ description)_4f34fc67.pdf",
+      "status": "completed",
+      "job_id": "fbfc1501-6da9-45c3-945b-be8c9f9adf9d",
+      "pages": 8,
+      "cost": 1.045991,
+      "tokens": 795931,
+      "elapsed": 490.375287457995,
+      "edits": 122
+    },
+    {
+      "file": "023_The Refugee Crisis_ A Conference (Field_ description)_c0764177.pdf",
+      "status": "completed",
+      "job_id": "19873c17-a504-45fb-aa62-cb490fb64b90",
+      "pages": 10,
+      "cost": 1.2128240000000001,
+      "tokens": 991440,
+      "elapsed": 439.63590441600536,
+      "edits": 107
+    },
+    {
+      "file": "016_Annual Reports &amp; Documents (Field_ intro_text_body)_1c24c5cf.pdf",
+      "status": "completed",
+      "job_id": "2560b209-4264-490c-8360-d225541e1942",
+      "pages": 8,
+      "cost": 0.048324,
+      "tokens": 40628,
+      "elapsed": 260.60648170800414,
+      "edits": 6
+    },
+    {
+      "file": "011_Year at a Glance (Field_ intro_text_body)_033e3072.pdf",
+      "status": "completed",
+      "job_id": "dd04c221-d0a1-4e24-a4af-cdb68483dd4b",
+      "pages": 4,
+      "cost": 0.211112,
+      "tokens": 164124,
+      "elapsed": 119.42307058299775,
+      "edits": 11
+    },
+    {
+      "file": "Undergraduate Course Syllabi (Field_ intro_text_body)_ad82e678.pdf",
+      "status": "completed",
+      "job_id": "00b3a4d4-cd2b-4ece-af69-3dc5db085e27",
+      "pages": 13,
+      "cost": 0.773965,
+      "tokens": 647109,
+      "elapsed": 219.74396108300425,
+      "edits": 69
+    },
+    {
+      "file": "006_Heals &amp; Feels_ Voguing (Field_ intro_text_body)_767805f8.pdf",
+      "status": "completed",
+      "job_id": "7a18a407-a2fc-4c6f-91cf-35ba0e0dd9b4",
+      "pages": 1,
+      "cost": 0.04698200000000001,
+      "tokens": 33950,
+      "elapsed": 56.470848459008266,
+      "edits": 8
+    },
+    {
+      "file": "059_Spring 2020 Mural Tours and Dialogues for UIC classes &amp; groups at the LCC (Field_ description)_e0fb82ef.pdf",
+      "status": "completed",
+      "job_id": "c4b994ff-be7c-4cfc-b295-b19ea5ce6d58",
+      "pages": 1,
+      "cost": 0.049976,
+      "tokens": 38448,
+      "elapsed": 75.86500254200655,
+      "edits": 7
+    },
+    {
+      "file": "004_Local economies (Field_ intro_text_body)_41401408.pdf",
+      "status": "completed",
+      "job_id": "7f8493ff-6e0a-42b7-b957-ab587bdc26ac",
+      "pages": 11,
+      "cost": 1.122147,
+      "tokens": 848215,
+      "elapsed": 501.28394316699996,
+      "edits": 134
+    },
+    {
+      "file": "003_Safety Meeting Material (Field_ intro_text_body)_5e392a73.pdf",
+      "status": "completed",
+      "job_id": "63629cc2-1843-4a10-889a-84cb150e9fce",
+      "pages": 1,
+      "cost": 0.07713,
+      "tokens": 56878,
+      "elapsed": 86.41443941699981,
+      "edits": 7
+    },
+    {
+      "file": "002_Women\u2019s Rights in Challenging Times (Field_ description)_23d642fb.pdf",
+      "status": "completed",
+      "job_id": "b9885f40-12b5-4afc-90b5-fdbcb7ffa78b",
+      "pages": 1,
+      "cost": 0.05342700000000001,
+      "tokens": 42367,
+      "elapsed": 46.18320504199073,
+      "edits": 4
+    },
+    {
+      "file": "Graduate Tuition and Fees (Field_ intro_text_body)_499772ce.pdf",
+      "status": "completed",
+      "job_id": "a90ebe0e-aeab-4f7e-ae51-03c722092df0",
+      "pages": 3,
+      "cost": 0.369407,
+      "tokens": 292647,
+      "elapsed": 131.2074595419981,
+      "edits": 12
+    },
+    {
+      "file": "Civic and Political Engagement (Field_ intro_text_body)_fe65212d.pdf",
+      "status": "completed",
+      "job_id": "fd1d0d22-bff6-4039-b482-5548a4aefe5f",
+      "pages": 2,
+      "cost": 0.163188,
+      "tokens": 127520,
+      "elapsed": 61.00504979099787,
+      "edits": 14
+    },
+    {
+      "file": "Rafael Cintr\u00f3n Ortiz (Field_ intro_text_body)_dccea6fb.pdf",
+      "status": "completed",
+      "job_id": "a18b493e-413f-45e1-afee-cfe801bf3daa",
+      "pages": 1,
+      "cost": 0.0,
+      "tokens": 0,
+      "elapsed": 20.148355208002613,
+      "edits": 1
+    }
+  ]
+}

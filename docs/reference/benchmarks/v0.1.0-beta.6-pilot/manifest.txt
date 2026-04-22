@@ -1,0 +1,54 @@
+# Deliverable 3 pilot corpus — 30 diverse UIC documents
+#
+# Tested against Equalify Reflow v0.1.0-beta.6. The corpus was curated for
+# diversity across page counts (1–20), content types (academic, policy,
+# event, infographic, syllabus, newsletter, presentation), and layout
+# complexity (single- vs. multi-column, scanned vs. born-digital, text- vs.
+# image-heavy).
+#
+# PDFs are NOT checked into the repo — several are third-party copyrighted
+# works. To reproduce this run, drop the source files under a `samples/`
+# directory beside this manifest (paths below are relative to this file),
+# or replace with your own corpus and keep the same layout.
+#
+# Usage:
+#     uv run scripts/batch_run.py \
+#         --manifest docs/reference/benchmarks/v0.1.0-beta.6-pilot/manifest.txt
+#
+# Format: one path per line; `#` introduces a comment.
+
+# --- Long (10–20 pages) ---
+samples/081_Cite in ICMJE style.pdf                                   # 20p medical citation guidelines (tables, lists)
+samples/089_Australias Price of Energy.pdf                            # 16p energy policy report (data, charts)
+samples/038_Policies and Guidelines.pdf                               # 15p UIC policies & guidelines
+samples/Undergraduate Course Syllabi.pdf                              # 13p course syllabus (structured, multi-section)
+samples/004_Local economies.pdf                                       # 11p image-heavy economic brief
+samples/082_Advising Millennial Students.pdf                          # 10p academic advising journal
+samples/023_Refugee Crisis Conference.pdf                             # 10p conference program (mixed layout)
+
+# --- Medium (4–9 pages) ---
+samples/031_Academic Research.pdf                                     # 9p academic research
+samples/016_Annual Reports.pdf                                        # 8p annual report (graphics + text)
+samples/062_Professional Licensure Disclosures.pdf                    # 8p regulatory disclosures
+samples/024_Refugee Crisis Conference variant.pdf                     # 8p conference program variant
+samples/025_Education of Alice Hamilton.pdf                           # 7p curriculum / education history
+samples/078_UIH Patient Complaint and Grievance.pdf                   # 6p hospital policy (formal, structured)
+samples/011_Year at a Glance.pdf                                      # 4p visual infographic
+samples/076_State Infrastructure Countercyclical Tool.pdf             # 4p policy brief with data
+samples/061_Summer Research Program.pdf                               # 4p multi-track program descriptions
+samples/Graduate Tuition and Fees.pdf                                 # 3p dense numeric tables
+
+# --- Short (1–3 pages) ---
+samples/030_Senate Democrats on Amazon Delivery.pdf                   # 3p text-heavy political letter
+samples/032_Early Retirement Incentives.pdf                           # 3p policy analysis
+samples/026_UIC Wellness Center Resources.pdf                         # 2p wellness resources
+samples/Civic and Political Engagement.pdf                            # 2p text-heavy policy / stats
+samples/002_Womens Rights in Challenging Times.pdf                    # 1p image-heavy poster
+samples/003_Safety Meeting Material.pdf                               # 1p image-heavy safety material
+samples/006_Heals and Feels Voguing.pdf                               # 1p cultural event flyer
+samples/059_Spring 2020 Mural Tours.pdf                               # 1p art / visual flyer
+samples/Rafael Cintron Ortiz.pdf                                      # 1p narrative prose
+samples/048_Language Data.pdf                                         # 1p linguistics lecture flyer
+samples/049_Mesoamerican Archaeology.pdf                              # 1p archaeology event flyer
+samples/036_Meeting Notes.pdf                                         # 1p text-only meeting notes
+samples/083_RELS 225 Jews in Islamic Lands.pdf                        # 1p religious studies course flyer

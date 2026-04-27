@@ -1,19 +1,19 @@
 # Pipeline phases reference
 
-The pipeline has **6 public phases** that consumers (the viewer, the WordPress plugin, API clients) see. Internally, each phase is implemented by one or more `_step_*` methods in `src/services/pipeline_viewer.py`, except for PII Review which runs inline in the streaming endpoint before any `_step_*` executes. This document is the authoritative public ↔ internal mapping.
+The pipeline has **5 versioned conversion phases** plus a **PII Review** gate that the viewer renders as a stage indicator. Each conversion phase is implemented by one or more `_step_*` methods in `src/services/pipeline_viewer.py`. PII Review runs inline in the streaming endpoint before any `_step_*` executes — it is a permission gate, not a versioned transformation, and does not bump the markdown version. This document is the authoritative public ↔ internal mapping for everything the viewer surfaces.
 
 **Source of truth:** `clients/viewer/src/types/pipeline-viewer.ts` (`PIPELINE_STAGES`). If this table disagrees with that constant, the constant wins — update the docs.
 
-## Public phases → internal steps
+## Public stages → internal steps
 
-| Public phase | Internal step names | AI? | What it does |
+| Stage | Internal step names | AI? | What it does |
 |---|---|---|---|
-| 1. **PII Review** | `pii_scan` | No | Runs Presidio against a text-only docling pass before full extraction. If findings exist, the streaming pipeline blocks on `session.pii_decision_event` until the user approves or denies via `POST /api/v1/pipeline/sessions/{sid}/pii-decision`. Denial aborts the pipeline. Can be opted out with `skip_pii_scan=true`. |
-| 2. **Extraction** | `docling`, `docling_ocr` (conditional) | No | PDF → markdown + page images via IBM Docling. `docling_ocr` only fires when the classifier flags a scanned document. |
-| 3. **Analysis** | `classification`, `structure` | Yes | `classification` tags the document as digital / scanned / malformed. `structure` identifies headings, footnotes, code blocks, per-page layout attributes. |
-| 4. **Headings** | `heading_reconciliation`, `heading_levels` | Yes | `heading_reconciliation` reconciles per-page heading candidates against the global outline. `heading_levels` normalises the hierarchy (H1 → H2 → H3, no skips). |
-| 5. **Translation** | `page_content`, `code_blocks` | Yes | `page_content` does per-page accessibility corrections (invokes image / table / list subagents). `code_blocks` tags fenced blocks with detected programming language. |
-| 6. **Assembly** | `boundaries`, `cleanup` | Mixed | `boundaries` rejoins cross-page split content and relocates footnotes (AI). `cleanup` normalises whitespace and lints the markdown (deterministic). |
+| **PII Review** (gate) | `pii_scan` | No | Runs Presidio against a text-only docling pass before full extraction. If findings exist, the streaming pipeline blocks on `session.pii_decision_event` until the user approves or denies via `POST /api/v1/pipeline/sessions/{sid}/pii-decision`. Denial aborts the pipeline. Can be opted out with `skip_pii_scan=true`. |
+| 1. **Extraction** | `docling`, `docling_ocr` (conditional) | No | PDF → markdown + page images via IBM Docling. `docling_ocr` only fires when the classifier flags a scanned document. |
+| 2. **Analysis** | `classification`, `structure` | Yes | `classification` tags the document as digital / scanned / malformed. `structure` identifies headings, footnotes, code blocks, per-page layout attributes. |
+| 3. **Headings** | `heading_reconciliation`, `heading_levels` | Yes | `heading_reconciliation` reconciles per-page heading candidates against the global outline. `heading_levels` normalises the hierarchy (H1 → H2 → H3, no skips). |
+| 4. **Translation** | `page_content`, `code_blocks` | Yes | `page_content` does per-page accessibility corrections (invokes image / table / list subagents). `code_blocks` tags fenced blocks with detected programming language. |
+| 5. **Assembly** | `boundaries`, `cleanup` | Mixed | `boundaries` rejoins cross-page split content and relocates footnotes (AI). `cleanup` normalises whitespace and lints the markdown (deterministic). |
 
 The viewer also shows a dynamic **Review** stage that catches any orphan steps (`revision_*`, `feedback_*`, custom steps) not listed above.
 

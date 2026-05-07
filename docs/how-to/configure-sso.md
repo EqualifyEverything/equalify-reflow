@@ -67,6 +67,42 @@ In your terminal, confirm parallel API-key access still works:
 curl -H "X-API-Key: $YOUR_KEY" https://<your-host>/api/v1/feedback/config
 ```
 
+## Local round-trip before flipping prod
+
+Smoke-test the OIDC config end-to-end on your laptop before you flip a real deployment. This catches client-secret typos, missing optional claims, scope misconfig, and tenant-policy surprises while a broken config only affects you.
+
+Two ways to set this up:
+
+1. **Register a separate "localdev" Entra app** with redirect URI `http://localhost:8080/api/v1/auth/callback/entra` and its own client secret. Two apps means two secrets to rotate, but a leaked dev secret never compromises prod. Recommended.
+2. **Register one app with two redirect URIs** — list `https://<your-prod-host>/api/v1/auth/callback/entra` *and* `http://localhost:8080/api/v1/auth/callback/entra` on the same app and reuse one secret. Faster to set up, but a dev-laptop `.env` leak is a prod incident.
+
+Steps for path 1:
+
+1. Repeat steps 1–3 of the Entra walkthrough above against a new app named `equalify-reflow-localdev` (or similar). Use `http://localhost:8080/api/v1/auth/callback/entra` as the redirect URI. Capture the dev tenant ID, client ID, and client secret.
+2. In your local `.env`:
+
+   ```env
+   AUTH_MODE=oidc
+   AUTH_SECRET_KEY=<openssl rand -hex 32>
+   AUTH_COOKIE_SECURE=false
+   AUTH_OIDC_PROVIDERS=[{"id":"entra","display_name":"Sign in with Microsoft","discovery_url":"https://login.microsoftonline.com/<dev-tenant-id>/v2.0/.well-known/openid-configuration","client_id":"<dev-client-id>","client_secret":"<dev-client-secret>","scopes":"openid email profile"}]
+   ```
+
+   Note `AUTH_COOKIE_SECURE=false` — local dev runs over HTTP, so the `Secure` flag would otherwise drop the cookie before it lands. Production must keep it `true`.
+3. `make down && make dev`. Open `http://localhost:8080/` and click **Sign in with Microsoft**. You should bounce to `login.microsoftonline.com`, complete sign-in/MFA, and arrive on the pipeline viewer with your name in the top-right.
+4. Inspect the request chain in DevTools (Network tab, "Preserve log") to confirm:
+   - `GET /api/v1/auth/login/entra` → 302 to `login.microsoftonline.com/<tenant>/.../authorize?...`
+   - IdP → 302 back to `/api/v1/auth/callback/entra?code=…&state=…`
+   - Our callback → 302 to `/` with `Set-Cookie: reflow_session` and `reflow_session_csrf` on the response
+   - `GET /api/v1/auth/me` returns your `sub`, `email`, `name`, `provider_id: "entra"`
+5. Confirm the API-key path still works in parallel:
+
+   ```bash
+   curl -H "X-API-Key: $YOUR_KEY" http://localhost:8080/api/v1/feedback/config
+   ```
+
+If any step fails, fix the config and retry — the broken state never reaches the prod deployment.
+
 ## Generic OIDC (Google, Okta, Auth0, Keycloak, ...)
 
 The provider implementation is IdP-agnostic — the discovery URL is the only thing that distinguishes one from another. Reference URLs:

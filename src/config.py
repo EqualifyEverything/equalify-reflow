@@ -75,7 +75,10 @@ class Settings(BaseSettings):
     # API keys remain valid as a parallel auth path in all modes.
     auth_mode: Literal["none", "basic", "oidc"] = Field(
         default="none",
-        description="Auth mode for the viewer. 'none' preserves today's behaviour; 'basic' enables HTTP basic; 'oidc' enables SSO (PR2).",
+        description=(
+            "Auth mode for the viewer. 'none' preserves today's behaviour; "
+            "'basic' enables HTTP basic; 'oidc' enables SSO (PR2)."
+        ),
     )
     auth_secret_key: SecretStr | None = Field(
         default=None,
@@ -97,7 +100,11 @@ class Settings(BaseSettings):
     )
     auth_basic_users: SecretStr | None = Field(
         default=None,
-        description="Semicolon-separated 'username:argon2hash' pairs. Required when auth_mode='basic'. Generate hashes with `make auth-hash-password`. Comma-separated would collide with argon2 parameter blocks.",
+        description=(
+            "Semicolon-separated 'username:argon2hash' pairs. Required when "
+            "auth_mode='basic'. Generate hashes with `make auth-hash-password`. "
+            "Comma-separated would collide with argon2 parameter blocks."
+        ),
     )
     auth_oidc_providers: SecretStr | None = Field(
         default=None,

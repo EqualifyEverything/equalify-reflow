@@ -4,7 +4,6 @@ from __future__ import annotations
 
 import pytest
 
-
 COMMON_HEADERS = {"Origin": "http://testserver", "Sec-Fetch-Site": "same-origin"}
 
 

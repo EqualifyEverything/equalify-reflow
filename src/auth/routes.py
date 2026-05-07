@@ -20,9 +20,9 @@ from ..config import settings
 from . import audit, csrf
 from .base import AuthMode, Identity
 from .cookies import clear_session_cookies, set_session_cookies
-from .dependencies import current_identity, require_identity
+from .dependencies import require_identity
 from .factory import get_auth_provider
-from .providers.basic_provider import BasicAuthProvider, InvalidCredentials
+from .providers.basic_provider import BasicAuthProvider, InvalidCredentialsError
 
 logger = logging.getLogger(__name__)
 
@@ -60,7 +60,7 @@ class IdentityResponse(BaseModel):
     expires_at: str
 
     @classmethod
-    def from_identity(cls, identity: Identity) -> "IdentityResponse":
+    def from_identity(cls, identity: Identity) -> IdentityResponse:
         return cls(
             sub=identity.sub,
             email=identity.email,
@@ -161,7 +161,7 @@ async def basic_login(
 
     try:
         identity = provider.authenticate(username=payload.username, password=payload.password)
-    except InvalidCredentials:
+    except InvalidCredentialsError:
         audit.emit(
             "login_failure",
             provider_id="basic",

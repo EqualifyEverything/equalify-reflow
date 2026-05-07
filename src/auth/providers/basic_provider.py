@@ -59,7 +59,7 @@ def _parse_users(raw: str) -> dict[str, _BasicUser]:
     return users
 
 
-class InvalidCredentials(Exception):
+class InvalidCredentialsError(Exception):
     """Raised when login should fail. Caller maps to a 401 with an opaque
     error so we never leak whether the username exists.
     """
@@ -91,7 +91,7 @@ class BasicAuthProvider:
     def authenticate(self, *, username: str, password: str) -> Identity:
         """Verify the password and return a fresh :class:`Identity`.
 
-        Raises :class:`InvalidCredentials` for both unknown users and wrong
+        Raises :class:`InvalidCredentialsError` for both unknown users and wrong
         passwords. The argon2 verify is constant-time per its library
         contract; we run it against a dummy hash on unknown-user to keep
         timing identical between the two failure modes.
@@ -105,12 +105,12 @@ class BasicAuthProvider:
                 self._hasher.verify(_DUMMY_HASH, password)
             except Exception:
                 pass
-            raise InvalidCredentials("invalid credentials")
+            raise InvalidCredentialsError("invalid credentials")
 
         try:
             self._hasher.verify(user.password_hash, password)
         except VerifyMismatchError as exc:
-            raise InvalidCredentials("invalid credentials") from exc
+            raise InvalidCredentialsError("invalid credentials") from exc
 
         return make_identity(
             sub=user.username,

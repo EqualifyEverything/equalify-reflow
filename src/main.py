@@ -225,7 +225,10 @@ def custom_openapi() -> dict[str, object]:
             "type": "apiKey",
             "in": "cookie",
             "name": settings.auth_session_cookie_name,
-            "description": "Signed session cookie set by /api/v1/auth/login or the OIDC callback. Active only when AUTH_MODE != 'none'.",
+            "description": (
+                "Signed session cookie set by /api/v1/auth/login or the OIDC "
+                "callback. Active only when AUTH_MODE != 'none'."
+            ),
         },
     }
 

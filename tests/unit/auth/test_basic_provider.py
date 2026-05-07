@@ -4,10 +4,9 @@ from __future__ import annotations
 
 import pytest
 from argon2 import PasswordHasher
-
 from src.auth.providers.basic_provider import (
     BasicAuthProvider,
-    InvalidCredentials,
+    InvalidCredentialsError,
     _parse_users,
 )
 
@@ -45,7 +44,7 @@ def test_authenticate_returns_identity_for_valid_password() -> None:
 def test_wrong_password_raises_invalid_credentials() -> None:
     csv = _csv_for({"alice": "correct-horse"})
     provider = BasicAuthProvider(users_csv=csv, session_ttl_seconds=3600)
-    with pytest.raises(InvalidCredentials):
+    with pytest.raises(InvalidCredentialsError):
         provider.authenticate(username="alice", password="battery-staple")
 
 
@@ -53,12 +52,12 @@ def test_wrong_password_raises_invalid_credentials() -> None:
 def test_unknown_user_raises_invalid_credentials() -> None:
     csv = _csv_for({"alice": "correct-horse"})
     provider = BasicAuthProvider(users_csv=csv, session_ttl_seconds=3600)
-    with pytest.raises(InvalidCredentials):
+    with pytest.raises(InvalidCredentialsError):
         provider.authenticate(username="bob", password="anything")
 
 
 @pytest.mark.unit
 def test_empty_user_set_initialises_but_rejects_all() -> None:
     provider = BasicAuthProvider(users_csv="", session_ttl_seconds=3600)
-    with pytest.raises(InvalidCredentials):
+    with pytest.raises(InvalidCredentialsError):
         provider.authenticate(username="alice", password="anything")

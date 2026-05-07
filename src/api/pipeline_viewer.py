@@ -7,20 +7,19 @@ import time
 from collections.abc import AsyncGenerator
 from typing import Any, Literal
 
+import redis.asyncio as aioredis
 from fastapi import APIRouter, File, Form, HTTPException, Query, Request, UploadFile
 from fastapi.responses import StreamingResponse
 from pydantic import BaseModel
 
-import redis.asyncio as aioredis
-
+from ..config import settings
+from ..dependencies import _get_redis_pool
 from ..services.feedback_client import feedback_client
 from ..services.pdf_classifier import classify_pdf, enrich_classification
 from ..services.pdf_extractor import PDFExtractionError, extract_pdf_text
 from ..services.pii_analyzer import get_pii_analyzer
 from ..services.pipeline_viewer import PipelineViewerService
 from ..services.pipeline_viewer_models import PipelineViewerResult, StepResult
-from ..config import settings
-from ..dependencies import _get_redis_pool
 from ..services.session_store import PipelineSession, session_store
 
 logger = logging.getLogger(__name__)
@@ -91,7 +90,7 @@ async def _buffer_reader(
             await asyncio.wait_for(
                 session.new_event.wait(), timeout=_HEARTBEAT_INTERVAL_SECONDS,
             )
-        except asyncio.TimeoutError:
+        except TimeoutError:
             yield _SSE_HEARTBEAT
 
 
@@ -275,7 +274,7 @@ async def _pipeline_steps(
                     session.pii_decision_event.wait(),
                     timeout=_PII_DECISION_TIMEOUT_SECONDS,
                 )
-            except asyncio.TimeoutError:
+            except TimeoutError:
                 emit("pii_decision", {"decision": "denied", "reason": "timeout"})
                 session.status = "completed"
                 emit("done", {
@@ -333,7 +332,7 @@ async def _pipeline_steps(
 
     # OCR re-run for scanned documents
     if result.stats.get("is_likely_scanned", False):
-        from src.services.pdf_classifier import FINDING_SCANNED, FINDING_SCAN_PRODUCER
+        from src.services.pdf_classifier import FINDING_SCAN_PRODUCER, FINDING_SCANNED
 
         scanned_codes = {FINDING_SCANNED, FINDING_SCAN_PRODUCER}
         finding_codes = {f.code for f in classification.findings}

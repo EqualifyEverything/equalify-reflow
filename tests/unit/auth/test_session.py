@@ -5,7 +5,6 @@ from __future__ import annotations
 import time
 
 import pytest
-
 from src.auth.session import SignedCookieSession, make_identity, should_reissue
 
 SECRET = "x" * 32

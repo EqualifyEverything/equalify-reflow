@@ -9,7 +9,7 @@ can be swapped in for Phase 3 with a one-line registration change in
 from __future__ import annotations
 
 import logging
-from datetime import datetime, timedelta, timezone
+from datetime import UTC, datetime, timedelta
 from typing import Protocol
 
 from itsdangerous import BadSignature, SignatureExpired, URLSafeTimedSerializer
@@ -80,7 +80,7 @@ def make_identity(
     """Construct a fresh :class:`Identity` with ``issued_at``/``expires_at``
     derived from ``ttl_seconds``. Use at login and at sliding-window re-issue.
     """
-    now = datetime.now(timezone.utc)
+    now = datetime.now(UTC)
     return Identity(
         sub=sub,
         provider_id=provider_id,
@@ -93,7 +93,7 @@ def make_identity(
 
 def should_reissue(identity: Identity) -> bool:
     """Sliding-window check: re-issue once we're past the half-life."""
-    now = datetime.now(timezone.utc)
+    now = datetime.now(UTC)
     total = (identity.expires_at - identity.issued_at).total_seconds()
     elapsed = (now - identity.issued_at).total_seconds()
     return elapsed > (total / 2.0)

@@ -6,35 +6,61 @@ Settings are immutable for the process lifetime, so memoising here is safe.
 
 from __future__ import annotations
 
+import json
 from functools import lru_cache
 
 from ..config import settings
 from .base import AuthMode, AuthProvider
 from .providers.basic_provider import BasicAuthProvider
 from .providers.none_provider import NoneAuthProvider
+from .providers.oidc_provider import OIDCAuthProvider, OIDCProviderConfig
 from .session import SessionStore, SignedCookieSession
 
 
 @lru_cache(maxsize=1)
-def get_auth_provider() -> AuthProvider:
-    """Return the active provider for the configured ``auth_mode``.
+def get_auth_providers() -> dict[str, AuthProvider]:
+    """All configured providers, keyed by ``provider.id``.
 
-    Settings validation has already enforced that mode-required env is set,
-    so we only handle the modes that actually run.
+    For ``AUTH_MODE=none`` and ``=basic`` there's exactly one entry. For
+    ``=oidc`` there's one entry per element of ``AUTH_OIDC_PROVIDERS`` —
+    PR2 typically ships with a single Entra entry; PR3's UI exposes the
+    chooser when there are several.
     """
     mode = AuthMode(settings.auth_mode)
     if mode is AuthMode.NONE:
-        return NoneAuthProvider()
+        return {"none": NoneAuthProvider()}
     if mode is AuthMode.BASIC:
         # validated by Settings: auth_basic_users is non-None and parses
         users_csv = settings.auth_basic_users.get_secret_value()  # type: ignore[union-attr]
-        return BasicAuthProvider(users_csv=users_csv, session_ttl_seconds=settings.auth_session_ttl_seconds)
+        return {
+            "basic": BasicAuthProvider(
+                users_csv=users_csv, session_ttl_seconds=settings.auth_session_ttl_seconds
+            )
+        }
     if mode is AuthMode.OIDC:
-        # Lands in PR2; raise loudly until then so a misconfigured deployment
-        # fails at startup rather than silently auth-bypassing.
-        raise NotImplementedError("OIDC provider lands in PR2; use AUTH_MODE=basic for now")
-    # Defensive — Settings validates the literal so this branch shouldn't run.
+        # validated by Settings: auth_oidc_providers parses to a non-empty
+        # JSON array whose entries have the required keys.
+        raw = settings.auth_oidc_providers.get_secret_value()  # type: ignore[union-attr]
+        configs = [OIDCProviderConfig.model_validate(entry) for entry in json.loads(raw)]
+        return {
+            cfg.id: OIDCAuthProvider(cfg, session_ttl_seconds=settings.auth_session_ttl_seconds)
+            for cfg in configs
+        }
     raise ValueError(f"Unknown auth_mode: {settings.auth_mode!r}")
+
+
+@lru_cache(maxsize=1)
+def get_auth_provider() -> AuthProvider:
+    """Return the *first* active provider — convenience for single-provider
+    paths (``AUTH_MODE=none`` and ``=basic``, or ``=oidc`` with one entry).
+
+    Routes that need to look up a specific provider by id under multi-
+    provider OIDC use ``get_auth_providers()[provider_id]`` instead.
+    """
+    providers = get_auth_providers()
+    if not providers:
+        raise RuntimeError("no auth providers configured")
+    return next(iter(providers.values()))
 
 
 @lru_cache(maxsize=1)

@@ -74,7 +74,7 @@ Middleware executes in reverse registration order (last added = first executed):
 | `AUTH_SESSION_COOKIE_NAME` | `reflow_session` | — | CSRF companion cookie is named `<this>_csrf`. |
 | `AUTH_COOKIE_SECURE` | `true` | — | Disable only for local HTTP dev. |
 | `AUTH_BASIC_USERS` | — | `AUTH_MODE=basic` | Semicolon-separated `username:argon2hash` pairs (commas collide with argon2 parameter blocks). Generate hashes with `make auth-hash-password`. |
-| `AUTH_OIDC_PROVIDERS` | — | `AUTH_MODE=oidc` (PR2) | JSON array of `{id, display_name, discovery_url, client_id, client_secret, scopes?}` entries. |
+| `AUTH_OIDC_PROVIDERS` | — | `AUTH_MODE=oidc` | JSON array of `{id, display_name, discovery_url, client_id, client_secret, scopes?}` entries. The `id` field becomes the path segment in `/api/v1/auth/callback/{id}` — must match what's registered with the IdP. |
 | `AUTH_POST_LOGIN_REDIRECT` | `/` | — | Where to send the browser after login when no `?next=` is present. |
 
 ### Endpoints under `/api/v1/auth/*`
@@ -83,8 +83,8 @@ Middleware executes in reverse registration order (last added = first executed):
 |---|---|---|
 | `GET /auth/config` | always | Public. SPA reads on mount; reports `mode` and providers. |
 | `POST /auth/login` | basic | JSON `{username, password}`. Sets session + CSRF cookies. |
-| `GET /auth/login/{provider_id}` | oidc (PR2) | 302 to IdP authorisation endpoint with PKCE. |
-| `GET /auth/callback/{provider_id}` | oidc (PR2) | Handles redirect-back, sets cookies, 302 to `next`. |
+| `GET /auth/login/{provider_id}` | oidc | 302 to IdP authorisation endpoint with PKCE. Sets the `reflow_oauth_tx` signed cookie carrying state, nonce, PKCE verifier, and `next_path`. |
+| `GET /auth/callback/{provider_id}` | oidc | Validates state + tx cookie, exchanges code for tokens, validates ID token (signature, iss, aud, exp, nonce), sets session cookies, 302 to `next`. |
 | `POST /auth/logout` | basic + oidc | CSRF required (`X-CSRF-Token` header). Clears cookies. |
 | `GET /auth/me` | basic + oidc | Returns identity or 401. |
 
@@ -92,6 +92,7 @@ Middleware executes in reverse registration order (last added = first executed):
 
 - `reflow_session` — `HttpOnly`, `Secure` (configurable), `SameSite=Lax`. Stateless signed cookie carrying `{sub, email, name, provider_id, issued_at, expires_at}`. The ID token itself is **not** stored in the cookie.
 - `reflow_session_csrf` — NOT `HttpOnly`. HMAC of the session-cookie value. SPA echoes as `X-CSRF-Token` on non-GET requests under `/api/v1/auth/*`.
+- `reflow_oauth_tx` — `HttpOnly`, `SameSite=Lax`, 10-minute TTL. Set during the OIDC kickoff route; carries the OAuth `state`, OIDC `nonce`, PKCE verifier, and the user's original `next_path`. Cleared by the callback route. Signed with a different `itsdangerous` salt from the session cookie so the two can never be confused.
 
 ### Audit logging
 

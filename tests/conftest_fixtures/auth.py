@@ -52,6 +52,7 @@ def _build_app(settings_overrides: dict[str, Any]) -> FastAPI:
         object.__setattr__(global_settings, key, value)
 
     factory.get_auth_provider.cache_clear()
+    factory.get_auth_providers.cache_clear()
     factory.get_session_store.cache_clear()
 
     app = FastAPI()
@@ -78,6 +79,7 @@ def _restore(app: FastAPI) -> None:
     for key, value in saved.items():
         object.__setattr__(global_settings, key, value)
     factory.get_auth_provider.cache_clear()
+    factory.get_auth_providers.cache_clear()
     factory.get_session_store.cache_clear()
 
 
@@ -129,6 +131,7 @@ def _restore_settings(saved: dict[str, Any]) -> None:
     for key, value in saved.items():
         object.__setattr__(global_settings, key, value)
     factory.get_auth_provider.cache_clear()
+    factory.get_auth_providers.cache_clear()
     factory.get_session_store.cache_clear()
 
 
@@ -164,6 +167,7 @@ def auth_full_app(basic_users_csv: str) -> Iterator[FastAPI]:
         saved[key] = getattr(global_settings, key)
         object.__setattr__(global_settings, key, value)
     factory.get_auth_provider.cache_clear()
+    factory.get_auth_providers.cache_clear()
     factory.get_session_store.cache_clear()
 
     app = FastAPI()
@@ -190,3 +194,59 @@ def auth_full_app(basic_users_csv: str) -> Iterator[FastAPI]:
 @pytest.fixture
 def auth_full_client(auth_full_app: FastAPI) -> TestClient:
     return TestClient(auth_full_app)
+
+
+@pytest.fixture
+def auth_oidc_app() -> Iterator[FastAPI]:
+    """App configured for AUTH_MODE=oidc with one mocked-IdP provider entry.
+
+    Use respx in the test body to mock the IdP's discovery / JWKS / token
+    endpoints. The provider's discovery_url is ``http://idp.example/.well-
+    known/openid-configuration`` so respx can intercept it.
+    """
+    import json
+
+    from pydantic import SecretStr
+    from src.auth import factory
+    from src.auth.middleware import SessionAuthMiddleware
+    from src.auth.routes import router as auth_router
+    from src.config import settings as global_settings
+
+    providers = [
+        {
+            "id": "idp",
+            "display_name": "Sign in with IdP",
+            "discovery_url": "http://idp.example/.well-known/openid-configuration",
+            "client_id": "client-abc",
+            "client_secret": "client-secret-shh",
+            "scopes": "openid email profile",
+        }
+    ]
+    overrides: dict[str, Any] = {
+        "auth_mode": "oidc",
+        "auth_secret_key": SecretStr("x" * 32),
+        "auth_oidc_providers": SecretStr(json.dumps(providers)),
+        "auth_cookie_secure": False,
+        "auth_session_cookie_name": "reflow_session",
+        "auth_session_ttl_seconds": 3600,
+    }
+    saved: dict[str, Any] = {}
+    for key, value in overrides.items():
+        saved[key] = getattr(global_settings, key)
+        object.__setattr__(global_settings, key, value)
+    factory.get_auth_provider.cache_clear()
+    factory.get_auth_providers.cache_clear()
+    factory.get_session_store.cache_clear()
+
+    app = FastAPI()
+    app.add_middleware(SessionAuthMiddleware)
+    app.include_router(auth_router)
+    try:
+        yield app
+    finally:
+        _restore_settings(saved)
+
+
+@pytest.fixture
+def auth_oidc_client(auth_oidc_app: FastAPI) -> TestClient:
+    return TestClient(auth_oidc_app)

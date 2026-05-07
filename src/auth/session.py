@@ -99,4 +99,22 @@ def should_reissue(identity: Identity) -> bool:
     return elapsed > (total / 2.0)
 
 
-__all__ = ["SessionStore", "SignedCookieSession", "make_identity", "should_reissue"]
+def make_tx_serializer(secret_key: str) -> URLSafeTimedSerializer:
+    """Serializer for the short-lived OAuth transaction cookie.
+
+    Uses a different salt from :class:`SignedCookieSession` so a session
+    cookie can never be replayed as a tx cookie or vice versa. Caller
+    enforces TTL via the ``max_age`` argument to ``loads``.
+    """
+    if len(secret_key) < 32:
+        raise ValueError("auth_secret_key must be at least 32 characters")
+    return URLSafeTimedSerializer(secret_key, salt="reflow-oauth-tx-v1")
+
+
+__all__ = [
+    "SessionStore",
+    "SignedCookieSession",
+    "make_identity",
+    "make_tx_serializer",
+    "should_reissue",
+]

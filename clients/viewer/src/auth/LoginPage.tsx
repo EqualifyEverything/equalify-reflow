@@ -33,15 +33,6 @@ export function LoginPage() {
     }
   }, [config, navigate])
 
-  // OIDC with a single provider → auto-redirect to its login_url.
-  useEffect(() => {
-    if (config && config.mode === 'oidc' && config.providers.length === 1) {
-      const url = new URL(config.providers[0].login_url, window.location.origin)
-      url.searchParams.set('next', next)
-      window.location.href = url.toString()
-    }
-  }, [config, next])
-
   const handleSubmit = async (event: FormEvent<HTMLFormElement>) => {
     event.preventDefault()
     if (submitting) return

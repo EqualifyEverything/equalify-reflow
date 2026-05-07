@@ -79,6 +79,7 @@ export function LoginPage() {
     return (
       <main className="flex min-h-screen items-center justify-center bg-background px-4">
         <section className="w-full max-w-sm space-y-6 rounded-lg border border-border bg-card p-8 shadow-lg">
+          <BrandHeader />
           <header>
             <h1 className="text-2xl font-bold">Sign in</h1>
             <p className="mt-1 text-sm text-muted-foreground">
@@ -112,6 +113,7 @@ export function LoginPage() {
   return (
     <main className="flex min-h-screen items-center justify-center bg-background px-4">
       <section className="w-full max-w-sm space-y-6 rounded-lg border border-border bg-card p-8 shadow-lg">
+        <BrandHeader />
         <header>
           <h1 className="text-2xl font-bold">Sign in</h1>
           <p className="mt-1 text-sm text-muted-foreground">
@@ -158,5 +160,26 @@ export function LoginPage() {
         </form>
       </section>
     </main>
+  )
+}
+
+// Mirrors the header on PipelineViewerPage so the brand reads continuous
+// between login and the rest of the app. UIC logo is conditional on the same
+// VITE_SHOW_UIC_LOGO flag the post-login header reads.
+function BrandHeader() {
+  return (
+    <div className="flex items-center justify-center gap-2 text-uic-blue">
+      {import.meta.env.VITE_SHOW_UIC_LOGO === 'true' && (
+        <img
+          src="/uic-logo.png"
+          alt="University of Illinois Chicago"
+          className="h-8 w-8"
+        />
+      )}
+      <span className="text-xl font-bold">Equalify Reflow</span>
+      <span className="text-[10px] font-semibold uppercase tracking-wider bg-uic-blue/10 text-uic-blue border border-uic-blue/20 px-2 py-0.5 rounded-full">
+        Beta
+      </span>
+    </div>
   )
 }

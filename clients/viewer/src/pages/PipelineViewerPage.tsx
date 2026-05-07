@@ -18,6 +18,7 @@ import { FeedbackModal } from '@/components/pipeline-viewer/FeedbackModal';
 import { PiiReviewPanel } from '@/components/pipeline-viewer/PiiReviewPanel';
 import { usePipelineViewer } from '@/hooks/usePipelineViewer';
 import { useFeedbackConfig } from '@/hooks/useFeedbackConfig';
+import { UserMenu } from '@/auth/UserMenu';
 import {
   Upload,
   Loader2,
@@ -601,6 +602,7 @@ export function PipelineViewerPage() {
             Beta
           </span>
         </h1>
+        <UserMenu />
       </header>
 
       {/* Classification error — document was rejected before processing */}

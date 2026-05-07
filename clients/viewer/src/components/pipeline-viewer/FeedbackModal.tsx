@@ -3,8 +3,7 @@ import { Modal } from '@/components/ui/modal';
 import { Button } from '@/components/ui/button';
 import { Input } from '@/components/ui/input';
 import { X, Loader2, CheckCircle2 } from 'lucide-react';
-
-const API_URL = import.meta.env.VITE_API_URL ?? '';
+import { apiFetch } from '@/auth/apiFetch';
 
 const CATEGORIES = [
   { value: 'content', label: 'Content — incorrect text, missing content, OCR errors' },
@@ -57,7 +56,7 @@ export function FeedbackModal({
     setError(null);
 
     try {
-      const res = await fetch(`${API_URL}/api/v1/feedback`, {
+      const res = await apiFetch('/api/v1/feedback', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({

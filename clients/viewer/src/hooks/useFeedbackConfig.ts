@@ -1,6 +1,5 @@
 import { useEffect, useState } from 'react';
-
-const API_URL = import.meta.env.VITE_API_URL ?? '';
+import { apiFetch } from '@/auth/apiFetch';
 
 interface FeedbackConfig {
   enabled: boolean;
@@ -11,7 +10,7 @@ export function useFeedbackConfig() {
 
   useEffect(() => {
     let cancelled = false;
-    fetch(`${API_URL}/api/v1/feedback/config`)
+    apiFetch('/api/v1/feedback/config')
       .then((r) => (r.ok ? r.json() : { enabled: false }))
       .then((cfg: FeedbackConfig) => {
         if (!cancelled) setEnabled(!!cfg.enabled);

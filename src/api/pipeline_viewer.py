@@ -7,7 +7,7 @@ import time
 from collections.abc import AsyncGenerator
 from typing import Any, Literal
 
-from fastapi import APIRouter, File, Form, HTTPException, Query, UploadFile
+from fastapi import APIRouter, File, Form, HTTPException, Query, Request, UploadFile
 from fastapi.responses import StreamingResponse
 from pydantic import BaseModel
 
@@ -585,6 +585,7 @@ async def process_pdf(
 
 @router.post("/process/stream")
 async def process_pdf_stream(
+    request: Request,
     file: UploadFile = File(...),
     images_scale: float = Form(default=2.0),
     do_table_structure: bool = Form(default=True),
@@ -632,10 +633,30 @@ async def process_pdf_stream(
         feedback_client.upload_document(content, filename)
     )
 
-    # Create session and emit session event (id=0) before spawning task
-    session = session_store.create_for_stream(filename)
+    # Create session and emit session event (id=0) before spawning task.
+    # Stamp identity if SessionAuthMiddleware populated it — both fields stay
+    # None when AUTH_MODE=none, preserving today's anonymous session shape.
+    # isinstance-check to avoid a MagicMock attribute satisfying the truthy
+    # path in mock-based tests.
+    from ..auth.base import Identity as _AuthIdentity
+
+    raw_identity = getattr(request.state, "identity", None)
+    identity = raw_identity if isinstance(raw_identity, _AuthIdentity) else None
+    session = session_store.create_for_stream(
+        filename,
+        identity_sub=identity.sub if identity is not None else None,
+        provider_id=identity.provider_id if identity is not None else None,
+    )
+    session_event_payload: dict[str, Any] = {"session_id": session.session_id}
+    if identity is not None:
+        session_event_payload["user"] = {
+            "sub": identity.sub,
+            "name": identity.name,
+            "email": identity.email,
+            "provider_id": identity.provider_id,
+        }
     session.event_buffer.append(
-        _sse_event("session", {"session_id": session.session_id}, event_id=0)
+        _sse_event("session", session_event_payload, event_id=0)
     )
     session.event_counter = 1
     session.new_event.set()

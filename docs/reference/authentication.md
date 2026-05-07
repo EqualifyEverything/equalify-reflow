@@ -1,8 +1,13 @@
 # Authentication reference
 
-The API has a single authentication layer — API key auth on `/api/*` endpoints. Everything else (the Pipeline Viewer SPA, Swagger UI, OpenAPI spec, ReDoc, health checks, metrics) is publicly accessible.
+The API supports two complementary authentication paths:
 
-For the rationale behind the same-origin bypass and stream-token flows, see [authentication design](../explanation/authentication-design.md).
+1. **API key** on `/api/*` endpoints — always available, governed by `ENABLE_API_KEY_AUTH` and `API_KEYS`.
+2. **Optional viewer auth** — when `AUTH_MODE != none`, browser sessions are established via username/password (`basic`) or OIDC SSO (`oidc`, PR2). API keys remain valid in parallel — programmatic clients are unaffected.
+
+Everything outside `/api/*` (the Pipeline Viewer SPA shell, Swagger UI, OpenAPI spec, ReDoc, health checks, metrics) is publicly accessible regardless of mode.
+
+For the rationale behind the same-origin bypass, stream-token flows, and the layered auth design, see [authentication design](../explanation/authentication-design.md).
 
 ## Configuration
 
@@ -52,9 +57,45 @@ Middleware executes in reverse registration order (last added = first executed):
 3. Logging
 4. Rate Limit
 5. Error Handler
-6. API Key Auth
-7. Endpoint
+6. Session Auth         (only when AUTH_MODE != none)
+7. API Key Auth
+8. Endpoint
 ```
+
+`SessionAuthMiddleware` runs ahead of `APIKeyAuthMiddleware` so the latter can short-circuit when ``request.state.identity`` is set. Both middlewares coexist on purpose — API keys remain a parallel auth path for programmatic clients regardless of `AUTH_MODE`.
+
+## Viewer authentication
+
+| Variable | Default | Required when | Notes |
+|---|---|---|---|
+| `AUTH_MODE` | `none` | — | One of `none`, `basic`, `oidc`. `none` preserves today's behaviour. |
+| `AUTH_SECRET_KEY` | — | `AUTH_MODE != none` | HMAC key for signing session and CSRF cookies. >= 32 chars; rotation invalidates all sessions. |
+| `AUTH_SESSION_TTL_SECONDS` | `28800` (8h) | — | Sliding re-issue at half-life. |
+| `AUTH_SESSION_COOKIE_NAME` | `reflow_session` | — | CSRF companion cookie is named `<this>_csrf`. |
+| `AUTH_COOKIE_SECURE` | `true` | — | Disable only for local HTTP dev. |
+| `AUTH_BASIC_USERS` | — | `AUTH_MODE=basic` | Semicolon-separated `username:argon2hash` pairs (commas collide with argon2 parameter blocks). Generate hashes with `make auth-hash-password`. |
+| `AUTH_OIDC_PROVIDERS` | — | `AUTH_MODE=oidc` (PR2) | JSON array of `{id, display_name, discovery_url, client_id, client_secret, scopes?}` entries. |
+| `AUTH_POST_LOGIN_REDIRECT` | `/` | — | Where to send the browser after login when no `?next=` is present. |
+
+### Endpoints under `/api/v1/auth/*`
+
+| Method & path | When available | Notes |
+|---|---|---|
+| `GET /auth/config` | always | Public. SPA reads on mount; reports `mode` and providers. |
+| `POST /auth/login` | basic | JSON `{username, password}`. Sets session + CSRF cookies. |
+| `GET /auth/login/{provider_id}` | oidc (PR2) | 302 to IdP authorisation endpoint with PKCE. |
+| `GET /auth/callback/{provider_id}` | oidc (PR2) | Handles redirect-back, sets cookies, 302 to `next`. |
+| `POST /auth/logout` | basic + oidc | CSRF required (`X-CSRF-Token` header). Clears cookies. |
+| `GET /auth/me` | basic + oidc | Returns identity or 401. |
+
+### Cookies
+
+- `reflow_session` — `HttpOnly`, `Secure` (configurable), `SameSite=Lax`. Stateless signed cookie carrying `{sub, email, name, provider_id, issued_at, expires_at}`. The ID token itself is **not** stored in the cookie.
+- `reflow_session_csrf` — NOT `HttpOnly`. HMAC of the session-cookie value. SPA echoes as `X-CSRF-Token` on non-GET requests under `/api/v1/auth/*`.
+
+### Audit logging
+
+When auth is on, `LoggingMiddleware` adds `user_sub`, `user_email`, `user_provider` fields to every Response log line. Auth-state transitions emit a separate structured record with `category="auth_event"` covering `login_success`, `login_failure`, `logout`, `session_expired`. Failure reasons are categorical (`invalid_password`, `csrf_mismatch`, …) — never the username attempted, never PII.
 
 ## Client IP extraction
 

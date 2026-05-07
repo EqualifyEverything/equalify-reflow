@@ -9,6 +9,7 @@ from fastapi import Request, Response, status
 from fastapi.responses import JSONResponse
 from starlette.middleware.base import BaseHTTPMiddleware
 
+from ..auth.base import Identity
 from ..config import settings
 
 logger = logging.getLogger(__name__)
@@ -122,6 +123,22 @@ class APIKeyAuthMiddleware(BaseHTTPMiddleware):
 
         # API routes are the only ones gated by API key auth.
         if path.startswith("/api/"):
+            # Session-authenticated requests (set by SessionAuthMiddleware
+            # when AUTH_MODE != 'none') short-circuit. Both auth paths
+            # coexist: an API key still works in parallel for programmatic
+            # clients regardless of AUTH_MODE.
+            #
+            # We isinstance-check rather than truthiness-check because mock
+            # tests upstream sometimes use MagicMock for request.state, and a
+            # MagicMock attribute is always truthy. Only a real Identity
+            # object should short-circuit.
+            if isinstance(getattr(request.state, "identity", None), Identity):
+                return True
+            # /api/v1/auth/* endpoints handle their own auth (config is
+            # always public; login/logout/me self-validate). Exempt the
+            # subtree here so an unauthenticated user can hit /auth/login.
+            if path.startswith("/api/v1/auth/"):
+                return True
             # Dev-only endpoints are exempt when running in dev
             if settings.environment == "dev" and (
                 path.startswith("/api/dev/monitoring")
@@ -129,8 +146,12 @@ class APIKeyAuthMiddleware(BaseHTTPMiddleware):
                 or path.startswith("/api/dev/pipeline-viewer")
             ):
                 return True
-            # Same-origin requests from the viewer or demo UI
-            if self._is_demo_ui_request(request):
+            # Same-origin requests from the viewer or demo UI.
+            # When AUTH_MODE != 'none', the SPA must establish a session
+            # before it can call the API — the same-origin shortcut is only
+            # safe in the open-default mode. Otherwise an unauthenticated
+            # browser session would defeat the new auth layer.
+            if settings.auth_mode == "none" and self._is_demo_ui_request(request):
                 return True
             # SSE stream endpoints authenticate via ?token= query param
             if self._is_stream_token_request(request):

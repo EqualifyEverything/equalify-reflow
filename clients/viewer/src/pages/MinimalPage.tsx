@@ -18,8 +18,7 @@ import {
   Copy,
   Check,
 } from 'lucide-react';
-
-const API_URL = import.meta.env.VITE_API_URL ?? '';
+import { apiFetch } from '@/auth/apiFetch';
 
 interface PageData {
   page_number: number;
@@ -139,7 +138,7 @@ export function MinimalPage() {
         formData.append('images_scale', String(imagesScale));
         formData.append('do_table_structure', String(doTableStructure));
 
-        const response = await fetch(`${API_URL}/api/dev/minimal/process`, {
+        const response = await apiFetch('/api/dev/minimal/process', {
           method: 'POST',
           body: formData,
         });

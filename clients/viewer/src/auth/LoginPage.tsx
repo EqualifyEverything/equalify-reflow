@@ -1,0 +1,162 @@
+import { useState, type FormEvent, useEffect } from 'react'
+import { useNavigate, useSearchParams } from 'react-router-dom'
+
+import { Button } from '@/components/ui/button'
+import { Input } from '@/components/ui/input'
+
+import { apiFetch } from './apiFetch'
+import { useAuth } from './AuthContext'
+import type { Identity } from './types'
+
+export function LoginPage() {
+  const { config, identity, setIdentity } = useAuth()
+  const [searchParams] = useSearchParams()
+  const navigate = useNavigate()
+  const next = searchParams.get('next') || '/'
+
+  const [username, setUsername] = useState('')
+  const [password, setPassword] = useState('')
+  const [error, setError] = useState<string | null>(null)
+  const [submitting, setSubmitting] = useState(false)
+
+  // Already logged in → bounce to next.
+  useEffect(() => {
+    if (identity) {
+      navigate(next, { replace: true })
+    }
+  }, [identity, next, navigate])
+
+  // AUTH_MODE=none → there's nothing to log into; send the user home.
+  useEffect(() => {
+    if (config && config.mode === 'none') {
+      navigate('/', { replace: true })
+    }
+  }, [config, navigate])
+
+  // OIDC with a single provider → auto-redirect to its login_url.
+  useEffect(() => {
+    if (config && config.mode === 'oidc' && config.providers.length === 1) {
+      const url = new URL(config.providers[0].login_url, window.location.origin)
+      url.searchParams.set('next', next)
+      window.location.href = url.toString()
+    }
+  }, [config, next])
+
+  const handleSubmit = async (event: FormEvent<HTMLFormElement>) => {
+    event.preventDefault()
+    if (submitting) return
+    setError(null)
+    setSubmitting(true)
+    try {
+      const res = await apiFetch('/api/v1/auth/login', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ username, password }),
+      })
+      if (!res.ok) {
+        setError(res.status === 401 ? 'Invalid username or password.' : 'Login failed.')
+        return
+      }
+      const id = (await res.json()) as Identity
+      setIdentity(id)
+      navigate(next, { replace: true })
+    } catch {
+      setError('Network error. Please try again.')
+    } finally {
+      setSubmitting(false)
+    }
+  }
+
+  if (!config) {
+    return (
+      <div className="flex min-h-screen items-center justify-center text-sm text-muted-foreground">
+        Loading…
+      </div>
+    )
+  }
+
+  if (config.mode === 'oidc') {
+    return (
+      <main className="flex min-h-screen items-center justify-center bg-background px-4">
+        <section className="w-full max-w-sm space-y-6 rounded-lg border border-border bg-card p-8 shadow-lg">
+          <header>
+            <h1 className="text-2xl font-bold">Sign in</h1>
+            <p className="mt-1 text-sm text-muted-foreground">
+              Choose a sign-in method to continue.
+            </p>
+          </header>
+          <ul className="space-y-3">
+            {config.providers.map((provider) => {
+              const url = new URL(provider.login_url, window.location.origin)
+              url.searchParams.set('next', next)
+              return (
+                <li key={provider.id}>
+                  <Button
+                    asChild
+                    variant="primary"
+                    size="lg"
+                    className="w-full"
+                  >
+                    <a href={url.toString()}>{provider.display_name}</a>
+                  </Button>
+                </li>
+              )
+            })}
+          </ul>
+        </section>
+      </main>
+    )
+  }
+
+  // Basic mode form.
+  return (
+    <main className="flex min-h-screen items-center justify-center bg-background px-4">
+      <section className="w-full max-w-sm space-y-6 rounded-lg border border-border bg-card p-8 shadow-lg">
+        <header>
+          <h1 className="text-2xl font-bold">Sign in</h1>
+          <p className="mt-1 text-sm text-muted-foreground">
+            Enter your username and password to continue.
+          </p>
+        </header>
+        <form className="space-y-4" onSubmit={handleSubmit} noValidate>
+          <label className="block space-y-1">
+            <span className="text-sm font-medium">Username</span>
+            <Input
+              type="text"
+              autoComplete="username"
+              value={username}
+              onChange={(e) => setUsername(e.target.value)}
+              required
+              disabled={submitting}
+            />
+          </label>
+          <label className="block space-y-1">
+            <span className="text-sm font-medium">Password</span>
+            <Input
+              type="password"
+              autoComplete="current-password"
+              value={password}
+              onChange={(e) => setPassword(e.target.value)}
+              required
+              disabled={submitting}
+            />
+          </label>
+          {error && (
+            <p role="alert" className="text-sm text-destructive">
+              {error}
+            </p>
+          )}
+          <Button
+            type="submit"
+            variant="primary"
+            size="lg"
+            className="w-full"
+            disabled={submitting || !username || !password}
+          >
+            {submitting ? 'Signing in…' : 'Sign in'}
+          </Button>
+        </form>
+      </section>
+    </main>
+  )
+}

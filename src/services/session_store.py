@@ -43,6 +43,11 @@ class PipelineSession:
     # human decision. `pii_decision` holds "approved" or "denied" once set.
     pii_decision_event: asyncio.Event = field(default_factory=asyncio.Event)
     pii_decision: str | None = None
+    # Identity attribution — populated when AUTH_MODE != 'none' and the
+    # request that created this session carried a session cookie. Both
+    # remain None when auth is off, preserving today's anonymous flow.
+    identity_sub: str | None = None
+    provider_id: str | None = None
 
     def touch(self) -> None:
         """Update the last-accessed timestamp."""
@@ -63,11 +68,20 @@ class SessionStore:
     def __init__(self) -> None:
         self._sessions: dict[str, PipelineSession] = {}
 
-    def create_for_stream(self, filename: str) -> PipelineSession:
+    def create_for_stream(
+        self,
+        filename: str,
+        *,
+        identity_sub: str | None = None,
+        provider_id: str | None = None,
+    ) -> PipelineSession:
         """Create a session early for SSE reconnect support.
 
         The session starts with an empty result and status="processing".
         The caller populates the result as processing completes.
+
+        ``identity_sub`` and ``provider_id`` are passed through from the
+        request's authenticated identity when ``AUTH_MODE != 'none'``.
         """
         self._evict_expired()
         session_id = uuid.uuid4().hex[:12]
@@ -75,6 +89,8 @@ class SessionStore:
             session_id=session_id,
             result=PipelineViewerResult(filename=filename, total_pages=0),
             status="processing",
+            identity_sub=identity_sub,
+            provider_id=provider_id,
         )
         self._sessions[session_id] = session
         return session

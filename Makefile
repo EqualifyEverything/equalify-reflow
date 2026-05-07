@@ -33,6 +33,9 @@ help:
 	@echo "  make shell        - Access API container shell"
 	@echo "  make test-docker  - Run tests inside container"
 	@echo ""
+	@echo "Auth:"
+	@echo "  make auth-hash-password - Hash a password for AUTH_BASIC_USERS"
+	@echo ""
 	@echo "Canvas LMS:"
 	@echo "  make canvas       - Start local Canvas LMS"
 	@echo "  make canvas-down  - Stop local Canvas LMS"
@@ -293,6 +296,11 @@ shell:
 # Run tests inside Docker container (with parallelization)
 test-docker:
 	docker compose -f docker-compose.yml -f docker-compose.dev.yml exec -e SKIP_BEDROCK_TESTS=1 api-gateway uv run pytest tests/ -v
+
+# Hash a password for AUTH_BASIC_USERS. Prompts for a password (no echo) and
+# prints the argon2id hash. Paste it into env as ``username:<hash>``.
+auth-hash-password:
+	docker compose -f docker-compose.yml -f docker-compose.dev.yml exec api-gateway uv run python -m src.auth.cli hash-password
 
 # View API logs only
 logs-api:

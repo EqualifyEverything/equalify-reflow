@@ -12,6 +12,8 @@ from fastapi import FastAPI
 from fastapi.openapi.utils import get_openapi
 
 from .api import approval, documents, feedback, health
+from .auth.middleware import SessionAuthMiddleware
+from .auth.routes import router as auth_router
 from .config import settings
 from .dependencies import get_redis_client
 from .middleware import (
@@ -157,10 +159,17 @@ app = FastAPI(
 setup_metrics(app)
 
 # Add middleware (order matters: last added = first executed)
-# Authentication middleware added first (executes before others)
+# Authentication middlewares added first (execute before others). Session
+# middleware runs ahead of API-key middleware so the latter can short-circuit
+# when ``request.state.identity`` is set. Both coexist by design — API keys
+# remain a parallel auth path for programmatic clients regardless of AUTH_MODE.
 if settings.enable_api_key_auth:
     app.add_middleware(APIKeyAuthMiddleware)
     logger.info("✅ API key authentication enabled")
+
+if settings.auth_mode != "none":
+    app.add_middleware(SessionAuthMiddleware)
+    logger.info("✅ Session authentication enabled (mode=%s)", settings.auth_mode)
 
 app.add_middleware(ErrorHandlerMiddleware)  # Catch all errors
 app.add_middleware(RateLimitMiddleware)  # Rate limit before processing
@@ -173,6 +182,7 @@ app.include_router(health.router)
 app.include_router(documents.router)
 app.include_router(approval.router)
 app.include_router(feedback.router)
+app.include_router(auth_router)
 
 # Pipeline viewer — always available (primary processing API)
 from .api import pipeline_viewer  # noqa: E402
@@ -201,7 +211,8 @@ def custom_openapi() -> dict[str, object]:
         license_info=app.license_info,
     )
 
-    # Add API key security scheme
+    # Add API key + session cookie security schemes. Either path satisfies
+    # the global security requirement; clients pick whichever fits.
     openapi_schema["components"] = openapi_schema.get("components", {})
     openapi_schema["components"]["securitySchemes"] = {
         "APIKeyHeader": {
@@ -209,11 +220,17 @@ def custom_openapi() -> dict[str, object]:
             "in": "header",
             "name": settings.api_key_header_name,
             "description": "API key for authentication. Get your key from the system administrator.",
-        }
+        },
+        "CookieAuth": {
+            "type": "apiKey",
+            "in": "cookie",
+            "name": settings.auth_session_cookie_name,
+            "description": "Signed session cookie set by /api/v1/auth/login or the OIDC callback. Active only when AUTH_MODE != 'none'.",
+        },
     }
 
-    # Apply security globally to all endpoints
-    openapi_schema["security"] = [{"APIKeyHeader": []}]
+    # Apply security globally to all endpoints — either scheme accepted.
+    openapi_schema["security"] = [{"APIKeyHeader": []}, {"CookieAuth": []}]
 
     app.openapi_schema = openapi_schema
     return app.openapi_schema

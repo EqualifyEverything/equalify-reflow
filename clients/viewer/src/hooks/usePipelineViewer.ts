@@ -1,7 +1,6 @@
 import { useState, useCallback, useRef } from 'react';
 import type { PipelineViewerResult, StepResult, PIIFinding } from '@/types/pipeline-viewer';
-
-const API_URL = import.meta.env.VITE_API_URL ?? '';
+import { apiFetch } from '@/auth/apiFetch';
 
 const MAX_RECONNECT_ATTEMPTS = 10;
 const RECONNECT_BASE_DELAY_MS = 2000;
@@ -311,8 +310,8 @@ export function usePipelineViewer() {
     if (signal.aborted) return;
 
     try {
-      const url = `${API_URL}/api/v1/pipeline/sessions/${sid}/stream?last_event_id=${lastId}`;
-      const response = await fetch(url, { signal });
+      const url = `/api/v1/pipeline/sessions/${sid}/stream?last_event_id=${lastId}`;
+      const response = await apiFetch(url, { signal });
 
       if (!response.ok) {
         console.warn(`SSE reconnect: server returned ${response.status}`);
@@ -355,7 +354,7 @@ export function usePipelineViewer() {
       formData.append('images_scale', String(options.imagesScale));
       formData.append('do_table_structure', String(options.doTableStructure));
 
-      const response = await fetch(`${API_URL}/api/v1/pipeline/process/stream`, {
+      const response = await apiFetch('/api/v1/pipeline/process/stream', {
         method: 'POST',
         body: formData,
         signal: controller.signal,
@@ -427,7 +426,7 @@ export function usePipelineViewer() {
       const sid = sessionIdRef.current;
       if (!sid) return;
       try {
-        await fetch(`${API_URL}/api/v1/pipeline/sessions/${sid}/pii-decision`, {
+        await apiFetch(`/api/v1/pipeline/sessions/${sid}/pii-decision`, {
           method: 'POST',
           headers: { 'Content-Type': 'application/json' },
           body: JSON.stringify({ decision }),

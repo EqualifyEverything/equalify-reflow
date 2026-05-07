@@ -7,20 +7,19 @@ import time
 from collections.abc import AsyncGenerator
 from typing import Any, Literal
 
-from fastapi import APIRouter, File, Form, HTTPException, Query, UploadFile
+import redis.asyncio as aioredis
+from fastapi import APIRouter, File, Form, HTTPException, Query, Request, UploadFile
 from fastapi.responses import StreamingResponse
 from pydantic import BaseModel
 
-import redis.asyncio as aioredis
-
+from ..config import settings
+from ..dependencies import _get_redis_pool
 from ..services.feedback_client import feedback_client
 from ..services.pdf_classifier import classify_pdf, enrich_classification
 from ..services.pdf_extractor import PDFExtractionError, extract_pdf_text
 from ..services.pii_analyzer import get_pii_analyzer
 from ..services.pipeline_viewer import PipelineViewerService
 from ..services.pipeline_viewer_models import PipelineViewerResult, StepResult
-from ..config import settings
-from ..dependencies import _get_redis_pool
 from ..services.session_store import PipelineSession, session_store
 
 logger = logging.getLogger(__name__)
@@ -91,7 +90,7 @@ async def _buffer_reader(
             await asyncio.wait_for(
                 session.new_event.wait(), timeout=_HEARTBEAT_INTERVAL_SECONDS,
             )
-        except asyncio.TimeoutError:
+        except TimeoutError:
             yield _SSE_HEARTBEAT
 
 
@@ -275,7 +274,7 @@ async def _pipeline_steps(
                     session.pii_decision_event.wait(),
                     timeout=_PII_DECISION_TIMEOUT_SECONDS,
                 )
-            except asyncio.TimeoutError:
+            except TimeoutError:
                 emit("pii_decision", {"decision": "denied", "reason": "timeout"})
                 session.status = "completed"
                 emit("done", {
@@ -333,7 +332,7 @@ async def _pipeline_steps(
 
     # OCR re-run for scanned documents
     if result.stats.get("is_likely_scanned", False):
-        from src.services.pdf_classifier import FINDING_SCANNED, FINDING_SCAN_PRODUCER
+        from src.services.pdf_classifier import FINDING_SCAN_PRODUCER, FINDING_SCANNED
 
         scanned_codes = {FINDING_SCANNED, FINDING_SCAN_PRODUCER}
         finding_codes = {f.code for f in classification.findings}
@@ -585,6 +584,7 @@ async def process_pdf(
 
 @router.post("/process/stream")
 async def process_pdf_stream(
+    request: Request,
     file: UploadFile = File(...),
     images_scale: float = Form(default=2.0),
     do_table_structure: bool = Form(default=True),
@@ -632,10 +632,30 @@ async def process_pdf_stream(
         feedback_client.upload_document(content, filename)
     )
 
-    # Create session and emit session event (id=0) before spawning task
-    session = session_store.create_for_stream(filename)
+    # Create session and emit session event (id=0) before spawning task.
+    # Stamp identity if SessionAuthMiddleware populated it — both fields stay
+    # None when AUTH_MODE=none, preserving today's anonymous session shape.
+    # isinstance-check to avoid a MagicMock attribute satisfying the truthy
+    # path in mock-based tests.
+    from ..auth.base import Identity as _AuthIdentity
+
+    raw_identity = getattr(request.state, "identity", None)
+    identity = raw_identity if isinstance(raw_identity, _AuthIdentity) else None
+    session = session_store.create_for_stream(
+        filename,
+        identity_sub=identity.sub if identity is not None else None,
+        provider_id=identity.provider_id if identity is not None else None,
+    )
+    session_event_payload: dict[str, Any] = {"session_id": session.session_id}
+    if identity is not None:
+        session_event_payload["user"] = {
+            "sub": identity.sub,
+            "name": identity.name,
+            "email": identity.email,
+            "provider_id": identity.provider_id,
+        }
     session.event_buffer.append(
-        _sse_event("session", {"session_id": session.session_id}, event_id=0)
+        _sse_event("session", session_event_payload, event_id=0)
     )
     session.event_counter = 1
     session.new_event.set()

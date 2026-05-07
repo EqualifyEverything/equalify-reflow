@@ -95,6 +95,7 @@ tests/
 - [Debug a CI failure](docs/how-to/debug-ci-failures.md)
 - [Add a new S3 operation](docs/how-to/add-s3-operations.md)
 - [Test rate limits locally](docs/how-to/test-rate-limits.md)
+- [Enable basic auth on the viewer](docs/how-to/enable-basic-auth.md)
 
 ## Conventions
 

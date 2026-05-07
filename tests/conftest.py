@@ -13,6 +13,9 @@ Import these instead of defining duplicates in test files.
 import os
 
 os.environ["ENABLE_API_KEY_AUTH"] = "false"
+# Pin auth_mode=none for the default test app. Tests that exercise basic or
+# OIDC flows construct their own Settings/TestClient with monkeypatch.
+os.environ.setdefault("AUTH_MODE", "none")
 
 from unittest.mock import AsyncMock, MagicMock
 
@@ -23,7 +26,11 @@ from src.shared.models.queue import ProcessingQueuePayload
 
 # Import shared fixtures to make them available to all tests
 # Note: Using string-based plugin registration to avoid import-time side effects
-pytest_plugins = ["tests.conftest_fixtures.clients", "tests.conftest_fixtures.data_factories"]
+pytest_plugins = [
+    "tests.conftest_fixtures.clients",
+    "tests.conftest_fixtures.data_factories",
+    "tests.conftest_fixtures.auth",
+]
 
 
 @pytest.fixture

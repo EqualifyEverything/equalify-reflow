@@ -1,8 +1,9 @@
 """Configuration management for API Gateway Service."""
 
+import json
 from typing import Literal
 
-from pydantic import Field, SecretStr
+from pydantic import Field, SecretStr, model_validator
 from pydantic_settings import BaseSettings, SettingsConfigDict
 
 
@@ -65,6 +66,54 @@ class Settings(BaseSettings):
     enable_api_key_auth: bool = Field(default=True, description="Enable API key authentication for API endpoints")
     api_key_header_name: str = Field(default="X-API-Key", description="Header name for API key authentication")
     api_keys: SecretStr | None = Field(default=None, description="Comma-separated list of valid API keys")
+
+    # Viewer Authentication (optional, layered on top of API keys)
+    # AUTH_MODE=none keeps today's behaviour: no login, no cookies, no identity.
+    # AUTH_MODE=basic enables operator-provisioned username/password against
+    #   AUTH_BASIC_USERS (CSV of "username:argon2hash"). No signup endpoint.
+    # AUTH_MODE=oidc (PR2) enables generic OIDC; Entra is just a config preset.
+    # API keys remain valid as a parallel auth path in all modes.
+    auth_mode: Literal["none", "basic", "oidc"] = Field(
+        default="none",
+        description=(
+            "Auth mode for the viewer. 'none' preserves today's behaviour; "
+            "'basic' enables HTTP basic; 'oidc' enables SSO (PR2)."
+        ),
+    )
+    auth_secret_key: SecretStr | None = Field(
+        default=None,
+        description="HMAC key for signing session and CSRF cookies. Required when auth_mode != 'none'. >= 32 chars.",
+    )
+    auth_session_ttl_seconds: int = Field(
+        ge=300,
+        le=30 * 24 * 3600,
+        default=8 * 3600,
+        description="Session lifetime in seconds (default 8h). Sliding re-issue at half-life.",
+    )
+    auth_session_cookie_name: str = Field(
+        default="reflow_session",
+        description="Name of the session cookie. The CSRF companion cookie is named '<this>_csrf'.",
+    )
+    auth_cookie_secure: bool = Field(
+        default=True,
+        description="Set Secure flag on session cookies. Disable only for local HTTP dev.",
+    )
+    auth_basic_users: SecretStr | None = Field(
+        default=None,
+        description=(
+            "Semicolon-separated 'username:argon2hash' pairs. Required when "
+            "auth_mode='basic'. Generate hashes with `make auth-hash-password`. "
+            "Comma-separated would collide with argon2 parameter blocks."
+        ),
+    )
+    auth_oidc_providers: SecretStr | None = Field(
+        default=None,
+        description="JSON array of OIDC provider configs. Required when auth_mode='oidc' (PR2).",
+    )
+    auth_post_login_redirect: str = Field(
+        default="/",
+        description="Where to send the browser after a successful login when no ?next= is provided.",
+    )
 
     # Metrics Configuration
     enable_metrics: bool = Field(default=True, description="Enable Prometheus metrics collection and /metrics endpoint")
@@ -246,6 +295,55 @@ class Settings(BaseSettings):
     feedback_service_api_key: SecretStr | None = Field(
         default=None, description="API key for the external feedback service (secret)"
     )
+
+    @model_validator(mode="after")
+    def _validate_auth(self) -> "Settings":
+        """Enforce per-mode requirements so misconfiguration fails fast at startup.
+
+        We deliberately raise inside the validator (not log-and-continue) so an
+        operator who flips ``AUTH_MODE=basic`` without populating users gets a
+        loud failure rather than a silent auth bypass.
+        """
+        if self.auth_mode == "none":
+            return self
+
+        if self.auth_secret_key is None:
+            raise ValueError("AUTH_SECRET_KEY is required when AUTH_MODE != 'none'")
+        if len(self.auth_secret_key.get_secret_value()) < 32:
+            raise ValueError("AUTH_SECRET_KEY must be at least 32 characters")
+
+        if self.auth_mode == "basic":
+            if self.auth_basic_users is None:
+                raise ValueError("AUTH_BASIC_USERS is required when AUTH_MODE='basic'")
+            # Semicolon-separated to avoid colliding with argon2 parameter
+            # blocks, which always contain commas (m=…,t=…,p=…).
+            entries = [e.strip() for e in self.auth_basic_users.get_secret_value().split(";")]
+            valid = [
+                e for e in entries if ":" in e and e.partition(":")[2].strip().startswith("$argon2")
+            ]
+            if not valid:
+                raise ValueError(
+                    "AUTH_BASIC_USERS must contain at least one 'username:$argon2…' entry"
+                )
+
+        if self.auth_mode == "oidc":
+            if self.auth_oidc_providers is None:
+                raise ValueError("AUTH_OIDC_PROVIDERS is required when AUTH_MODE='oidc'")
+            try:
+                providers = json.loads(self.auth_oidc_providers.get_secret_value())
+            except json.JSONDecodeError as e:
+                raise ValueError(f"AUTH_OIDC_PROVIDERS must be valid JSON: {e}") from e
+            if not isinstance(providers, list) or not providers:
+                raise ValueError("AUTH_OIDC_PROVIDERS must be a non-empty JSON array")
+            required_keys = {"id", "display_name", "discovery_url", "client_id", "client_secret"}
+            for entry in providers:
+                if not isinstance(entry, dict):
+                    raise ValueError("AUTH_OIDC_PROVIDERS entries must be objects")
+                missing = required_keys - entry.keys()
+                if missing:
+                    raise ValueError(f"AUTH_OIDC_PROVIDERS entry missing keys: {sorted(missing)}")
+
+        return self
 
 
 settings = Settings()

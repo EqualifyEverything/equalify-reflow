@@ -95,5 +95,16 @@ HEALTHCHECK --interval=30s --timeout=10s --start-period=40s --retries=3 \
 # Expose API port
 EXPOSE 8080
 
-# Production command (no reload for stability)
-CMD ["uv", "run", "uvicorn", "src.main:app", "--host", "0.0.0.0", "--port", "8080", "--workers", "1"]
+# Production command (no reload for stability).
+#
+# --proxy-headers + --forwarded-allow-ips=* tells uvicorn to honour the
+# X-Forwarded-Proto / X-Forwarded-For headers set by an upstream reverse
+# proxy (ALB, Nginx, Cloudflare). Without this, request.url.scheme inside
+# the container reads "http" even when the user hit "https", so any
+# scheme-aware code path silently builds wrong URLs — most visibly the
+# OIDC redirect_uri, which then mismatches what's registered with the IdP
+# and login fails with AADSTS50011 (or the equivalent on Google/Okta/...).
+# The "*" allowlist is safe behind ECS+ALB because the security group
+# restricts ingress on :8080 to the ALB only, and the ALB strips any
+# client-supplied X-Forwarded-* before forwarding.
+CMD ["uv", "run", "uvicorn", "src.main:app", "--host", "0.0.0.0", "--port", "8080", "--workers", "1", "--proxy-headers", "--forwarded-allow-ips=*"]

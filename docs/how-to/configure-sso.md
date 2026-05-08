@@ -126,6 +126,20 @@ AUTH_OIDC_PROVIDERS=[
 ]
 ```
 
+## Behind a reverse proxy (ALB, Nginx, Cloudflare)
+
+OIDC redirect URIs are **scheme-sensitive** — Entra (and all other IdPs) reject the round-trip if the `redirect_uri` we send doesn't match what's registered byte-for-byte. When the app sits behind a reverse proxy that terminates HTTPS, the container itself sees only HTTP, and naive `request.url.scheme` reads return `"http"` — building an `http://...` redirect URI for a service the user actually reached over `https://...`. Login fails with `AADSTS50011` on Entra, equivalent codes elsewhere.
+
+The shipped Dockerfile already addresses this: the production CMD includes `--proxy-headers --forwarded-allow-ips=*`, which tells uvicorn to read `X-Forwarded-Proto` and reflect it back into `request.url.scheme`.
+
+What you must verify in your deployment:
+
+- **Your reverse proxy sets `X-Forwarded-Proto`.** AWS ALB, GCP Cloud Load Balancer, Azure App Gateway, and Cloudflare all do this by default. Nginx needs an explicit `proxy_set_header X-Forwarded-Proto $scheme;`.
+- **The container is reachable only via the proxy.** Otherwise a direct caller could spoof `X-Forwarded-Proto: https` and trick the app into building wrong URIs. ECS security groups, Nginx upstream configs, and equivalent network controls handle this.
+- **You're not running uvicorn with custom flags that drop `--proxy-headers`.** If you've replaced the Dockerfile CMD, keep the flag.
+
+If a working local OIDC round-trip suddenly fails the moment you put the app behind a proxy, this is almost certainly the cause. Confirm by checking the kickoff redirect URL — `redirect_uri=https%3A%2F%2F…` is correct; `redirect_uri=http%3A%2F%2F…` against an HTTPS-fronted host means proxy headers aren't being honoured.
+
 ## Common pitfalls
 
 - **AADSTS50011: redirect URI does not match.** The URI registered with Entra must match the request's host + scheme + path *exactly*. If your deployment is behind an ALB that terminates HTTPS, register `https://...` even though the FastAPI process internally sees HTTP. Confirm the ALB sets `X-Forwarded-Proto: https` and that Starlette is reading it (otherwise our `_redirect_uri_for` builds the wrong URL).

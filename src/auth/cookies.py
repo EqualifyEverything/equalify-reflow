@@ -68,3 +68,46 @@ def clear_session_cookies(response: Response) -> None:
             path="/",
         )
     response.headers["X-Auth-Cookie-Set"] = "1"
+
+
+# --- OAuth transaction cookie (OIDC kickoff/callback handshake) --------------
+
+OAUTH_TX_COOKIE_NAME = "reflow_oauth_tx"
+# 10 minutes — long enough that a slow IdP (Entra MFA, password resets)
+# still completes; short enough that a captured cookie can't be replayed
+# hours later. Mirrors OAUTH_TX_TTL_SECONDS in providers/oidc_provider.py.
+OAUTH_TX_TTL_SECONDS = 600
+
+
+def set_oauth_tx_cookie(response: Response, value: str) -> None:
+    """Write the signed OAuth transaction cookie set during OIDC kickoff.
+
+    Carries ``state``, ``nonce``, PKCE verifier, and ``next_path``. Read
+    by the matching ``/api/v1/auth/callback/{provider_id}`` route to
+    validate the redirect-back. ``HttpOnly`` so JS can't read it;
+    ``SameSite=Lax`` so the IdP's redirect-back GET still sends it.
+    """
+    response.set_cookie(
+        key=OAUTH_TX_COOKIE_NAME,
+        value=value,
+        max_age=OAUTH_TX_TTL_SECONDS,
+        secure=settings.auth_cookie_secure,
+        httponly=True,
+        samesite="lax",
+        path="/",
+    )
+
+
+def clear_oauth_tx_cookie(response: Response) -> None:
+    """Delete the OAuth transaction cookie. Call on callback success or
+    failure so a stale tx can't be replayed against a future kickoff.
+    """
+    response.set_cookie(
+        key=OAUTH_TX_COOKIE_NAME,
+        value="",
+        max_age=0,
+        secure=settings.auth_cookie_secure,
+        httponly=True,
+        samesite="lax",
+        path="/",
+    )

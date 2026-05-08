@@ -5,8 +5,12 @@ render (or whether to render one at all). The remaining routes are gated on
 ``settings.auth_mode != "none"``: when auth is off they 404 like any unknown
 path, and the SPA's ``AuthProvider`` never calls them anyway.
 
-OIDC routes (``/auth/login/{provider_id}``, ``/auth/callback/{provider_id}``)
-land in PR2; this PR ships the basic + shared surface.
+Mode-conditional routes:
+
+- ``POST /auth/login`` — basic mode only.
+- ``GET /auth/login/{provider_id}`` — OIDC kickoff.
+- ``GET /auth/callback/{provider_id}`` — OIDC redirect-back.
+- ``POST /auth/logout`` and ``GET /auth/me`` — both basic and OIDC.
 """
 
 from __future__ import annotations
@@ -14,15 +18,26 @@ from __future__ import annotations
 import logging
 
 from fastapi import APIRouter, Depends, HTTPException, Request, Response, status
+from fastapi.responses import RedirectResponse
+from itsdangerous import BadSignature, SignatureExpired
 from pydantic import BaseModel, Field
 
 from ..config import settings
 from . import audit, csrf
 from .base import AuthMode, Identity
-from .cookies import clear_session_cookies, set_session_cookies
+from .cookies import (
+    OAUTH_TX_COOKIE_NAME,
+    OAUTH_TX_TTL_SECONDS,
+    clear_oauth_tx_cookie,
+    clear_session_cookies,
+    set_oauth_tx_cookie,
+    set_session_cookies,
+)
 from .dependencies import require_identity
-from .factory import get_auth_provider
+from .factory import get_auth_provider, get_auth_providers
 from .providers.basic_provider import BasicAuthProvider, InvalidCredentialsError
+from .providers.oidc_provider import OIDCAuthProvider, OIDCError
+from .session import make_tx_serializer
 
 logger = logging.getLogger(__name__)
 
@@ -126,17 +141,16 @@ async def get_config(request: Request) -> AuthConfigResponse:
     if mode is AuthMode.NONE:
         return AuthConfigResponse(mode=mode, providers=[])
 
-    provider = get_auth_provider()
+    providers = get_auth_providers()
     return AuthConfigResponse(
         mode=mode,
         providers=[
             _ProviderInfo(
-                id=provider.id,
-                display_name=provider.display_name,
-                # Basic mode points at the SPA route; OIDC will return
-                # /api/v1/auth/login/{id} from the provider.
-                login_url=await provider.login_url(request=request, next_path="/"),
+                id=p.id,
+                display_name=p.display_name,
+                login_url=await p.login_url(request=request, next_path="/"),
             )
+            for p in providers.values()
         ],
     )
 
@@ -223,3 +237,149 @@ async def get_me(
 ) -> IdentityResponse:
     """Return the current identity, 401 if anonymous. SPA hits this on mount."""
     return IdentityResponse.from_identity(identity)
+
+
+# --- OIDC kickoff + callback -------------------------------------------------
+
+
+def _redirect_uri_for(request: Request, provider_id: str) -> str:
+    """Build the absolute redirect_uri the IdP calls back to.
+
+    Derived from the request's scheme + host so the same code works in
+    local dev (``http://localhost:8080``) and behind an HTTPS-terminating
+    ALB. Operators must register *exactly* this URL with the IdP — there
+    is no wildcard support in OAuth.
+    """
+    return f"{request.url.scheme}://{request.url.netloc}/api/v1/auth/callback/{provider_id}"
+
+
+def _safe_next_path(raw: str | None) -> str:
+    """Sanitise the ``next`` query param so we only redirect to in-app
+    paths. Anything starting with a scheme or ``//`` is rejected to prevent
+    open-redirect abuse.
+    """
+    if not raw:
+        return settings.auth_post_login_redirect
+    if raw.startswith("//") or "://" in raw:
+        return settings.auth_post_login_redirect
+    if not raw.startswith("/"):
+        return settings.auth_post_login_redirect
+    return raw
+
+
+def _get_oidc_provider(provider_id: str) -> OIDCAuthProvider:
+    """Look up an OIDC provider by id, 404 if not configured for this mode."""
+    if AuthMode(settings.auth_mode) is not AuthMode.OIDC:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="oidc not enabled")
+    provider = get_auth_providers().get(provider_id)
+    if not isinstance(provider, OIDCAuthProvider):
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="unknown provider")
+    return provider
+
+
+@router.get("/login/{provider_id}")
+async def oidc_login(provider_id: str, request: Request, next: str = "") -> RedirectResponse:
+    """OIDC kickoff. Mints state/nonce/PKCE, sets the tx cookie, redirects to IdP."""
+    provider = _get_oidc_provider(provider_id)
+    secret = settings.auth_secret_key
+    if secret is None:
+        raise HTTPException(status_code=status.HTTP_500_INTERNAL_SERVER_ERROR, detail="not configured")
+
+    next_path = _safe_next_path(next)
+    redirect_uri = _redirect_uri_for(request, provider_id)
+    auth_url, tx_payload = await provider.begin_authorization(
+        redirect_uri=redirect_uri, next_path=next_path
+    )
+
+    serializer = make_tx_serializer(secret.get_secret_value())
+    signed = serializer.dumps(tx_payload)
+
+    response = RedirectResponse(url=auth_url, status_code=status.HTTP_302_FOUND)
+    set_oauth_tx_cookie(response, signed)
+    return response
+
+
+@router.get("/callback/{provider_id}")
+async def oidc_callback(
+    provider_id: str,
+    request: Request,
+    response: Response,
+) -> RedirectResponse:
+    """OIDC redirect-back. Validates state, exchanges code, mints session."""
+    provider = _get_oidc_provider(provider_id)
+    secret = settings.auth_secret_key
+    if secret is None:
+        raise HTTPException(status_code=status.HTTP_500_INTERNAL_SERVER_ERROR, detail="not configured")
+
+    code = request.query_params.get("code")
+    state_from_query = request.query_params.get("state")
+    error_from_idp = request.query_params.get("error")
+
+    if error_from_idp:
+        # IdP refused the user (consent declined, account disabled, …).
+        # Don't tell the SPA more than the category; the IdP already
+        # showed the user the specifics.
+        audit.emit(
+            "login_failure",
+            provider_id=provider_id,
+            reason="provider_error",
+            client_ip=_client_ip(request),
+        )
+        redirect = RedirectResponse(url="/login", status_code=status.HTTP_302_FOUND)
+        clear_oauth_tx_cookie(redirect)
+        return redirect
+
+    if not code or not state_from_query:
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail="callback missing code or state",
+        )
+
+    tx_cookie = request.cookies.get(OAUTH_TX_COOKIE_NAME)
+    if not tx_cookie:
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail="missing oauth tx cookie",
+        )
+
+    serializer = make_tx_serializer(secret.get_secret_value())
+    try:
+        tx_payload = serializer.loads(tx_cookie, max_age=OAUTH_TX_TTL_SECONDS)
+    except SignatureExpired as exc:
+        raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="oauth tx expired") from exc
+    except BadSignature as exc:
+        raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="oauth tx invalid") from exc
+
+    if not isinstance(tx_payload, dict):
+        raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="oauth tx malformed")
+
+    redirect_uri = _redirect_uri_for(request, provider_id)
+    try:
+        result = await provider.complete_authorization(
+            code=code,
+            state_from_query=state_from_query,
+            tx_payload={k: str(v) for k, v in tx_payload.items()},
+            redirect_uri=redirect_uri,
+        )
+    except OIDCError as exc:
+        audit.emit(
+            "login_failure",
+            provider_id=provider_id,
+            reason="provider_error",
+            client_ip=_client_ip(request),
+        )
+        logger.warning("OIDC callback failed for provider %s: %s", provider_id, exc)
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST, detail="authentication failed"
+        ) from exc
+
+    redirect = RedirectResponse(url=result.next_path, status_code=status.HTTP_302_FOUND)
+    set_session_cookies(response=redirect, identity=result.identity)
+    clear_oauth_tx_cookie(redirect)
+    audit.emit(
+        "login_success",
+        provider_id=provider_id,
+        sub=result.identity.sub,
+        client_ip=_client_ip(request),
+    )
+    return redirect

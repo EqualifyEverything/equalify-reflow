@@ -33,15 +33,6 @@ export function LoginPage() {
     }
   }, [config, navigate])
 
-  // OIDC with a single provider → auto-redirect to its login_url.
-  useEffect(() => {
-    if (config && config.mode === 'oidc' && config.providers.length === 1) {
-      const url = new URL(config.providers[0].login_url, window.location.origin)
-      url.searchParams.set('next', next)
-      window.location.href = url.toString()
-    }
-  }, [config, next])
-
   const handleSubmit = async (event: FormEvent<HTMLFormElement>) => {
     event.preventDefault()
     if (submitting) return
@@ -80,12 +71,7 @@ export function LoginPage() {
       <main className="flex min-h-screen items-center justify-center bg-background px-4">
         <section className="w-full max-w-sm space-y-6 rounded-lg border border-border bg-card p-8 shadow-lg">
           <BrandHeader />
-          <header>
-            <h1 className="text-2xl font-bold">Sign in</h1>
-            <p className="mt-1 text-sm text-muted-foreground">
-              Choose a sign-in method to continue.
-            </p>
-          </header>
+          <h1 className="sr-only">Sign in to Equalify Reflow</h1>
           <ul className="space-y-3">
             {config.providers.map((provider) => {
               const url = new URL(provider.login_url, window.location.origin)
@@ -114,12 +100,7 @@ export function LoginPage() {
     <main className="flex min-h-screen items-center justify-center bg-background px-4">
       <section className="w-full max-w-sm space-y-6 rounded-lg border border-border bg-card p-8 shadow-lg">
         <BrandHeader />
-        <header>
-          <h1 className="text-2xl font-bold">Sign in</h1>
-          <p className="mt-1 text-sm text-muted-foreground">
-            Enter your username and password to continue.
-          </p>
-        </header>
+        <h1 className="sr-only">Sign in to Equalify Reflow</h1>
         <form className="space-y-4" onSubmit={handleSubmit} noValidate>
           <label className="block space-y-1">
             <span className="text-sm font-medium">Username</span>

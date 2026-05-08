@@ -74,3 +74,64 @@ SSO via OIDC redirects out to the IdP and back. The browser's first request afte
 Self-signup implies a user database, an email-verification flow (or an open-by-default surface), and an admin UI for moderation. That's an entire product surface that doesn't belong in an OSS tool deployed by small operators who want a *locked-down* viewer. Operator-provisioned users via env keep the threat model the same as API keys: the people with access are the people the operator deliberately gave access to.
 
 For deployments that need self-signup, OIDC is the right answer — federate to an IdP that already handles signup, password reset, and account hygiene.
+
+## How the OIDC redirect flow holds together
+
+The browser drives a chain of redirects with state preserved across hops in two short-lived cookies. The high-level picture:
+
+```
+User → SPA              GET /login                    (anonymous; AuthProvider knows mode=oidc)
+SPA  → Backend          GET /api/v1/auth/login/entra  (kickoff route)
+                        ← 302 to IdP authz URL
+                          + Set-Cookie: reflow_oauth_tx (signed: state, nonce, verifier, next_path)
+User → IdP                                            (sign-in, MFA, consent — entirely on the IdP)
+IdP  → User             302 to /api/v1/auth/callback/entra?code=…&state=…
+User → Backend          GET /api/v1/auth/callback/entra (callback route)
+                        Reads reflow_oauth_tx, validates state matches.
+                        POSTs token endpoint with code + verifier.
+                        Validates id_token: signature (JWKS), iss, aud, exp, nonce.
+                        ← 302 to next_path
+                          + Set-Cookie: reflow_session (signed identity)
+                          + Set-Cookie: reflow_session_csrf
+                          + clears reflow_oauth_tx
+```
+
+Several decisions are worth understanding because they're not obvious from reading the code alone.
+
+### Why two cookies, not one
+
+The OAuth `state` parameter is the canonical CSRF defence for the redirect-back. To validate it, we need to know what state we minted on kickoff — that's the kind of thing many implementations stash in a server-side session. Our session store doesn't exist yet at that point in the flow (the user is still anonymous), so a separate, short-lived `reflow_oauth_tx` cookie carries it instead. Same cookie also carries the PKCE verifier and the original `next` path so the callback finishes the round-trip without needing any other state.
+
+The `reflow_oauth_tx` cookie is signed with a different `itsdangerous` salt from the session cookie, so a session value can never be replayed as a tx value or vice versa. TTL is 10 minutes — long enough that a user pausing on an MFA prompt or a password reset still completes the flow, short enough that a captured tx cookie can't be replayed against a future kickoff.
+
+### Why PKCE even with a confidential client
+
+Entra (and most enterprise IdPs) treat us as a "confidential client" because we have a `client_secret`. The OAuth 2.0 spec says PKCE is optional for confidential clients. We do it anyway because:
+
+1. Defence in depth — if the `client_secret` ever leaks (CI logs, accidental commit, env-dump page), an attacker who also intercepts a single authorisation code can't redeem it without the verifier we never put on the wire.
+2. Future-proofing — if we ever break the deployment into a public client (e.g. a native desktop variant), nothing about the OIDC integration changes.
+
+The `code_challenge` (S256 hash of a 64-char verifier) goes in the auth URL; the verifier rides home in the signed tx cookie and is sent in the token-exchange POST body.
+
+### Why we validate every claim ourselves
+
+`joserfc.jwt.decode` validates the JWT signature against the JWKS we fetched from the discovery doc. It does **not** validate `iss`, `aud`, `exp`, or `nonce` — those are application-level checks. We do them in `OIDCAuthProvider._validate_id_token`:
+
+- `iss` must match the discovery doc's issuer. Catches "wrong tenant" misconfigurations.
+- `aud` must include our `client_id`. ID tokens issued for *another* client of the same IdP should not be redeemable here.
+- `exp` must not be in the past (with 60s leeway for clock skew).
+- `nonce` must match the value we minted on kickoff. Prevents replay of an ID token captured from a different login session — even from the same IdP, even within the token's `exp` window.
+
+### Why JWKS rotation gets a force-refresh retry
+
+IdPs rotate signing keys silently. Entra ≈ daily; some providers do it on demand. Our JWKS cache TTL (one hour) is an optimisation, not a correctness boundary — on a signature-validation failure we force-refresh JWKS once and retry. If validation still fails, the token really is bad. This avoids a class of "everything was fine yesterday and now nobody can log in" outages that would otherwise need a container restart to recover.
+
+### Why the open-redirect sanitiser
+
+A malicious link `https://reflow.example/login?next=https://evil.example/steal` would, without sanitisation, surface `https://evil.example/steal` as the post-login destination — turning our login flow into an unintentional open redirect. `_safe_next_path` accepts only values starting with a single `/` (no scheme, no `//`); anything else falls back to `AUTH_POST_LOGIN_REDIRECT`. Cheap defence, real value.
+
+## Why no group/role gating in the first cut
+
+The `Identity` model deliberately has no `groups` or `roles` field. Reading the IdP's group claim is straightforward (Entra emits group object IDs in the `groups` claim or via Graph API for large groups), but **policy** — what to do with the membership — is the messy part. "Members of group X may use the viewer" is a different policy from "members of group Y are admins" or "members of any of these N groups", and each of those wants a different config shape.
+
+Shipping a half-baked policy mechanism in PR2 would be worse than shipping none. The clean extension point is there: add `groups: list[str]` to `Identity`, plus a `RequireGroups` FastAPI dependency, plus an env-driven allowlist. That's a Phase 4 ticket once the OIDC plumbing has lived in production for a while and we know which policy patterns operators actually need.

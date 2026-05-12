@@ -319,7 +319,7 @@ export function PipelineViewerPage() {
   const [activeStepIdx, setActiveStepIdx] = useState(0);
   const [copiedImage, setCopiedImage] = useState(false);
   const [dragOver, setDragOver] = useState(false);
-  const [autoAdvance, setAutoAdvance] = useState(true);
+  const [autoAdvance, setAutoAdvance] = useState(false);
   const [changesModalOpen, setChangesModalOpen] = useState(false);
   const [metadataModalOpen, setMetadataModalOpen] = useState(false);
   const [feedbackModalOpen, setFeedbackModalOpen] = useState(false);
@@ -797,7 +797,7 @@ export function PipelineViewerPage() {
               onClick={() => setAutoAdvance(!autoAdvance)}
               title={autoAdvance ? 'Auto-advance is on — click to pause' : 'Auto-advance is off — click to resume'}
             >
-              {autoAdvance ? <Play className="w-3.5 h-3.5" /> : <Pause className="w-3.5 h-3.5" />}
+              {autoAdvance ? <Pause className="w-3.5 h-3.5" /> : <Play className="w-3.5 h-3.5" />}
               Auto-advance
             </Button>
 

@@ -33,8 +33,8 @@ Equalify Reflow is a monolithic Python application with background task queuing 
 ### Infrastructure
 
 - **Redis 5.0+** - Task queues, job state, rate limiting, distributed locks
-- **AWS S3** - Current default for object storage (PDFs, pipeline artefacts, results). Pluggable: the provider-abstraction roadmap (in progress) will add a local filesystem option for simpler deployments.
-- **Floci** - Lightweight (~72 MB, ~26 ms startup, MIT licensed) local AWS emulator used by the default dev stack. Replaces LocalStack — same wire protocol, same port (4566). Once the filesystem storage provider lands, Floci becomes opt-in rather than required.
+- **S3-compatible object storage** - PDFs, pipeline artefacts, and results live in two buckets (temp and results). The storage layer uses boto3 against the S3 API — *not* an AWS-only integration. Any service that speaks the S3 protocol works in production: AWS S3, [MinIO](https://min.io), [Garage](https://garagehq.deuxfleurs.fr/), [Cloudflare R2](https://developers.cloudflare.com/r2/), Backblaze B2, Wasabi, or [Floci](https://github.com/floci-io/floci). Point `AWS_ENDPOINT_URL_S3` at the chosen service and set `S3_PUBLIC_URL` to the public hostname used in client-facing presigned links. See [`docs/how-to/self-host.md`](../how-to/self-host.md) for the full setup.
+- **Floci** - Lightweight (~72 MB, ~26 ms startup, MIT licensed) local S3-compatible emulator used by the default dev stack. Replaces LocalStack — same wire protocol, same port (4566). Production deployments swap it for any of the S3-compatible options listed above.
 - **Docker & Docker Compose** - Containerized services
 
 ### Monitoring & Observability

@@ -1,4 +1,14 @@
-"""Storage service for S3 operations."""
+"""Object-storage service.
+
+Talks to any service that implements the S3 API via boto3. AWS S3 is one
+option; production deployments also run against MinIO, Garage, Cloudflare
+R2, Backblaze B2, Wasabi, etc. Local dev uses Floci. The choice is
+controlled by ``AWS_ENDPOINT_URL_S3`` (boto3 reads it directly); this
+module is endpoint-agnostic.
+
+The class and surrounding comments still say "S3" because that is the
+name of the protocol the API speaks, not a claim that AWS is required.
+"""
 
 import asyncio
 import json

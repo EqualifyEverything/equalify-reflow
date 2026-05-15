@@ -155,7 +155,16 @@ class Settings(BaseSettings):
     # Docling-serve sidecar configuration
     docling_serve_url: str = Field(
         default="http://docling-serve:5001",
-        description="Base URL of the docling-serve sidecar",
+        description=(
+            "Base URL of the docling-serve service. **Required** — every "
+            "document submission calls this; there is no in-process docling "
+            "fallback. The default 'http://docling-serve:5001' resolves only "
+            "inside the docker-compose dev stack, where 'docling-serve' is "
+            "the compose service name. For any other deployment set this to "
+            "the actual address: 'http://localhost:5001' when docling-serve "
+            "runs as a sidecar in the same task/pod, or the full "
+            "DNS/hostname of a separate docling-serve service otherwise."
+        ),
     )
     docling_serve_timeout: float = Field(
         ge=10.0,

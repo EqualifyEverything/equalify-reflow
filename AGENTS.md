@@ -97,6 +97,7 @@ tests/
 - [Test rate limits locally](docs/how-to/test-rate-limits.md)
 - [Enable basic auth on the viewer](docs/how-to/enable-basic-auth.md)
 - [Configure SSO (Microsoft Entra and other OIDC providers)](docs/how-to/configure-sso.md)
+- [Self-host on your own infrastructure](docs/how-to/self-host.md)
 
 ## Conventions
 

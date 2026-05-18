@@ -76,10 +76,10 @@ async def test_valid_api_key_allows_access(enable_api_key_auth):
 
     try:
         # Patch the middleware's validation method
-        def mock_is_valid_key(self, provided_key: str) -> bool:
-            return provided_key == "test-key-123"
+        def mock_match_key(self, provided_key: str) -> str | None:
+            return "test-label" if provided_key == "test-key-123" else None
 
-        with patch.object(APIKeyAuthMiddleware, '_is_valid_key', mock_is_valid_key):
+        with patch.object(APIKeyAuthMiddleware, '_match_key', mock_match_key):
             async with AsyncClient(
                 transport=ASGITransport(app=app),
                 base_url="http://test",
@@ -150,10 +150,10 @@ async def test_multiple_api_keys_supported(enable_api_key_auth):
 
         # Directly patch the method that validates keys
 
-        def mock_is_valid_key(self, provided_key: str) -> bool:
-            return provided_key in {"key-1", "key-2", "key-3"}
+        def mock_match_key(self, provided_key: str) -> str | None:
+            return provided_key if provided_key in {"key-1", "key-2", "key-3"} else None
 
-        with patch.object(APIKeyAuthMiddleware, '_is_valid_key', mock_is_valid_key):
+        with patch.object(APIKeyAuthMiddleware, '_match_key', mock_match_key):
             mock_job_service = AsyncMock()
             mock_job_service.get_job.return_value = {
                 "job_id": "test",
@@ -224,10 +224,10 @@ async def test_api_key_auth_unaffected_by_public_docs():
     from src.middleware.api_key_auth import APIKeyAuthMiddleware
 
     with patch("src.dependencies.get_job_service") as mock_job_service_dep:
-        def mock_is_valid_key(self, provided_key: str) -> bool:
-            return provided_key == "api-key-123"
+        def mock_match_key(self, provided_key: str) -> str | None:
+            return "test-label" if provided_key == "api-key-123" else None
 
-        with patch.object(APIKeyAuthMiddleware, '_is_valid_key', mock_is_valid_key):
+        with patch.object(APIKeyAuthMiddleware, '_match_key', mock_match_key):
             mock_job_service = AsyncMock()
             mock_job_service.get_job.return_value = {
                 "job_id": "test-id",

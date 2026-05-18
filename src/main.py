@@ -27,11 +27,17 @@ from .middleware import (
 from .middleware.metrics import setup_metrics
 from .services.rate_limit_service import RateLimitService
 from .telemetry import init_telemetry, shutdown_telemetry
+from .utils.logging_config import configure_logging
 from .workers.pii_worker import start_pii_worker
 from .workers.timeout_worker import start_timeout_worker
 
-# Configure logging
-logging.basicConfig(level=settings.log_level, format="%(asctime)s - %(name)s - %(levelname)s - %(message)s")
+# Configure logging. JSON in production so the structured fields the
+# middleware attaches via extra={} (path, status, latency, identity) are
+# queryable downstream; human-readable text in local dev.
+configure_logging(
+    level=settings.log_level,
+    json_format=(settings.environment == "production"),
+)
 
 # Silence noisy third-party loggers (they flood DEBUG with base64 payloads, auth signatures, etc.)
 for _noisy_logger in ("botocore", "boto3", "urllib3", "httpcore", "httpx", "s3transfer", "python_multipart"):

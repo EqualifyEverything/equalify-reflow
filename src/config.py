@@ -65,7 +65,18 @@ class Settings(BaseSettings):
     # API Key Authentication Configuration
     enable_api_key_auth: bool = Field(default=True, description="Enable API key authentication for API endpoints")
     api_key_header_name: str = Field(default="X-API-Key", description="Header name for API key authentication")
-    api_keys: SecretStr | None = Field(default=None, description="Comma-separated list of valid API keys")
+    api_keys: SecretStr | None = Field(
+        default=None,
+        description=(
+            "Comma-separated list of valid API keys. Each entry is either a "
+            "bare key or a 'label:key' pair (split on the first colon, like "
+            "AUTH_BASIC_USERS). The label is recorded on every authenticated "
+            "request log so per-key usage is attributable; the key itself is "
+            "never logged. Bare keys get a derived 'key-<fingerprint>' label. "
+            "Keys that themselves contain a colon must be given an explicit "
+            "label to avoid the leading segment being parsed as one."
+        ),
+    )
 
     # Viewer Authentication (optional, layered on top of API keys)
     # AUTH_MODE=none keeps today's behaviour: no login, no cookies, no identity.

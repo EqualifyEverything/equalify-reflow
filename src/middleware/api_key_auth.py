@@ -1,5 +1,6 @@
 """API Key authentication middleware for FastAPI."""
 
+import hashlib
 import logging
 import secrets
 from collections.abc import Awaitable, Callable
@@ -13,6 +14,15 @@ from ..auth.base import Identity
 from ..config import settings
 
 logger = logging.getLogger(__name__)
+
+
+def _fingerprint(api_key: str) -> str:
+    """Stable, non-reversible identifier for an unlabelled key.
+
+    Lets two unlabelled keys still be told apart in logs without ever
+    logging the key itself.
+    """
+    return "key-" + hashlib.sha256(api_key.encode()).hexdigest()[:8]
 
 
 class APIKeyAuthMiddleware(BaseHTTPMiddleware):
@@ -31,29 +41,50 @@ class APIKeyAuthMiddleware(BaseHTTPMiddleware):
             app: FastAPI application instance
         """
         super().__init__(app)
-        # Cache API keys at initialization to avoid reloading on every request
-        self._cached_keys: set[str] = self._load_api_keys()
+        # Cache API keys at initialization to avoid reloading on every request.
+        # Maps secret key -> human label (for usage attribution in logs).
+        self._cached_keys: dict[str, str] = self._load_api_keys()
 
-    def _load_api_keys(self) -> set[str]:
+    def _load_api_keys(self) -> dict[str, str]:
         """
-        Load valid API keys from settings.
+        Load valid API keys from settings into a {key: label} map.
+
+        ``API_KEYS`` is comma-separated. Each entry is either a bare key or a
+        ``label:key`` pair (split on the first colon, mirroring how
+        ``AUTH_BASIC_USERS`` encodes ``username:hash``). The label is logged
+        on every authenticated request so per-key usage is attributable; the
+        key itself is never logged. A bare key gets a derived
+        ``key-<fingerprint>`` label so even unlabelled keys stay distinct.
 
         Returns:
-            Set of valid API key strings
+            Mapping of valid API key string -> label.
         """
         if not settings.api_keys:
             logger.warning("No API keys configured! All authenticated requests will be rejected.")
-            return set()
+            return {}
 
-        # Parse comma-separated keys from SecretStr
-        keys_str = settings.api_keys.get_secret_value()
-        keys = {key.strip() for key in keys_str.split(",") if key.strip()}
+        keys: dict[str, str] = {}
+        for entry in settings.api_keys.get_secret_value().split(","):
+            entry = entry.strip()
+            if not entry:
+                continue
+            if ":" in entry:
+                label, _, key = entry.partition(":")
+                label = label.strip()
+                key = key.strip()
+            else:
+                key = entry
+                label = ""
+            if not key:
+                logger.warning("API key entry skipped: empty key after parsing")
+                continue
+            keys[key] = label or _fingerprint(key)
 
         if not keys:
             logger.warning("API keys configured but empty after parsing!")
-            return set()
+            return {}
 
-        logger.info(f"Loaded {len(keys)} API key(s) for authentication")
+        logger.info("Loaded %d API key(s) for authentication", len(keys))
         return keys
 
     async def dispatch(self, request: Request, call_next: Callable[[Request], Awaitable[Response]]) -> Response:
@@ -84,14 +115,18 @@ class APIKeyAuthMiddleware(BaseHTTPMiddleware):
             )
 
         # Validate API key using constant-time comparison
-        if not self._is_valid_key(api_key):
+        label = self._match_key(api_key)
+        if label is None:
             logger.warning(
                 f"Invalid API key for {request.method} {request.url.path} from {self._get_client_ip(request)}"
             )
             return self._unauthorized_response(detail="Invalid API key")
 
-        # API key is valid, add to request state for potential use in handlers
+        # API key is valid. Stash the key for handlers and the label for
+        # request logging (LoggingMiddleware reads request.state.api_key_label
+        # so per-key usage is attributable without ever logging the key).
         request.state.api_key = api_key
+        request.state.api_key_label = label
 
         # Process request
         return await call_next(request)
@@ -243,28 +278,24 @@ class APIKeyAuthMiddleware(BaseHTTPMiddleware):
 
         return True
 
-    def _is_valid_key(self, provided_key: str) -> bool:
+    def _match_key(self, provided_key: str) -> str | None:
         """
-        Validate API key using constant-time comparison.
+        Validate an API key and return its label.
 
-        Uses secrets.compare_digest() to prevent timing attacks.
-        Uses cached keys loaded at initialization for optimal performance.
+        Uses secrets.compare_digest() per key to prevent timing attacks on
+        the comparison itself. Uses cached keys loaded at initialization.
 
         Args:
             provided_key: API key from request header
 
         Returns:
-            True if key is valid
+            The matching key's label, or None if no key matches.
         """
-        if not self._cached_keys:
-            return False
-
-        # Use constant-time comparison to prevent timing attacks
-        for valid_key in self._cached_keys:
+        for valid_key, label in self._cached_keys.items():
             if secrets.compare_digest(provided_key, valid_key):
-                return True
+                return label
 
-        return False
+        return None
 
     def _get_client_ip(self, request: Request) -> str:
         """

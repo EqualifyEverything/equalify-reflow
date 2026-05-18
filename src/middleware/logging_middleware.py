@@ -11,24 +11,40 @@ logger = logging.getLogger(__name__)
 
 
 def _identity_fields(request: Request) -> dict[str, str | None]:
-    """Pull identity attributes off ``request.state`` if SessionAuthMiddleware
-    populated them. Returns ``{}`` for anonymous requests so log lines from
+    """Pull caller-identity attributes off ``request.state`` for logging.
+
+    Two independent auth paths can populate identity, and a request may use
+    either:
+
+    * SessionAuthMiddleware sets ``request.state.identity`` (an ``Identity``)
+      for viewer logins — surfaced as ``user_sub`` / ``user_email`` /
+      ``user_provider``.
+    * APIKeyAuthMiddleware sets ``request.state.api_key_label`` for
+      programmatic clients — surfaced as ``api_key_label``. The key itself
+      is never logged.
+
+    Returns ``{}`` for fully anonymous requests so log lines from
     AUTH_MODE=none deployments stay shape-identical to today's.
 
-    The ``isinstance`` rather than truthiness check matters: existing mock
+    The ``isinstance`` rather than truthiness checks matter: existing mock
     tests sometimes use a MagicMock for ``request.state`` whose attribute
     access always returns a truthy child mock.
     """
     from ..auth.base import Identity  # lazy to keep middleware import-light
 
+    fields: dict[str, str | None] = {}
+
     identity = getattr(request.state, "identity", None)
-    if not isinstance(identity, Identity):
-        return {}
-    return {
-        "user_sub": identity.sub,
-        "user_email": identity.email,
-        "user_provider": identity.provider_id,
-    }
+    if isinstance(identity, Identity):
+        fields["user_sub"] = identity.sub
+        fields["user_email"] = identity.email
+        fields["user_provider"] = identity.provider_id
+
+    api_key_label = getattr(request.state, "api_key_label", None)
+    if isinstance(api_key_label, str):
+        fields["api_key_label"] = api_key_label
+
+    return fields
 
 
 class LoggingMiddleware(BaseHTTPMiddleware):

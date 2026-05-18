@@ -5,7 +5,7 @@ from unittest.mock import AsyncMock, MagicMock, patch
 import pytest
 from fastapi import Request, Response
 from fastapi.responses import JSONResponse
-from src.middleware.api_key_auth import APIKeyAuthMiddleware
+from src.middleware.api_key_auth import APIKeyAuthMiddleware, _fingerprint
 
 
 @pytest.fixture
@@ -433,3 +433,78 @@ async def test_cached_keys_used_on_multiple_requests():
             assert call_count == initial_call_count
             assert call_count == 1
             assert call_next.call_count == 5
+
+
+# ---------- labelled API keys (usage attribution) ----------
+
+
+def _middleware_with(raw_keys: str) -> APIKeyAuthMiddleware:
+    """Build a middleware instance whose API_KEYS is `raw_keys`."""
+    mock_app = MagicMock()
+    with patch("src.middleware.api_key_auth.settings") as mock_settings:
+        mock_settings.api_key_header_name = "X-API-Key"
+        mock_settings.environment = "production"
+        mock_settings.api_keys = MagicMock()
+        mock_settings.api_keys.get_secret_value.return_value = raw_keys
+        return APIKeyAuthMiddleware(mock_app)
+
+
+@pytest.mark.unit
+def test_fingerprint_is_stable_and_does_not_leak_key():
+    fp = _fingerprint("super-secret-key")
+    assert fp == _fingerprint("super-secret-key")  # deterministic
+    assert fp.startswith("key-")
+    assert "super-secret-key" not in fp
+
+
+@pytest.mark.unit
+def test_labelled_keys_parsed_into_key_to_label_map():
+    mw = _middleware_with("zach:key-zzz,daisy:key-ddd")
+    assert mw._cached_keys == {"key-zzz": "zach", "key-ddd": "daisy"}
+
+
+@pytest.mark.unit
+def test_bare_key_gets_fingerprint_label():
+    mw = _middleware_with("plainkey")
+    assert mw._cached_keys["plainkey"] == _fingerprint("plainkey")
+
+
+@pytest.mark.unit
+def test_mixed_labelled_and_bare_keys():
+    mw = _middleware_with("zach:key-a,key-b")
+    assert mw._cached_keys["key-a"] == "zach"
+    assert mw._cached_keys["key-b"] == _fingerprint("key-b")
+
+
+@pytest.mark.unit
+def test_label_split_on_first_colon_only():
+    # A key that itself contains colons works when explicitly labelled:
+    # everything after the first colon is the key.
+    mw = _middleware_with("svc:weird:key:with:colons")
+    assert mw._cached_keys == {"weird:key:with:colons": "svc"}
+
+
+@pytest.mark.unit
+@pytest.mark.asyncio
+async def test_valid_labelled_key_sets_label_on_request_state():
+    mw = _middleware_with("zach:key-zzz,daisy:key-ddd")
+    request = create_mock_request("/api/v1/documents/submit", {"X-API-Key": "key-ddd"})
+    call_next = AsyncMock(return_value=Response(status_code=200))
+
+    response = await mw.dispatch(request, call_next)
+
+    assert response.status_code == 200
+    assert request.state.api_key == "key-ddd"
+    assert request.state.api_key_label == "daisy"
+
+
+@pytest.mark.unit
+@pytest.mark.asyncio
+async def test_bare_key_sets_fingerprint_label_on_request_state():
+    mw = _middleware_with("plainkey")
+    request = create_mock_request("/api/v1/documents/submit", {"X-API-Key": "plainkey"})
+    call_next = AsyncMock(return_value=Response(status_code=200))
+
+    await mw.dispatch(request, call_next)
+
+    assert request.state.api_key_label == _fingerprint("plainkey")

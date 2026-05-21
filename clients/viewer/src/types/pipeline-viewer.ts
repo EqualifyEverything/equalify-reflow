@@ -45,7 +45,7 @@ export const PIPELINE_STAGES: StageDefinition[] = [
   { name: 'extraction',  label: 'Extraction',   steps: ['docling', 'docling_ocr'] },
   { name: 'analysis',    label: 'Analysis',      steps: ['classification', 'structure'] },
   { name: 'headings',    label: 'Headings',      steps: ['heading_levels', 'heading_reconciliation'] },
-  { name: 'translation', label: 'Translation',   steps: ['page_content', 'code_blocks'] },
+  { name: 'translation', label: 'Translation',   steps: ['page_content', 'code_blocks', 'form_fields'] },
   { name: 'assembly',    label: 'Assembly',       steps: ['boundaries', 'cleanup'] },
 ];
 

@@ -12,14 +12,14 @@ The pipeline has **5 versioned conversion phases** plus a **PII Review** gate th
 | 1. **Extraction** | `docling`, `docling_ocr` (conditional) | No | PDF → markdown + page images via IBM Docling. `docling_ocr` only fires when the classifier flags a scanned document. |
 | 2. **Analysis** | `classification`, `structure` | Yes | `classification` tags the document as digital / scanned / malformed. `structure` identifies headings, footnotes, code blocks, per-page layout attributes. |
 | 3. **Headings** | `heading_reconciliation`, `heading_levels` | Yes | `heading_reconciliation` reconciles per-page heading candidates against the global outline. `heading_levels` normalises the hierarchy (H1 → H2 → H3, no skips). |
-| 4. **Translation** | `page_content`, `code_blocks` | Yes | `page_content` does per-page accessibility corrections (invokes image / table / list subagents). `code_blocks` tags fenced blocks with detected programming language. |
+| 4. **Translation** | `page_content`, `code_blocks`, `form_fields` | Yes | `page_content` does per-page accessibility corrections (invokes image / table / list subagents). `code_blocks` tags fenced blocks with detected programming language. `form_fields` detects form controls from each page image and injects accessible HTML (labelled inputs, `<fieldset>`/`<legend>` option groups). |
 | 5. **Assembly** | `boundaries`, `cleanup` | Mixed | `boundaries` rejoins cross-page split content and relocates footnotes (AI). `cleanup` normalises whitespace and lints the markdown (deterministic). |
 
 The viewer also shows a dynamic **Review** stage that catches any orphan steps (`revision_*`, `feedback_*`, custom steps) not listed above.
 
 ## Internal step → `_step_*` method map
 
-Nine methods in `src/services/pipeline_viewer.py`, plus `pii_scan` which runs inline in `src/api/pipeline_viewer.py` (no `_step_*` method — it's pre-extraction gate logic, not a PipelineViewerService method):
+Ten methods in `src/services/pipeline_viewer.py`, plus `pii_scan` which runs inline in `src/api/pipeline_viewer.py` (no `_step_*` method — it's pre-extraction gate logic, not a PipelineViewerService method):
 
 | Step name | Method | Phase | Deterministic / AI |
 |---|---|---|---|
@@ -32,10 +32,11 @@ Nine methods in `src/services/pipeline_viewer.py`, plus `pii_scan` which runs in
 | `heading_levels` | `_step_heading_levels` | Headings | AI |
 | `page_content` | `_step_page_content` | Translation | AI + subagents |
 | `code_blocks` | `_step_code_blocks` | Translation | AI |
+| `form_fields` | `_step_form_fields` | Translation | AI (vision) + deterministic injection |
 | `boundaries` | `_step_boundaries` | Assembly | AI + subagent |
 | `cleanup` | `_step_cleanup` | Assembly | Deterministic |
 
-`classification` is not its own `_step_*` method — it's a `StepResult` emitted from within `_step_docling` when the classifier runs. Up to 10 named step results can appear in one run.
+`classification` is not its own `_step_*` method — it's a `StepResult` emitted from within `_step_docling` when the classifier runs. Up to 11 named step results can appear in one run.
 
 ## Subagents
 

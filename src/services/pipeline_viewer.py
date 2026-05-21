@@ -13,6 +13,7 @@ from __future__ import annotations
 import asyncio
 import base64
 import difflib
+import html
 import logging
 import re
 import time
@@ -26,6 +27,9 @@ from .pipeline_viewer_models import (
     DocumentChange,
     FigureData,
     FootnoteInfo,
+    FormFieldInfo,
+    FormFieldsPageOutput,
+    FormFieldType,
     HeadingReconciliationOutput,
     ImageDescriptionResult,
     LayoutType,
@@ -270,6 +274,126 @@ def _apply_code_block_fence(
             f"(structure analysis: {cb.reasoning})"
         ),
         stage="code_block",
+    )
+
+
+def _render_form_field_html(field: FormFieldInfo, field_id: str) -> str:
+    """Render a detected form field as an accessible, static HTML control.
+
+    The output is a *representation* of the form for accessibility, not a
+    working form: there is no surrounding ``<form>`` and inputs are marked
+    ``readonly`` / ``disabled`` so they advertise their role and label to a
+    screen reader without implying the document is fillable.
+
+    Every control is paired with a programmatic label:
+      - text / textarea / date / select use ``<label for=...>``,
+      - checkbox / single fields put the label after the control,
+      - radio_group / checkbox_group / multi-option select wrap options in a
+        ``<fieldset>`` with the prompt as the ``<legend>``.
+
+    Args:
+        field: The detected field.
+        field_id: A document-unique id stem (e.g. "ff-p1-2") used to wire
+            labels to controls.
+
+    Returns:
+        An HTML fragment.
+    """
+    label = html.escape(field.label or "Field")
+    required_attr = ' aria-required="true"' if field.required else ""
+    req_marker = ' <abbr title="required">*</abbr>' if field.required else ""
+
+    if field.field_type in (FormFieldType.TEXT, FormFieldType.DATE):
+        input_type = "date" if field.field_type == FormFieldType.DATE else "text"
+        return (
+            f'<label for="{field_id}">{label}{req_marker}</label>\n'
+            f'<input type="{input_type}" id="{field_id}" '
+            f'name="{field_id}"{required_attr} readonly>'
+        )
+
+    if field.field_type == FormFieldType.TEXTAREA:
+        return (
+            f'<label for="{field_id}">{label}{req_marker}</label>\n'
+            f'<textarea id="{field_id}" name="{field_id}"{required_attr} '
+            f"readonly></textarea>"
+        )
+
+    if field.field_type == FormFieldType.SIGNATURE:
+        return (
+            f'<label for="{field_id}">{label}{req_marker}</label>\n'
+            f'<input type="text" id="{field_id}" name="{field_id}" '
+            f'aria-label="{label} (signature)"{required_attr} readonly>'
+        )
+
+    if field.field_type == FormFieldType.CHECKBOX:
+        checked = " checked" if (field.options and field.options[0].checked) else ""
+        return (
+            f'<input type="checkbox" id="{field_id}" name="{field_id}"'
+            f"{checked}{required_attr} disabled> "
+            f'<label for="{field_id}">{label}{req_marker}</label>'
+        )
+
+    if field.field_type == FormFieldType.SELECT:
+        opts = "\n".join(
+            f'  <option{" selected" if o.checked else ""}>'
+            f"{html.escape(o.label)}</option>"
+            for o in field.options
+        )
+        return (
+            f'<label for="{field_id}">{label}{req_marker}</label>\n'
+            f'<select id="{field_id}" name="{field_id}"{required_attr} disabled>\n'
+            f"{opts}\n"
+            f"</select>"
+        )
+
+    # radio_group / checkbox_group — fieldset + legend, one control per option
+    input_type = (
+        "checkbox" if field.field_type == FormFieldType.CHECKBOX_GROUP else "radio"
+    )
+    parts = ["<fieldset>", f"  <legend>{label}{req_marker}</legend>"]
+    for i, opt in enumerate(field.options):
+        opt_id = f"{field_id}-{i}"
+        checked = " checked" if opt.checked else ""
+        # All radios in a group share a name; checkboxes get distinct names.
+        name = field_id if input_type == "radio" else opt_id
+        parts.append(
+            f'  <input type="{input_type}" id="{opt_id}" name="{name}"'
+            f"{checked} disabled> "
+            f'<label for="{opt_id}">{html.escape(opt.label)}</label>'
+        )
+    parts.append("</fieldset>")
+    return "\n".join(parts)
+
+
+def _apply_form_field(
+    page_md: str,
+    field: FormFieldInfo,
+    field_id: str,
+) -> tuple[str, DocumentChange | None]:
+    """Replace a detected field's ``anchor_text`` with accessible HTML.
+
+    Fuzzy-finds the anchor line in *page_md* and swaps it for the rendered
+    control. Returns ``(new_markdown, change)`` or ``(original, None)`` if the
+    anchor could not be located.
+    """
+    lines = page_md.split("\n")
+    idx = _fuzzy_find_line(lines, field.anchor_text)
+    if idx < 0:
+        return page_md, None
+
+    new_html = _render_form_field_html(field, field_id)
+    old_text = lines[idx]
+    new_lines = lines[:idx] + [new_html] + lines[idx + 1 :]
+
+    return "\n".join(new_lines), DocumentChange(
+        page=field.page,
+        old_text=old_text[:200] + ("..." if len(old_text) > 200 else ""),
+        new_text=new_html[:200] + ("..." if len(new_html) > 200 else ""),
+        reasoning=(
+            f"Replaced {field.field_type.value} field "
+            f"'{field.label}' with accessible HTML ({field.reasoning})"
+        ),
+        stage="form_field",
     )
 
 
@@ -637,6 +761,8 @@ class PipelineViewerService:
             await self._step_page_content(result, structure, page_hints=page_hints)
             _emit_phase("code_blocks", "Code Block Languages")
             await self._step_code_blocks(result, structure)
+            _emit_phase("form_fields", "Form Fields")
+            await self._step_form_fields(result)
 
         if enable_boundaries and structure is not None:
             if section_map is None and structure is not None:
@@ -2666,6 +2792,128 @@ class PipelineViewerService:
                 metadata={
                     "blocks_tagged": len(changes),
                 },
+            )
+        )
+
+    async def _step_form_fields(
+        self,
+        result: PipelineViewerResult,
+    ) -> None:
+        """Detect form fields per page and inject accessible HTML controls.
+
+        A vision agent compares each page image (ground truth) against its
+        markdown and reports the form fields it sees. A deterministic injector
+        then replaces each field's ``anchor_text`` with accessible HTML
+        (labelled controls, ``<fieldset>``/``<legend>`` for option groups).
+
+        Detection-only pages (no form) cost one cheap call and change nothing.
+        Edits whichever per-page version is newest (v1 if present, else v0)
+        in-place — does not introduce a new version.
+        """
+        from pydantic_ai import Agent
+        from pydantic_ai.messages import BinaryContent
+
+        from ..agents.model_factory import get_model_for_tier
+        from ..agents.model_tiers import ModelTier
+        from ..agents.prompts.form_fields import (
+            FORM_FIELDS_SYSTEM_PROMPT,
+            build_form_fields_user_message,
+        )
+        from ..shared.llm_cost import calculate_estimated_cost
+
+        step_start = time.time()
+        source_version = "v1" if "v1" in result.page_markdowns else "v0"
+        page_mds = result.page_markdowns.get(source_version, {})
+
+        model = get_model_for_tier(ModelTier.EFFICIENT)
+        agent: Agent[None, FormFieldsPageOutput] = Agent(
+            model=model,
+            output_type=FormFieldsPageOutput,
+            system_prompt=FORM_FIELDS_SYSTEM_PROMPT,
+        )
+
+        changes: list[DocumentChange] = []
+        fields_found = 0
+        total_input_tokens = 0
+        total_output_tokens = 0
+
+        for page_num in range(1, result.total_pages + 1):
+            page_key = str(page_num)
+            page_md = page_mds.get(page_key, "")
+            page_image_b64 = result.page_images.get(page_key)
+            if not page_md or not page_image_b64:
+                continue
+
+            text_msg = build_form_fields_user_message(
+                page_markdown=page_md,
+                page_number=page_num,
+                total_pages=result.total_pages,
+            )
+            messages: list[Any] = [
+                BinaryContent(
+                    data=base64.b64decode(page_image_b64), media_type="image/png"
+                ),
+                text_msg,
+            ]
+
+            try:
+                agent_result = await agent.run(messages)
+                page_output = agent_result.output
+                usage = agent_result.usage()
+                total_input_tokens += usage.request_tokens or 0
+                total_output_tokens += usage.response_tokens or 0
+            except Exception as e:
+                logger.error(f"Form field detection failed on page {page_num}: {e}")
+                continue
+
+            if not page_output.form_fields:
+                continue
+
+            fields_found += len(page_output.form_fields)
+            current_md = page_mds[page_key]
+            for i, field in enumerate(page_output.form_fields):
+                field.page = page_num
+                field_id = f"ff-p{page_num}-{i}"
+                new_md, change = _apply_form_field(current_md, field, field_id)
+                if change:
+                    current_md = new_md
+                    changes.append(change)
+                else:
+                    logger.info(
+                        f"Form field anchor not found on page {page_num}: "
+                        f"{field.anchor_text!r}"
+                    )
+            page_mds[page_key] = current_md
+
+            logger.info(
+                f"Form fields page {page_num}/{result.total_pages}: "
+                f"detected={len(page_output.form_fields)}"
+            )
+
+        # Rebuild the full version from corrected pages
+        if changes:
+            result.versions[source_version] = "\n\n".join(
+                page_mds.get(str(p), "") for p in range(1, result.total_pages + 1)
+            )
+
+        elapsed_ms = int((time.time() - step_start) * 1000)
+        cost_cents = calculate_estimated_cost(total_input_tokens, total_output_tokens)
+
+        result.steps.append(
+            StepResult(
+                name="form_fields",
+                display_name="Form Fields",
+                version_before=source_version,
+                version_after=source_version,
+                elapsed_ms=elapsed_ms,
+                changes=changes,
+                metadata={
+                    "fields_detected": fields_found,
+                    "fields_injected": len(changes),
+                },
+                input_tokens=total_input_tokens,
+                output_tokens=total_output_tokens,
+                cost_cents=cost_cents,
             )
         )
 

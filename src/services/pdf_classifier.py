@@ -326,14 +326,19 @@ def _check_hard_blockers(classification: PdfClassification) -> None:
                 details={"form_type": meta.form_type, "form_field_count": meta.form_field_count},
             ))
         else:
-            # AcroForm (1) or unknown form type with real widgets
+            # AcroForm (1) or unknown form type with real widgets.
+            # Not a blocker: AcroForm field *content* isn't extracted directly,
+            # but the form-reconstruction subagent rebuilds the form visually
+            # from the page image into an accessible `form` block. Surface a
+            # warning so the user knows the form was detected and handled.
             classification.findings.append(ClassificationFinding(
                 code=FINDING_FORM_ACROFORM,
-                severity=ClassificationSeverity.ERROR,
+                severity=ClassificationSeverity.WARNING,
                 message=(
                     f"PDF contains {meta.form_field_count} interactive form "
-                    f"field(s) (AcroForm). Form content cannot be reliably "
-                    "extracted. Please flatten the form or export as a standard PDF."
+                    f"field(s) (AcroForm). Interactive fields are not extracted "
+                    "directly; the form is reconstructed from the page image into "
+                    "an accessible form block."
                 ),
                 details={"form_type": meta.form_type, "form_field_count": meta.form_field_count},
             ))

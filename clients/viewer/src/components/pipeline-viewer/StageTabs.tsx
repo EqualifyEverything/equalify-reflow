@@ -141,7 +141,7 @@ function isProcessingInStage(
     extraction: ['Docling Extraction', 'OCR Re-extraction', 'Extraction'],
     analysis: ['PDF Classification', 'Structure Analysis'],
     headings: ['Heading Levels', 'Heading Reconciliation'],
-    translation: ['Page Content Corrections', 'Code Block Languages'],
+    translation: ['Page Content Corrections', 'Code Block Languages', 'Form Fields'],
     assembly: ['Cross-Page Fixes', 'Final Cleanup'],
   };
   const names = nameMap[stage.name];

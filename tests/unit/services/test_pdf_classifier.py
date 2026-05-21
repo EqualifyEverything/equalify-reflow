@@ -155,11 +155,12 @@ class TestHardBlockers:
     """Tests for _check_hard_blockers."""
 
     def test_acroform_with_fields_detected(self):
-        """AcroForm declared AND real widget fields present → block."""
+        """AcroForm with real widget fields → warn, not block (reconstructed visually)."""
         c = PdfClassification(metadata=PdfMetadata(page_count=5, form_type=1, form_field_count=10))
         _check_hard_blockers(c)
         assert FINDING_FORM_ACROFORM in _classification_codes(c)
-        assert c.findings[0].severity == ClassificationSeverity.ERROR
+        assert c.findings[0].severity == ClassificationSeverity.WARNING
+        assert not c.has_errors
         assert "10" in c.findings[0].message
 
     def test_acroform_without_fields_is_clean(self):
@@ -453,8 +454,8 @@ class TestClassifyPdf:
 
     @patch("src.services.pdf_classifier._extract_metadata")
     @patch("pypdfium2.PdfDocument")
-    def test_form_pdf_with_fields_blocked(self, mock_pdf_cls, mock_extract):
-        """AcroForm with actual widget fields → blocked."""
+    def test_form_pdf_with_fields_warns_not_blocked(self, mock_pdf_cls, mock_extract):
+        """AcroForm with actual widget fields → warn (reconstructed visually), not blocked."""
         mock_pdf_cls.return_value = _make_mock_pdf(form_type=1)
 
         def populate_metadata(pdf, classification):
@@ -466,7 +467,8 @@ class TestClassifyPdf:
 
         result = classify_pdf(b"fake-pdf-bytes")
 
-        assert result.has_errors
+        assert not result.has_errors
+        assert result.has_warnings
         assert result.document_type == PdfDocumentType.FORM
         assert FINDING_FORM_ACROFORM in _classification_codes(result)
 

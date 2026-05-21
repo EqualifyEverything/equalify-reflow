@@ -253,58 +253,81 @@ class ListReconstructionResult(BaseModel):
 
 
 class FormFieldType(str, Enum):
-    """Type of form control, mapped to a ``form`` block DSL token.
-
-    The DSL token (the value here) is what appears in the rendered
-    ``form`` code block; a downstream renderer turns each into the
-    appropriate accessible control.
-    """
+    """Type of form control to render for a detected field."""
 
     TEXT = "text"
+    """Single-line free-text input (name, email, short answer)."""
+
     TEXTAREA = "textarea"
-    CHECKBOX = "checkbox"  # single standalone checkbox
-    MULTISELECT = "multiselect"  # group of checkboxes (more than one allowed)
-    RADIO = "radio"  # mutually-exclusive option group
-    SELECT = "select"  # dropdown / choice list
+    """Multi-line free-text input (comments, essay box)."""
+
+    CHECKBOX = "checkbox"
+    """A single standalone checkbox (e.g. "I attest …")."""
+
+    CHECKBOX_GROUP = "checkbox_group"
+    """A set of checkboxes where more than one may be ticked."""
+
+    RADIO_GROUP = "radio_group"
+    """A set of mutually-exclusive options (exactly one selected)."""
+
+    SELECT = "select"
+    """A dropdown / choice list."""
+
     DATE = "date"
+    """A date entry field."""
+
     SIGNATURE = "signature"
+    """A signature line."""
 
 
-class FormFieldSpec(BaseModel):
-    """One field in a detected form, read from the page image."""
+class FormFieldOption(BaseModel):
+    """One selectable option within a radio, checkbox, or select group."""
+
+    label: str
+    """Visible option text as read from the page image."""
+
+    checked: bool = False
+    """True if the option appears pre-selected / ticked in the image."""
+
+
+class FormFieldInfo(BaseModel):
+    """A form field detected on a page from the page image.
+
+    The agent reports what it sees; the deterministic injector turns this
+    into accessible HTML and splices it into the page markdown by replacing
+    ``anchor_text``.
+    """
 
     field_type: FormFieldType
     """The kind of control this field represents."""
 
     label: str
-    """Accessible label, read from the IMAGE. For grouped fields
-    (radio / multiselect / select) this is the group prompt."""
+    """Accessible label for the field, read from the IMAGE (e.g. "Full name").
+    For grouped fields this is the group prompt/legend (e.g. "Marital status")."""
 
-    options: list[str] = Field(default_factory=list)
-    """Choice labels for radio / multiselect / select. Empty otherwise."""
+    anchor_text: str
+    """The exact existing markdown text representing this field (e.g.
+    "Name: ____________" or "☐ I attest …"). The injector replaces this text
+    with the rendered accessible HTML. Copy it verbatim from the markdown."""
+
+    options: list[FormFieldOption] = Field(default_factory=list)
+    """Options for radio_group / checkbox_group / select fields. Empty otherwise."""
 
     required: bool = False
-    """True if the field is visibly marked required (asterisk, "required")."""
+    """True if the field is marked required (asterisk, "required", etc.)."""
 
-
-class FormReconstructionResult(BaseModel):
-    """Result from the form reconstruction subagent.
-
-    The deterministic renderer turns this into a ``form`` code block; the
-    page agent then splices that block in via ``str_replace``.
-    """
-
-    legend: str = ""
-    """The form's overall title/prompt, used as the block legend. May be empty."""
-
-    fields: list[FormFieldSpec] = Field(default_factory=list)
-    """The fields that make up the form, in top-to-bottom order."""
-
-    confidence: str = "high"
-    """Confidence level: high, medium, or low."""
+    page: int = 0
+    """Page where this field appears (1-indexed). Set by the orchestrator."""
 
     reasoning: str = ""
-    """How the fields and types were identified from the image."""
+    """How the field type and label were determined."""
+
+
+class FormFieldsPageOutput(BaseModel):
+    """What the form-fields agent returns for a single page."""
+
+    form_fields: list[FormFieldInfo] = Field(default_factory=list)
+    """Form fields found on this page. Empty list if the page has no form."""
 
 
 class SectionCorrectionResult(BaseModel):
@@ -365,12 +388,6 @@ class PageCorrectionResult(BaseModel):
 
     list_reconstructor_output_tokens: int = 0
     """Output tokens from list reconstructor subagent calls."""
-
-    form_reconstructor_input_tokens: int = 0
-    """Input tokens consumed by form reconstructor subagent calls."""
-
-    form_reconstructor_output_tokens: int = 0
-    """Output tokens from form reconstructor subagent calls."""
 
 
 # ---------------------------------------------------------------------------

@@ -13,6 +13,7 @@ from __future__ import annotations
 import asyncio
 import base64
 import difflib
+import html
 import logging
 import re
 import time
@@ -26,7 +27,9 @@ from .pipeline_viewer_models import (
     DocumentChange,
     FigureData,
     FootnoteInfo,
-    FormReconstructionResult,
+    FormFieldInfo,
+    FormFieldsPageOutput,
+    FormFieldType,
     HeadingReconciliationOutput,
     ImageDescriptionResult,
     LayoutType,
@@ -279,54 +282,135 @@ def _apply_code_block_fence(
     )
 
 
-def _form_dsl_escape(text: str) -> str:
-    """Make a label/option safe to embed in a ``form`` block line.
+# Markers Docling leaves behind when it flattens a form: runs of underscores
+# (fill-in blanks), checkbox glyphs, and bracket checkboxes. Used to detect
+# form pages deterministically, independent of the structure agent.
+_FORM_UNDERLINE_RE = re.compile(r"_{4,}")
+_FORM_CHECKBOX_RE = re.compile(r"[☐☑☒□◻❐❏]|\[\s?\]")
 
-    The DSL is line- and delimiter-oriented: ``|`` separates a field's
-    columns and ``;`` separates options, so those characters (and newlines)
-    are replaced with safe equivalents rather than allowed to break parsing.
+
+def _page_has_form_signals(page_md: str) -> bool:
+    """Heuristically decide whether a page contains a fillable form.
+
+    Keys on the typical artifacts Docling produces for forms — long underline
+    runs (``____``) and checkbox glyphs (``☐``, ``[ ]``) — so form pages are
+    caught even when the structure agent's ``has_forms`` flag misses them.
     """
-    return (
-        " ".join(text.split())  # collapse newlines/runs of whitespace
-        .replace("|", "/")
-        .replace(";", ",")
-        .strip()
+    return bool(
+        _FORM_UNDERLINE_RE.search(page_md) or _FORM_CHECKBOX_RE.search(page_md)
     )
 
 
-def _render_form_block(result: FormReconstructionResult) -> str:
-    """Render a reconstructed form as a composable ``form`` code block.
+def _render_form_field_html(field: FormFieldInfo, field_id: str) -> str:
+    """Render a detected form field as an accessible, static HTML control.
 
-    Grammar (one self-contained fenced block per form)::
+    The output is a *representation* of the form for accessibility, not a
+    working form: there is no surrounding ``<form>`` and inputs are marked
+    ``readonly`` / ``disabled`` so they advertise their role and label to a
+    screen reader without implying the document is fillable.
 
-        ```form
-        legend: <form title>
-        - <type>[*] | <label>[ | opt1; opt2; ...]
-        ```
-
-    ``<type>`` is the field-type DSL token, ``*`` marks a required field, and
-    options (semicolon-separated) appear only for radio/multiselect/select.
-    A downstream renderer compiles this to accessible controls; see
-    ``docs/reference/form-block.md``.
+    Every control is paired with a programmatic label:
+      - text / textarea / date / select use ``<label for=...>``,
+      - checkbox / single fields put the label after the control,
+      - radio_group / checkbox_group / multi-option select wrap options in a
+        ``<fieldset>`` with the prompt as the ``<legend>``.
     """
-    lines = ["```form"]
-    legend = _form_dsl_escape(result.legend)
-    if legend:
-        lines.append(f"legend: {legend}")
+    label = html.escape(field.label or "Field")
+    required_attr = ' aria-required="true"' if field.required else ""
+    req_marker = ' <abbr title="required">*</abbr>' if field.required else ""
 
-    for field in result.fields:
-        token = field.field_type.value
-        required = "*" if field.required else ""
-        label = _form_dsl_escape(field.label) or "Field"
-        line = f"- {token}{required} | {label}"
-        if field.options:
-            opts = "; ".join(_form_dsl_escape(o) for o in field.options if o.strip())
-            if opts:
-                line += f" | {opts}"
-        lines.append(line)
+    if field.field_type in (FormFieldType.TEXT, FormFieldType.DATE):
+        input_type = "date" if field.field_type == FormFieldType.DATE else "text"
+        return (
+            f'<label for="{field_id}">{label}{req_marker}</label>\n'
+            f'<input type="{input_type}" id="{field_id}" '
+            f'name="{field_id}"{required_attr} readonly>'
+        )
 
-    lines.append("```")
-    return "\n".join(lines)
+    if field.field_type == FormFieldType.TEXTAREA:
+        return (
+            f'<label for="{field_id}">{label}{req_marker}</label>\n'
+            f'<textarea id="{field_id}" name="{field_id}"{required_attr} '
+            f"readonly></textarea>"
+        )
+
+    if field.field_type == FormFieldType.SIGNATURE:
+        return (
+            f'<label for="{field_id}">{label}{req_marker}</label>\n'
+            f'<input type="text" id="{field_id}" name="{field_id}" '
+            f'aria-label="{label} (signature)"{required_attr} readonly>'
+        )
+
+    if field.field_type == FormFieldType.CHECKBOX:
+        checked = " checked" if (field.options and field.options[0].checked) else ""
+        return (
+            f'<input type="checkbox" id="{field_id}" name="{field_id}"'
+            f"{checked}{required_attr} disabled> "
+            f'<label for="{field_id}">{label}{req_marker}</label>'
+        )
+
+    if field.field_type == FormFieldType.SELECT:
+        opts = "\n".join(
+            f'  <option{" selected" if o.checked else ""}>'
+            f"{html.escape(o.label)}</option>"
+            for o in field.options
+        )
+        return (
+            f'<label for="{field_id}">{label}{req_marker}</label>\n'
+            f'<select id="{field_id}" name="{field_id}"{required_attr} disabled>\n'
+            f"{opts}\n"
+            f"</select>"
+        )
+
+    # radio_group / checkbox_group — fieldset + legend, one control per option
+    input_type = (
+        "checkbox" if field.field_type == FormFieldType.CHECKBOX_GROUP else "radio"
+    )
+    parts = ["<fieldset>", f"  <legend>{label}{req_marker}</legend>"]
+    for i, opt in enumerate(field.options):
+        opt_id = f"{field_id}-{i}"
+        checked = " checked" if opt.checked else ""
+        # All radios in a group share a name; checkboxes get distinct names.
+        name = field_id if input_type == "radio" else opt_id
+        parts.append(
+            f'  <input type="{input_type}" id="{opt_id}" name="{name}"'
+            f"{checked} disabled> "
+            f'<label for="{opt_id}">{html.escape(opt.label)}</label>'
+        )
+    parts.append("</fieldset>")
+    return "\n".join(parts)
+
+
+def _apply_form_field(
+    page_md: str,
+    field: FormFieldInfo,
+    field_id: str,
+) -> tuple[str, DocumentChange | None]:
+    """Replace a detected field's ``anchor_text`` with accessible HTML.
+
+    Fuzzy-finds the anchor line in *page_md* and swaps it for the rendered
+    control. Returns ``(new_markdown, change)`` or ``(original, None)`` if the
+    anchor could not be located.
+    """
+    lines = page_md.split("\n")
+    idx = _fuzzy_find_line(lines, field.anchor_text)
+    if idx < 0:
+        return page_md, None
+
+    new_html = _render_form_field_html(field, field_id)
+    old_text = lines[idx]
+    new_lines = lines[:idx] + [new_html] + lines[idx + 1 :]
+
+    return "\n".join(new_lines), DocumentChange(
+        page=field.page,
+        old_text=old_text[:200] + ("..." if len(old_text) > 200 else ""),
+        new_text=new_html[:200] + ("..." if len(new_html) > 200 else ""),
+        reasoning=(
+            f"Replaced {field.field_type.value} field "
+            f"'{field.label}' with accessible HTML ({field.reasoning})"
+        ),
+        stage="form_field",
+    )
 
 
 def _replace_image_placeholders(
@@ -554,6 +638,11 @@ class PipelineViewerService:
             "findings_count": len(classification.findings),
             "elapsed_ms": classification.elapsed_ms,
         }
+        # Document-level form signal: count of interactive AcroForm widgets.
+        # Docling often drops form-field content from the extracted markdown
+        # (especially on later pages), so the form step uses this to decide
+        # whether to scan every page with the vision agent.
+        result.stats["form_field_count"] = classification.metadata.form_field_count
 
         # ── Tesseract OCR re-run for scanned documents ──────────
         # If the classifier flagged a scanned document (< 50 chars/page),
@@ -693,6 +782,8 @@ class PipelineViewerService:
             await self._step_page_content(result, structure, page_hints=page_hints)
             _emit_phase("code_blocks", "Code Block Languages")
             await self._step_code_blocks(result, structure)
+            _emit_phase("form_fields", "Form Fields")
+            await self._step_form_fields(result, structure)
 
         if enable_boundaries and structure is not None:
             if section_map is None and structure is not None:
@@ -2080,83 +2171,158 @@ class PipelineViewerService:
         )
 
     # ------------------------------------------------------------------
-    # Form reconstruction subagent
+    # Phase 2c — Form fields → accessible HTML (guaranteed on form pages)
     # ------------------------------------------------------------------
 
-    async def _run_form_reconstructor(
+    async def _step_form_fields(
         self,
-        form_text: str,
-        surrounding_text: str,
-        page_image_b64: str | None,
-        page_number: int,
-        update_tokens: Any,
-    ) -> str:
-        """Run the form reconstruction vision subagent.
+        result: PipelineViewerResult,
+        structure: StructureResult,
+    ) -> None:
+        """Convert detected form fields to accessible HTML on every form page.
 
-        Mirrors _run_list_reconstructor: a one-shot PydanticAI agent with
-        structured output reads the form from the page image, then a
-        deterministic renderer turns the result into a ``form`` block that the
-        page agent applies with str_replace.
+        Runs unconditionally as a step (not an agent-optional tool, which the
+        page agent was skipping). A page is processed when the structure agent
+        flagged it ``has_forms`` OR a deterministic scan finds form signals
+        (underline runs, checkbox glyphs) — so multi-page forms are caught even
+        where ``has_forms`` missed a page.
+
+        For each form page, a vision agent reads the page image + markdown and
+        returns the fields it sees; a deterministic renderer then replaces each
+        field's ``anchor_text`` with accessible HTML (labelled controls,
+        ``<fieldset>``/``<legend>`` for option groups). Edits whichever per-page
+        version is newest (v1 if present, else v0) in-place.
         """
         from pydantic_ai import Agent
         from pydantic_ai.messages import BinaryContent
 
         from ..agents.model_factory import get_model_for_tier
         from ..agents.model_tiers import ModelTier
-        from ..agents.prompts.form_reconstruction import (
-            FORM_RECONSTRUCTOR_SYSTEM_PROMPT,
-            build_form_user_message,
+        from ..agents.prompts.form_fields import (
+            FORM_FIELDS_SYSTEM_PROMPT,
+            build_form_fields_user_message,
         )
+        from ..shared.llm_cost import calculate_estimated_cost
 
-        user_parts: list[Any] = []
-        if page_image_b64:
-            user_parts.append(
-                BinaryContent(
-                    data=base64.b64decode(page_image_b64),
-                    media_type="image/png",
-                )
-            )
-        user_parts.append(
-            build_form_user_message(
-                form_text=form_text,
-                surrounding_text=surrounding_text,
-                page_number=page_number,
-            )
-        )
+        step_start = time.time()
+        source_version = "v1" if "v1" in result.page_markdowns else "v0"
+        page_mds = result.page_markdowns.get(source_version, {})
 
         model = get_model_for_tier(ModelTier.EFFICIENT)
-        reconstructor_agent: Agent[None, FormReconstructionResult] = Agent(
+        agent: Agent[None, FormFieldsPageOutput] = Agent(
             model=model,
-            output_type=FormReconstructionResult,
-            system_prompt=FORM_RECONSTRUCTOR_SYSTEM_PROMPT,
+            output_type=FormFieldsPageOutput,
+            system_prompt=FORM_FIELDS_SYSTEM_PROMPT,
         )
 
-        try:
-            agent_result = await reconstructor_agent.run(user_parts)
-            usage = agent_result.usage()
-            update_tokens(usage.request_tokens or 0, usage.response_tokens or 0)
-        except Exception as e:
-            logger.warning(f"Form reconstructor failed on page {page_number}: {e}")
-            return (
-                f"Form reconstruction failed: {e}. "
-                f"Use str_replace to fix the form manually if needed."
+        changes: list[DocumentChange] = []
+        fields_found = 0
+        pages_processed = 0
+        total_input_tokens = 0
+        total_output_tokens = 0
+
+        # Document-level form signal. Docling frequently drops form-field text
+        # (underscores, checkboxes) from later pages, so per-page text signals
+        # alone miss multi-page forms. When the document is a form — it has
+        # AcroForm widgets, OR any page was flagged ``has_forms``, OR any page
+        # shows form signals — scan EVERY page with the vision agent (it returns
+        # no fields for non-form pages, so the cost is bounded and safe).
+        has_acroform = result.stats.get("form_field_count", 0) > 0
+        any_flagged = any(
+            a.has_forms for a in structure.page_attributes.values()
+        )
+        any_signal = any(_page_has_form_signals(md) for md in page_mds.values())
+        is_form_document = has_acroform or any_flagged or any_signal
+
+        for page_num in range(1, result.total_pages + 1):
+            page_key = str(page_num)
+            page_md = page_mds.get(page_key, "")
+            page_image_b64 = result.page_images.get(page_key)
+            if not page_md or not page_image_b64:
+                continue
+
+            attrs = structure.page_attributes.get(page_num)
+            is_form_page = (
+                is_form_document
+                or (attrs and attrs.has_forms)
+                or _page_has_form_signals(page_md)
+            )
+            if not is_form_page:
+                continue
+            pages_processed += 1
+
+            text_msg = build_form_fields_user_message(
+                page_markdown=page_md,
+                page_number=page_num,
+                total_pages=result.total_pages,
+            )
+            messages: list[Any] = [
+                BinaryContent(
+                    data=base64.b64decode(page_image_b64), media_type="image/png"
+                ),
+                text_msg,
+            ]
+
+            try:
+                agent_result = await agent.run(messages)
+                page_output = agent_result.output
+                usage = agent_result.usage()
+                total_input_tokens += usage.request_tokens or 0
+                total_output_tokens += usage.response_tokens or 0
+            except Exception as e:
+                logger.error(f"Form field detection failed on page {page_num}: {e}")
+                continue
+
+            if not page_output.form_fields:
+                continue
+
+            fields_found += len(page_output.form_fields)
+            current_md = page_mds[page_key]
+            for i, field in enumerate(page_output.form_fields):
+                field.page = page_num
+                field_id = f"ff-p{page_num}-{i}"
+                new_md, change = _apply_form_field(current_md, field, field_id)
+                if change:
+                    current_md = new_md
+                    changes.append(change)
+                else:
+                    logger.info(
+                        f"Form field anchor not found on page {page_num}: "
+                        f"{field.anchor_text!r}"
+                    )
+            page_mds[page_key] = current_md
+
+            logger.info(
+                f"Form fields page {page_num}/{result.total_pages}: "
+                f"detected={len(page_output.form_fields)}"
             )
 
-        result = agent_result.output
-
-        if not result.fields:
-            return (
-                "No fillable fields were found in that region — it may be a "
-                f"table or decorative rule. Reason: {result.reasoning}. "
-                "Leave it as-is or fix it with str_replace if needed."
+        # Rebuild the full version from corrected pages
+        if changes:
+            result.versions[source_version] = "\n\n".join(
+                page_mds.get(str(p), "") for p in range(1, result.total_pages + 1)
             )
 
-        form_block = _render_form_block(result)
-        return (
-            f"Reconstructed the form as a `form` block "
-            f"({len(result.fields)} field(s)).\n"
-            f"Use str_replace to replace the original form text with this "
-            f"block exactly:\n\n{form_block}"
+        elapsed_ms = int((time.time() - step_start) * 1000)
+        cost_cents = calculate_estimated_cost(total_input_tokens, total_output_tokens)
+
+        result.steps.append(
+            StepResult(
+                name="form_fields",
+                display_name="Form Fields",
+                version_before=source_version,
+                version_after=source_version,
+                elapsed_ms=elapsed_ms,
+                changes=changes,
+                metadata={
+                    "pages_processed": pages_processed,
+                    "fields_detected": fields_found,
+                    "fields_injected": len(changes),
+                },
+                input_tokens=total_input_tokens,
+                output_tokens=total_output_tokens,
+                cost_cents=cost_cents,
+            )
         )
 
     # ------------------------------------------------------------------
@@ -2242,8 +2408,6 @@ class PipelineViewerService:
         total_table_reconstructor_output = 0
         total_list_reconstructor_input = 0
         total_list_reconstructor_output = 0
-        total_form_reconstructor_input = 0
-        total_form_reconstructor_output = 0
         for i, pr in enumerate(page_results):
             page_num = pages_to_process[i]
             page_key = str(page_num)
@@ -2265,8 +2429,6 @@ class PipelineViewerService:
             total_table_reconstructor_output += pr.table_reconstructor_output_tokens
             total_list_reconstructor_input += pr.list_reconstructor_input_tokens
             total_list_reconstructor_output += pr.list_reconstructor_output_tokens
-            total_form_reconstructor_input += pr.form_reconstructor_input_tokens
-            total_form_reconstructor_output += pr.form_reconstructor_output_tokens
 
         # Write v1
         result.page_markdowns["v1"] = corrected_mds
@@ -2283,14 +2445,12 @@ class PipelineViewerService:
             + total_describer_input
             + total_table_reconstructor_input
             + total_list_reconstructor_input
-            + total_form_reconstructor_input
         )
         combined_output = (
             total_output_tokens
             + total_describer_output
             + total_table_reconstructor_output
             + total_list_reconstructor_output
-            + total_form_reconstructor_output
         )
         cost_cents = calculate_estimated_cost(combined_input, combined_output)
 
@@ -2314,8 +2474,6 @@ class PipelineViewerService:
                     "table_reconstructor_output_tokens": total_table_reconstructor_output,
                     "list_reconstructor_input_tokens": total_list_reconstructor_input,
                     "list_reconstructor_output_tokens": total_list_reconstructor_output,
-                    "form_reconstructor_input_tokens": total_form_reconstructor_input,
-                    "form_reconstructor_output_tokens": total_form_reconstructor_output,
                 },
                 input_tokens=combined_input,
                 output_tokens=combined_output,
@@ -2426,16 +2584,6 @@ class PipelineViewerService:
         enable_list_reconstruct = bool(
             page_attrs and page_attrs.has_lists
         )
-
-        # ------------------------------------------------------------------
-        # reconstruct_form tool: closure state
-        # ------------------------------------------------------------------
-        max_form_reconstruct_calls = 5
-        form_reconstructor_input_tokens = 0
-        form_reconstructor_output_tokens = 0
-        form_reconstruct_call_count = 0
-
-        enable_form_reconstruct = bool(page_attrs and page_attrs.has_forms)
 
         # Create agent with tools
         model = get_model_for_tier(ModelTier.EFFICIENT)
@@ -2649,58 +2797,6 @@ class PipelineViewerService:
                 list_reconstructor_output_tokens += out
 
         # ------------------------------------------------------------------
-        # Conditionally register reconstruct_form tool
-        # ------------------------------------------------------------------
-        if enable_form_reconstruct:
-            @agent.tool_plain
-            async def reconstruct_form(form_text: str, reasoning: str) -> str:
-                """Rebuild a form region as an accessible ``form`` block.
-
-                Args:
-                    form_text: The exact markdown text of the form region to
-                        rebuild. Include enough text to uniquely identify it
-                        in the page markdown.
-                    reasoning: Why reconstruction is needed (e.g. "labels and
-                        checkboxes flattened into plain text").
-                """
-                nonlocal form_reconstruct_call_count
-
-                if form_reconstruct_call_count >= max_form_reconstruct_calls:
-                    return (
-                        f"ERROR: Maximum reconstruct_form calls "
-                        f"({max_form_reconstruct_calls}) reached. "
-                        f"Fix remaining forms with str_replace."
-                    )
-
-                form_reconstruct_call_count += 1
-
-                if form_text not in current_markdown:
-                    return (
-                        f"ERROR: form_text not found in page markdown. "
-                        f"Pass the exact text from the current markdown. "
-                        f"Current markdown:\n---\n{current_markdown}\n---"
-                    )
-
-                idx = current_markdown.find(form_text)
-                start = max(0, idx - 200)
-                end = min(len(current_markdown), idx + len(form_text) + 200)
-                surrounding = current_markdown[start:end]
-
-                return await self._run_form_reconstructor(
-                    form_text=form_text,
-                    surrounding_text=surrounding,
-                    page_image_b64=page_image_b64,
-                    page_number=page_num,
-                    update_tokens=lambda inp, out: _update_form_tokens(inp, out),
-                )
-
-            def _update_form_tokens(inp: int, out: int) -> None:
-                nonlocal form_reconstructor_input_tokens
-                nonlocal form_reconstructor_output_tokens
-                form_reconstructor_input_tokens += inp
-                form_reconstructor_output_tokens += out
-
-        # ------------------------------------------------------------------
         # Conditionally register rewrite_page tool (create mode only)
         # ------------------------------------------------------------------
         if is_create_mode:
@@ -2796,8 +2892,6 @@ class PipelineViewerService:
             table_reconstructor_output_tokens=table_reconstructor_output_tokens,
             list_reconstructor_input_tokens=list_reconstructor_input_tokens,
             list_reconstructor_output_tokens=list_reconstructor_output_tokens,
-            form_reconstructor_input_tokens=form_reconstructor_input_tokens,
-            form_reconstructor_output_tokens=form_reconstructor_output_tokens,
         )
 
     # ------------------------------------------------------------------

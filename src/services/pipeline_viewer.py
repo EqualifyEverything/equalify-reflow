@@ -26,6 +26,7 @@ from .pipeline_viewer_models import (
     DocumentChange,
     FigureData,
     FootnoteInfo,
+    FormReconstructionResult,
     HeadingReconciliationOutput,
     ImageDescriptionResult,
     LayoutType,
@@ -110,6 +111,11 @@ def _compose_page_prompt(attrs: PageAttributes) -> str:
         lst = _load_fragment("content/has_lists")
         if lst:
             fragments.append(lst)
+
+    if attrs.has_forms:
+        frm = _load_fragment("content/has_forms")
+        if frm:
+            fragments.append(frm)
 
     if attrs.has_equations:
         eq = _load_fragment("content/has_equations")
@@ -271,6 +277,56 @@ def _apply_code_block_fence(
         ),
         stage="code_block",
     )
+
+
+def _form_dsl_escape(text: str) -> str:
+    """Make a label/option safe to embed in a ``form`` block line.
+
+    The DSL is line- and delimiter-oriented: ``|`` separates a field's
+    columns and ``;`` separates options, so those characters (and newlines)
+    are replaced with safe equivalents rather than allowed to break parsing.
+    """
+    return (
+        " ".join(text.split())  # collapse newlines/runs of whitespace
+        .replace("|", "/")
+        .replace(";", ",")
+        .strip()
+    )
+
+
+def _render_form_block(result: FormReconstructionResult) -> str:
+    """Render a reconstructed form as a composable ``form`` code block.
+
+    Grammar (one self-contained fenced block per form)::
+
+        ```form
+        legend: <form title>
+        - <type>[*] | <label>[ | opt1; opt2; ...]
+        ```
+
+    ``<type>`` is the field-type DSL token, ``*`` marks a required field, and
+    options (semicolon-separated) appear only for radio/multiselect/select.
+    A downstream renderer compiles this to accessible controls; see
+    ``docs/reference/form-block.md``.
+    """
+    lines = ["```form"]
+    legend = _form_dsl_escape(result.legend)
+    if legend:
+        lines.append(f"legend: {legend}")
+
+    for field in result.fields:
+        token = field.field_type.value
+        required = "*" if field.required else ""
+        label = _form_dsl_escape(field.label) or "Field"
+        line = f"- {token}{required} | {label}"
+        if field.options:
+            opts = "; ".join(_form_dsl_escape(o) for o in field.options if o.strip())
+            if opts:
+                line += f" | {opts}"
+        lines.append(line)
+
+    lines.append("```")
+    return "\n".join(lines)
 
 
 def _replace_image_placeholders(
@@ -2024,6 +2080,86 @@ class PipelineViewerService:
         )
 
     # ------------------------------------------------------------------
+    # Form reconstruction subagent
+    # ------------------------------------------------------------------
+
+    async def _run_form_reconstructor(
+        self,
+        form_text: str,
+        surrounding_text: str,
+        page_image_b64: str | None,
+        page_number: int,
+        update_tokens: Any,
+    ) -> str:
+        """Run the form reconstruction vision subagent.
+
+        Mirrors _run_list_reconstructor: a one-shot PydanticAI agent with
+        structured output reads the form from the page image, then a
+        deterministic renderer turns the result into a ``form`` block that the
+        page agent applies with str_replace.
+        """
+        from pydantic_ai import Agent
+        from pydantic_ai.messages import BinaryContent
+
+        from ..agents.model_factory import get_model_for_tier
+        from ..agents.model_tiers import ModelTier
+        from ..agents.prompts.form_reconstruction import (
+            FORM_RECONSTRUCTOR_SYSTEM_PROMPT,
+            build_form_user_message,
+        )
+
+        user_parts: list[Any] = []
+        if page_image_b64:
+            user_parts.append(
+                BinaryContent(
+                    data=base64.b64decode(page_image_b64),
+                    media_type="image/png",
+                )
+            )
+        user_parts.append(
+            build_form_user_message(
+                form_text=form_text,
+                surrounding_text=surrounding_text,
+                page_number=page_number,
+            )
+        )
+
+        model = get_model_for_tier(ModelTier.EFFICIENT)
+        reconstructor_agent: Agent[None, FormReconstructionResult] = Agent(
+            model=model,
+            output_type=FormReconstructionResult,
+            system_prompt=FORM_RECONSTRUCTOR_SYSTEM_PROMPT,
+        )
+
+        try:
+            agent_result = await reconstructor_agent.run(user_parts)
+            usage = agent_result.usage()
+            update_tokens(usage.request_tokens or 0, usage.response_tokens or 0)
+        except Exception as e:
+            logger.warning(f"Form reconstructor failed on page {page_number}: {e}")
+            return (
+                f"Form reconstruction failed: {e}. "
+                f"Use str_replace to fix the form manually if needed."
+            )
+
+        result = agent_result.output
+
+        if not result.fields:
+            return (
+                "No fillable fields were found in that region — it may be a "
+                f"table or decorative rule. Reason: {result.reasoning}. "
+                "Leave it as-is or fix it with str_replace if needed."
+            )
+
+        form_block = _render_form_block(result)
+        return (
+            f"Reconstructed the form as a `form` block "
+            f"({len(result.fields)} field(s)).\n"
+            f"Use str_replace to replace the original form text with this "
+            f"block exactly:\n\n{form_block}"
+        )
+
+    # ------------------------------------------------------------------
     # Phase 2 — Page Content Corrections (parallel, semaphore-limited)
     # ------------------------------------------------------------------
 
@@ -2106,6 +2242,8 @@ class PipelineViewerService:
         total_table_reconstructor_output = 0
         total_list_reconstructor_input = 0
         total_list_reconstructor_output = 0
+        total_form_reconstructor_input = 0
+        total_form_reconstructor_output = 0
         for i, pr in enumerate(page_results):
             page_num = pages_to_process[i]
             page_key = str(page_num)
@@ -2127,6 +2265,8 @@ class PipelineViewerService:
             total_table_reconstructor_output += pr.table_reconstructor_output_tokens
             total_list_reconstructor_input += pr.list_reconstructor_input_tokens
             total_list_reconstructor_output += pr.list_reconstructor_output_tokens
+            total_form_reconstructor_input += pr.form_reconstructor_input_tokens
+            total_form_reconstructor_output += pr.form_reconstructor_output_tokens
 
         # Write v1
         result.page_markdowns["v1"] = corrected_mds
@@ -2143,12 +2283,14 @@ class PipelineViewerService:
             + total_describer_input
             + total_table_reconstructor_input
             + total_list_reconstructor_input
+            + total_form_reconstructor_input
         )
         combined_output = (
             total_output_tokens
             + total_describer_output
             + total_table_reconstructor_output
             + total_list_reconstructor_output
+            + total_form_reconstructor_output
         )
         cost_cents = calculate_estimated_cost(combined_input, combined_output)
 
@@ -2172,6 +2314,8 @@ class PipelineViewerService:
                     "table_reconstructor_output_tokens": total_table_reconstructor_output,
                     "list_reconstructor_input_tokens": total_list_reconstructor_input,
                     "list_reconstructor_output_tokens": total_list_reconstructor_output,
+                    "form_reconstructor_input_tokens": total_form_reconstructor_input,
+                    "form_reconstructor_output_tokens": total_form_reconstructor_output,
                 },
                 input_tokens=combined_input,
                 output_tokens=combined_output,
@@ -2282,6 +2426,16 @@ class PipelineViewerService:
         enable_list_reconstruct = bool(
             page_attrs and page_attrs.has_lists
         )
+
+        # ------------------------------------------------------------------
+        # reconstruct_form tool: closure state
+        # ------------------------------------------------------------------
+        max_form_reconstruct_calls = 5
+        form_reconstructor_input_tokens = 0
+        form_reconstructor_output_tokens = 0
+        form_reconstruct_call_count = 0
+
+        enable_form_reconstruct = bool(page_attrs and page_attrs.has_forms)
 
         # Create agent with tools
         model = get_model_for_tier(ModelTier.EFFICIENT)
@@ -2495,6 +2649,58 @@ class PipelineViewerService:
                 list_reconstructor_output_tokens += out
 
         # ------------------------------------------------------------------
+        # Conditionally register reconstruct_form tool
+        # ------------------------------------------------------------------
+        if enable_form_reconstruct:
+            @agent.tool_plain
+            async def reconstruct_form(form_text: str, reasoning: str) -> str:
+                """Rebuild a form region as an accessible ``form`` block.
+
+                Args:
+                    form_text: The exact markdown text of the form region to
+                        rebuild. Include enough text to uniquely identify it
+                        in the page markdown.
+                    reasoning: Why reconstruction is needed (e.g. "labels and
+                        checkboxes flattened into plain text").
+                """
+                nonlocal form_reconstruct_call_count
+
+                if form_reconstruct_call_count >= max_form_reconstruct_calls:
+                    return (
+                        f"ERROR: Maximum reconstruct_form calls "
+                        f"({max_form_reconstruct_calls}) reached. "
+                        f"Fix remaining forms with str_replace."
+                    )
+
+                form_reconstruct_call_count += 1
+
+                if form_text not in current_markdown:
+                    return (
+                        f"ERROR: form_text not found in page markdown. "
+                        f"Pass the exact text from the current markdown. "
+                        f"Current markdown:\n---\n{current_markdown}\n---"
+                    )
+
+                idx = current_markdown.find(form_text)
+                start = max(0, idx - 200)
+                end = min(len(current_markdown), idx + len(form_text) + 200)
+                surrounding = current_markdown[start:end]
+
+                return await self._run_form_reconstructor(
+                    form_text=form_text,
+                    surrounding_text=surrounding,
+                    page_image_b64=page_image_b64,
+                    page_number=page_num,
+                    update_tokens=lambda inp, out: _update_form_tokens(inp, out),
+                )
+
+            def _update_form_tokens(inp: int, out: int) -> None:
+                nonlocal form_reconstructor_input_tokens
+                nonlocal form_reconstructor_output_tokens
+                form_reconstructor_input_tokens += inp
+                form_reconstructor_output_tokens += out
+
+        # ------------------------------------------------------------------
         # Conditionally register rewrite_page tool (create mode only)
         # ------------------------------------------------------------------
         if is_create_mode:
@@ -2590,6 +2796,8 @@ class PipelineViewerService:
             table_reconstructor_output_tokens=table_reconstructor_output_tokens,
             list_reconstructor_input_tokens=list_reconstructor_input_tokens,
             list_reconstructor_output_tokens=list_reconstructor_output_tokens,
+            form_reconstructor_input_tokens=form_reconstructor_input_tokens,
+            form_reconstructor_output_tokens=form_reconstructor_output_tokens,
         )
 
     # ------------------------------------------------------------------

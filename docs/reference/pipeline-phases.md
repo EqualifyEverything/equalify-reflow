@@ -10,9 +10,9 @@ The pipeline has **5 versioned conversion phases** plus a **PII Review** gate th
 |---|---|---|---|
 | **PII Review** (gate) | `pii_scan` | No | Runs Presidio against a text-only docling pass before full extraction. If findings exist, the streaming pipeline blocks on `session.pii_decision_event` until the user approves or denies via `POST /api/v1/pipeline/sessions/{sid}/pii-decision`. Denial aborts the pipeline. Can be opted out with `skip_pii_scan=true`. |
 | 1. **Extraction** | `docling`, `docling_ocr` (conditional) | No | PDF → markdown + page images via IBM Docling. `docling_ocr` only fires when the classifier flags a scanned document. |
-| 2. **Analysis** | `classification`, `structure` | Yes | `classification` tags the document as digital / scanned / malformed. `structure` identifies headings, footnotes, code blocks, per-page layout attributes. |
+| 2. **Analysis** | `classification`, `structure` | Yes | `classification` tags the document as digital / scanned / malformed. `structure` identifies headings, footnotes, code blocks, per-page layout attributes, and per-page content flags (`has_tables`, `has_lists`, `has_forms`, …) that gate the Translation subagents. |
 | 3. **Headings** | `heading_reconciliation`, `heading_levels` | Yes | `heading_reconciliation` reconciles per-page heading candidates against the global outline. `heading_levels` normalises the hierarchy (H1 → H2 → H3, no skips). |
-| 4. **Translation** | `page_content`, `code_blocks` | Yes | `page_content` does per-page accessibility corrections (invokes image / table / list subagents). `code_blocks` tags fenced blocks with detected programming language. |
+| 4. **Translation** | `page_content`, `code_blocks` | Yes | `page_content` does per-page accessibility corrections (invokes image / table / list / form subagents). `code_blocks` tags fenced blocks with detected programming language. |
 | 5. **Assembly** | `boundaries`, `cleanup` | Mixed | `boundaries` rejoins cross-page split content and relocates footnotes (AI). `cleanup` normalises whitespace and lints the markdown (deterministic). |
 
 The viewer also shows a dynamic **Review** stage that catches any orphan steps (`revision_*`, `feedback_*`, custom steps) not listed above.
@@ -46,6 +46,7 @@ Some main-agent tool calls delegate to specialist subagents:
 | `page_content` | Image describer | `ImageDescriptionResult` |
 | `page_content` | Table reconstructor | `TableReconstructionResult` |
 | `page_content` | List reconstructor | `ListReconstructionResult` |
+| `page_content` | Form reconstructor | `FormReconstructionResult` (rendered to a `form` block — see [form-block.md](form-block.md)) |
 | `boundaries` | Footnote relocator | (inline, no dedicated output model) |
 
 ## Versioning

@@ -34,6 +34,7 @@ class PageAttributes(BaseModel):
     has_tables: bool = False
     has_lists: bool = False
     has_equations: bool = False
+    has_forms: bool = False
     is_scanned: bool = False
 
 
@@ -251,6 +252,61 @@ class ListReconstructionResult(BaseModel):
     """Why this reconstruction was chosen."""
 
 
+class FormFieldType(str, Enum):
+    """Type of form control, mapped to a ``form`` block DSL token.
+
+    The DSL token (the value here) is what appears in the rendered
+    ``form`` code block; a downstream renderer turns each into the
+    appropriate accessible control.
+    """
+
+    TEXT = "text"
+    TEXTAREA = "textarea"
+    CHECKBOX = "checkbox"  # single standalone checkbox
+    MULTISELECT = "multiselect"  # group of checkboxes (more than one allowed)
+    RADIO = "radio"  # mutually-exclusive option group
+    SELECT = "select"  # dropdown / choice list
+    DATE = "date"
+    SIGNATURE = "signature"
+
+
+class FormFieldSpec(BaseModel):
+    """One field in a detected form, read from the page image."""
+
+    field_type: FormFieldType
+    """The kind of control this field represents."""
+
+    label: str
+    """Accessible label, read from the IMAGE. For grouped fields
+    (radio / multiselect / select) this is the group prompt."""
+
+    options: list[str] = Field(default_factory=list)
+    """Choice labels for radio / multiselect / select. Empty otherwise."""
+
+    required: bool = False
+    """True if the field is visibly marked required (asterisk, "required")."""
+
+
+class FormReconstructionResult(BaseModel):
+    """Result from the form reconstruction subagent.
+
+    The deterministic renderer turns this into a ``form`` code block; the
+    page agent then splices that block in via ``str_replace``.
+    """
+
+    legend: str = ""
+    """The form's overall title/prompt, used as the block legend. May be empty."""
+
+    fields: list[FormFieldSpec] = Field(default_factory=list)
+    """The fields that make up the form, in top-to-bottom order."""
+
+    confidence: str = "high"
+    """Confidence level: high, medium, or low."""
+
+    reasoning: str = ""
+    """How the fields and types were identified from the image."""
+
+
 class SectionCorrectionResult(BaseModel):
     """What a section correction agent returns."""
 
@@ -309,6 +365,12 @@ class PageCorrectionResult(BaseModel):
 
     list_reconstructor_output_tokens: int = 0
     """Output tokens from list reconstructor subagent calls."""
+
+    form_reconstructor_input_tokens: int = 0
+    """Input tokens consumed by form reconstructor subagent calls."""
+
+    form_reconstructor_output_tokens: int = 0
+    """Output tokens from form reconstructor subagent calls."""
 
 
 # ---------------------------------------------------------------------------

@@ -469,6 +469,24 @@ async def _pipeline_steps(
             logger.error(f"Code block language tagging failed: {e}")
             emit("error", {"step_name": "code_blocks", "message": str(e)})
 
+    # Step 3c: Form fields → accessible HTML (guaranteed on form pages)
+    if structure is not None:
+        emit("processing", {"step_name": "form_fields", "display_name": "Form Fields"})
+        try:
+            await service._step_form_fields(result, structure)
+            total_steps += 1
+            step = result.steps[-1]
+            # form_fields edits v1 (or v0) in-place — send the updated version
+            source_ver = "v1" if "v1" in result.page_markdowns else "v0"
+            emit("step", {
+                "step": step.model_dump(),
+                "new_versions": {source_ver: result.versions.get(source_ver, "")},
+                "new_page_markdowns": {source_ver: result.page_markdowns.get(source_ver, {})},
+            })
+        except Exception as e:
+            logger.error(f"Form fields step failed: {e}")
+            emit("error", {"step_name": "form_fields", "message": str(e)})
+
     # Step 4: Cross-page fixes (boundaries + footnotes)
     if structure is not None:
         emit("processing", {"step_name": "boundaries", "display_name": "Cross-Page Fixes"})

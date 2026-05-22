@@ -15,6 +15,8 @@ from src.services.pipeline_viewer import (
     PipelineViewerService,
     _apply_form_field,
     _convert_task_list_checkboxes,
+    _convert_underscore_fields,
+    _is_underscore_rule,
     _page_has_form_signals,
     _render_form_field_html,
 )
@@ -233,6 +235,63 @@ class TestConvertTaskListCheckboxes:
         out, changes = _convert_task_list_checkboxes(md, 1)
         assert out == md
         assert changes == []
+
+
+# ---------------------------------------------------------------------------
+# _convert_underscore_fields — inline "label ____" blanks
+# ---------------------------------------------------------------------------
+
+
+class TestConvertUnderscoreFields:
+    def test_multiple_fields_on_one_line(self):
+        line = "Name__________ Date of Birth________ Age___ Gender___"
+        out, changes = _convert_underscore_fields(line, 1)
+        assert "_" * 3 not in out  # no underscore runs survive
+        assert out.count("<input ") == 4
+        assert '<label for="uf-p1-0">Name</label>' in out
+        assert '<label for="uf-p1-1">Date of Birth</label>' in out
+        assert '<label for="uf-p1-2">Age</label>' in out
+        assert '<label for="uf-p1-3">Gender</label>' in out
+        assert len(changes) == 1
+
+    def test_run_together_fields(self):
+        out, _ = _convert_underscore_fields("Zip________Telephone__________", 1)
+        assert out.count("<input ") == 2
+        assert "Zip</label>" in out
+        assert "Telephone</label>" in out
+
+    def test_separator_rule_is_kept(self):
+        rule = "________________________________________"
+        out, changes = _convert_underscore_fields(rule, 1)
+        assert out == rule
+        assert changes == []
+
+    def test_label_trailing_punctuation_trimmed(self):
+        out, _ = _convert_underscore_fields("Email: ____________", 1)
+        assert '<label for="uf-p1-0">Email</label>' in out
+
+    def test_line_without_blanks_untouched(self):
+        line = "Just some prose with my_var and a__b."
+        out, changes = _convert_underscore_fields(line, 1)
+        assert out == line
+        assert changes == []
+
+    def test_trailing_text_preserved(self):
+        out, _ = _convert_underscore_fields("Date____ (mm/dd/yyyy)", 1)
+        assert "<input " in out
+        assert "(mm/dd/yyyy)" in out
+
+    def test_is_underscore_rule(self):
+        assert _is_underscore_rule("__________________")
+        assert _is_underscore_rule("   ____  ____  ")
+        assert not _is_underscore_rule("Name ____")
+
+    def test_input_type_inferred_from_label(self):
+        out, _ = _convert_underscore_fields("Date of Birth________ Email________ Telephone________ City________", 1)
+        assert '<input type="date"' in out
+        assert '<input type="email"' in out
+        assert '<input type="tel"' in out
+        assert '<input type="text"' in out  # City → plain text
 
 
 # ---------------------------------------------------------------------------

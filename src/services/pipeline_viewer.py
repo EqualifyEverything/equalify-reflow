@@ -429,6 +429,97 @@ def _convert_task_list_checkboxes(
     return "\n".join(out), changes
 
 
+# A run of 3+ underscores is a fill-in blank. Threshold 3 catches short blanks
+# like "Age___" while skipping snake_case / markdown emphasis (rarely 3+).
+_UNDERSCORE_RUN_RE = re.compile(r"_{3,}")
+# Trailing punctuation/whitespace to trim off a label before a blank.
+_LABEL_TRIM = " \t:.–—-"
+
+
+def _is_underscore_rule(line: str) -> bool:
+    """True if *line* is a horizontal rule / separator (underscores only).
+
+    Such lines are kept as-is — they are not fillable fields.
+    """
+    return len(re.sub(r"[_\s]", "", line)) < 2
+
+
+def _infer_input_type(label: str) -> str:
+    """Infer an HTML input type from a field label's words (context-driven).
+
+    Keeps the control semantic — a "Date of Birth" blank becomes a date input,
+    an "Email" blank an email input — which improves both accessibility and
+    on-screen affordances. Falls back to plain text.
+    """
+    low = label.lower()
+    if re.search(r"\b(date|dob|birth|expir\w*)\b", low):
+        return "date"
+    if "email" in low or "e-mail" in low:
+        return "email"
+    if re.search(r"\b(phone|telephone|tel|fax|mobile|cell)\b", low):
+        return "tel"
+    return "text"
+
+
+def _convert_underscore_fields(
+    page_md: str, page_num: int
+) -> tuple[str, list[DocumentChange]]:
+    """Convert ``label ____`` blanks (including several per line) to HTML.
+
+    Docling keeps form blanks as runs of underscores, often packing multiple
+    fields on one line (``Name____ Date of Birth____ Age___ Gender___``).
+    Line-granular replacement can't handle that, so this walks each underscore
+    run and turns the text preceding it into the field's label, emitting a
+    labelled, accessible ``<input>`` per blank. Pure-underscore separator rules
+    are left untouched.
+    """
+    out: list[str] = []
+    changes: list[DocumentChange] = []
+    seq = 0
+    for line in page_md.split("\n"):
+        runs = list(_UNDERSCORE_RUN_RE.finditer(line))
+        if not runs or _is_underscore_rule(line):
+            out.append(line)
+            continue
+
+        parts: list[str] = []
+        cursor = 0
+        for m in runs:
+            preceding = line[cursor : m.start()]
+            label = preceding.strip(_LABEL_TRIM)
+            # Keep labels short — use the trailing words if it ran long.
+            words = label.split()
+            if len(words) > 8:
+                label = " ".join(words[-8:])
+            if not label:
+                label = "Field"
+            fid = f"uf-p{page_num}-{seq}"
+            seq += 1
+            input_type = _infer_input_type(label)
+            parts.append(
+                f'<label for="{fid}">{html.escape(label)}</label> '
+                f'<input type="{input_type}" id="{fid}" name="{fid}" readonly>'
+            )
+            cursor = m.end()
+
+        trailing = line[cursor:].strip()
+        new_line = " ".join(parts)
+        if trailing:
+            new_line = f"{new_line} {trailing}"
+
+        out.append(new_line)
+        changes.append(
+            DocumentChange(
+                page=page_num,
+                old_text=line[:200],
+                new_text=new_line[:200],
+                reasoning=f"Converted {len(runs)} underscore blank(s) to accessible HTML input(s)",
+                stage="form_field",
+            )
+        )
+    return "\n".join(out), changes
+
+
 def _apply_form_field(
     page_md: str,
     field: FormFieldInfo,
@@ -2266,6 +2357,7 @@ class PipelineViewerService:
         changes: list[DocumentChange] = []
         fields_found = 0
         checkboxes_converted = 0
+        underscore_fields_converted = 0
         pages_processed = 0
         total_input_tokens = 0
         total_output_tokens = 0
@@ -2348,6 +2440,12 @@ class PipelineViewerService:
             changes.extend(cb_changes)
             checkboxes_converted += len(cb_changes)
 
+            # 3. Deterministic: convert residual "label ____" blanks (incl.
+            #    several per line) the agent's line-replacement couldn't handle.
+            current_md, uf_changes = _convert_underscore_fields(current_md, page_num)
+            changes.extend(uf_changes)
+            underscore_fields_converted += len(uf_changes)
+
             page_mds[page_key] = current_md
 
             logger.info(
@@ -2378,6 +2476,7 @@ class PipelineViewerService:
                     "fields_detected": fields_found,
                     "fields_injected": len(changes),
                     "markdown_checkboxes_converted": checkboxes_converted,
+                    "underscore_fields_converted": underscore_fields_converted,
                 },
                 input_tokens=total_input_tokens,
                 output_tokens=total_output_tokens,

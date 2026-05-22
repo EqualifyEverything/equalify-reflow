@@ -78,6 +78,15 @@ of data).
 - **has_lists** — True if the page contains bulleted lists, numbered lists, \
 or definition-style term/description pairs. Not single items that happen to \
 start with a dash.
+- **has_forms** — True if the page contains form fields a person is meant to \
+fill in. The strongest signals are **long horizontal underline runs** that a \
+person writes on (e.g. "Name: ______________________") and **checkboxes** \
+(☐, [ ]) next to statements. Also: mutually-exclusive option sets, dropdowns, \
+date blanks ("__/__/____"), and signature lines. A page with several labelled \
+blanks or checkboxes is a form even if it has no overall "Form" title, and a \
+multi-page form means later pages are still forms. Do NOT set this for ordinary \
+tables, rules used for emphasis, or table borders — only genuine fillable \
+fields.
 - **has_equations** — True if the page contains mathematical equations, \
 either display (centered) or complex inline equations.
 - **is_scanned** — True if the page appears to be a scan of a physical \

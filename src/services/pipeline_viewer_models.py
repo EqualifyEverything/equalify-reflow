@@ -34,6 +34,7 @@ class PageAttributes(BaseModel):
     has_tables: bool = False
     has_lists: bool = False
     has_equations: bool = False
+    has_forms: bool = False
     is_scanned: bool = False
 
 
@@ -249,6 +250,84 @@ class ListReconstructionResult(BaseModel):
 
     reasoning: str = ""
     """Why this reconstruction was chosen."""
+
+
+class FormFieldType(str, Enum):
+    """Type of form control to render for a detected field."""
+
+    TEXT = "text"
+    """Single-line free-text input (name, email, short answer)."""
+
+    TEXTAREA = "textarea"
+    """Multi-line free-text input (comments, essay box)."""
+
+    CHECKBOX = "checkbox"
+    """A single standalone checkbox (e.g. "I attest …")."""
+
+    CHECKBOX_GROUP = "checkbox_group"
+    """A set of checkboxes where more than one may be ticked."""
+
+    RADIO_GROUP = "radio_group"
+    """A set of mutually-exclusive options (exactly one selected)."""
+
+    SELECT = "select"
+    """A dropdown / choice list."""
+
+    DATE = "date"
+    """A date entry field."""
+
+    SIGNATURE = "signature"
+    """A signature line."""
+
+
+class FormFieldOption(BaseModel):
+    """One selectable option within a radio, checkbox, or select group."""
+
+    label: str
+    """Visible option text as read from the page image."""
+
+    checked: bool = False
+    """True if the option appears pre-selected / ticked in the image."""
+
+
+class FormFieldInfo(BaseModel):
+    """A form field detected on a page from the page image.
+
+    The agent reports what it sees; the deterministic injector turns this
+    into accessible HTML and splices it into the page markdown by replacing
+    ``anchor_text``.
+    """
+
+    field_type: FormFieldType
+    """The kind of control this field represents."""
+
+    label: str
+    """Accessible label for the field, read from the IMAGE (e.g. "Full name").
+    For grouped fields this is the group prompt/legend (e.g. "Marital status")."""
+
+    anchor_text: str
+    """The exact existing markdown text representing this field (e.g.
+    "Name: ____________" or "☐ I attest …"). The injector replaces this text
+    with the rendered accessible HTML. Copy it verbatim from the markdown."""
+
+    options: list[FormFieldOption] = Field(default_factory=list)
+    """Options for radio_group / checkbox_group / select fields. Empty otherwise."""
+
+    required: bool = False
+    """True if the field is marked required (asterisk, "required", etc.)."""
+
+    page: int = 0
+    """Page where this field appears (1-indexed). Set by the orchestrator."""
+
+    reasoning: str = ""
+    """How the field type and label were determined."""
+
+
+class FormFieldsPageOutput(BaseModel):
+    """What the form-fields agent returns for a single page."""
+
+    form_fields: list[FormFieldInfo] = Field(default_factory=list)
+    """Form fields found on this page. Empty list if the page has no form."""
 
 
 class SectionCorrectionResult(BaseModel):

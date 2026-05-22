@@ -13,6 +13,7 @@ from __future__ import annotations
 import asyncio
 import base64
 import difflib
+import html
 import logging
 import re
 import time
@@ -26,6 +27,9 @@ from .pipeline_viewer_models import (
     DocumentChange,
     FigureData,
     FootnoteInfo,
+    FormFieldInfo,
+    FormFieldsPageOutput,
+    FormFieldType,
     HeadingReconciliationOutput,
     ImageDescriptionResult,
     LayoutType,
@@ -110,6 +114,11 @@ def _compose_page_prompt(attrs: PageAttributes) -> str:
         lst = _load_fragment("content/has_lists")
         if lst:
             fragments.append(lst)
+
+    if attrs.has_forms:
+        frm = _load_fragment("content/has_forms")
+        if frm:
+            fragments.append(frm)
 
     if attrs.has_equations:
         eq = _load_fragment("content/has_equations")
@@ -270,6 +279,285 @@ def _apply_code_block_fence(
             f"(structure analysis: {cb.reasoning})"
         ),
         stage="code_block",
+    )
+
+
+# Markers Docling leaves behind when it flattens a form: runs of underscores
+# (fill-in blanks), checkbox glyphs, and bracket checkboxes. Used to detect
+# form pages deterministically, independent of the structure agent.
+_FORM_UNDERLINE_RE = re.compile(r"_{4,}")
+_FORM_CHECKBOX_RE = re.compile(r"[☐☑☒□◻❐❏]|\[\s?\]")
+
+
+def _page_has_form_signals(page_md: str) -> bool:
+    """Heuristically decide whether a page contains a fillable form.
+
+    Keys on the typical artifacts Docling produces for forms — long underline
+    runs (``____``) and checkbox glyphs (``☐``, ``[ ]``) — so form pages are
+    caught even when the structure agent's ``has_forms`` flag misses them.
+    """
+    return bool(
+        _FORM_UNDERLINE_RE.search(page_md) or _FORM_CHECKBOX_RE.search(page_md)
+    )
+
+
+def _render_form_field_html(field: FormFieldInfo, field_id: str) -> str:
+    """Render a detected form field as an accessible, static HTML control.
+
+    The output is a *representation* of the form for accessibility, not a
+    working form: there is no surrounding ``<form>`` and inputs are marked
+    ``readonly`` / ``disabled`` so they advertise their role and label to a
+    screen reader without implying the document is fillable.
+
+    Every control is paired with a programmatic label:
+      - text / textarea / date / select use ``<label for=...>``,
+      - checkbox / single fields put the label after the control,
+      - radio_group / checkbox_group / multi-option select wrap options in a
+        ``<fieldset>`` with the prompt as the ``<legend>``.
+    """
+    label = html.escape(field.label or "Field")
+    required_attr = ' aria-required="true"' if field.required else ""
+    req_marker = ' <abbr title="required">*</abbr>' if field.required else ""
+
+    if field.field_type in (FormFieldType.TEXT, FormFieldType.DATE):
+        input_type = "date" if field.field_type == FormFieldType.DATE else "text"
+        return (
+            f'<label for="{field_id}">{label}{req_marker}</label>\n'
+            f'<input type="{input_type}" id="{field_id}" '
+            f'name="{field_id}"{required_attr} readonly>'
+        )
+
+    if field.field_type == FormFieldType.TEXTAREA:
+        return (
+            f'<label for="{field_id}">{label}{req_marker}</label>\n'
+            f'<textarea id="{field_id}" name="{field_id}"{required_attr} '
+            f"readonly></textarea>"
+        )
+
+    if field.field_type == FormFieldType.SIGNATURE:
+        return (
+            f'<label for="{field_id}">{label}{req_marker}</label>\n'
+            f'<input type="text" id="{field_id}" name="{field_id}" '
+            f'aria-label="{label} (signature)"{required_attr} readonly>'
+        )
+
+    if field.field_type == FormFieldType.CHECKBOX:
+        checked = " checked" if (field.options and field.options[0].checked) else ""
+        return (
+            f'<input type="checkbox" id="{field_id}" name="{field_id}"'
+            f"{checked}{required_attr} disabled> "
+            f'<label for="{field_id}">{label}{req_marker}</label>'
+        )
+
+    if field.field_type == FormFieldType.SELECT:
+        opts = "\n".join(
+            f'  <option{" selected" if o.checked else ""}>'
+            f"{html.escape(o.label)}</option>"
+            for o in field.options
+        )
+        return (
+            f'<label for="{field_id}">{label}{req_marker}</label>\n'
+            f'<select id="{field_id}" name="{field_id}"{required_attr} disabled>\n'
+            f"{opts}\n"
+            f"</select>"
+        )
+
+    # radio_group / checkbox_group — fieldset + legend, one control per option
+    input_type = (
+        "checkbox" if field.field_type == FormFieldType.CHECKBOX_GROUP else "radio"
+    )
+    parts = ["<fieldset>", f"  <legend>{label}{req_marker}</legend>"]
+    for i, opt in enumerate(field.options):
+        opt_id = f"{field_id}-{i}"
+        checked = " checked" if opt.checked else ""
+        # All radios in a group share a name; checkboxes get distinct names.
+        name = field_id if input_type == "radio" else opt_id
+        parts.append(
+            f'  <input type="{input_type}" id="{opt_id}" name="{name}"'
+            f"{checked} disabled> "
+            f'<label for="{opt_id}">{html.escape(opt.label)}</label>'
+        )
+    parts.append("</fieldset>")
+    return "\n".join(parts)
+
+
+# A GFM task-list item (``- [ ]`` / ``* [x]``). remark-gfm renders these as
+# bare, unlabelled <input type=checkbox> — a markdown-created input. We convert
+# every one to a labelled, accessible HTML control so no input is left in
+# markdown form. An optional leading checkbox glyph (Docling emits both) is
+# stripped from the label.
+_TASK_LIST_CHECKBOX_RE = re.compile(r"^(\s*)[-*]\s+\[([ xX]?)\]\s*(.*)$")
+
+
+def _convert_task_list_checkboxes(
+    page_md: str, page_num: int
+) -> tuple[str, list[DocumentChange]]:
+    """Convert any GFM task-list checkboxes in *page_md* to accessible HTML.
+
+    Deterministic safeguard: guarantees no markdown-rendered checkbox inputs
+    survive, regardless of what the vision agent detected.
+    """
+    out: list[str] = []
+    changes: list[DocumentChange] = []
+    seq = 0
+    for line in page_md.split("\n"):
+        m = _TASK_LIST_CHECKBOX_RE.match(line)
+        if not m:
+            out.append(line)
+            continue
+        label = m.group(3).lstrip("☐☑☒□◻❐❏ \t").strip()
+        if not label:
+            out.append(line)
+            continue
+        checked = " checked" if m.group(2).lower() == "x" else ""
+        cid = f"cb-p{page_num}-{seq}"
+        seq += 1
+        html_line = (
+            f'<input type="checkbox" id="{cid}" name="{cid}"{checked} disabled> '
+            f'<label for="{cid}">{html.escape(label)}</label>'
+        )
+        out.append(html_line)
+        changes.append(
+            DocumentChange(
+                page=page_num,
+                old_text=line[:200],
+                new_text=html_line[:200],
+                reasoning="Converted markdown task-list checkbox to accessible HTML",
+                stage="form_field",
+            )
+        )
+    return "\n".join(out), changes
+
+
+# A run of 3+ underscores is a fill-in blank. Threshold 3 catches short blanks
+# like "Age___" while skipping snake_case / markdown emphasis (rarely 3+).
+_UNDERSCORE_RUN_RE = re.compile(r"_{3,}")
+# Trailing punctuation/whitespace to trim off a label before a blank.
+_LABEL_TRIM = " \t:.–—-"
+
+
+def _is_underscore_rule(line: str) -> bool:
+    """True if *line* is a horizontal rule / separator (underscores only).
+
+    Such lines are kept as-is — they are not fillable fields.
+    """
+    return len(re.sub(r"[_\s]", "", line)) < 2
+
+
+def _infer_input_type(label: str) -> str:
+    """Infer an HTML input type from a field label's words (context-driven).
+
+    Keeps the control semantic — a "Date of Birth" blank becomes a date input,
+    an "Email" blank an email input — which improves both accessibility and
+    on-screen affordances. Falls back to plain text.
+    """
+    low = label.lower()
+    if re.search(r"\b(date|dob|birth|expir\w*)\b", low):
+        return "date"
+    if "email" in low or "e-mail" in low:
+        return "email"
+    if re.search(r"\b(phone|telephone|tel|fax|mobile|cell)\b", low):
+        return "tel"
+    return "text"
+
+
+def _convert_underscore_fields(
+    page_md: str, page_num: int
+) -> tuple[str, list[DocumentChange]]:
+    """Convert ``label ____`` blanks (including several per line) to HTML.
+
+    Docling keeps form blanks as runs of underscores, often packing multiple
+    fields on one line (``Name____ Date of Birth____ Age___ Gender___``).
+    Line-granular replacement can't handle that, so this walks each underscore
+    run and turns the text preceding it into the field's label, emitting a
+    labelled, accessible ``<input>`` per blank. Pure-underscore separator rules
+    are left untouched.
+    """
+    out: list[str] = []
+    changes: list[DocumentChange] = []
+    seq = 0
+    for line in page_md.split("\n"):
+        runs = list(_UNDERSCORE_RUN_RE.finditer(line))
+        if not runs or _is_underscore_rule(line):
+            out.append(line)
+            continue
+
+        parts: list[str] = []
+        cursor = 0
+        for m in runs:
+            preceding = line[cursor : m.start()]
+            label = preceding.strip(_LABEL_TRIM)
+            # Keep labels short — use the trailing words if it ran long.
+            words = label.split()
+            if len(words) > 8:
+                label = " ".join(words[-8:])
+            if not label:
+                label = "Field"
+            fid = f"uf-p{page_num}-{seq}"
+            seq += 1
+            input_type = _infer_input_type(label)
+            parts.append(
+                f'<label for="{fid}">{html.escape(label)}</label> '
+                f'<input type="{input_type}" id="{fid}" name="{fid}" readonly>'
+            )
+            cursor = m.end()
+
+        trailing = line[cursor:].strip()
+        new_line = " ".join(parts)
+        if trailing:
+            new_line = f"{new_line} {trailing}"
+
+        out.append(new_line)
+        changes.append(
+            DocumentChange(
+                page=page_num,
+                old_text=line[:200],
+                new_text=new_line[:200],
+                reasoning=f"Converted {len(runs)} underscore blank(s) to accessible HTML input(s)",
+                stage="form_field",
+            )
+        )
+    return "\n".join(out), changes
+
+
+def _apply_form_field(
+    page_md: str,
+    field: FormFieldInfo,
+    field_id: str,
+) -> tuple[str, DocumentChange | None]:
+    """Replace a detected field's ``anchor_text`` with accessible HTML.
+
+    Fuzzy-finds the anchor line in *page_md* and swaps it for the rendered
+    control. Returns ``(new_markdown, change)`` or ``(original, None)`` if the
+    anchor could not be located.
+
+    Defers two cases to the deterministic passes instead of whole-line
+    replacing: lines that already hold an injected control, and lines packing
+    multiple underscore blanks (``Phone: ___ Email: ___``) — replacing the
+    whole line there would drop every field but one.
+    """
+    lines = page_md.split("\n")
+    idx = _fuzzy_find_line(lines, field.anchor_text)
+    if idx < 0:
+        return page_md, None
+
+    target = lines[idx]
+    if "<input" in target or len(_UNDERSCORE_RUN_RE.findall(target)) > 1:
+        return page_md, None
+
+    new_html = _render_form_field_html(field, field_id)
+    old_text = lines[idx]
+    new_lines = lines[:idx] + [new_html] + lines[idx + 1 :]
+
+    return "\n".join(new_lines), DocumentChange(
+        page=field.page,
+        old_text=old_text[:200] + ("..." if len(old_text) > 200 else ""),
+        new_text=new_html[:200] + ("..." if len(new_html) > 200 else ""),
+        reasoning=(
+            f"Replaced {field.field_type.value} field "
+            f"'{field.label}' with accessible HTML ({field.reasoning})"
+        ),
+        stage="form_field",
     )
 
 
@@ -498,6 +786,11 @@ class PipelineViewerService:
             "findings_count": len(classification.findings),
             "elapsed_ms": classification.elapsed_ms,
         }
+        # Document-level form signal: count of interactive AcroForm widgets.
+        # Docling often drops form-field content from the extracted markdown
+        # (especially on later pages), so the form step uses this to decide
+        # whether to scan every page with the vision agent.
+        result.stats["form_field_count"] = classification.metadata.form_field_count
 
         # ── Tesseract OCR re-run for scanned documents ──────────
         # If the classifier flagged a scanned document (< 50 chars/page),
@@ -637,6 +930,8 @@ class PipelineViewerService:
             await self._step_page_content(result, structure, page_hints=page_hints)
             _emit_phase("code_blocks", "Code Block Languages")
             await self._step_code_blocks(result, structure)
+            _emit_phase("form_fields", "Form Fields")
+            await self._step_form_fields(result, structure)
 
         if enable_boundaries and structure is not None:
             if section_map is None and structure is not None:
@@ -2021,6 +2316,181 @@ class PipelineViewerService:
             f"Reconstructed as {format_note}.\n"
             f"Use str_replace to replace the original list with this "
             f"corrected version:\n\n{result.reconstructed_content}"
+        )
+
+    # ------------------------------------------------------------------
+    # Phase 2c — Form fields → accessible HTML (guaranteed on form pages)
+    # ------------------------------------------------------------------
+
+    async def _step_form_fields(
+        self,
+        result: PipelineViewerResult,
+        structure: StructureResult,
+    ) -> None:
+        """Convert detected form fields to accessible HTML on every form page.
+
+        Runs unconditionally as a step (not an agent-optional tool, which the
+        page agent was skipping). A page is processed when the structure agent
+        flagged it ``has_forms`` OR a deterministic scan finds form signals
+        (underline runs, checkbox glyphs) — so multi-page forms are caught even
+        where ``has_forms`` missed a page.
+
+        For each form page, a vision agent reads the page image + markdown and
+        returns the fields it sees; a deterministic renderer then replaces each
+        field's ``anchor_text`` with accessible HTML (labelled controls,
+        ``<fieldset>``/``<legend>`` for option groups). Edits whichever per-page
+        version is newest (v1 if present, else v0) in-place.
+        """
+        from pydantic_ai import Agent
+        from pydantic_ai.messages import BinaryContent
+
+        from ..agents.model_factory import get_model_for_tier
+        from ..agents.model_tiers import ModelTier
+        from ..agents.prompts.form_fields import (
+            FORM_FIELDS_SYSTEM_PROMPT,
+            build_form_fields_user_message,
+        )
+        from ..shared.llm_cost import calculate_estimated_cost
+
+        step_start = time.time()
+        source_version = "v1" if "v1" in result.page_markdowns else "v0"
+        page_mds = result.page_markdowns.get(source_version, {})
+
+        model = get_model_for_tier(ModelTier.EFFICIENT)
+        agent: Agent[None, FormFieldsPageOutput] = Agent(
+            model=model,
+            output_type=FormFieldsPageOutput,
+            system_prompt=FORM_FIELDS_SYSTEM_PROMPT,
+        )
+
+        changes: list[DocumentChange] = []
+        fields_found = 0
+        checkboxes_converted = 0
+        underscore_fields_converted = 0
+        pages_processed = 0
+        total_input_tokens = 0
+        total_output_tokens = 0
+
+        # Document-level form signal. Docling frequently drops form-field text
+        # (underscores, checkboxes) from later pages, so per-page text signals
+        # alone miss multi-page forms. When the document is a form — it has
+        # AcroForm widgets, OR any page was flagged ``has_forms``, OR any page
+        # shows form signals — scan EVERY page with the vision agent (it returns
+        # no fields for non-form pages, so the cost is bounded and safe).
+        has_acroform = result.stats.get("form_field_count", 0) > 0
+        any_flagged = any(
+            a.has_forms for a in structure.page_attributes.values()
+        )
+        any_signal = any(_page_has_form_signals(md) for md in page_mds.values())
+        is_form_document = has_acroform or any_flagged or any_signal
+
+        for page_num in range(1, result.total_pages + 1):
+            page_key = str(page_num)
+            page_md = page_mds.get(page_key, "")
+            page_image_b64 = result.page_images.get(page_key)
+            if not page_md or not page_image_b64:
+                continue
+
+            attrs = structure.page_attributes.get(page_num)
+            is_form_page = (
+                is_form_document
+                or (attrs and attrs.has_forms)
+                or _page_has_form_signals(page_md)
+            )
+            if not is_form_page:
+                continue
+            pages_processed += 1
+
+            text_msg = build_form_fields_user_message(
+                page_markdown=page_md,
+                page_number=page_num,
+                total_pages=result.total_pages,
+            )
+            messages: list[Any] = [
+                BinaryContent(
+                    data=base64.b64decode(page_image_b64), media_type="image/png"
+                ),
+                text_msg,
+            ]
+
+            try:
+                agent_result = await agent.run(messages)
+                page_output = agent_result.output
+                usage = agent_result.usage()
+                total_input_tokens += usage.request_tokens or 0
+                total_output_tokens += usage.response_tokens or 0
+            except Exception as e:
+                logger.error(f"Form field detection failed on page {page_num}: {e}")
+                continue
+
+            fields_found += len(page_output.form_fields)
+            current_md = page_mds[page_key]
+
+            # 1. Agent-detected fields → accessible HTML (text, checkbox, radio…)
+            for i, field in enumerate(page_output.form_fields):
+                field.page = page_num
+                field_id = f"ff-p{page_num}-{i}"
+                new_md, change = _apply_form_field(current_md, field, field_id)
+                if change:
+                    current_md = new_md
+                    changes.append(change)
+                else:
+                    logger.info(
+                        f"Form field anchor not found on page {page_num}: "
+                        f"{field.anchor_text!r}"
+                    )
+
+            # 2. Deterministic safeguard: convert any residual markdown
+            #    task-list checkboxes the agent didn't replace. Guarantees no
+            #    input is left as markdown.
+            current_md, cb_changes = _convert_task_list_checkboxes(
+                current_md, page_num
+            )
+            changes.extend(cb_changes)
+            checkboxes_converted += len(cb_changes)
+
+            # 3. Deterministic: convert residual "label ____" blanks (incl.
+            #    several per line) the agent's line-replacement couldn't handle.
+            current_md, uf_changes = _convert_underscore_fields(current_md, page_num)
+            changes.extend(uf_changes)
+            underscore_fields_converted += len(uf_changes)
+
+            page_mds[page_key] = current_md
+
+            logger.info(
+                f"Form fields page {page_num}/{result.total_pages}: "
+                f"detected={len(page_output.form_fields)}, "
+                f"markdown_checkboxes_converted={len(cb_changes)}"
+            )
+
+        # Rebuild the full version from corrected pages
+        if changes:
+            result.versions[source_version] = "\n\n".join(
+                page_mds.get(str(p), "") for p in range(1, result.total_pages + 1)
+            )
+
+        elapsed_ms = int((time.time() - step_start) * 1000)
+        cost_cents = calculate_estimated_cost(total_input_tokens, total_output_tokens)
+
+        result.steps.append(
+            StepResult(
+                name="form_fields",
+                display_name="Form Fields",
+                version_before=source_version,
+                version_after=source_version,
+                elapsed_ms=elapsed_ms,
+                changes=changes,
+                metadata={
+                    "pages_processed": pages_processed,
+                    "fields_detected": fields_found,
+                    "fields_injected": len(changes),
+                    "markdown_checkboxes_converted": checkboxes_converted,
+                    "underscore_fields_converted": underscore_fields_converted,
+                },
+                input_tokens=total_input_tokens,
+                output_tokens=total_output_tokens,
+                cost_cents=cost_cents,
+            )
         )
 
     # ------------------------------------------------------------------

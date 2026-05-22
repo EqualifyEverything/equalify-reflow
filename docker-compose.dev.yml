@@ -108,8 +108,9 @@ services:
       - AWS_ACCESS_KEY_ID=${AWS_ACCESS_KEY_ID:-test}
       - AWS_SECRET_ACCESS_KEY=${AWS_SECRET_ACCESS_KEY:-test}
       - AWS_SESSION_TOKEN=${AWS_SESSION_TOKEN:-}
-      # Clear AWS_PROFILE to prevent boto3 from looking for profile config in container
-      - AWS_PROFILE=
+      # AWS_PROFILE is intentionally NOT set here. boto3 treats a set-but-empty
+      # AWS_PROFILE as a missing named profile (ProfileNotFound) and ignores the
+      # exported env creds above. Leaving it unset makes boto3 use those creds.
       - AWS_DEFAULT_REGION=us-east-1
       # Disable AWS Instance Metadata Service (IMDS) to prevent boto3 hang in Docker
       - AWS_EC2_METADATA_DISABLED=true

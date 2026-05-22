@@ -542,6 +542,10 @@ async def process_pdf(
     enable_structure: bool = Form(default=False),
     enable_page_content: bool = Form(default=False),
     enable_boundaries: bool = Form(default=False),
+    enable_form_field_map: bool = Form(
+        default=False,
+        description="Run the Form Field Mapper analysis step (structured field dictionary in the Review stage).",
+    ),
     ocr_languages: str = Form(
         default="eng",
         description="Comma-separated Tesseract OCR language codes (e.g. 'eng,deu')",
@@ -576,6 +580,7 @@ async def process_pdf(
         enable_structure=enable_structure,
         enable_page_content=enable_page_content,
         enable_boundaries=enable_boundaries,
+        enable_form_field_map=enable_form_field_map,
         ocr_languages=ocr_lang_list,
     )
 

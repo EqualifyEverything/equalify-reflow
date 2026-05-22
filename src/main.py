@@ -196,6 +196,13 @@ from .api import pipeline_viewer  # noqa: E402
 app.include_router(pipeline_viewer.router)
 logger.info("✅ Pipeline endpoint enabled at /api/v1/pipeline/process")
 
+# Accessible form generation + PDF write-back — always available.
+from .api import accessible_forms  # noqa: E402
+
+app.include_router(accessible_forms.router)
+app.include_router(accessible_forms.public_router)
+logger.info("✅ Accessible form endpoints enabled at /api/v1/forms/accessible/* and /accessible-forms/*")
+
 # Conditionally import dev-only endpoints (only in development)
 if settings.environment == "dev":
     from .api import minimal_pipeline

@@ -417,6 +417,7 @@ class PipelineViewerService:
         enable_structure: bool = False,
         enable_page_content: bool = False,
         enable_boundaries: bool = False,
+        enable_form_field_map: bool = False,
         ocr_languages: list[str] | None = None,
         on_phase: Callable[[str, str, int, int], None] | None = None,
     ) -> PipelineViewerResult:
@@ -430,6 +431,10 @@ class PipelineViewerService:
             enable_structure: Run Phase 1 structure analysis.
             enable_page_content: Run Phase 2 per-page corrections.
             enable_boundaries: Run Phase 3 cross-page fixes.
+            enable_form_field_map: Run the Form Field Mapper analysis step. Reads
+                the best available markdown version and records a structured field
+                dictionary (analysis-only, no markdown change). Opt-in so it adds
+                no LLM cost unless requested.
             ocr_languages: Tesseract OCR language codes for scanned documents.
             on_phase: Optional callback invoked before each pipeline step.
                 Signature: (phase_name, display_name, step_number, total_steps).
@@ -449,6 +454,8 @@ class PipelineViewerService:
             phase_total += 2  # page_content, code_blocks
         if enable_boundaries and enable_structure:
             phase_total += 2  # boundaries, cleanup
+        if enable_form_field_map:
+            phase_total += 1  # form field map
         phase_step = 0
 
         def _emit_phase(name: str, display_name: str) -> None:
@@ -645,6 +652,10 @@ class PipelineViewerService:
             await self._step_boundaries(result, structure, section_map=section_map)
             _emit_phase("cleanup", "Final Cleanup")
             await self._step_cleanup(result)
+
+        if enable_form_field_map:
+            _emit_phase("form_field_map", "Form Field Map")
+            await self._step_form_field_map(result)
 
         return result
 
@@ -3042,4 +3053,112 @@ class PipelineViewerService:
                 metadata={},
             )
         )
+
+    # ------------------------------------------------------------------
+    # Review — Form Field Mapper (analysis-only field dictionary)
+    # ------------------------------------------------------------------
+
+    async def _step_form_field_map(self, result: PipelineViewerResult) -> None:
+        """Extract a structured field dictionary from the assembled form.
+
+        Reads the best available markdown version (v3 down to v0) and asks an
+        agent to enumerate every fillable field a human would complete, with the
+        question text, inferred type, plain description, options, and required
+        flag.
+
+        Analysis-only: does NOT modify any markdown version. Records the result
+        as ``StepResult`` metadata, so it surfaces in the viewer's dynamic Review
+        stage (the step name is not in ``PIPELINE_STAGES``). Always appends a
+        ``StepResult`` — happy, skip, and error paths — so the step is never
+        silently missing.
+        """
+        from pydantic_ai import Agent
+
+        from ..agents.model_factory import get_model_for_tier
+        from ..agents.model_tiers import ModelTier
+        from ..agents.prompts.form_field_mapper import (
+            FORM_FIELD_MAPPER_SYSTEM_PROMPT,
+            FormFieldMapOutput,
+        )
+
+        step_start = time.time()
+
+        # Prefer the most-corrected version; fall back to raw extraction so the
+        # step still works when only Docling (v0) has run.
+        source_version = next(
+            (v for v in ("v3", "v2", "v1", "v0") if result.versions.get(v)),
+            None,
+        )
+        document = result.versions.get(source_version, "") if source_version else ""
+
+        if not document.strip():
+            result.steps.append(
+                StepResult(
+                    name="form_field_map",
+                    display_name="Form Field Map",
+                    version_before=source_version or "v0",
+                    version_after=source_version or "v0",
+                    elapsed_ms=int((time.time() - step_start) * 1000),
+                    changes=[],
+                    metadata={"reason": "no_markdown_to_map"},
+                    skipped=True,
+                )
+            )
+            return
+
+        model = get_model_for_tier(ModelTier.REASONING)
+        agent: Agent[None, FormFieldMapOutput] = Agent(
+            model=model,
+            output_type=FormFieldMapOutput,
+            system_prompt=FORM_FIELD_MAPPER_SYSTEM_PROMPT,
+        )
+
+        try:
+            agent_result = await agent.run(document)
+            mapped = agent_result.output
+            usage = agent_result.usage()
+            input_tokens = usage.request_tokens or 0
+            output_tokens = usage.response_tokens or 0
+        except Exception as e:
+            logger.error(f"Form field mapper failed: {e}")
+            result.steps.append(
+                StepResult(
+                    name="form_field_map",
+                    display_name="Form Field Map",
+                    version_before=source_version,
+                    version_after=source_version,
+                    elapsed_ms=int((time.time() - step_start) * 1000),
+                    changes=[],
+                    metadata={},
+                    error=str(e),
+                )
+            )
+            return
+
+        from ..shared.llm_cost import calculate_estimated_cost
+
+        cost_cents = calculate_estimated_cost(input_tokens, output_tokens)
+
+        result.steps.append(
+            StepResult(
+                name="form_field_map",
+                display_name="Form Field Map",
+                version_before=source_version,
+                version_after=source_version,  # analysis-only, no markdown change
+                elapsed_ms=int((time.time() - step_start) * 1000),
+                changes=[],
+                metadata={
+                    "source_version": source_version,
+                    "document_kind": mapped.document_kind,
+                    "overall_confidence": mapped.overall_confidence,
+                    "field_count": len(mapped.fields),
+                    "fields": [f.model_dump() for f in mapped.fields],
+                    "notes": mapped.notes,
+                },
+                input_tokens=input_tokens,
+                output_tokens=output_tokens,
+                cost_cents=cost_cents,
+            )
+        )
+        # Form Field Mapper records an analysis-only StepResult (Review stage).
 

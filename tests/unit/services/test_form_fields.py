@@ -14,6 +14,7 @@ import pytest
 from src.services.pipeline_viewer import (
     PipelineViewerService,
     _apply_form_field,
+    _convert_task_list_checkboxes,
     _page_has_form_signals,
     _render_form_field_html,
 )
@@ -198,6 +199,43 @@ class TestApplyFormField:
 
 
 # ---------------------------------------------------------------------------
+# _convert_task_list_checkboxes — no markdown inputs survive
+# ---------------------------------------------------------------------------
+
+
+class TestConvertTaskListCheckboxes:
+    def test_gfm_task_list_becomes_accessible_html(self):
+        md = "- [ ] I attest the animal is vaccinated"
+        out, changes = _convert_task_list_checkboxes(md, 1)
+        assert "- [ ]" not in out
+        assert '<input type="checkbox" id="cb-p1-0"' in out
+        assert "disabled>" in out
+        assert '<label for="cb-p1-0">I attest the animal is vaccinated</label>' in out
+        assert len(changes) == 1
+        assert changes[0].stage == "form_field"
+
+    def test_checked_task_item_is_checked(self):
+        out, _ = _convert_task_list_checkboxes("- [x] Done", 2)
+        assert " checked disabled>" in out
+
+    def test_leading_glyph_stripped_from_label(self):
+        # Docling emits both the task-list marker AND a glyph
+        out, _ = _convert_task_list_checkboxes("- [ ] ☐ I agree", 1)
+        assert '<label for="cb-p1-0">I agree</label>' in out
+        assert "☐" not in out
+
+    def test_label_html_escaped(self):
+        out, _ = _convert_task_list_checkboxes("- [ ] a < b & c", 1)
+        assert "a &lt; b &amp; c" in out
+
+    def test_non_task_lines_untouched(self):
+        md = "# Heading\n\n- a normal bullet\n\nprose"
+        out, changes = _convert_task_list_checkboxes(md, 1)
+        assert out == md
+        assert changes == []
+
+
+# ---------------------------------------------------------------------------
 # _page_has_form_signals — deterministic detection
 # ---------------------------------------------------------------------------
 
@@ -321,6 +359,30 @@ class TestStepFormFields:
         step = next(s for s in result.steps if s.name == "form_fields")
         assert step.metadata["pages_processed"] == 0
         assert result.versions["v0"] == md
+
+    @pytest.mark.asyncio
+    async def test_markdown_checkbox_converted_even_when_agent_finds_nothing(self, service):
+        """A GFM task-list checkbox must become HTML even if the vision agent
+        returns no fields — the deterministic safeguard."""
+        md = "# Form\n\n- [ ] I attest the animal is vaccinated"
+        result = PipelineViewerResult(
+            filename="form.pdf",
+            total_pages=1,
+            versions={"v0": md},
+            page_images={"1": "AAAA"},
+            page_markdowns={"v0": {"1": md}},
+        )
+        mock_agent = _mock_agent_returning(FormFieldsPageOutput(form_fields=[]))
+        p1, p2, p3 = _patches()
+        with p1 as agent_cls, p2, p3:
+            agent_cls.return_value = mock_agent
+            await service._step_form_fields(result, _structure(has_forms=False))
+
+        v0 = result.versions["v0"]
+        assert "- [ ]" not in v0
+        assert '<input type="checkbox"' in v0
+        step = next(s for s in result.steps if s.name == "form_fields")
+        assert step.metadata["markdown_checkboxes_converted"] == 1
 
     @pytest.mark.asyncio
     async def test_agent_failure_does_not_raise(self, service, base_result):

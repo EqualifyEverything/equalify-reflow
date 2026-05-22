@@ -381,6 +381,54 @@ def _render_form_field_html(field: FormFieldInfo, field_id: str) -> str:
     return "\n".join(parts)
 
 
+# A GFM task-list item (``- [ ]`` / ``* [x]``). remark-gfm renders these as
+# bare, unlabelled <input type=checkbox> — a markdown-created input. We convert
+# every one to a labelled, accessible HTML control so no input is left in
+# markdown form. An optional leading checkbox glyph (Docling emits both) is
+# stripped from the label.
+_TASK_LIST_CHECKBOX_RE = re.compile(r"^(\s*)[-*]\s+\[([ xX]?)\]\s*(.*)$")
+
+
+def _convert_task_list_checkboxes(
+    page_md: str, page_num: int
+) -> tuple[str, list[DocumentChange]]:
+    """Convert any GFM task-list checkboxes in *page_md* to accessible HTML.
+
+    Deterministic safeguard: guarantees no markdown-rendered checkbox inputs
+    survive, regardless of what the vision agent detected.
+    """
+    out: list[str] = []
+    changes: list[DocumentChange] = []
+    seq = 0
+    for line in page_md.split("\n"):
+        m = _TASK_LIST_CHECKBOX_RE.match(line)
+        if not m:
+            out.append(line)
+            continue
+        label = m.group(3).lstrip("☐☑☒□◻❐❏ \t").strip()
+        if not label:
+            out.append(line)
+            continue
+        checked = " checked" if m.group(2).lower() == "x" else ""
+        cid = f"cb-p{page_num}-{seq}"
+        seq += 1
+        html_line = (
+            f'<input type="checkbox" id="{cid}" name="{cid}"{checked} disabled> '
+            f'<label for="{cid}">{html.escape(label)}</label>'
+        )
+        out.append(html_line)
+        changes.append(
+            DocumentChange(
+                page=page_num,
+                old_text=line[:200],
+                new_text=html_line[:200],
+                reasoning="Converted markdown task-list checkbox to accessible HTML",
+                stage="form_field",
+            )
+        )
+    return "\n".join(out), changes
+
+
 def _apply_form_field(
     page_md: str,
     field: FormFieldInfo,
@@ -2217,6 +2265,7 @@ class PipelineViewerService:
 
         changes: list[DocumentChange] = []
         fields_found = 0
+        checkboxes_converted = 0
         pages_processed = 0
         total_input_tokens = 0
         total_output_tokens = 0
@@ -2273,11 +2322,10 @@ class PipelineViewerService:
                 logger.error(f"Form field detection failed on page {page_num}: {e}")
                 continue
 
-            if not page_output.form_fields:
-                continue
-
             fields_found += len(page_output.form_fields)
             current_md = page_mds[page_key]
+
+            # 1. Agent-detected fields → accessible HTML (text, checkbox, radio…)
             for i, field in enumerate(page_output.form_fields):
                 field.page = page_num
                 field_id = f"ff-p{page_num}-{i}"
@@ -2290,11 +2338,22 @@ class PipelineViewerService:
                         f"Form field anchor not found on page {page_num}: "
                         f"{field.anchor_text!r}"
                     )
+
+            # 2. Deterministic safeguard: convert any residual markdown
+            #    task-list checkboxes the agent didn't replace. Guarantees no
+            #    input is left as markdown.
+            current_md, cb_changes = _convert_task_list_checkboxes(
+                current_md, page_num
+            )
+            changes.extend(cb_changes)
+            checkboxes_converted += len(cb_changes)
+
             page_mds[page_key] = current_md
 
             logger.info(
                 f"Form fields page {page_num}/{result.total_pages}: "
-                f"detected={len(page_output.form_fields)}"
+                f"detected={len(page_output.form_fields)}, "
+                f"markdown_checkboxes_converted={len(cb_changes)}"
             )
 
         # Rebuild the full version from corrected pages
@@ -2318,6 +2377,7 @@ class PipelineViewerService:
                     "pages_processed": pages_processed,
                     "fields_detected": fields_found,
                     "fields_injected": len(changes),
+                    "markdown_checkboxes_converted": checkboxes_converted,
                 },
                 input_tokens=total_input_tokens,
                 output_tokens=total_output_tokens,

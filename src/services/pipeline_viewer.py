@@ -530,10 +530,19 @@ def _apply_form_field(
     Fuzzy-finds the anchor line in *page_md* and swaps it for the rendered
     control. Returns ``(new_markdown, change)`` or ``(original, None)`` if the
     anchor could not be located.
+
+    Defers two cases to the deterministic passes instead of whole-line
+    replacing: lines that already hold an injected control, and lines packing
+    multiple underscore blanks (``Phone: ___ Email: ___``) — replacing the
+    whole line there would drop every field but one.
     """
     lines = page_md.split("\n")
     idx = _fuzzy_find_line(lines, field.anchor_text)
     if idx < 0:
+        return page_md, None
+
+    target = lines[idx]
+    if "<input" in target or len(_UNDERSCORE_RUN_RE.findall(target)) > 1:
         return page_md, None
 
     new_html = _render_form_field_html(field, field_id)

@@ -187,6 +187,26 @@ class TestApplyFormField:
         assert new_md.endswith("Thanks")
         assert change.stage == "form_field"
 
+    def test_defers_multi_field_line_to_deterministic(self):
+        """A line with several blanks must NOT be whole-line replaced (that
+        would drop all but one field); defer it to the underscore converter."""
+        md = "Phone: __________ Email: __________"
+        field = FormFieldInfo(
+            field_type=FormFieldType.TEXT,
+            label="Phone",
+            anchor_text="Phone: __________ Email: __________",
+            page=1,
+        )
+        new_md, change = _apply_form_field(md, field, "ff-p1-0")
+        assert change is None
+        assert new_md == md
+
+    def test_defers_line_already_holding_input(self):
+        md = '<input type="text" id="ff-p1-0"> Name'
+        field = FormFieldInfo(field_type=FormFieldType.TEXT, label="Name", anchor_text="Name", page=1)
+        new_md, change = _apply_form_field(md, field, "ff-p1-1")
+        assert change is None
+
     def test_missing_anchor_returns_original(self):
         md = "# Application\n\nNothing to fill in here."
         field = FormFieldInfo(

@@ -39,6 +39,15 @@ FROM base AS dependencies
 # conversion are handled by the docling-serve sidecar container.
 RUN apt-get update && apt-get install -y --no-install-recommends \
     poppler-utils \
+    tesseract-ocr \
+    tesseract-ocr-eng \
+    ghostscript \
+    qpdf \
+    pngquant \
+    unpaper \
+    liblouis-data \
+    liblouis20 \
+    liblouis-bin \
     && rm -rf /var/lib/apt/lists/*
 
 # Copy dependency files

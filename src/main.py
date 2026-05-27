@@ -110,6 +110,25 @@ async def lifespan(app: FastAPI) -> AsyncIterator[None]:
         ]
         logger.info("PII and Timeout worker tasks created")
 
+        # Canvas LTI integration — opt-in via LTI_ENABLED. Watcher and
+        # bridge run alongside the existing workers; the same shutdown
+        # event signals all of them.
+        if getattr(settings, "lti_enabled", False):
+            from .workers.canvas_watcher import start_canvas_watcher
+            from .workers.reflow_bridge_worker import start_reflow_bridge
+
+            worker_tasks.append(
+                asyncio.create_task(
+                    start_canvas_watcher(redis_client, shutdown_event=shutdown_event)
+                )
+            )
+            worker_tasks.append(
+                asyncio.create_task(
+                    start_reflow_bridge(redis_client, shutdown_event=shutdown_event)
+                )
+            )
+            logger.info("Canvas watcher and Reflow bridge worker tasks created")
+
     yield
 
     # Shutdown: Graceful shutdown with timeout (only if workers were started)
@@ -180,7 +199,10 @@ if settings.auth_mode != "none":
 app.add_middleware(ErrorHandlerMiddleware)  # Catch all errors
 app.add_middleware(RateLimitMiddleware)  # Rate limit before processing
 app.add_middleware(LoggingMiddleware)  # Log all requests
-app.add_middleware(SecurityHeadersMiddleware)  # Frame security
+app.add_middleware(
+    SecurityHeadersMiddleware,
+    canvas_origin=getattr(settings, "canvas_api_url", None) or getattr(settings, "lti_issuer", None) or "",
+)  # Frame security; allows Canvas origin to embed /lti/* in an iframe
 add_cors_middleware(app)  # CORS headers
 
 # Include routers
@@ -195,6 +217,40 @@ from .api import pipeline_viewer  # noqa: E402
 
 app.include_router(pipeline_viewer.router)
 logger.info("✅ Pipeline endpoint enabled at /api/v1/pipeline/process")
+
+# Canvas LTI + Panorama overlay endpoints (opt-in via LTI_ENABLED).
+if getattr(settings, "lti_enabled", False):
+    from .api import canvas_consent, canvas_oauth, canvas_panorama, canvas_review
+    from .lti import router as lti_router
+
+    app.include_router(lti_router)
+    app.include_router(canvas_review.router)
+    app.include_router(canvas_panorama.router)
+    app.include_router(canvas_consent.router)
+    app.include_router(canvas_oauth.router)
+
+    # Also serve the overlay bundle at the ROOT path. Canvas's Theme-Editor
+    # loader references /panorama.js (without the /lti prefix); without this,
+    # that request falls through to the viewer SPA catch-all (registered below)
+    # and 500s when the viewer build is absent, so the overlay never loads.
+    # Mirrors GET /lti/panorama.js. Registered here — before the catch-all — so
+    # it claims the path.
+    @app.get("/panorama.js", include_in_schema=False)
+    async def panorama_js_root():  # noqa: ANN202
+        from pathlib import Path as _Path
+
+        from fastapi import Response as _Response
+
+        bundle = _Path(__file__).resolve().parent / "web" / "canvas_review" / "panorama.js"
+        if not bundle.exists():
+            return _Response(status_code=404, content="// panorama.js bundle not found")
+        return _Response(
+            content=bundle.read_text(encoding="utf-8"),
+            media_type="application/javascript",
+            headers={"Cache-Control": "no-cache"},
+        )
+
+    logger.info("✅ Canvas LTI + Panorama + Consent endpoints enabled")
 
 # Conditionally import dev-only endpoints (only in development)
 if settings.environment == "dev":

@@ -286,6 +286,77 @@ class Settings(BaseSettings):
         ge=1, le=300, default=60, description="Timeout worker sleep duration on error"
     )
 
+    # ------------------------------------------------------------------
+    # Canvas LMS / LTI 1.3 integration
+    # ------------------------------------------------------------------
+    # All optional. When ``lti_enabled`` is False the routers self-disable
+    # and the watcher/bridge idle, so leaving the rest empty is safe.
+    lti_enabled: bool = Field(default=False, description="Enable LTI 1.3 endpoints and Canvas workers")
+    lti_issuer: str | None = Field(default=None, description="Canvas issuer URL (e.g. https://canvas.instructure.com)")
+    lti_client_id: str | None = Field(default=None, description="Canvas Developer Key client_id")
+    lti_deployment_id: str | None = Field(default=None, description="Canvas deployment id")
+    lti_auth_login_url: str | None = Field(default=None, description="Canvas OIDC authorize_redirect endpoint")
+    lti_auth_token_url: str | None = Field(default=None, description="Canvas OAuth2 token endpoint")
+    lti_jwks_url: str | None = Field(default=None, description="Canvas JWKS endpoint")
+    lti_private_key_path: str = Field(default="/app/keys/lti_private.pem", description="Path to LTI private key")
+    lti_public_key_path: str = Field(default="/app/keys/lti_public.pem", description="Path to LTI public key")
+    lti_state_ttl_seconds: int = Field(ge=60, le=3600, default=600, description="OIDC state nonce TTL")
+    lti_public_url: str | None = Field(default=None, description="Public origin of this tool, used in notification deep links")
+
+    canvas_tenant: str = Field(
+        default="default",
+        description=(
+            "Tenant id for Redis key namespacing. 'default' preserves the "
+            "legacy unprefixed key shape (single-campus install); any other "
+            "value namespaces every key as eq-pdf:t:{tenant}:... so multiple "
+            "campuses can share one Redis without cross-contamination."
+        ),
+    )
+    canvas_api_url: str | None = Field(default=None, description="Canvas instance base URL (https://yourschool.instructure.com)")
+    canvas_api_token: SecretStr | None = Field(default=None, description="Canvas API token used by the watcher/bridge workers")
+    canvas_watched_courses: str = Field(default="", description="Comma-separated Canvas course ids the watcher polls")
+    multi_tenant_watcher: bool = Field(default=False, description="Watcher iterates LTI-registered platforms instead of canvas_watched_courses")
+    canvas_oauth_client_id: str = Field(default="", description="Canvas API Key (non-LTI Developer Key) client_id for the user-OAuth2 flow; required because LTI 1.3 keys are not accepted by Canvas's /login/oauth2/auth endpoint")
+    canvas_oauth_client_secret: SecretStr | None = Field(default=None, description="Secret for the user-OAuth API Key (optional if the key uses a public JWK URL and JWT-bearer client auth)")
+    canvas_allowed_origins: str = Field(default="", description="Comma-separated Canvas origins allowed to call panorama endpoints (e.g. 'https://canvas.example.edu,https://example.instructure.com')")
+    canvas_allowed_origin_regex: str = Field(default="", description="Regex of Canvas origins allowed to call panorama endpoints; takes precedence over canvas_allowed_origins when set")
+    canvas_poll_seconds: int = Field(ge=15, le=3600, default=60, description="Canvas file poll interval")
+    reflow_poll_seconds: int = Field(ge=5, le=600, default=30, description="Reflow job poll interval for the bridge")
+    reflow_api_url: str = Field(default="http://api-gateway:8080", description="Reflow API base URL the bridge calls")
+
+    # Data retention controls. Both apply to Canvas-side state stored in Redis.
+    # Set to 0 (or negative) to disable purging for that bucket. Defaults are
+    # conservative for a research-data steward: jobs roll off after 90 days
+    # (alt formats can always be regenerated from the original file), audit
+    # events survive a full year so ISO reviews have history to walk.
+    # Per-course Claude API spend cap. See ``canvas.spend_cap`` for the
+    # full contract. Default of 0 disables the cap entirely - operators
+    # opt in by setting a per-course budget.
+    canvas_monthly_spend_cap_usd_default: int = Field(
+        ge=0, le=100_000, default=0,
+        description="Default monthly Claude-API spend cap in USD per Canvas course (0=unlimited)",
+    )
+    canvas_monthly_spend_cap_overrides: str = Field(
+        default="",
+        description='JSON map of course_id->cap_usd overrides, e.g. \'{"50594": 250}\'',
+    )
+    canvas_estimated_cost_per_doc_cents: int = Field(
+        ge=0, le=10000, default=10,
+        description="Pre-flight per-document cost estimate in cents (used by the spend cap)",
+    )
+    canvas_job_retention_days: int = Field(
+        ge=0, le=3650, default=90,
+        description="Days to retain Canvas job records in Redis (0=keep forever)",
+    )
+    canvas_audit_retention_days: int = Field(
+        ge=0, le=3650, default=365,
+        description="Days to retain approval-audit events in Redis (0=keep forever)",
+    )
+    canvas_retention_sweep_every_ticks: int = Field(
+        ge=1, le=10080, default=240,
+        description="Run the retention sweep every N watcher ticks (default 240 ~= every 4 hours at 60s poll)",
+    )
+
     # Testing Configuration
     disable_workers: bool = Field(
         default=False, description="Disable background workers (PII, timeout) for testing scenarios"

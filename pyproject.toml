@@ -15,7 +15,23 @@ dependencies = [
     "presidio-analyzer>=2.2.0",
     "spacy>=3.7.0,<3.8.0",
     "pypdfium2>=4.0.0",
-    "pydantic-ai[anthropic,bedrock]>=1.0.12",
+    # NOTE: the [anthropic] extras live on pydantic-ai-slim, not on the
+    # meta `pydantic-ai` package. Using the meta package with these
+    # extras silently kept us pinned at 1.38.0 (warning:
+    # "pydantic-ai==1.38.0 does not have an extra named 'anthropic'")
+    # which then broke at runtime against newer anthropic SDKs.
+    # Dropped [bedrock] — that extra pulls boto3>=1.42.63 which is
+    # mutually exclusive with aioboto3 (max 15.5.0 caps boto3<1.40.62).
+    # We talk to Anthropic directly, not via AWS Bedrock, so it's safe
+    # to drop.
+    "pydantic-ai-slim[anthropic]>=1.98.0",
+    # HTML sanitization for instructor-edited and AI-generated content.
+    # See src/canvas/sanitize.py for the academic-content allowlist.
+    "bleach[css]>=6.1.0",
+    # Stdlib has ``importlib.metadata`` but logfire (transitively, via
+    # pytest-11 entry-points) imports the *third-party* ``importlib_metadata``
+    # backport explicitly. Without it pytest fails to load. Cheap to keep.
+    "importlib-metadata>=7.0",
     "pyyaml>=6.0.0",
     "pdf2image>=1.17.0",
     "en-core-web-sm @ https://github.com/explosion/spacy-models/releases/download/en_core_web_sm-3.7.1/en_core_web_sm-3.7.1-py3-none-any.whl",
@@ -40,6 +56,9 @@ dependencies = [
     "argon2-cffi>=23.1.0",
     "itsdangerous>=2.2.0",
     "joserfc>=1.0.0",
+    "ebooklib>=0.18",
+    "ocrmypdf>=16.0",
+    "numpy>=1.26,<2.0",
 ]
 
 [project.optional-dependencies]

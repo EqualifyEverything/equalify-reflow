@@ -20,6 +20,7 @@ from ..dependencies import (
     get_storage_service,
 )
 from ..services import JobService, QueueService, S3URLService, StorageService
+from ..services.approval_service import ApprovalService
 from ..services.document_processing_service import DocumentProcessingService
 from ..services.metrics_service import jobs_submitted_total
 from .schemas import (
@@ -711,3 +712,201 @@ async def get_ledger(
         processing_duration_ms=0,
         final_markdown_url=final_markdown_url,
     )
+
+
+# ---------------------------------------------------------------------------
+# PII approval / denial — by-job-id endpoints.
+#
+# The token-based equivalent lives at /api/v1/approval/{token}/decision in
+# api.approval. These by-job-id variants exist so machine clients (e.g. the
+# reflow-canvas-lti connector) can forward a faculty decision without having
+# to juggle an approval token — they already authenticated with an API key
+# and they already know the job_id from a prior status poll.
+# ---------------------------------------------------------------------------
+
+
+class PIIDecisionInput(BaseModel):
+    """Input for the by-job-id PII decision endpoints."""
+
+    justification: str | None = Field(
+        None,
+        min_length=10,
+        max_length=1000,
+        description="Optional explanation for the decision (10–1000 chars when provided).",
+    )
+    reviewed_by: str = Field(
+        ...,
+        min_length=3,
+        description="Reviewer identifier (email or stable user id).",
+    )
+
+
+class PIIDecisionResponse(BaseModel):
+    """Response for the by-job-id PII decision endpoints."""
+
+    message: str
+    job_id: str
+    decision: Literal["approved", "denied"]
+
+
+@router.post(
+    "/{job_id}/pii/approve",
+    response_model=PIIDecisionResponse,
+    summary="Approve PII gate for a document (by job_id)",
+    description=(
+        "Records a faculty approval of the PII findings on a job that is in "
+        "``awaiting_approval`` status, then resumes processing. Symmetric "
+        "counterpart of ``POST /{job_id}/pii/deny``. Intended for connector "
+        "consumption (the Canvas LTI connector forwards a faculty decision "
+        "here after the panorama PII gate)."
+    ),
+)
+async def approve_pii(
+    job_id: str,
+    body: PIIDecisionInput,
+    background_tasks: BackgroundTasks,
+    redis_client: Any = Depends(get_redis_client),
+    storage_service: StorageService = Depends(get_storage_service),
+    s3_url_service: S3URLService = Depends(get_s3_url_service),
+) -> PIIDecisionResponse:
+    return await _process_pii_decision(
+        job_id=job_id,
+        decision="approved",
+        body=body,
+        background_tasks=background_tasks,
+        redis_client=redis_client,
+        storage_service=storage_service,
+        s3_url_service=s3_url_service,
+    )
+
+
+@router.post(
+    "/{job_id}/pii/deny",
+    response_model=PIIDecisionResponse,
+    summary="Deny PII gate for a document (by job_id)",
+    description=(
+        "Records a faculty denial of the PII findings on a job that is in "
+        "``awaiting_approval`` status, then cleans up the document. Symmetric "
+        "counterpart of ``POST /{job_id}/pii/approve``."
+    ),
+)
+async def deny_pii(
+    job_id: str,
+    body: PIIDecisionInput,
+    background_tasks: BackgroundTasks,
+    redis_client: Any = Depends(get_redis_client),
+    storage_service: StorageService = Depends(get_storage_service),
+    s3_url_service: S3URLService = Depends(get_s3_url_service),
+) -> PIIDecisionResponse:
+    return await _process_pii_decision(
+        job_id=job_id,
+        decision="denied",
+        body=body,
+        background_tasks=background_tasks,
+        redis_client=redis_client,
+        storage_service=storage_service,
+        s3_url_service=s3_url_service,
+    )
+
+
+async def _process_pii_decision(
+    *,
+    job_id: str,
+    decision: Literal["approved", "denied"],
+    body: PIIDecisionInput,
+    background_tasks: BackgroundTasks,
+    redis_client: Any,
+    storage_service: StorageService,
+    s3_url_service: S3URLService,
+) -> PIIDecisionResponse:
+    """Shared body for approve_pii + deny_pii.
+
+    Pre-validates the job's current status (404 if missing, 409 if not
+    awaiting_approval) before invoking the approval_service. That contract is
+    what the Canvas LTI connector relies on to surface "another instructor
+    decided in a parallel tab" as a 409 to the operator. The token-based
+    sibling endpoint in api.approval lets quick_approve / quick_deny set the
+    status unconditionally; that's safe there because the token already
+    proves the job is in awaiting_approval, but it isn't safe by job_id.
+
+    Connector contract pinned by:
+        https://github.com/oshrizak/reflow-canvas-lti — the Canvas LTI
+        connector tries this endpoint first when forwarding a faculty PII
+        decision; on 404/405 it falls back to
+        ``POST /api/v1/approval/{token}/decision`` so the connector keeps
+        working against Core deployments that pre-date this PR. Both
+        branches are covered in the connector's
+        ``tests/integration/test_pii_decision.py``
+        (``test_pii_approve_prefers_by_job_id_endpoint`` +
+        ``test_pii_approve_falls_back_to_token_endpoint_on_405``).
+        Net effect once this PR merges + Core ships: connector drops the
+        approval-token round-trip and submits decisions in one POST.
+    """
+    job_service = JobService(redis_client)
+    queue_service = QueueService(redis_client)
+    approval_service = ApprovalService(
+        redis_client=redis_client,
+        s3_client=None,  # Lazy-loaded inside the background task on the denial path.
+        job_service=job_service,
+        queue_service=queue_service,
+        storage_service=storage_service,
+        s3_url_service=s3_url_service,
+    )
+
+    job = await job_service.get_job(job_id)
+    if not job:
+        raise HTTPException(status_code=404, detail=f"Job {job_id} not found")
+
+    current_status = str(job.get("status") or "")
+    if current_status != "awaiting_approval":
+        raise HTTPException(
+            status_code=409,
+            detail=(
+                f"Job {job_id} is in {current_status!r}, not 'awaiting_approval' "
+                f"— a decision was already recorded."
+            ),
+        )
+
+    s3_key = job.get("s3_key", "")
+    justification = body.justification or ""
+
+    try:
+        if decision == "approved":
+            await approval_service.quick_approve(job_id)
+            background_tasks.add_task(
+                approval_service.process_approval_background,
+                job_id=job_id,
+                s3_key=s3_key,
+                justification=justification,
+                reviewed_by=body.reviewed_by,
+            )
+            return PIIDecisionResponse(
+                message="Job approved - processing started",
+                job_id=job_id,
+                decision="approved",
+            )
+
+        await approval_service.quick_deny(job_id)
+        background_tasks.add_task(
+            approval_service.process_denial_background,
+            job_id=job_id,
+            s3_key=s3_key,
+            justification=justification,
+            reviewed_by=body.reviewed_by,
+        )
+        return PIIDecisionResponse(
+            message="Job denied - cleanup started",
+            job_id=job_id,
+            decision="denied",
+        )
+    except ValueError as exc:
+        # Defensive: approval_service can raise ValueError on data checks
+        # (e.g. missing s3_key). The job exists but isn't in a decidable
+        # state — surface as 409 not 500.
+        raise HTTPException(status_code=409, detail=str(exc)) from exc
+    except Exception as exc:  # noqa: BLE001
+        logger.exception("PII decision (%s) failed for job=%s", decision, job_id)
+        raise HTTPException(
+            status_code=500,
+            detail=f"Failed to process PII decision: {exc}",
+        ) from exc
